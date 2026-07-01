@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryContext",
+  "type": "object",
+  "required": ["source", "status", "items"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "note": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "data"],
+        "properties": {
+          "id": {
+            "type": ["string", "null"]
+          },
+          "type": {
+            "type": "string",
+            "enum": ["world_state", "location", "character", "constraint", "timeline_event"]
+          },
+          "name": {
+            "type": ["string", "null"]
+          },
+          "source_run_id": {
+            "type": ["string", "null"]
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "last_run": {
+      "type": "object"
+    },
+    "source_mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "source", "type", "name"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          },
+          "memory_id": {
+            "type": ["string", "null"]
+          },
+          "type": {
+            "type": ["string", "null"]
+          },
+          "name": {
+            "type": ["string", "null"]
+          },
+          "path": {
+            "type": "string"
+          },
+          "line_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_id": {
+            "type": "string"
+          },
+          "page_url": {
+            "type": "string"
+          },
+          "page_index": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "snapshot_builder_audit": {
+      "type": "object"
+    },
+    "pages": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": true
+}

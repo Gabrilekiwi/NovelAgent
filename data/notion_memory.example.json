@@ -1,0 +1,38 @@
+{
+  "pages": [
+    {
+      "properties": {
+        "Type": "world_state",
+        "Data": {
+          "infection_level": "medium"
+        }
+      }
+    },
+    {
+      "properties": {
+        "Type": "location",
+        "Name": "shelter",
+        "Risk": "rising",
+        "Status": "unstable"
+      }
+    },
+    {
+      "properties": {
+        "Type": "character",
+        "Name": "protagonist",
+        "Role": "lead",
+        "Current Location": "shelter",
+        "Current Goal": "protect the serum sample"
+      }
+    },
+    {
+      "properties": {
+        "Type": "constraint",
+        "Rule": "Keep serum in focus.",
+        "Required Terms": [
+          "serum"
+        ]
+      }
+    }
+  ]
+}

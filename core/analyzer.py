@@ -1,7 +1,5 @@
-def analyze_chapter(chapter_text):
-    return {
-        "events": [],
-        "character_changes": [],
-        "world_changes": [],
-        "new_locations": []
-    }
+from __future__ import annotations
+
+from modules.conflict_engine import analyze_chapter
+
+__all__ = ["analyze_chapter"]

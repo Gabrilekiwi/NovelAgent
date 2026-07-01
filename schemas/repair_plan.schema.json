@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepairPlan",
+  "type": "object",
+  "required": [
+    "problem_count",
+    "blocking_problem_count",
+    "warning_count",
+    "severity_counts",
+    "risk_level",
+    "repair_budget",
+    "attempt",
+    "deterministic_step_count",
+    "manual_review_count",
+    "actions",
+    "recovery",
+    "steps"
+  ],
+  "properties": {
+    "problem_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "blocking_problem_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warning_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "severity_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "count"],
+        "properties": {
+          "severity": {
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "risk_level": {
+      "enum": ["critical", "high", "medium", "low", "none"]
+    },
+    "repair_budget": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 5
+    },
+    "attempt": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "deterministic_step_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "manual_review_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "seed_conflict_scene",
+          "expand_scene",
+          "add_conflict_signal",
+          "remove_forbidden_term",
+          "add_required_term",
+          "anchor_known_location",
+          "flag_unknown_location",
+          "add_character_location",
+          "rewrite_inactive_character_action",
+          "correct_chapter_index",
+          "manual_review"
+        ]
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "required": [
+        "available",
+        "source_run_id",
+        "source_status",
+        "source_problem_codes",
+        "repeated_problem_codes",
+        "unresolved_problem_codes",
+        "new_problem_codes",
+        "skipped_checks",
+        "previous_repair_attempts",
+        "previous_repair_risk_level",
+        "previous_manual_review_count",
+        "repair_stalled",
+        "repair_introduced_new_problems",
+        "repair_budget_exhausted",
+        "failure_modes"
+      ],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "source_run_id": {
+          "type": ["string", "null"]
+        },
+        "source_status": {
+          "type": ["string", "null"]
+        },
+        "source_problem_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repeated_problem_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unresolved_problem_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "new_problem_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skipped_checks": {
+          "type": "array",
+          "items": {
+            "enum": ["continuity", "spatial", "logic"]
+          }
+        },
+        "previous_repair_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "previous_repair_risk_level": {
+          "enum": ["critical", "high", "medium", "low", "none", null]
+        },
+        "previous_manual_review_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repair_stalled": {
+          "type": "boolean"
+        },
+        "repair_introduced_new_problems": {
+          "type": "boolean"
+        },
+        "repair_budget_exhausted": {
+          "type": "boolean"
+        },
+        "failure_modes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "previous_problem_repeated",
+              "previous_repair_stalled",
+              "previous_repair_introduced_new_problems",
+              "previous_validation_skipped",
+              "previous_manual_review_required",
+              "previous_repair_budget_exhausted"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "code", "message", "validator", "severity", "blocking", "repair_hint", "action", "priority", "strategy", "parameters"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string"
+          },
+          "validator": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "repair_hint": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["kind", "value"],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "action": {
+            "enum": [
+              "seed_conflict_scene",
+              "expand_scene",
+              "add_conflict_signal",
+              "remove_forbidden_term",
+              "add_required_term",
+              "anchor_known_location",
+              "flag_unknown_location",
+              "add_character_location",
+              "rewrite_inactive_character_action",
+              "correct_chapter_index",
+              "manual_review"
+            ]
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "strategy": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "term": {
+                "type": "string"
+              },
+              "suggested_term": {
+                "type": "string"
+              },
+              "character": {
+                "type": "string"
+              },
+              "location": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "actual": {
+                "type": "string"
+              },
+              "raw_problem": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

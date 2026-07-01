@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryWriteback",
+  "type": "object",
+  "required": ["target", "written", "item_mappings", "verification"],
+  "properties": {
+    "target": {
+      "enum": ["file", "notion", null]
+    },
+    "path": {
+      "type": "string"
+    },
+    "written": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skipped": {
+      "type": ["integer", "boolean"],
+      "minimum": 0
+    },
+    "page_ids": {
+      "type": "array",
+      "items": {
+        "type": ["string", "null"]
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["allowed", "reasons", "pending_update_count", "pending_update_types", "repair_attempt_count", "final_repair_delta"],
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "not_committed",
+              "validation_not_ok",
+              "repair_after_problems_remaining",
+              "repair_introduced_new_problem_codes",
+              "repair_left_remaining_problem_codes"
+            ]
+          }
+        },
+        "pending_update_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pending_update_types": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "count"],
+            "properties": {
+              "type": {
+                "enum": ["world_state", "location", "character", "constraint", "timeline_event"]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "repair_attempt_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "final_repair_delta": {
+          "type": ["object", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "item_mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["memory_id", "type", "name", "target", "status"],
+        "properties": {
+          "memory_id": {
+            "type": ["string", "null"]
+          },
+          "type": {
+            "type": ["string", "null"]
+          },
+          "name": {
+            "type": ["string", "null"]
+          },
+          "target": {
+            "enum": ["file", "notion", null]
+          },
+          "status": {
+            "enum": ["written", "skipped_duplicate", "skipped_no_writer"]
+          },
+          "path": {
+            "type": "string"
+          },
+          "line_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "page_id": {
+            "type": "string"
+          },
+          "page_url": {
+            "type": "string"
+          },
+          "database_id": {
+            "type": ["string", "null"]
+          },
+          "property_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": ["status", "target"],
+      "properties": {
+        "status": {
+          "enum": [
+            "verified",
+            "failed",
+            "not_applicable",
+            "response_recorded",
+            "response_incomplete",
+            "readback_failed"
+          ]
+        },
+        "target": {
+          "enum": ["file", "notion", null]
+        },
+        "checked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "reason": {
+          "enum": [
+            "no_updates",
+            "no_writer",
+            "no_written_items",
+            "gate_blocked",
+            "remote_readback_not_configured",
+            "remote_readback",
+            "remote_readback_error"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

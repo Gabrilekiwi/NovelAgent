@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SnapshotBuilderAudit",
+  "type": "object",
+  "required": [
+    "source",
+    "status",
+    "item_count",
+    "applied_count",
+    "skipped_count",
+    "deduplicated_count",
+    "applied_type_counts",
+    "skipped_type_counts",
+    "skipped_reason_counts",
+    "skipped_severity_counts",
+    "skipped_blocking_count",
+    "applied_items",
+    "skipped_items"
+  ],
+  "properties": {
+    "source": {
+      "type": ["string", "null"]
+    },
+    "status": {
+      "type": ["string", "null"]
+    },
+    "item_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "applied_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skipped_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "deduplicated_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "applied_type_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "count"],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skipped_type_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "count"],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skipped_reason_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["reason_code", "count"],
+        "properties": {
+          "reason_code": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skipped_severity_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "count"],
+        "properties": {
+          "severity": {
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skipped_blocking_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "applied_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "type", "name", "id"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "type": {
+            "type": ["string", "null"]
+          },
+          "name": {
+            "type": ["string", "null"]
+          },
+          "id": {
+            "type": ["string", "null"]
+          },
+          "operation": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "category": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "source_mapping": {
+            "type": "object",
+            "required": ["index", "source", "type", "name"],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source": {
+                "type": "string"
+              },
+              "memory_id": {
+                "type": ["string", "null"]
+              },
+              "type": {
+                "type": ["string", "null"]
+              },
+              "name": {
+                "type": ["string", "null"]
+              },
+              "path": {
+                "type": "string"
+              },
+              "line_number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "page_id": {
+                "type": "string"
+              },
+              "page_url": {
+                "type": "string"
+              },
+              "page_index": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skipped_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "type", "name", "id"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "type": {
+            "type": ["string", "null"]
+          },
+          "name": {
+            "type": ["string", "null"]
+          },
+          "id": {
+            "type": ["string", "null"]
+          },
+          "operation": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "category": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "source_mapping": {
+            "type": "object",
+            "required": ["index", "source", "type", "name"],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source": {
+                "type": "string"
+              },
+              "memory_id": {
+                "type": ["string", "null"]
+              },
+              "type": {
+                "type": ["string", "null"]
+              },
+              "name": {
+                "type": ["string", "null"]
+              },
+              "path": {
+                "type": "string"
+              },
+              "line_number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "page_id": {
+                "type": "string"
+              },
+              "page_url": {
+                "type": "string"
+              },
+              "page_index": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

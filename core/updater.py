@@ -1,7 +1,5 @@
-def update_snapshot(snapshot, analysis):
-    snapshot["chapter_index"] += 1
+﻿from __future__ import annotations
 
-    # 简化示例
-    snapshot["timeline"].append(analysis)
+from core.state.snapshot import build_state_update_audit, update_snapshot
 
-    return snapshot
+__all__ = ["build_state_update_audit", "update_snapshot"]

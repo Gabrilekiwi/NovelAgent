@@ -1,0 +1,2023 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RunRecord",
+  "type": "object",
+  "required": [
+    "id",
+    "started_at",
+    "finished_at",
+    "status",
+    "committed",
+    "chapter_index",
+    "snapshot",
+    "memory",
+    "recovery_context",
+    "snapshot_builder",
+    "director",
+    "decision",
+    "workflow",
+    "workflow_plan",
+    "input_pack",
+    "chapter",
+    "validation",
+    "analysis",
+    "state_update",
+    "repair_attempts",
+    "trace"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "committed",
+        "rejected",
+        "failed"
+      ]
+    },
+    "committed": {
+      "type": "boolean"
+    },
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "snapshot": {
+      "type": "object",
+      "required": [
+        "base_chapter_index",
+        "runtime_chapter_index",
+        "next_chapter_index"
+      ],
+      "properties": {
+        "base_chapter_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runtime_chapter_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "next_chapter_index": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "memory": {
+      "type": "object",
+      "required": [
+        "source",
+        "status",
+        "item_count"
+      ],
+      "properties": {
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "item_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_mapping_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_mapping_sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source", "count"],
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "file_mapping_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line_mapping_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "notion_page_mapping_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "notion_page_url_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "writeback": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recovery_context": {
+      "type": "object",
+      "required": [
+        "available",
+        "source_run_id",
+        "source_status",
+        "source_committed",
+        "source_chapter_index",
+        "source_goal",
+        "problem_codes",
+        "problem_count",
+        "blocking_problem_count",
+        "severity_counts",
+        "repair_attempts",
+        "repair_effective",
+        "repair_stalled",
+        "repair_introduced_new_problems",
+        "repair_risk_level",
+        "repair_budget",
+        "repair_manual_review_count",
+        "repair_budget_exhausted"
+      ],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "source_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_committed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "source_chapter_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "source_goal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "problem_codes": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "problem_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking_problem_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "severity_counts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "repair_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repair_effective": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "repair_stalled": {
+          "type": "boolean"
+        },
+        "repair_introduced_new_problems": {
+          "type": "boolean"
+        },
+        "repair_risk_level": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "none",
+            null
+          ]
+        },
+        "repair_budget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 5
+        },
+        "repair_manual_review_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repair_budget_exhausted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot_builder": {
+      "type": "object",
+      "required": [
+        "chars",
+        "preview"
+      ],
+      "properties": {
+        "chars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "preview": {
+          "type": "string"
+        },
+        "artifact": {
+          "type": "object"
+        },
+        "audit": {
+          "type": "object",
+          "required": [
+            "source",
+            "status",
+            "item_count",
+            "applied_count",
+            "skipped_count",
+            "deduplicated_count",
+            "applied_type_counts",
+            "skipped_type_counts",
+            "skipped_reason_counts",
+            "skipped_severity_counts",
+            "skipped_blocking_count",
+            "applied_items",
+            "skipped_items"
+          ],
+          "properties": {
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "item_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "applied_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skipped_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "deduplicated_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "applied_type_counts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "type",
+                  "count"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "skipped_type_counts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "type",
+                  "count"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "skipped_reason_counts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "reason_code",
+                  "count"
+                ],
+                "properties": {
+                  "reason_code": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "skipped_severity_counts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "severity",
+                  "count"
+                ],
+                "properties": {
+                  "severity": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "critical"
+                    ]
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "skipped_blocking_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "applied_items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "index",
+                  "type",
+                  "name",
+                  "id"
+                ],
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "operation": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "reason_code": {
+                    "type": "string"
+                  },
+                  "severity": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "critical"
+                    ]
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "blocking": {
+                    "type": "boolean"
+                  },
+                  "source_mapping": {
+                    "type": "object",
+                    "required": [
+                      "index",
+                      "source",
+                      "type",
+                      "name"
+                    ],
+                    "properties": {
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "memory_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "line_number": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "page_id": {
+                        "type": "string"
+                      },
+                      "page_url": {
+                        "type": "string"
+                      },
+                      "page_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "skipped_items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "index",
+                  "type",
+                  "name",
+                  "id"
+                ],
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "operation": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "reason_code": {
+                    "type": "string"
+                  },
+                  "severity": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "critical"
+                    ]
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "blocking": {
+                    "type": "boolean"
+                  },
+                  "source_mapping": {
+                    "type": "object",
+                    "required": [
+                      "index",
+                      "source",
+                      "type",
+                      "name"
+                    ],
+                    "properties": {
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "memory_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "line_number": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "page_id": {
+                        "type": "string"
+                      },
+                      "page_url": {
+                        "type": "string"
+                      },
+                      "page_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "director": {
+      "type": "object",
+      "required": [
+        "mode",
+        "source",
+        "model",
+        "status",
+        "started_at",
+        "finished_at",
+        "duration_ms"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "rule",
+            "model",
+            "injected",
+            "unknown"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "failed"
+          ]
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "finished_at": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error_type": {
+          "type": "string"
+        },
+        "error_message": {
+          "type": "string"
+        },
+        "model_call": {
+          "type": "object",
+          "required": [
+            "provider",
+            "stage",
+            "model",
+            "cause_type",
+            "message"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "stage": {
+              "type": "string"
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cause_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "decision": {
+      "type": "object",
+      "required": [
+        "goal",
+        "actions",
+        "validation_focus",
+        "max_repair_attempts"
+      ],
+      "properties": {
+        "goal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "validation_focus": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_repair_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workflow_plan": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "goal",
+        "actions",
+        "steps",
+        "validation_focus",
+        "max_repair_attempts",
+        "recovery"
+      ],
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "generate_chapter",
+              "polish",
+              "validate",
+              "repair_if_needed"
+            ]
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "action",
+              "requires",
+              "produces",
+              "purpose",
+              "mode",
+              "skippable",
+              "skip_condition",
+              "failure_policy"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "action": {
+                "enum": [
+                  "generate_chapter",
+                  "polish",
+                  "validate",
+                  "repair_if_needed"
+                ]
+              },
+              "requires": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "chapter",
+                    "validation"
+                  ]
+                }
+              },
+              "produces": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "chapter",
+                    "validation"
+                  ]
+                }
+              },
+              "purpose": {
+                "type": "string",
+                "minLength": 1
+              },
+              "mode": {
+                "enum": [
+                  "required",
+                  "optional",
+                  "conditional"
+                ]
+              },
+              "skippable": {
+                "type": "boolean"
+              },
+              "skip_condition": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "failure_policy": {
+                "enum": [
+                  "fail_run"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "validation_focus": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "continuity",
+              "spatial",
+              "logic"
+            ]
+          }
+        },
+        "max_repair_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "recovery": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_pack": {
+      "type": "object",
+      "required": [
+        "chars",
+        "preview"
+      ],
+      "properties": {
+        "chars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "preview": {
+          "type": "string"
+        },
+        "artifact": {
+          "type": "object"
+        },
+        "metadata": {
+          "type": "object",
+          "required": [
+            "kind",
+            "chapter_index",
+            "chars",
+            "sections",
+            "decision",
+            "snapshot",
+            "memory_index",
+            "recovery_context"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "chapter_input_pack"
+              ]
+            },
+            "chapter_index": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "chars": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sections": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "chapter_index",
+                  "director_decision",
+                  "world_state",
+                  "characters",
+                  "timeline",
+                  "constraints",
+                  "runtime_memory_metadata",
+                  "memory_index",
+                  "recovery_context",
+                  "requirements"
+                ]
+              }
+            },
+            "decision": {
+              "type": "object",
+              "required": [
+                "goal",
+                "actions",
+                "validation_focus",
+                "max_repair_attempts"
+              ],
+              "properties": {
+                "goal": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "generate_chapter",
+                      "polish",
+                      "validate",
+                      "repair_if_needed"
+                    ]
+                  }
+                },
+                "validation_focus": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "continuity",
+                      "spatial",
+                      "logic"
+                    ]
+                  }
+                },
+                "max_repair_attempts": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 5
+                }
+              },
+              "additionalProperties": false
+            },
+            "snapshot": {
+              "type": "object",
+              "required": [
+                "world_state_keys",
+                "character_count",
+                "timeline_count",
+                "constraint_count",
+                "memory_source",
+                "memory_status",
+                "memory_item_count"
+              ],
+              "properties": {
+                "world_state_keys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "character_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "timeline_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "constraint_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "memory_source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "memory_status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "memory_item_count": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            },
+            "memory_index": {
+              "type": "object",
+              "required": [
+                "source",
+                "status",
+                "item_count",
+                "indexed_item_count",
+                "source_mapping_count",
+                "last_run_present"
+              ],
+              "properties": {
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "item_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "indexed_item_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "source_mapping_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "last_run_present": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "recovery_context": {
+              "type": "object",
+              "required": [
+                "available",
+                "source_run_id",
+                "status",
+                "problem_count",
+                "executed_checks",
+                "skipped_checks",
+                "repair_attempts"
+              ],
+              "properties": {
+                "available": {
+                  "type": "boolean"
+                },
+                "source_run_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "problem_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "executed_checks": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "continuity",
+                      "spatial",
+                      "logic"
+                    ]
+                  }
+                },
+                "skipped_checks": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "continuity",
+                      "spatial",
+                      "logic"
+                    ]
+                  }
+                },
+                "repair_attempts": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "chapter": {
+      "type": "object",
+      "required": [
+        "chars"
+      ],
+      "properties": {
+        "chars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifact": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "validation": {
+      "type": "object",
+      "required": [
+        "ok",
+        "problem_codes",
+        "problem_count",
+        "blocking_problem_count",
+        "warning_count",
+        "severity_counts"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "problem_codes": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "problem_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking_problem_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warning_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "severity_counts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "severity",
+              "count"
+            ],
+            "properties": {
+              "severity": {
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "deterministic_repair_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "manual_review_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repair_action_counts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "action",
+              "count"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "seed_conflict_scene",
+                  "expand_scene",
+                  "add_conflict_signal",
+                  "remove_forbidden_term",
+                  "add_required_term",
+                  "anchor_known_location",
+                  "flag_unknown_location",
+                  "add_character_location",
+                  "rewrite_inactive_character_action",
+                  "correct_chapter_index",
+                  "manual_review"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "requested_focus": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "continuity",
+              "spatial",
+              "logic"
+            ]
+          }
+        },
+        "executed_checks": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "continuity",
+              "spatial",
+              "logic"
+            ]
+          }
+        },
+        "skipped_checks": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "continuity",
+              "spatial",
+              "logic"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "analysis": {
+      "type": "object",
+      "required": [
+        "validation_ok",
+        "conflict_count",
+        "event_count",
+        "world_change_count",
+        "summary"
+      ],
+      "properties": {
+        "validation_ok": {
+          "type": "boolean"
+        },
+        "conflict_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "world_change_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "state_update": {
+      "type": "object",
+      "required": [
+        "applied",
+        "chapter_index",
+        "next_chapter_index",
+        "timeline_added",
+        "character_update_count",
+        "location_update_count",
+        "world_change_count",
+        "memory_update_count",
+        "memory_update_types",
+        "analysis_validation_ok"
+      ],
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        },
+        "chapter_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "next_chapter_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeline_added": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "character_update_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "location_update_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "world_change_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "memory_update_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "memory_update_types": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "type",
+              "count"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "world_state",
+                  "location",
+                  "character",
+                  "constraint",
+                  "timeline_event"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "analysis_validation_ok": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "repair_attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "trace": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "action",
+          "status",
+          "started_at",
+          "finished_at",
+          "chapter_chars",
+          "repair_attempts"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "generate_chapter",
+              "polish",
+              "validate",
+              "repair_if_needed"
+            ]
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "finished_at": {
+            "type": "string"
+          },
+          "chapter_chars": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "repair_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "plan_step_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "plan_step_mode": {
+            "enum": [
+              "required",
+              "optional",
+              "conditional"
+            ]
+          },
+          "plan_failure_policy": {
+            "enum": [
+              "fail_run"
+            ]
+          },
+          "model_stage": {
+            "enum": [
+              "chapter_generation",
+              "claude_polish",
+              "scene_repair"
+            ]
+          },
+          "model_provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "openai",
+              "anthropic",
+              "local",
+              "injected",
+              null
+            ]
+          },
+          "model_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_invocation": {
+            "enum": [
+              "model",
+              "dry_run",
+              "injected",
+              "none"
+            ]
+          },
+          "validation_ok": {
+            "type": "boolean"
+          },
+          "problem_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "implicit": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "skip_reason": {
+            "enum": [
+              "validation_ok",
+              "max_repair_attempts_exhausted"
+            ]
+          },
+          "error_type": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "repair_plan": {
+            "type": "object",
+            "required": [
+              "problem_count",
+              "blocking_problem_count",
+              "warning_count",
+              "severity_counts",
+              "risk_level",
+              "repair_budget",
+              "attempt",
+              "deterministic_step_count",
+              "manual_review_count",
+              "actions",
+              "recovery",
+              "steps"
+            ],
+            "properties": {
+              "problem_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "blocking_problem_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "warning_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "severity_counts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "severity",
+                    "count"
+                  ],
+                  "properties": {
+                    "severity": {
+                      "enum": [
+                        "critical",
+                        "high",
+                        "medium",
+                        "low"
+                      ]
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "risk_level": {
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low",
+                  "none"
+                ]
+              },
+              "repair_budget": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 5
+              },
+              "attempt": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              },
+              "deterministic_step_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "manual_review_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "seed_conflict_scene",
+                    "expand_scene",
+                    "add_conflict_signal",
+                    "remove_forbidden_term",
+                    "add_required_term",
+                    "anchor_known_location",
+                    "flag_unknown_location",
+                    "add_character_location",
+                    "rewrite_inactive_character_action",
+                    "correct_chapter_index",
+                    "manual_review"
+                  ]
+                }
+              },
+              "recovery": {
+                "type": "object",
+                "required": [
+                  "available",
+                  "source_run_id",
+                  "source_status",
+                  "source_problem_codes",
+                  "repeated_problem_codes",
+                  "unresolved_problem_codes",
+                  "new_problem_codes",
+                  "skipped_checks",
+                  "previous_repair_attempts",
+                  "previous_repair_risk_level",
+                  "previous_manual_review_count",
+                  "repair_stalled",
+                  "repair_introduced_new_problems",
+                  "repair_budget_exhausted",
+                  "failure_modes"
+                ],
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "source_run_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "source_status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "source_problem_codes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "repeated_problem_codes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "unresolved_problem_codes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "new_problem_codes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "skipped_checks": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "continuity",
+                        "spatial",
+                        "logic"
+                      ]
+                    }
+                  },
+                  "previous_repair_attempts": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "previous_repair_risk_level": {
+                    "enum": [
+                      "critical",
+                      "high",
+                      "medium",
+                      "low",
+                      "none",
+                      null
+                    ]
+                  },
+                  "previous_manual_review_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "repair_stalled": {
+                    "type": "boolean"
+                  },
+                  "repair_introduced_new_problems": {
+                    "type": "boolean"
+                  },
+                  "repair_budget_exhausted": {
+                    "type": "boolean"
+                  },
+                  "failure_modes": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "previous_problem_repeated",
+                        "previous_repair_stalled",
+                        "previous_repair_introduced_new_problems",
+                        "previous_validation_skipped",
+                        "previous_manual_review_required",
+                        "previous_repair_budget_exhausted"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "index",
+                    "code",
+                    "message",
+                    "validator",
+                    "severity",
+                    "blocking",
+                    "repair_hint",
+                    "action",
+                    "priority",
+                    "strategy",
+                    "parameters"
+                  ],
+                  "properties": {
+                    "index": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "code": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "validator": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "enum": [
+                        "critical",
+                        "high",
+                        "medium",
+                        "low"
+                      ]
+                    },
+                    "blocking": {
+                      "type": "boolean"
+                    },
+                    "repair_hint": {
+                      "type": "string"
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "kind",
+                          "value"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "value": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "action": {
+                      "enum": [
+                        "seed_conflict_scene",
+                        "expand_scene",
+                        "add_conflict_signal",
+                        "remove_forbidden_term",
+                        "add_required_term",
+                        "anchor_known_location",
+                        "flag_unknown_location",
+                        "add_character_location",
+                        "rewrite_inactive_character_action",
+                        "correct_chapter_index",
+                        "manual_review"
+                      ]
+                    },
+                    "priority": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "strategy": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "term": {
+                          "type": "string"
+                        },
+                        "suggested_term": {
+                          "type": "string"
+                        },
+                        "character": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "expected": {
+                          "type": "string"
+                        },
+                        "actual": {
+                          "type": "string"
+                        },
+                        "raw_problem": {
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "repair_deltas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "attempt",
+                "before_ok",
+                "after_ok",
+                "before_problem_count",
+                "after_problem_count",
+                "before_problem_codes",
+                "after_problem_codes",
+                "resolved_problem_codes",
+                "new_problem_codes",
+                "remaining_problem_codes"
+              ],
+              "properties": {
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "before_ok": {
+                  "type": "boolean"
+                },
+                "after_ok": {
+                  "type": "boolean"
+                },
+                "before_problem_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "after_problem_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "before_problem_codes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "after_problem_codes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "resolved_problem_codes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "new_problem_codes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "remaining_problem_codes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "model_call": {
+            "type": "object",
+            "required": [
+              "provider",
+              "stage",
+              "model",
+              "cause_type",
+              "message"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "stage": {
+                "type": "string"
+              },
+              "model": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cause_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "type",
+        "message"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

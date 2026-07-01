@@ -1,0 +1,53 @@
+{
+  "source": "notion-export",
+  "status": "ready",
+  "items": [
+    {
+      "type": "world_state",
+      "data": {
+        "infection_level": "medium"
+      }
+    },
+    {
+      "type": "location",
+      "name": "shelter",
+      "data": {
+        "aliases": [
+          "sealed gate"
+        ],
+        "risk": "rising",
+        "status": "unstable"
+      }
+    },
+    {
+      "type": "character",
+      "name": "主角",
+      "data": {
+        "role": "lead",
+        "current_goal": "protect the serum sample"
+      }
+    },
+    {
+      "type": "character",
+      "name": "protagonist",
+      "data": {
+        "role": "lead",
+        "current_location": "shelter",
+        "current_goal": "protect the serum sample"
+      }
+    },
+    {
+      "type": "constraint",
+      "data": {
+        "rule": "Do not resolve the serum conflict in one chapter.",
+        "forbidden_terms": [
+          "serum conflict resolved",
+          "the serum crisis was over"
+        ],
+        "required_terms": [
+          "serum"
+        ]
+      }
+    }
+  ]
+}

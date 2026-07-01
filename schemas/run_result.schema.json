@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RunResult",
+  "type": "object",
+  "required": ["run"],
+  "properties": {
+    "run": {
+      "type": "object"
+    },
+    "decision": {
+      "type": "object"
+    },
+    "workflow": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workflow_plan": {
+      "type": ["object", "null"]
+    },
+    "chapter": {
+      "type": "string"
+    },
+    "validation": {
+      "type": ["object", "null"]
+    },
+    "analysis": {
+      "type": "object"
+    },
+    "state_update": {
+      "type": "object"
+    },
+    "snapshot": {
+      "type": "object"
+    },
+    "repair_attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "committed": {
+      "type": "boolean"
+    },
+    "memory_write": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,5 +1,7 @@
-from core.orchestrator import run_once
+from __future__ import annotations
 
-if __name__ == '__main__':
-    chapter = run_once()
-    print(chapter)
+from main import main
+
+
+if __name__ == "__main__":
+    main()

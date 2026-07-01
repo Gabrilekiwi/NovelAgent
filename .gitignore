@@ -1,0 +1,16 @@
+.env
+.tmp/
+.venv/
+.idea/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+data/runs/
+data/chapters/
+data/memory_outbox.jsonl
+data/memory_outbox*.jsonl

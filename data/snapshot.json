@@ -1,9 +1,112 @@
 {
-  "chapter_index": 1,
+  "chapter_index": 3,
   "world_state": {
     "infection_level": "medium",
-    "locations": {}
+    "locations": {
+      "shelter": {
+        "risk": "rising",
+        "status": "unstable"
+      },
+      "sealed gate": {
+        "source": "chapter_analysis",
+        "first_seen_chapter": 2
+      }
+    },
+    "last_world_changes": [
+      {
+        "type": "infection_pressure",
+        "text": "Infection pressure is active in the chapter."
+      },
+      {
+        "type": "serum_focus",
+        "text": "Serum remains narratively relevant."
+      }
+    ]
   },
-  "characters": {},
-  "timeline": []
+  "characters": {
+    "protagonist": {
+      "role": "lead",
+      "current_location": "shelter",
+      "current_goal": "protect the serum sample"
+    }
+  },
+  "timeline": [
+    {
+      "events": [],
+      "character_changes": [],
+      "world_changes": [],
+      "new_locations": []
+    },
+    {
+      "chapter_index": 2,
+      "summary": "The first alarm sounded just as the shelter lights dimmed. The protagonist stood before the sealed gate and saw that the route once marked safe had been cut off by a new infection zone.",
+      "events": [
+        {
+          "text": "The first alarm sounded just as the shelter lights dimmed."
+        },
+        {
+          "text": "The protagonist stood before the sealed gate and saw that the route once marked safe had been cut off by a new infection zone."
+        },
+        {
+          "text": "She had to choose between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict."
+        }
+      ],
+      "character_changes": [],
+      "world_changes": [
+        {
+          "type": "infection_pressure",
+          "text": "Infection pressure is active in the chapter."
+        },
+        {
+          "type": "serum_focus",
+          "text": "Serum remains narratively relevant."
+        }
+      ],
+      "new_locations": [
+        "shelter",
+        "sealed gate"
+      ],
+      "conflicts": [
+        "conflict",
+        "choice",
+        "choose",
+        "infection",
+        "serum"
+      ],
+      "validation": {
+        "ok": true,
+        "checks": [
+          {
+            "name": "continuity",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "name": "spatial",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "name": "logic",
+            "ok": true,
+            "problems": []
+          }
+        ],
+        "problems": []
+      }
+    }
+  ],
+  "constraints": [
+    {
+      "rule": "Keep serum in focus.",
+      "required_terms": [
+        "serum"
+      ]
+    }
+  ],
+  "memory": {
+    "source": "notion-export",
+    "status": "ready",
+    "item_count": 4
+  }
 }

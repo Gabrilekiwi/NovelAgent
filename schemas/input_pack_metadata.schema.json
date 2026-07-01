@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InputPackMetadata",
+  "type": "object",
+  "required": ["kind", "chapter_index", "chars", "sections", "decision", "snapshot", "memory_index", "recovery_context"],
+  "properties": {
+    "kind": {
+      "enum": ["chapter_input_pack"]
+    },
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "chars": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": [
+          "chapter_index",
+          "director_decision",
+          "world_state",
+          "characters",
+          "timeline",
+          "constraints",
+          "runtime_memory_metadata",
+          "memory_index",
+          "recovery_context",
+          "requirements"
+        ]
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["goal", "actions", "validation_focus", "max_repair_attempts"],
+      "properties": {
+        "goal": {
+          "type": ["string", "null"]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "enum": ["generate_chapter", "polish", "validate", "repair_if_needed"]
+          }
+        },
+        "validation_focus": {
+          "type": "array",
+          "items": {
+            "enum": ["continuity", "spatial", "logic"]
+          }
+        },
+        "max_repair_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot": {
+      "type": "object",
+      "required": [
+        "world_state_keys",
+        "character_count",
+        "timeline_count",
+        "constraint_count",
+        "memory_source",
+        "memory_status",
+        "memory_item_count"
+      ],
+      "properties": {
+        "world_state_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "character_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeline_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "constraint_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "memory_source": {
+          "type": ["string", "null"]
+        },
+        "memory_status": {
+          "type": ["string", "null"]
+        },
+        "memory_item_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "memory_index": {
+      "type": "object",
+      "required": ["source", "status", "item_count", "indexed_item_count", "source_mapping_count", "last_run_present"],
+      "properties": {
+        "source": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": ["string", "null"]
+        },
+        "item_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "indexed_item_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_mapping_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_run_present": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recovery_context": {
+      "type": "object",
+      "required": ["available", "source_run_id", "status", "problem_count", "executed_checks", "skipped_checks", "repair_attempts"],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "source_run_id": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": ["string", "null"]
+        },
+        "problem_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "executed_checks": {
+          "type": "array",
+          "items": {
+            "enum": ["continuity", "spatial", "logic"]
+          }
+        },
+        "skipped_checks": {
+          "type": "array",
+          "items": {
+            "enum": ["continuity", "spatial", "logic"]
+          }
+        },
+        "repair_attempts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

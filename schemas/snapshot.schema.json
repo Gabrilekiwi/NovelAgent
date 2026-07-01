@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Snapshot",
+  "type": "object",
+  "required": ["chapter_index", "world_state", "characters", "timeline"],
+  "properties": {
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "world_state": {
+      "type": "object",
+      "properties": {
+        "locations": {
+          "type": "object"
+        },
+        "last_world_changes": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    },
+    "characters": {
+      "type": "object"
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "constraints": {
+      "type": "array"
+    },
+    "memory": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

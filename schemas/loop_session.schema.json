@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LoopSession",
+  "type": "object",
+  "required": [
+    "id",
+    "started_at",
+    "finished_at",
+    "requested_steps",
+    "completed_steps",
+    "stopped_reason",
+    "persist",
+    "stop_on_rejection",
+    "committed_count",
+    "rejected_count",
+    "failed_count",
+    "first_chapter_index",
+    "last_chapter_index",
+    "last_run_id",
+    "recovery_links",
+    "runs"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    },
+    "requested_steps": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "completed_steps": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stopped_reason": {
+      "enum": ["max_steps", "rejected", "failed"]
+    },
+    "persist": {
+      "type": "boolean"
+    },
+    "stop_on_rejection": {
+      "type": "boolean"
+    },
+    "committed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "rejected_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "first_chapter_index": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "last_chapter_index": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "last_run_id": {
+      "type": ["string", "null"]
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "committed",
+          "chapter_index",
+          "problem_codes",
+          "repair_attempts"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": ["committed", "rejected", "failed"]
+          },
+          "committed": {
+            "type": "boolean"
+          },
+          "chapter_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "problem_codes": {
+            "type": "array",
+            "items": {
+              "type": ["string", "null"]
+            }
+          },
+          "requested_focus": {
+            "type": "array",
+            "items": {
+              "enum": ["continuity", "spatial", "logic"]
+            }
+          },
+          "executed_checks": {
+            "type": "array",
+            "items": {
+              "enum": ["continuity", "spatial", "logic"]
+            }
+          },
+          "skipped_checks": {
+            "type": "array",
+            "items": {
+              "enum": ["continuity", "spatial", "logic"]
+            }
+          },
+          "workflow_actions": {
+            "type": "array",
+            "items": {
+              "enum": ["generate_chapter", "polish", "validate", "repair_if_needed"]
+            }
+          },
+          "trace_actions": {
+            "type": "array",
+            "items": {
+              "enum": ["generate_chapter", "polish", "validate", "repair_if_needed"]
+            }
+          },
+          "trace_plan_aligned": {
+            "type": "boolean"
+          },
+          "repair_attempts": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "recovery_links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "run_status",
+          "director_goal",
+          "source_run_id",
+          "source_status",
+          "source_chapter_index",
+          "source_problem_codes",
+          "repair_stalled",
+          "repair_introduced_new_problems",
+          "repair_risk_level",
+          "repair_budget_exhausted"
+        ],
+        "properties": {
+          "run_id": {
+            "type": ["string", "null"]
+          },
+          "run_status": {
+            "enum": ["committed", "rejected", "failed"]
+          },
+          "director_goal": {
+            "type": ["string", "null"]
+          },
+          "source_run_id": {
+            "type": ["string", "null"]
+          },
+          "source_status": {
+            "type": ["string", "null"]
+          },
+          "source_chapter_index": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "source_problem_codes": {
+            "type": "array",
+            "items": {
+              "type": ["string", "null"]
+            }
+          },
+          "repair_stalled": {
+            "type": "boolean"
+          },
+          "repair_introduced_new_problems": {
+            "type": "boolean"
+          },
+          "repair_risk_level": {
+            "type": ["string", "null"],
+            "enum": ["critical", "high", "medium", "low", "none", null]
+          },
+          "repair_budget_exhausted": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "artifact": {
+      "type": "object"
+    },
+    "error": {
+      "type": "object",
+      "required": ["type", "message"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

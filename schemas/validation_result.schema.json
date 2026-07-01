@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ValidationResult",
+  "type": "object",
+  "required": [
+    "ok",
+    "requested_focus",
+    "executed_checks",
+    "skipped_checks",
+    "checks",
+    "problems",
+    "blocking_problem_count",
+    "warning_count",
+    "severity_counts",
+    "deterministic_repair_count",
+    "manual_review_count",
+    "repair_action_counts"
+  ],
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "requested_focus": {
+      "type": "array",
+      "items": {
+        "enum": ["continuity", "spatial", "logic"]
+      }
+    },
+    "executed_checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": ["continuity", "spatial", "logic"]
+      }
+    },
+    "skipped_checks": {
+      "type": "array",
+      "items": {
+        "enum": ["continuity", "spatial", "logic"]
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "ok", "problems"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["code", "message", "validator", "severity", "blocking", "category", "repair_hint", "repair_action", "repair_parameters"],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "validator": {
+                  "type": "string"
+                },
+                "severity": {
+                  "enum": ["critical", "high", "medium", "low"]
+                },
+                "blocking": {
+                  "type": "boolean"
+                },
+                "category": {
+                  "enum": ["blocking", "warning"]
+                },
+                "repair_hint": {
+                  "type": "string"
+                },
+                "repair_action": {
+                  "enum": [
+                    "seed_conflict_scene",
+                    "expand_scene",
+                    "add_conflict_signal",
+                    "remove_forbidden_term",
+                    "add_required_term",
+                    "anchor_known_location",
+                    "flag_unknown_location",
+                    "add_character_location",
+                    "rewrite_inactive_character_action",
+                    "correct_chapter_index",
+                    "manual_review"
+                  ]
+                },
+                "repair_parameters": {
+                  "type": "object"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["kind", "value"],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "value": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message", "validator", "severity", "blocking", "category", "repair_hint", "repair_action", "repair_parameters"],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "validator": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "category": {
+            "enum": ["blocking", "warning"]
+          },
+          "repair_hint": {
+            "type": "string"
+          },
+          "repair_action": {
+            "enum": [
+              "seed_conflict_scene",
+              "expand_scene",
+              "add_conflict_signal",
+              "remove_forbidden_term",
+              "add_required_term",
+              "anchor_known_location",
+              "flag_unknown_location",
+              "add_character_location",
+              "rewrite_inactive_character_action",
+              "correct_chapter_index",
+              "manual_review"
+            ]
+          },
+          "repair_parameters": {
+            "type": "object"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["kind", "value"],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "blocking_problem_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warning_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "severity_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "count"],
+        "properties": {
+          "severity": {
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "deterministic_repair_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "manual_review_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "repair_action_counts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "count"],
+        "properties": {
+          "action": {
+            "enum": [
+              "seed_conflict_scene",
+              "expand_scene",
+              "add_conflict_signal",
+              "remove_forbidden_term",
+              "add_required_term",
+              "anchor_known_location",
+              "flag_unknown_location",
+              "add_character_location",
+              "rewrite_inactive_character_action",
+              "correct_chapter_index",
+              "manual_review"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": true
+}

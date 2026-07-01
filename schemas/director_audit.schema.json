@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DirectorAudit",
+  "type": "object",
+  "required": ["mode", "source", "model", "status", "started_at", "finished_at", "duration_ms"],
+  "properties": {
+    "mode": {
+      "enum": ["rule", "model", "injected", "unknown"]
+    },
+    "source": {
+      "type": "string"
+    },
+    "model": {
+      "type": ["string", "null"]
+    },
+    "status": {
+      "enum": ["completed", "failed"]
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "error_type": {
+      "type": "string"
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "model_call": {
+      "type": "object",
+      "required": ["provider", "stage", "model", "cause_type", "message"],
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "model": {
+          "type": ["string", "null"]
+        },
+        "cause_type": {
+          "type": ["string", "null"]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

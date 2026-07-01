@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StateUpdateAudit",
+  "type": "object",
+  "required": [
+    "applied",
+    "chapter_index",
+    "next_chapter_index",
+    "timeline_added",
+    "character_update_count",
+    "location_update_count",
+    "world_change_count",
+    "memory_update_count",
+    "memory_update_types",
+    "analysis_validation_ok"
+  ],
+  "properties": {
+    "applied": {
+      "type": "boolean"
+    },
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "next_chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timeline_added": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "character_update_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "location_update_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "world_change_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "memory_update_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "memory_update_types": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "count"],
+        "properties": {
+          "type": {
+            "enum": ["world_state", "location", "character", "constraint", "timeline_event"]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "analysis_validation_ok": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}
