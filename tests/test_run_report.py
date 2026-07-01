@@ -193,6 +193,16 @@ class RunReportTest(unittest.TestCase):
                     "deterministic_repair_count": 1,
                     "manual_review_count": 0,
                     "repair_action_counts": [{"action": "add_conflict_signal", "count": 1}],
+                    "problem_evidence": [
+                        {
+                            "code": "missing_conflict_marker",
+                            "validator": "logic",
+                            "severity": "high",
+                            "blocking": True,
+                            "repair_action": "add_conflict_signal",
+                            "evidence": [{"kind": "missing_any_marker", "value": "conflict, danger, choice"}],
+                        }
+                    ],
                 },
                 "analysis": {"summary": "", "conflict_count": 0, "event_count": 0, "world_change_count": 0},
                 "repair_attempts": 1,
@@ -241,6 +251,7 @@ class RunReportTest(unittest.TestCase):
                             "steps": [
                                 {
                                     "validator": "logic",
+                                    "evidence": [{"kind": "missing_any_marker", "value": "conflict, danger, choice"}],
                                 }
                             ],
                         },
@@ -322,6 +333,16 @@ class RunReportTest(unittest.TestCase):
                         "committed": False,
                         "chapter_index": 2,
                         "problem_codes": ["missing_conflict_marker"],
+                        "problem_evidence": [
+                            {
+                                "code": "missing_conflict_marker",
+                                "validator": "logic",
+                                "severity": "high",
+                                "blocking": True,
+                                "repair_action": "add_conflict_signal",
+                                "evidence": [{"kind": "missing_any_marker", "value": "conflict, danger, choice"}],
+                            }
+                        ],
                         "requested_focus": ["logic"],
                         "executed_checks": ["logic"],
                         "skipped_checks": ["continuity", "spatial"],
@@ -329,6 +350,14 @@ class RunReportTest(unittest.TestCase):
                         "trace_actions": ["generate_chapter", "validate", "repair_if_needed"],
                         "trace_plan_aligned": True,
                         "repair_attempts": 1,
+                        "repair_evidence": [
+                            {
+                                "code": "missing_conflict_marker",
+                                "validator": "logic",
+                                "action": "add_conflict_signal",
+                                "evidence": [{"kind": "missing_any_marker", "value": "conflict, danger, choice"}],
+                            }
+                        ],
                     },
                 ],
             },
@@ -366,6 +395,10 @@ class RunReportTest(unittest.TestCase):
         self.assertEqual(["logic"], report["latest"]["validation"]["requested_focus"])
         self.assertEqual(["logic"], report["latest"]["validation"]["executed_checks"])
         self.assertEqual(["continuity", "spatial"], report["latest"]["validation"]["skipped_checks"])
+        self.assertEqual(
+            [{"kind": "missing_any_marker", "value": "conflict, danger, choice"}],
+            report["latest"]["validation"]["problem_evidence"][0]["evidence"],
+        )
         self.assertEqual(4, report["latest"]["trace"][0]["plan_step_index"])
         self.assertEqual("conditional", report["latest"]["trace"][0]["plan_step_mode"])
         self.assertEqual("fail_run", report["latest"]["trace"][0]["plan_failure_policy"])
@@ -375,6 +408,10 @@ class RunReportTest(unittest.TestCase):
         self.assertEqual("model", report["latest"]["trace"][0]["model_invocation"])
         self.assertEqual(["add_conflict_signal"], report["latest"]["trace"][0]["repair_actions"])
         self.assertEqual(["logic"], report["latest"]["trace"][0]["repair_validators"])
+        self.assertEqual(
+            [{"kind": "missing_any_marker", "value": "conflict, danger, choice"}],
+            report["latest"]["trace"][0]["repair_evidence"][0]["evidence"],
+        )
         self.assertEqual("high", report["latest"]["trace"][0]["repair_risk_level"])
         self.assertEqual(2, report["latest"]["trace"][0]["repair_budget"])
         self.assertEqual(0, report["latest"]["trace"][0]["repair_manual_review_count"])
@@ -433,6 +470,14 @@ class RunReportTest(unittest.TestCase):
         self.assertEqual(["chapter_1_20260101T000000000000Z", "chapter_2_20260101T000001000000Z"], report["latest_loop_session"]["run_ids"])
         self.assertEqual(["logic"], report["latest_loop_session"]["run_summaries"][1]["executed_checks"])
         self.assertEqual(["continuity", "spatial"], report["latest_loop_session"]["run_summaries"][1]["skipped_checks"])
+        self.assertEqual(
+            [{"kind": "missing_any_marker", "value": "conflict, danger, choice"}],
+            report["latest_loop_session"]["run_summaries"][1]["problem_evidence"][0]["evidence"],
+        )
+        self.assertEqual(
+            [{"kind": "missing_any_marker", "value": "conflict, danger, choice"}],
+            report["latest_loop_session"]["run_summaries"][1]["repair_evidence"][0]["evidence"],
+        )
         self.assertEqual(
             ["generate_chapter", "validate", "repair_if_needed"],
             report["latest_loop_session"]["run_summaries"][1]["workflow_actions"],

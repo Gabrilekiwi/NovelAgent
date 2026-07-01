@@ -102,6 +102,61 @@
               "type": ["string", "null"]
             }
           },
+          "problem_evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["code", "validator", "severity", "blocking", "repair_action", "evidence"],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "validator": {
+                  "type": "string"
+                },
+                "severity": {
+                  "enum": ["critical", "high", "medium", "low"]
+                },
+                "blocking": {
+                  "type": "boolean"
+                },
+                "repair_action": {
+                  "enum": [
+                    "seed_conflict_scene",
+                    "expand_scene",
+                    "add_conflict_signal",
+                    "remove_forbidden_term",
+                    "add_required_term",
+                    "anchor_known_location",
+                    "flag_unknown_location",
+                    "add_character_location",
+                    "rewrite_inactive_character_action",
+                    "correct_chapter_index",
+                    "manual_review"
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["kind", "value"],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "value": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
           "requested_focus": {
             "type": "array",
             "items": {
@@ -138,6 +193,55 @@
           "repair_attempts": {
             "type": "integer",
             "minimum": 0
+          },
+          "repair_evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["code", "validator", "action", "evidence"],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "validator": {
+                  "type": "string"
+                },
+                "action": {
+                  "enum": [
+                    "seed_conflict_scene",
+                    "expand_scene",
+                    "add_conflict_signal",
+                    "remove_forbidden_term",
+                    "add_required_term",
+                    "anchor_known_location",
+                    "flag_unknown_location",
+                    "add_character_location",
+                    "rewrite_inactive_character_action",
+                    "correct_chapter_index",
+                    "manual_review"
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["kind", "value"],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "value": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false

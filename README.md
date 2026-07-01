@@ -95,7 +95,7 @@ Persistent runs write schema-checked run result envelopes:
 - `data/runs/input_packs/*.md`: full input packs; run records include input pack metadata.
 - `data/chapters/*.md`: chapter body artifacts.
 
-Both directories are ignored by git by default.
+Run records, run reports, and loop session summaries expose compact validation and repair evidence, so common Validator/Repair failures can be diagnosed without opening the full run-result envelope. Both directories are ignored by git by default.
 
 Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.0 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.0 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.0 executor and orchestrator entrypoints.
 

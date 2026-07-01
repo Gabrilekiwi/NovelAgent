@@ -144,7 +144,20 @@ class RunRecordTest(unittest.TestCase):
                 "chapter_index": 4,
                 "decision": {"goal": "recover"},
                 "workflow": ["generate_chapter", "validate", "repair_if_needed"],
-                "validation": {"problem_codes": ["no_known_location"], "problem_count": 1},
+                "validation": {
+                    "problem_codes": ["no_known_location"],
+                    "problem_count": 1,
+                    "problem_evidence": [
+                        {
+                            "code": "no_known_location",
+                            "validator": "spatial",
+                            "severity": "critical",
+                            "blocking": True,
+                            "repair_action": "flag_unknown_location",
+                            "evidence": [{"kind": "unknown_location", "value": "empty corridor"}],
+                        }
+                    ],
+                },
                 "repair_attempts": 1,
                 "trace": [
                     {
@@ -155,6 +168,22 @@ class RunRecordTest(unittest.TestCase):
                             "attempt": 1,
                             "deterministic_step_count": 0,
                             "manual_review_count": 1,
+                            "steps": [
+                                {
+                                    "index": 1,
+                                    "code": "no_known_location",
+                                    "message": "Character location is unknown.",
+                                    "validator": "spatial",
+                                    "severity": "critical",
+                                    "blocking": True,
+                                    "repair_hint": "Anchor the scene to a known location.",
+                                    "evidence": [{"kind": "unknown_location", "value": "empty corridor"}],
+                                    "action": "flag_unknown_location",
+                                    "priority": 90,
+                                    "strategy": "Flag unknown location for manual review.",
+                                    "parameters": {"location": "empty corridor"},
+                                }
+                            ],
                         },
                         "repair_deltas": [
                             {
@@ -185,6 +214,9 @@ class RunRecordTest(unittest.TestCase):
         self.assertEqual("critical", summary["repair_plan"]["risk_level"])
         self.assertEqual(1, summary["repair_plan"]["repair_budget"])
         self.assertEqual(1, summary["repair_plan"]["manual_review_count"])
+        self.assertEqual("no_known_location", summary["problem_evidence"][0]["code"])
+        self.assertEqual("no_known_location", summary["repair_evidence"][0]["code"])
+        self.assertEqual([{"kind": "unknown_location", "value": "empty corridor"}], summary["repair_evidence"][0]["evidence"])
         self.assertEqual(["no_known_location"], summary["repair_deltas"][0]["new_problem_codes"])
 
     def test_load_latest_run_summary_skips_invalid_run_result(self) -> None:

@@ -143,6 +143,7 @@ def build_run_record(
             "blocking_problem_count": _blocking_problem_count(validation, problems),
             "warning_count": _warning_count(validation, problems),
             "severity_counts": _validation_severity_counts(validation, problems),
+            "problem_evidence": _problem_evidence_summary(problems),
             **_validation_repair_summary(validation, problems),
             **_validation_coverage_summary(validation, decision),
         },
@@ -235,6 +236,7 @@ def build_failed_run_record(
             "blocking_problem_count": _blocking_problem_count(validation_payload, problems),
             "warning_count": _warning_count(validation_payload, problems),
             "severity_counts": _validation_severity_counts(validation_payload, problems),
+            "problem_evidence": _problem_evidence_summary(problems),
             **_validation_repair_summary(validation_payload, problems),
             **_validation_coverage_summary(validation_payload, decision),
         },
@@ -313,6 +315,7 @@ def build_director_failed_run_record(
             "blocking_problem_count": 1,
             "warning_count": 0,
             "severity_counts": [{"severity": "critical", "count": 1}],
+            "problem_evidence": [],
             "deterministic_repair_count": 0,
             "manual_review_count": 1,
             "repair_action_counts": [{"action": "manual_review", "count": 1}],
@@ -396,6 +399,7 @@ def build_workflow_failed_run_record(
             "blocking_problem_count": 1,
             "warning_count": 0,
             "severity_counts": [{"severity": "critical", "count": 1}],
+            "problem_evidence": [],
             "deterministic_repair_count": 0,
             "manual_review_count": 1,
             "repair_action_counts": [{"action": "manual_review", "count": 1}],
@@ -588,6 +592,42 @@ def _validation_severity_counts(validation: dict[str, Any], problems: list[dict[
     return [{"severity": severity, "count": counts[severity]} for severity in order if severity in counts]
 
 
+def _problem_evidence_summary(problems: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for problem in problems:
+        if not isinstance(problem, dict):
+            continue
+        evidence = _evidence_items(problem.get("evidence"))
+        if not evidence:
+            continue
+        summaries.append(
+            {
+                "code": str(problem.get("code") or "unknown"),
+                "validator": str(problem.get("validator") or "unknown"),
+                "severity": str(problem.get("severity") or "critical"),
+                "blocking": bool(problem.get("blocking", True)),
+                "repair_action": str(problem.get("repair_action") or "manual_review"),
+                "evidence": evidence,
+            }
+        )
+    return summaries
+
+
+def _evidence_items(raw_evidence: Any) -> list[dict[str, str]]:
+    if not isinstance(raw_evidence, list):
+        return []
+    items: list[dict[str, str]] = []
+    for item in raw_evidence:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        value = item.get("value")
+        if kind is None or value is None:
+            continue
+        items.append({"kind": str(kind), "value": str(value)})
+    return items
+
+
 def _validation_repair_summary(validation: dict[str, Any], problems: list[dict[str, Any]]) -> dict[str, Any]:
     deterministic = validation.get("deterministic_repair_count")
     manual = validation.get("manual_review_count")
@@ -737,6 +777,8 @@ def _loop_run_summary(run: dict[str, Any]) -> dict[str, Any]:
         "requested_focus": validation.get("requested_focus", []),
         "executed_checks": validation.get("executed_checks", []),
         "skipped_checks": validation.get("skipped_checks", []),
+        "problem_evidence": validation.get("problem_evidence", []),
+        "repair_evidence": _latest_repair_evidence(run),
         **_loop_workflow_summary(run),
         "repair_attempts": int(run.get("repair_attempts") or 0),
     }
@@ -844,8 +886,10 @@ def load_latest_run_summary(run_dir: str | Path) -> dict[str, Any] | None:
                 "requested_focus": validation.get("requested_focus", []),
                 "executed_checks": validation.get("executed_checks", []),
                 "skipped_checks": validation.get("skipped_checks", []),
+                "problem_evidence": validation.get("problem_evidence", []),
                 "repair_attempts": run.get("repair_attempts", 0),
                 "repair_plan": repair_plan,
+                "repair_evidence": _latest_repair_evidence(run),
                 "repair_deltas": repair_deltas,
                 "repair_effective": _repair_effective(repair_deltas),
                 "repair_stalled": _repair_stalled(repair_deltas),
@@ -905,6 +949,42 @@ def _latest_repair_plan(run: dict[str, Any]) -> dict[str, Any] | None:
             "manual_review_count": repair_plan.get("manual_review_count"),
         }
     return None
+
+
+def _latest_repair_evidence(run: dict[str, Any]) -> list[dict[str, Any]]:
+    trace = run.get("trace", [])
+    if not isinstance(trace, list):
+        return []
+    for event in reversed(trace):
+        if not isinstance(event, dict):
+            continue
+        repair_plan = event.get("repair_plan")
+        if not isinstance(repair_plan, dict):
+            continue
+        return _repair_plan_evidence_summary(repair_plan)
+    return []
+
+
+def _repair_plan_evidence_summary(repair_plan: dict[str, Any]) -> list[dict[str, Any]]:
+    steps = repair_plan.get("steps")
+    if not isinstance(steps, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        evidence = _evidence_items(step.get("evidence"))
+        if not evidence:
+            continue
+        summaries.append(
+            {
+                "code": str(step.get("code") or "unknown"),
+                "validator": str(step.get("validator") or "unknown"),
+                "action": str(step.get("action") or "manual_review"),
+                "evidence": evidence,
+            }
+        )
+    return summaries
 
 
 def _repair_budget_exhausted(repair_budget: Any, repair_attempt: Any) -> bool:

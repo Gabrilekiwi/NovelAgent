@@ -35,11 +35,11 @@ def build_run_report(run_dir: str | Path = "data/runs", *, limit: int | None = 5
     candidates = _run_files(path)
     for candidate in candidates:
         try:
-            run = _load_run(candidate)
+            run_result = _load_run_result(candidate)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             skipped.append({"path": str(candidate), "error": str(exc)})
             continue
-        runs.append(_summarize_run(run, candidate))
+        runs.append(_summarize_run(run_result, candidate))
 
     session_candidates = _loop_session_files(path)
     for candidate in session_candidates:
@@ -84,10 +84,10 @@ def _loop_session_files(path: Path) -> list[Path]:
     return sorted(session_dir.glob("loop_*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
 
 
-def _load_run(path: Path) -> dict[str, Any]:
+def _load_run_result(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8-sig") as f:
         payload = json.load(f)
-    return validate_run_result(payload)["run"]
+    return validate_run_result(payload)
 
 
 def _load_loop_session(path: Path) -> dict[str, Any]:
@@ -138,8 +138,10 @@ def _summarize_loop_session(session: dict[str, Any], path: Path) -> dict[str, An
     }
 
 
-def _summarize_run(run: dict[str, Any], path: Path) -> dict[str, Any]:
+def _summarize_run(run_result: dict[str, Any], path: Path) -> dict[str, Any]:
+    run = run_result["run"]
     validation = run.get("validation") or {}
+    full_validation = run_result.get("validation") if isinstance(run_result.get("validation"), dict) else None
     decision = run.get("decision") or {}
     director = run.get("director") or {}
     analysis = run.get("analysis") or {}
@@ -173,6 +175,7 @@ def _summarize_run(run: dict[str, Any], path: Path) -> dict[str, Any]:
             "deterministic_repair_count": validation.get("deterministic_repair_count", 0),
             "manual_review_count": validation.get("manual_review_count", 0),
             "repair_action_counts": validation.get("repair_action_counts", []),
+            "problem_evidence": _problem_evidence_summary(validation, full_validation),
             "requested_focus": validation.get("requested_focus", []),
             "executed_checks": validation.get("executed_checks", []),
             "skipped_checks": validation.get("skipped_checks", []),
@@ -220,6 +223,7 @@ def _trace_summary(trace: Any) -> list[dict[str, Any]]:
             "skip_reason": event.get("skip_reason"),
             "repair_actions": _repair_actions(event.get("repair_plan")),
             "repair_validators": _repair_validators(event.get("repair_plan")),
+            "repair_evidence": _repair_evidence_summary(event.get("repair_plan")),
             "repair_risk_level": _repair_plan_field(event.get("repair_plan"), "risk_level"),
             "repair_budget": _repair_plan_field(event.get("repair_plan"), "repair_budget"),
             "repair_manual_review_count": _repair_plan_field(event.get("repair_plan"), "manual_review_count"),
@@ -250,6 +254,7 @@ def _loop_session_run_summaries(runs: Any) -> list[dict[str, Any]]:
                 "committed": run.get("committed"),
                 "chapter_index": run.get("chapter_index"),
                 "problem_codes": run.get("problem_codes", []),
+                "problem_evidence": run.get("problem_evidence", []),
                 "requested_focus": run.get("requested_focus", []),
                 "executed_checks": run.get("executed_checks", []),
                 "skipped_checks": run.get("skipped_checks", []),
@@ -257,6 +262,7 @@ def _loop_session_run_summaries(runs: Any) -> list[dict[str, Any]]:
                 "trace_actions": run.get("trace_actions", []),
                 "trace_plan_aligned": run.get("trace_plan_aligned"),
                 "repair_attempts": run.get("repair_attempts", 0),
+                "repair_evidence": run.get("repair_evidence", []),
             }
         )
     return summaries
@@ -434,6 +440,74 @@ def _repair_validators(repair_plan: Any) -> list[str]:
         if validator and str(validator) not in validators:
             validators.append(str(validator))
     return validators
+
+
+def _repair_evidence_summary(repair_plan: Any) -> list[dict[str, Any]]:
+    if not isinstance(repair_plan, dict):
+        return []
+    steps = repair_plan.get("steps")
+    if not isinstance(steps, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        evidence = _evidence_items(step.get("evidence"))
+        if not evidence:
+            continue
+        summaries.append(
+            {
+                "code": str(step.get("code") or "unknown"),
+                "validator": str(step.get("validator") or "unknown"),
+                "action": str(step.get("action") or "manual_review"),
+                "evidence": evidence,
+            }
+        )
+    return summaries
+
+
+def _problem_evidence_summary(compact_validation: Any, full_validation: Any = None) -> list[dict[str, Any]]:
+    if isinstance(compact_validation, dict):
+        compact = compact_validation.get("problem_evidence")
+        if isinstance(compact, list):
+            return [item for item in compact if isinstance(item, dict)]
+
+    problems = full_validation.get("problems") if isinstance(full_validation, dict) else None
+    if not isinstance(problems, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for problem in problems:
+        if not isinstance(problem, dict):
+            continue
+        evidence = _evidence_items(problem.get("evidence"))
+        if not evidence:
+            continue
+        summaries.append(
+            {
+                "code": str(problem.get("code") or "unknown"),
+                "validator": str(problem.get("validator") or "unknown"),
+                "severity": str(problem.get("severity") or "critical"),
+                "blocking": bool(problem.get("blocking", True)),
+                "repair_action": str(problem.get("repair_action") or "manual_review"),
+                "evidence": evidence,
+            }
+        )
+    return summaries
+
+
+def _evidence_items(raw_evidence: Any) -> list[dict[str, str]]:
+    if not isinstance(raw_evidence, list):
+        return []
+    items: list[dict[str, str]] = []
+    for item in raw_evidence:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        value = item.get("value")
+        if kind is None or value is None:
+            continue
+        items.append({"kind": str(kind), "value": str(value)})
+    return items
 
 
 def _repair_plan_field(repair_plan: Any, field: str) -> Any:

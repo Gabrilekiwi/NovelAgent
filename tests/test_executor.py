@@ -977,6 +977,11 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(0, loop_result["session"]["committed_count"])
         self.assertEqual(1, loop_result["session"]["rejected_count"])
         self.assertFalse(loop_result["last_result"]["committed"])
+        self.assertEqual("missing_conflict_marker", loop_result["session"]["runs"][0]["problem_evidence"][0]["code"])
+        self.assertEqual(
+            [{"kind": "missing_any_marker", "value": "conflict, danger, choice, choose, threat, secret"}],
+            loop_result["session"]["runs"][0]["problem_evidence"][0]["evidence"],
+        )
         self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))
 
     def test_run_loop_can_continue_after_rejection_with_history(self) -> None:
