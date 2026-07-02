@@ -19,6 +19,8 @@ Notion / Memory
 
 ## Quick Start
 
+Requires Python 3.12 or newer.
+
 Install dependencies:
 
 ```bash
