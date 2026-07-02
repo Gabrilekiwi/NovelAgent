@@ -7,10 +7,11 @@ from typing import Any, Callable
 from api.notion_client import create_database_page, query_database_pages
 from core.schema import validate_schema
 from core.state.notion_export import normalize_notion_export
+from core.runtime_paths import DEFAULT_MEMORY_OUTBOX as DEFAULT_MEMORY_OUTBOX_PATH
 
 
 MemoryWriter = Callable[[list[dict[str, Any]]], dict[str, Any]]
-DEFAULT_MEMORY_OUTBOX = "data/memory_outbox.jsonl"
+DEFAULT_MEMORY_OUTBOX = str(DEFAULT_MEMORY_OUTBOX_PATH)
 
 
 class FileMemoryWriter:

@@ -6,9 +6,10 @@ from typing import Any
 
 from core.schema import validate_schema
 from core.engine.run_record import validate_run_result
+from core.runtime_paths import DEFAULT_RUN_DIR
 
 
-def build_run_report(run_dir: str | Path = "data/runs", *, limit: int | None = 5) -> dict[str, Any]:
+def build_run_report(run_dir: str | Path = DEFAULT_RUN_DIR, *, limit: int | None = 5) -> dict[str, Any]:
     path = Path(run_dir)
     runs: list[dict[str, Any]] = []
     sessions: list[dict[str, Any]] = []
@@ -617,7 +618,41 @@ def _artifact_summary(run: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "path": artifact_path,
             "exists": Path(artifact_path).exists() if artifact_path else False,
         }
+    chapter = run.get("chapter") if isinstance(run.get("chapter"), dict) else {}
+    pipeline = chapter.get("pipeline") if isinstance(chapter, dict) else None
+    if isinstance(pipeline, dict):
+        artifacts["chapter_pipeline"] = _pipeline_artifact_summary(pipeline.get("artifacts"))
     return artifacts
+
+
+def _pipeline_artifact_summary(raw_artifacts: Any) -> dict[str, Any]:
+    if not isinstance(raw_artifacts, dict):
+        return {"exists": False}
+    summary: dict[str, Any] = {}
+    for key in ("plan", "merged_chapter", "validation_report", "repair_deltas"):
+        artifact = raw_artifacts.get(key)
+        if isinstance(artifact, dict):
+            path = artifact.get("path")
+            summary[key] = {
+                "path": path,
+                "exists": Path(path).exists() if path else False,
+            }
+    scene_artifacts = raw_artifacts.get("scene_drafts")
+    if isinstance(scene_artifacts, list):
+        summary["scene_drafts"] = [
+            {
+                "path": artifact.get("path"),
+                "exists": Path(artifact.get("path")).exists() if artifact.get("path") else False,
+            }
+            for artifact in scene_artifacts
+            if isinstance(artifact, dict)
+        ]
+    summary["exists"] = all(
+        item.get("exists")
+        for key, item in summary.items()
+        if key != "scene_drafts" and isinstance(item, dict)
+    ) and all(item.get("exists") for item in summary.get("scene_drafts", []))
+    return summary
 
 
 def _loop_session_artifact_summary(session: dict[str, Any], path: Path) -> dict[str, Any]:

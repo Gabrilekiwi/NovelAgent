@@ -26,14 +26,14 @@ def polish_chapter(chapter_text: str, *, dry_run: bool = False) -> str:
     model = config.claude_model
     if not api_key:
         raise ModelCallError(
-            "ANTHROPIC_API_KEY is required for non-dry-run Claude polish.",
+            "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN is required for non-dry-run Claude polish.",
             provider="anthropic",
             stage="claude_polish",
             model=model,
         )
     if not model:
         raise ModelCallError(
-            "CLAUDE_MODEL is required for non-dry-run Claude polish.",
+            "CLAUDE_MODEL or ANTHROPIC_MODEL is required for non-dry-run Claude polish.",
             provider="anthropic",
             stage="claude_polish",
             model=model,
@@ -50,7 +50,15 @@ def polish_chapter(chapter_text: str, *, dry_run: bool = False) -> str:
             cause=exc,
         ) from exc
 
-    client = Anthropic(api_key=api_key)
+    client_kwargs: dict[str, Any] = {"api_key": api_key}
+    if config.claude_base_url:
+        client_kwargs["base_url"] = config.claude_base_url
+    if config.claude_timeout_seconds > 0:
+        client_kwargs["timeout"] = config.claude_timeout_seconds
+    if config.claude_user_agent:
+        client_kwargs["default_headers"] = {"User-Agent": config.claude_user_agent}
+
+    client = Anthropic(**client_kwargs)
     try:
         response = client.messages.create(
             model=model,

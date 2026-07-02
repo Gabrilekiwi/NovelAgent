@@ -1189,6 +1189,115 @@
         },
         "artifact": {
           "type": "object"
+        },
+        "pipeline": {
+          "type": "object",
+          "required": [
+            "chapter_index",
+            "scene_count",
+            "plan_goal",
+            "merged_chars"
+          ],
+          "properties": {
+            "chapter_index": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "scene_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "plan_goal": {
+              "type": "string"
+            },
+            "merged_chars": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "scene_spans": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "index",
+                  "start_char",
+                  "end_char",
+                  "chars"
+                ],
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "start_char": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "end_char": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "chars": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "stages": {
+              "type": "array",
+              "minItems": 6,
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "status"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "enum": [
+                      "plan_chapter",
+                      "generate_scenes",
+                      "merge_scenes",
+                      "validate",
+                      "repair",
+                      "commit"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "completed",
+                      "skipped",
+                      "failed"
+                    ]
+                  },
+                  "artifact_key": {
+                    "type": "string",
+                    "enum": [
+                      "plan",
+                      "scene_drafts",
+                      "merged_chapter",
+                      "validation_report",
+                      "repair_deltas",
+                      "chapter"
+                    ]
+                  },
+                  "summary": {
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "artifacts": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -1369,7 +1478,8 @@
             "enum": [
               "continuity",
               "spatial",
-              "logic"
+              "logic",
+              "llm"
             ]
           }
         },
@@ -1379,7 +1489,8 @@
             "enum": [
               "continuity",
               "spatial",
-              "logic"
+              "logic",
+              "llm"
             ]
           }
         },
@@ -1389,7 +1500,8 @@
             "enum": [
               "continuity",
               "spatial",
-              "logic"
+              "logic",
+              "llm"
             ]
           }
         }

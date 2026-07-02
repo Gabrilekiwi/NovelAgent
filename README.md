@@ -9,9 +9,10 @@ Notion / Memory
   -> Snapshot Builder
   -> Director
   -> Execution Engine
-  -> Chapter Generator
+  -> Chapter Pipeline (plan -> scenes -> merge)
   -> Claude Polish
-  -> Validator
+  -> Rule Validator
+  -> optional LLM Validator
   -> Scene Repair
   -> Snapshot / Run Artifacts
 ```
@@ -27,6 +28,7 @@ pip install -r requirements.txt
 Run preflight without model calls:
 
 ```bash
+python main.py --init-runtime
 python main.py --check --dry-run --memory data/notion_memory.example.json
 ```
 
@@ -35,6 +37,7 @@ python main.py --check --dry-run --memory data/notion_memory.example.json
 Run one local dry-run step:
 
 ```bash
+python main.py --init-runtime
 python main.py --dry-run --memory data/notion_memory.example.json
 ```
 
@@ -65,12 +68,29 @@ Run the local v1.0 smoke gate:
 python -B scripts/smoke_v1.py
 ```
 
-This runs tests, preflight, one persisted dry-run, file memory writeback, and run reporting inside `.tmp/smoke_v1/...`.
+This runs tests, preflight, one persisted dry-run, file memory writeback, run reporting, and the provider-smoke missing-config diagnostic path inside `.tmp/smoke_v1/...`.
+
+The optional LLM Validator is off by default, including dry-run and CI. Enable it explicitly with `--llm-validator`; preflight will then require OpenAI configuration and schema-check the LLM validation output before any problems are merged into `validation.problems[]`.
+
+Real provider smoke checks are available separately after local gates pass:
+
+```bash
+python -B scripts/provider_smoke.py --providers openai claude
+python -B scripts/provider_smoke.py --providers notion --notion-write
+```
+
+These write diagnostics under `.tmp/runtime/provider_smoke/...` and use isolated runtime state.
+Use `--openai-model`, `--openai-base-url` or `--no-openai-base-url`, `--max-input-chars`, `--max-output-tokens`, `--openai-max-retries`, `--openai-scene-limit`, `--claude-model`, `--claude-base-url`, `--claude-user-agent`, `--claude-max-tokens`, `--request-timeout`, `--retries`, and `--retry-delay-seconds` to keep live provider diagnostics bounded. Claude uses the Anthropic Messages-compatible path through the Anthropic SDK; for MicuAPI-style Claude external compatibility, set `CLAUDE_BASE_URL` or `ANTHROPIC_BASE_URL` to the Anthropic-compatible root URL, not an OpenAI `/v1` endpoint. The Claude key can be `ANTHROPIC_API_KEY` or the Micu-style `ANTHROPIC_AUTH_TOKEN`, and the model can be `CLAUDE_MODEL` or `ANTHROPIC_MODEL`. OpenAI chapter-generation smoke uses one compact scene-generation probe so it proves the real chapter-generation API path without spending a full chapter budget; the full plan/scene/merge pipeline remains covered by local smoke and normal runs. OpenAI SDK retries default to 0 in smoke so `--retries` remains the visible retry budget. Retries apply to non-writing subchecks only; Notion writeback is not retried. Add `--no-proxy` when local `HTTP_PROXY` / `HTTPS_PROXY` variables point at a proxy you do not want provider smoke to use. Add `--require-all-checks` for Phase 4 acceptance, and add `--ignore-dotenv --allow-missing` when checking the missing-credential path on a machine that has local keys.
+The JSON report includes `request`, `required_checks[]`, `required_checks_ok`, and a compact `diagnostics` block with missing config names plus failed, skipped, and unrequested subchecks. Provider failures include `failure_category` and `retryable` when they can be classified. Missing provider config is aggregated per provider so one run reports all required variables it can prove are absent; `diagnostics.missing_config_groups[]` preserves alternatives such as `NOTION_DATABASE_ID` or `NOVELAGENT_NOTION_DATABASE_ID`.
+The OpenAI check reports Director and chapter-generation subchecks separately.
+Claude reports a `polish` subcheck, and Notion reports `read`, `writeback`, and `readback` subchecks once real credentials are available.
+The report also includes `config_status` with redacted set/missing flags, selected models, timeout/token/retry limits, SDK/default endpoint status, and redacted proxy endpoint metadata; no secrets are written.
+`required_checks[]` and `required_checks_ok` form the flat Phase 4 completion checklist.
 
 Inspect recent persisted run records:
 
 ```bash
-python main.py --report-runs --run-dir data/runs
+python main.py --report-runs
 ```
 
 ## Main Directories
@@ -79,7 +99,7 @@ python main.py --report-runs --run-dir data/runs
 - `core/engine`: execution loop, schema-checked workflow plans and trace events, model-call stage diagnostics, run records, artifacts, preflight, and run reports.
 - `core/state`: snapshot, input pack plus metadata, memory, Notion export normalization, and schema-checked state builder audit.
 - `core/validator`: continuity, spatial, and logic validation with explicit requested/executed/skipped coverage metadata.
-- `modules`: feature modules for generation, polish, schema-checked conflict analysis, and schema-checked repair planning.
+- `modules`: feature modules for chapter planning/scene generation/merge, polish, schema-checked conflict analysis, and schema-checked repair planning.
 - `api`: provider adapters for OpenAI, Claude, and Notion.
 - `prompts`: prompt assets.
 - `schemas`: JSON schema contracts.
@@ -89,13 +109,20 @@ python main.py --report-runs --run-dir data/runs
 
 Persistent runs write schema-checked run result envelopes:
 
-- `data/runs/*.json`: structured run records with Director audit, workflow plan, state update audit, trace, model output failure diagnostics, validation, and analysis summaries.
-- `data/runs/loop_sessions/*.json`: schema-checked multi-step loop session records.
-- `data/runs/snapshot_packs/*.md`: Snapshot Builder input packs.
-- `data/runs/input_packs/*.md`: full input packs; run records include input pack metadata.
-- `data/chapters/*.md`: chapter body artifacts.
+- `data/snapshot.example.json`: committed sample snapshot state.
+- `data/notion_memory.example.json`: committed sample Notion memory export.
+- `.tmp/runtime/snapshot.json`: default mutable runtime snapshot.
+- `.tmp/runtime/notion_memory.json`: optional initialized runtime memory copied from the sample.
+- `.tmp/runtime/runs/*.json`: structured run records with Director audit, workflow plan, state update audit, trace, model output failure diagnostics, validation, analysis summaries, and schema-checked `chapter.pipeline.stages`.
+- `.tmp/runtime/runs/loop_sessions/*.json`: schema-checked multi-step loop session records.
+- `.tmp/runtime/runs/snapshot_packs/*.md`: Snapshot Builder input packs.
+- `.tmp/runtime/runs/input_packs/*.md`: full input packs; run records include input pack metadata.
+- `.tmp/runtime/runs/chapter_pipeline/*`: chapter plan, scene drafts with merged-chapter spans, merged chapter, validation report, and repair delta artifacts for the pipeline stages.
+- `.tmp/runtime/chapters/*.md`: chapter body artifacts.
 
 Run records, run reports, and loop session summaries expose compact validation and repair evidence, so common Validator/Repair failures can be diagnosed without opening the full run-result envelope. Both directories are ignored by git by default.
+
+Local `.env` is ignored. Use `.env.example` for variable names and recommended default model names only; real configuration is still checked by preflight before live provider calls.
 
 Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.0 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.0 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.0 executor and orchestrator entrypoints.
 

@@ -64,11 +64,40 @@ class RepoHygieneTest(unittest.TestCase):
             "*.log",
             "data/runs/",
             "data/chapters/",
+            "data/snapshot.json",
+            "data/memory.json",
             "data/memory_outbox.jsonl",
             "data/memory_outbox*.jsonl",
         }
 
         self.assertEqual(set(), required_patterns - patterns)
+
+    def test_committed_runtime_samples_use_example_files(self) -> None:
+        root = Path.cwd()
+        self.assertTrue((root / "data" / "snapshot.example.json").is_file())
+        self.assertTrue((root / "data" / "notion_memory.example.json").is_file())
+        self.assertFalse((root / "data" / "snapshot.example.json").read_text(encoding="utf-8").strip() == "")
+        self.assertFalse((root / "data" / "notion_memory.example.json").read_text(encoding="utf-8").strip() == "")
+
+    def test_env_example_contains_only_names_and_recommended_models(self) -> None:
+        content = (Path.cwd() / ".env.example").read_text(encoding="utf-8")
+        values = {}
+        for line in content.splitlines():
+            if not line.strip():
+                continue
+            key, separator, value = line.partition("=")
+            with self.subTest(line=line):
+                self.assertEqual("=", separator)
+                self.assertTrue(key)
+                values[key] = value
+
+        self.assertEqual("gpt-4.1-mini", values["OPENAI_MODEL"])
+        self.assertEqual("claude-3-5-sonnet-latest", values["CLAUDE_MODEL"])
+        for key, value in values.items():
+            if key.endswith("_MODEL"):
+                continue
+            with self.subTest(key=key):
+                self.assertEqual("", value)
 
 
 if __name__ == "__main__":

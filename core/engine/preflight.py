@@ -7,6 +7,7 @@ from typing import Any
 
 from core.config import get_config
 from core.director import decide_next_step
+from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.engine.report import build_run_report
 from core.engine.run_record import load_latest_run_summary
 from core.schema import SchemaValidationError, validate_schema_consistency, validate_schema_keywords
@@ -28,12 +29,15 @@ PROMPT_ASSETS = (
 SCHEMA_ASSETS = (
     Path("core/director/schema.json"),
     Path("schemas/analysis_result.schema.json"),
+    Path("schemas/chapter_pipeline.schema.json"),
     Path("schemas/director_decision.schema.json"),
     Path("schemas/director_audit.schema.json"),
     Path("schemas/input_pack_metadata.schema.json"),
+    Path("schemas/llm_validation.schema.json"),
     Path("schemas/loop_session.schema.json"),
     Path("schemas/memory_context.schema.json"),
     Path("schemas/memory_writeback.schema.json"),
+    Path("schemas/provider_smoke_report.schema.json"),
     Path("schemas/repair_plan.schema.json"),
     Path("schemas/run_record.schema.json"),
     Path("schemas/run_result.schema.json"),
@@ -51,6 +55,7 @@ V1_STRUCTURE_PATHS = (
     Path("core/director/schema.json"),
     Path("core/engine/executor.py"),
     Path("core/engine/workflow.py"),
+    Path("core/runtime_paths.py"),
     Path("core/state/builder.py"),
     Path("core/state/input_pack.py"),
     Path("core/state/memory.py"),
@@ -59,6 +64,7 @@ V1_STRUCTURE_PATHS = (
     Path("core/validator/spatial.py"),
     Path("core/validator/logic.py"),
     Path("modules/chapter_generator/generator.py"),
+    Path("modules/chapter_generator/pipeline.py"),
     Path("modules/claude_polish/polisher.py"),
     Path("modules/scene_repair/repairer.py"),
     Path("modules/scene_repair/plan.py"),
@@ -76,17 +82,18 @@ V1_STRUCTURE_PATHS = (
 
 def run_preflight(
     *,
-    snapshot_path: str | Path = "data/snapshot.json",
+    snapshot_path: str | Path = DEFAULT_SNAPSHOT_PATH,
     memory_path: str | Path | None = None,
     memory_source: str = "auto",
-    run_dir: str | Path = "data/runs",
-    chapter_dir: str | Path = "data/chapters",
+    run_dir: str | Path = DEFAULT_RUN_DIR,
+    chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
     dry_run: bool = False,
     require_claude: bool = False,
     director_model: str | None = None,
     memory_writeback: str = "none",
     memory_outbox: str | Path | None = None,
     notion_readback: bool = False,
+    enable_llm_validator: bool = False,
     persist: bool | None = None,
     steps: int = 1,
     continue_on_rejection: bool = False,
@@ -161,6 +168,7 @@ def run_preflight(
                 persist=effective_persist,
                 steps=steps,
                 continue_on_rejection=continue_on_rejection,
+                enable_llm_validator=enable_llm_validator,
                 director_model=director_model,
                 planned_workflow=planned_workflow,
                 snapshot_path=snapshot_path,
@@ -184,6 +192,8 @@ def run_preflight(
     )
 
     requires_openai = (not dry_run) or bool(director_model)
+    if enable_llm_validator:
+        requires_openai = True
     if not requires_openai:
         checks.append({"name": "api_keys", "ok": True, "details": {"mode": "dry_run"}})
     else:
@@ -211,8 +221,18 @@ def run_preflight(
             "anthropic",
             "Install the anthropic package for non-dry-run Claude polish.",
         )
-        _check_value(checks, "env:ANTHROPIC_API_KEY", config.anthropic_api_key, "ANTHROPIC_API_KEY is required")
-        _check_value(checks, "env:CLAUDE_MODEL", config.claude_model, "CLAUDE_MODEL is required")
+        _check_value(
+            checks,
+            "env:ANTHROPIC_API_KEY",
+            config.anthropic_api_key,
+            "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN is required",
+        )
+        _check_value(
+            checks,
+            "env:CLAUDE_MODEL",
+            config.claude_model,
+            "CLAUDE_MODEL or ANTHROPIC_MODEL is required",
+        )
 
     _check_memory_writeback(
         checks,
@@ -222,6 +242,13 @@ def run_preflight(
         notion_readback=notion_readback,
     )
     _check_artifact_targets(checks, run_dir=run_dir, chapter_dir=chapter_dir)
+    checks.append(
+        {
+            "name": "llm_validator",
+            "ok": True,
+            "details": {"enabled": bool(enable_llm_validator), "provider": "openai" if enable_llm_validator else None},
+        }
+    )
 
     return {
         "ok": all(check["ok"] for check in checks),
@@ -560,6 +587,7 @@ def _execution_mode_details(
     config,
     run_dir: str | Path,
     chapter_dir: str | Path,
+    enable_llm_validator: bool,
 ) -> dict[str, Any]:
     model_calls: list[str] = []
     if director_model:
@@ -568,6 +596,8 @@ def _execution_mode_details(
         model_calls.append("chapter_generation_openai")
         if director_model or (isinstance(planned_workflow, list) and "polish" in planned_workflow):
             model_calls.append("claude_polish")
+    if enable_llm_validator:
+        model_calls.append("llm_validation_openai")
     return {
         "dry_run": bool(dry_run),
         "persist": bool(persist),
@@ -581,6 +611,7 @@ def _execution_mode_details(
         "memory_path": str(memory_path) if memory_path else str(config.memory_path),
         "run_dir": str(run_dir),
         "chapter_dir": str(chapter_dir),
+        "llm_validator_enabled": bool(enable_llm_validator),
     }
 
 

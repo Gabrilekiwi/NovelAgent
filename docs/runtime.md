@@ -1,5 +1,13 @@
 # Runtime Commands
 
+Initialize local runtime state from committed examples:
+
+```bash
+python main.py --init-runtime
+```
+
+This creates `.tmp/runtime/snapshot.json`, `.tmp/runtime/notion_memory.json`, `.tmp/runtime/runs/`, and `.tmp/runtime/chapters/` from `data/snapshot.example.json` and `data/notion_memory.example.json`. Existing runtime files are skipped unless `--force-init-runtime` is supplied.
+
 Preflight without model calls:
 
 ```bash
@@ -12,7 +20,7 @@ Local v1.0 smoke gate:
 python -B scripts/smoke_v1.py
 ```
 
-The smoke gate runs `unittest` discovery, preflight, one persisted dry-run, file memory writeback, and run reporting. It writes an isolated temporary snapshot, run directory, chapter directory, and memory outbox under `.tmp/smoke_v1/...`, then asserts that the committed run, chapter artifact, input pack artifact, snapshot pack artifact, report summary, and outbox were produced. Use `--skip-tests` to exercise only the runtime CLI flow.
+The smoke gate runs `unittest` discovery, preflight, one persisted dry-run, file memory writeback, run reporting, and a provider-smoke missing-config diagnostic check. It writes an isolated temporary snapshot, run directory, chapter directory, memory outbox, and provider smoke report under `.tmp/smoke_v1/...`, then asserts that the committed run, chapter artifact, input pack artifact, snapshot pack artifact, chapter pipeline artifacts, scene span metadata, report summary, outbox, and provider missing-config report were produced. Use `--skip-tests` to exercise only the runtime CLI flow.
 
 By default, `--check` prints a concise human-readable summary. Use `--check-json` when full machine-readable diagnostics are needed:
 
@@ -20,14 +28,14 @@ By default, `--check` prints a concise human-readable summary. Use `--check-json
 python main.py --check --check-json --dry-run --memory data/notion_memory.example.json
 ```
 
-Preflight diagnostics include Memory input resolution (`auto`, `file`, or `notion`), the selected Memory source, source-mapping counts, run-history contract status, latest run validation coverage, latest loop-session last-run validation coverage, execution mode, persistence mode, expected model-call stages, the schema-checked `state_builder_audit`, `planned_workflow` for the default rule Director, and `planned_flow` with the schema-checked auditable dynamic flow plan. The plain preflight summary prints compact State Builder counts for applied/skipped memory types, skipped reason/severity counts, deduplicated items, and blocking skipped items while `--check-json` retains the full item-level audit and source mappings. Loaded Memory contexts include item-level source mappings, and runtime input packs expose a compact Memory Index for tracing loaded items back to file lines or Notion page ids/URLs plus a Recovery Context for last-run problem codes, validation coverage gaps, and repair summaries. In non-dry-run mode, it checks that the OpenAI SDK is installed and `OPENAI_API_KEY` is set. If the planned workflow includes `polish`, preflight also checks that the Anthropic SDK is installed plus `ANTHROPIC_API_KEY` and `CLAUDE_MODEL`.
+Preflight diagnostics include Memory input resolution (`auto`, `file`, or `notion`), the selected Memory source, source-mapping counts, run-history contract status, latest run validation coverage, latest loop-session last-run validation coverage, execution mode, persistence mode, expected model-call stages, the schema-checked `state_builder_audit`, `planned_workflow` for the default rule Director, and `planned_flow` with the schema-checked auditable dynamic flow plan. The plain preflight summary prints compact State Builder counts for applied/skipped memory types, skipped reason/severity counts, deduplicated items, and blocking skipped items while `--check-json` retains the full item-level audit and source mappings. Loaded Memory contexts include item-level source mappings, and runtime input packs expose a compact Memory Index for tracing loaded items back to file lines or Notion page ids/URLs plus a Recovery Context for last-run problem codes, validation coverage gaps, and repair summaries. In non-dry-run mode, it checks that the OpenAI SDK is installed and `OPENAI_API_KEY` is set. If the planned workflow includes `polish`, preflight also checks that the Anthropic SDK is installed plus a Claude key (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`) and a Claude model (`CLAUDE_MODEL` or `ANTHROPIC_MODEL`).
 It also verifies the required v1.0 engineering structure, prompt Markdown files, JSON schema assets, embedded schema consistency, and the selected Memory input before any generation step runs.
 Artifact targets are checked as well: `--run-dir`, its `snapshot_packs`, `input_packs`, and `loop_sessions` subdirectories, and `--chapter-dir` must be directories or be creatable as directories before generation starts.
 
 Inspect recent persisted run records without generating a chapter:
 
 ```bash
-python main.py --report-runs --run-dir data/runs
+python main.py --report-runs
 ```
 
 Use `--report-limit 0` when only aggregate counts are needed. The report includes status counts, validation problem counts, compact validation evidence, compact Director details, workflow plan summaries, trace summaries with repair evidence, memory writeback status/type counts, loop session summaries, and artifact path existence checks. Malformed run result envelopes or run objects that fail the full run-record contract are skipped and listed under `skipped`; malformed loop sessions are listed under `skipped_loop_sessions`.
@@ -52,7 +60,7 @@ python main.py --check --dry-run --memory-source file --memory data/notion_memor
 python main.py --check --dry-run --memory-source notion
 ```
 
-`auto` remains the default. It uses a provided memory file path first, otherwise uses live Notion API when `NOTION_API_KEY` and a Notion database id are configured, otherwise falls back to `NOVELAGENT_MEMORY_PATH` or `data/memory.json`. Preflight reports this decision under `memory_input`, including the resolved source, resolved file path when applicable, Notion configuration flags, and the resolution reason.
+`auto` remains the default. It uses a provided memory file path first, otherwise uses live Notion API when `NOTION_API_KEY` and a Notion database id are configured, otherwise falls back to `NOVELAGENT_MEMORY_PATH` or `.tmp/runtime/notion_memory.json`. Preflight reports this decision under `memory_input`, including the resolved source, resolved file path when applicable, Notion configuration flags, and the resolution reason.
 
 Use a model-backed Director instead of the default offline rule Director:
 
@@ -63,6 +71,24 @@ python main.py --director-model gpt-4.1-mini --memory data/notion_memory.example
 This mode uses the OpenAI client and requires `OPENAI_API_KEY`.
 That requirement applies even with `--dry-run`, because `--dry-run` only replaces chapter generation and polish outputs, not the model-backed Director.
 For non-dry-run model Director mode, preflight conservatively checks Claude configuration because the model may choose a workflow containing `polish`.
+
+Run the optional story-level LLM Validator:
+
+```bash
+python main.py --check --dry-run --llm-validator
+python main.py --llm-validator
+```
+
+This uses OpenAI and is never enabled implicitly by dry-run or CI. Preflight requires `OPENAI_API_KEY` and the OpenAI package before this stage can run. LLM validation output is schema-checked and merged as `validator="llm"` problems with evidence, severity, repair hints, and an `area` enum covering complex plot logic, character motivation consistency, timeline causality, setup/payoff, and emotional/theme drift.
+
+Run real provider smoke checks after local gates are stable:
+
+```bash
+python -B scripts/provider_smoke.py --providers openai claude
+python -B scripts/provider_smoke.py --providers notion --notion-write
+```
+
+The provider smoke writes diagnostics under `.tmp/runtime/provider_smoke/<timestamp>/` by default and records `provider_smoke_report.json`. It initializes isolated runtime state from examples, can override the OpenAI smoke model with `--openai-model`, can override or clear a custom OpenAI endpoint with `--openai-base-url` or `--no-openai-base-url`, caps OpenAI input-pack size with `--max-input-chars`, caps OpenAI response size with `--max-output-tokens`, controls hidden OpenAI SDK retries with `--openai-max-retries`, can override Claude with `--claude-model`, `--claude-base-url`, `--claude-user-agent`, and `--claude-max-tokens`, applies `--request-timeout` to OpenAI, Claude, and Notion requests, and limits chapter generation to a small smoke path. Claude uses the Anthropic Messages-compatible path through the Anthropic SDK. For MicuAPI-style Claude external compatibility, set `CLAUDE_BASE_URL` or `ANTHROPIC_BASE_URL` to the Anthropic-compatible root URL, not an OpenAI `/v1` endpoint; use `ANTHROPIC_AUTH_TOKEN` if the gateway documents that variable name, and set `CLAUDE_USER_AGENT` when the gateway requires a Claude CLI user agent. Use `--retries` and `--retry-delay-seconds` for bounded retries on non-writing subchecks such as OpenAI model calls, Claude polish, and Notion reads; Notion writeback is intentionally not retried to avoid duplicate pages. OpenAI SDK retries default to 0 in provider smoke so the visible `--retries` budget controls repeat attempts. Add `--no-proxy` to clear `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` for the smoke process when local proxy environment variables point at a dead or unwanted proxy. OpenAI diagnostics report Director and chapter-generation subchecks separately; if the model Director fails, the generation subcheck uses a rule Director fallback so chapter generation is still tested. Claude reports a `polish` subcheck after credentials are available. Notion writes are opt-in with `--notion-write`; without that flag the Notion check reports `writeback` and `readback` as skipped, and with the flag it reports `read`, `writeback`, and remote `readback` subchecks. The schema-checked report includes `request` for requested providers, Notion write intent, missing-config mode, dotenv handling, and proxy clearing intent. It includes `config_status` with redacted `set`/`missing` flags, selected models, timeout/token/retry limits, SDK/default endpoint status, and redacted proxy endpoint metadata, but never writes credential values. It also includes `required_checks[]` plus `required_checks_ok`, a flat Phase 4 completion checklist for OpenAI Director, OpenAI chapter generation, Claude polish, Notion read, Notion writeback, and Notion readback. It also includes `diagnostics.status`, `diagnostics.missing_config`, `diagnostics.missing_config_groups`, `diagnostics.failed_checks`, `diagnostics.skipped_checks`, and `diagnostics.unrequested_checks` so provider failures can be triaged without expanding the full report. Missing provider config is aggregated per provider, so Claude can report either `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`, either `CLAUDE_MODEL` or `ANTHROPIC_MODEL`, and Notion can report `NOTION_API_KEY` plus the accepted database id variables in one run. `diagnostics.missing_config_groups[]` keeps one-of requirements explicit, such as `NOTION_DATABASE_ID` or `NOVELAGENT_NOTION_DATABASE_ID`. Use `--require-all-checks` when the command should fail unless every required check passes. Use `--allow-missing` when you want a local diagnostic report that skips providers whose real credentials are not configured. Add `--ignore-dotenv` to prove the missing-credential path on a machine that has local `.env` keys.
 
 Multi-step dry-run without persistence:
 
@@ -81,16 +107,16 @@ python main.py --dry-run --persist-dry-run --steps 2 --memory data/notion_memory
 Persist dry-run state and append committed memory updates to a local outbox:
 
 ```bash
-python main.py --dry-run --persist-dry-run --memory data/notion_memory.example.json --memory-outbox data/memory_outbox.jsonl
+python main.py --dry-run --persist-dry-run --memory data/notion_memory.example.json --memory-writeback file
 ```
 
 The explicit equivalent is:
 
 ```bash
-python main.py --dry-run --persist-dry-run --memory data/notion_memory.example.json --memory-writeback file --memory-outbox data/memory_outbox.jsonl
+python main.py --dry-run --persist-dry-run --memory data/notion_memory.example.json --memory-writeback file --memory-outbox .tmp/runtime/memory_outbox.jsonl
 ```
 
-If `--memory-writeback file` is used without `--memory-outbox`, the default path is `data/memory_outbox.jsonl`.
+If `--memory-writeback file` is used without `--memory-outbox`, the default path is `.tmp/runtime/memory_outbox.jsonl`.
 
 Write committed memory updates directly to Notion:
 
@@ -109,7 +135,7 @@ python main.py --memory data/notion_memory.example.json --memory-writeback notio
 Reuse that outbox as the next memory source:
 
 ```bash
-python main.py --dry-run --memory data/memory_outbox.jsonl
+python main.py --dry-run --memory .tmp/runtime/memory_outbox.jsonl
 ```
 
 Use custom artifact directories:
@@ -123,24 +149,29 @@ python main.py --dry-run --persist-dry-run --run-dir .tmp/runs --chapter-dir .tm
 Runtime output should stay out of source control. The default local-only targets are ignored by git:
 
 - `.tmp/`: tests, smoke runs, and disposable local experiments.
-- `data/runs/`: persisted run envelopes plus snapshot and input pack artifacts.
-- `data/chapters/`: generated chapter bodies.
-- `data/memory_outbox.jsonl` and `data/memory_outbox*.jsonl`: file-based memory writeback queues.
+- `.tmp/runtime/snapshot.json`: default mutable runtime snapshot.
+- `.tmp/runtime/runs/`: persisted run envelopes plus snapshot and input pack artifacts.
+- `.tmp/runtime/chapters/`: generated chapter bodies.
+- `.tmp/runtime/memory_outbox.jsonl`: default file-based memory writeback queue.
+- `data/snapshot.json`, `data/memory.json`, `data/memory_outbox.jsonl`, and `data/memory_outbox*.jsonl`: legacy local runtime files.
+
+Committed sample state stays under `data/*.example.json`, especially `data/snapshot.example.json` and `data/notion_memory.example.json`.
 
 Python and tooling caches such as `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, coverage output, logs, `.env`, `.venv/`, and `.idea/` are also ignored. If a cache or local config file was already tracked before these rules existed, clean it up as an explicit git-index maintenance step rather than mixing it into feature work.
 
 Persistent runs write schema-checked run result envelopes:
 
-- `data/runs/*.json`: structured run records.
-- `data/runs/loop_sessions/*.json`: schema-checked loop session records for multi-step runs.
-- `data/runs/snapshot_packs/*.md`: Snapshot Builder input packs built from base snapshot plus normalized memory.
-- `data/runs/input_packs/*.md`: full input packs used for generation and repair context; run records also store schema-checked input pack metadata.
-- `data/chapters/*.md`: chapter body artifacts for committed and rejected runs.
-- `data/memory_outbox.jsonl`: optional committed memory updates when `--memory-outbox` is set.
+- `.tmp/runtime/runs/*.json`: structured run records with schema-checked `chapter.pipeline.stages`.
+- `.tmp/runtime/runs/loop_sessions/*.json`: schema-checked loop session records for multi-step runs.
+- `.tmp/runtime/runs/snapshot_packs/*.md`: Snapshot Builder input packs built from base snapshot plus normalized memory.
+- `.tmp/runtime/runs/input_packs/*.md`: full input packs used for generation and repair context; run records also store schema-checked input pack metadata.
+- `.tmp/runtime/runs/chapter_pipeline/*`: chapter plan, scene drafts, merged chapter, validation report, and repair delta artifacts for the pipeline stages.
+- `.tmp/runtime/chapters/*.md`: chapter body artifacts for committed and rejected runs.
+- `.tmp/runtime/memory_outbox.jsonl`: default committed memory updates when `--memory-writeback file` is set without `--memory-outbox`.
 
 Run result envelopes pass a shared runtime validator that checks both the top-level `run_result.schema.json` envelope and the embedded full `run_record.schema.json` object. The executor uses this before writing a run artifact, loop failure recovery uses it before reloading the newest failed run, reports use it before summarizing saved runs, and history recovery uses it before attaching `memory_context.last_run`. Preflight exposes the same boundary under `run_history`; invalid saved run or loop-session artifacts fail startup diagnostics instead of being silently ignored by recovery planning.
 
-Run records include Snapshot Builder artifact links, State Builder memory-application audit, a compact `recovery_context`, the schema-checked `workflow_plan`, schema-checked `state_update`, and schema-checked `trace` events for each executed workflow action. The run `memory` summary stores item count plus source-mapping coverage counts by mapping source, file path, JSONL line, Notion page id, and Notion page URL, so persisted artifacts can prove how loaded Memory was traced even without opening the full input pack. Workflow plan steps include execution mode, skip condition, and failure policy so optional and conditional work can be audited separately from required work; runtime validation also rejects plan/action mismatch, non-contiguous step indexes, and step metadata drift. Trace events carry the matching workflow plan step index, step mode, and failure policy so the Director's plan can be compared directly with the action path actually executed. Multi-step loops also write a schema-checked `loop_session` record with requested/completed steps, stop reason, committed/rejected/failed counts, run ids, per-run validation coverage, compact validation evidence, compact repair evidence, per-run workflow actions, per-run trace actions, per-run trace/plan alignment, recovery links, artifact pointer, and a session-level error when the loop stops on an exception. Validation summaries include problem codes, blocking/warning counts, severity counts, deterministic/manual-review repair counts, repair action counts, requested validation focus, executed checks, skipped checks, and `problem_evidence`. Full Validator results enrich each problem with `repair_action`, normalized `repair_parameters`, and structured `evidence`, which the run record summarizes and the repair plan consumes before falling back to problem-code metadata. `state_update` records whether the commit was applied, the chapter index transition, timeline additions, extracted change counts, and memory update counts by type. Each trace event records timestamps, completion status, chapter length, validation state when present, repair attempt count, model stage/provider/model/invocation details for model-capable actions, model-call diagnostics when provider calls fail, and the schema-checked repair plan when `repair_if_needed` runs. Conditional repair trace events record `skipped` plus `skip_reason` when validation is already ok or the Director supplied no repair budget. Repair trace events also include repair plan risk level, budget, deterministic/manual-review counts, `repair_plan.recovery.failure_modes`, step evidence, and per-attempt `repair_deltas` with before/after problem counts and resolved/new/remaining problem codes, making repair effectiveness auditable without diffing full validation payloads. Run reports and loop sessions expose compact `repair_evidence` summaries from these repair plan steps. Repair plan step parameters are restricted to registered fields, so unexpected Validator fields cannot silently become strategy inputs. Dry-run repair executes that plan by dispatching ordered `repair_plan.steps[]` through registered local strategies, so the trace action list matches the actual repair path. Non-dry-run repair sends the same plan plus explicit Recovery Context to the model repair stage. Model-call diagnostics use stage names such as `director_decision`, `chapter_generation`, `claude_polish`, and `scene_repair`.
+Run records include Snapshot Builder artifact links, State Builder memory-application audit, a compact `recovery_context`, the schema-checked `workflow_plan`, schema-checked `state_update`, and schema-checked `trace` events for each executed workflow action. The run `chapter.pipeline.stages` list records `plan_chapter`, `generate_scenes`, `merge_scenes`, `validate`, `repair`, and `commit` with completed/skipped/failed status, artifact keys, and compact summaries. `chapter.pipeline.scene_spans` maps each scene draft to its character range in the merged chapter, and scene draft artifacts include the same span metadata. The run `memory` summary stores item count plus source-mapping coverage counts by mapping source, file path, JSONL line, Notion page id, and Notion page URL, so persisted artifacts can prove how loaded Memory was traced even without opening the full input pack. Workflow plan steps include execution mode, skip condition, and failure policy so optional and conditional work can be audited separately from required work; runtime validation also rejects plan/action mismatch, non-contiguous step indexes, and step metadata drift. Trace events carry the matching workflow plan step index, step mode, and failure policy so the Director's plan can be compared directly with the action path actually executed. Multi-step loops also write a schema-checked `loop_session` record with requested/completed steps, stop reason, committed/rejected/failed counts, run ids, per-run validation coverage, compact validation evidence, compact repair evidence, per-run workflow actions, per-run trace actions, per-run trace/plan alignment, recovery links, artifact pointer, and a session-level error when the loop stops on an exception. Validation summaries include problem codes, blocking/warning counts, severity counts, deterministic/manual-review repair counts, repair action counts, requested validation focus, executed checks, skipped checks, and `problem_evidence`. Full Validator results enrich each problem with `repair_action`, normalized `repair_parameters`, and structured `evidence`, which the run record summarizes and the repair plan consumes before falling back to problem-code metadata. `state_update` records whether the commit was applied, the chapter index transition, timeline additions, extracted change counts, and memory update counts by type. Each trace event records timestamps, completion status, chapter length, validation state when present, repair attempt count, model stage/provider/model/invocation details for model-capable actions, model-call diagnostics when provider calls fail, and the schema-checked repair plan when `repair_if_needed` runs. Conditional repair trace events record `skipped` plus `skip_reason` when validation is already ok or the Director supplied no repair budget. Repair trace events also include repair plan risk level, budget, deterministic/manual-review counts, `repair_plan.recovery.failure_modes`, step evidence, and per-attempt `repair_deltas` with before/after problem counts and resolved/new/remaining problem codes, making repair effectiveness auditable without diffing full validation payloads. Run reports and loop sessions expose compact `repair_evidence` summaries from these repair plan steps. Repair plan step parameters are restricted to registered fields, so unexpected Validator fields cannot silently become strategy inputs. Dry-run repair executes that plan by dispatching ordered `repair_plan.steps[]` through registered local strategies, so the trace action list matches the actual repair path. Non-dry-run repair sends the same plan plus explicit Recovery Context to the model repair stage. Model-call diagnostics use stage names such as `director_decision`, `chapter_generation`, `claude_polish`, and `scene_repair`.
 
 Model output contracts reject non-prose returns before they can be committed as chapter text. Empty output, JSON-like structured data, fenced code blocks, Markdown wrappers/headings, standalone chapter headings such as `Chapter 4`, and assistant commentary such as `Here is...`, `As an AI...`, or `Error:...` raise `ModelOutputError` and are persisted as failed-run diagnostics when persistence is enabled.
 
@@ -160,19 +191,29 @@ python main.py --steps 2 --continue-on-rejection --memory data/notion_memory.exa
 
 Recovery context includes validation problem codes plus blocking/warning counts, severity counts, validation coverage, compact validation evidence, compact repair plan summaries, compact repair evidence, and compact repair delta summaries from the last run. The rule Director uses that structured summary to choose validation focus and repair budget, model-backed Director receives the same compact `last_run` payload, chapter generation receives a first-class `# Recovery Context` section in the runtime input pack, and scene repair receives the same structure as explicit model payload context. Each run record stores which last run was attached under `recovery_context`; loop sessions collect those edges under `recovery_links` so multi-step recovery can be audited after the fact. If the previous run skipped continuity, spatial, or logic checks, the next recovery decision prioritizes those skipped checks before commit. If the previous repair plan carried critical risk, needed manual review, or exhausted its budget without a commit, the next recovery budget is raised before polish. If the previous repair stalled or introduced new problem codes, recovery budget is also raised and validation focus is derived from remaining/new problem codes. The current run's `snapshot_builder_audit` is also attached before Director executes; it includes applied/skipped memory type counts, skipped reason/severity counts, blocking skipped counts, and source mapping samples. Medium-or-higher skipped memory quality issues can raise the repair budget, prioritize continuity/spatial validation, and skip polish before repair.
 
-Non-dry-run preflight requires the `openai` package and `OPENAI_API_KEY`. Use `--require-claude` to also require the `anthropic` package, `ANTHROPIC_API_KEY`, and `CLAUDE_MODEL`.
+Non-dry-run preflight requires the `openai` package and `OPENAI_API_KEY`. Use `--require-claude` to also require the `anthropic` package, a Claude key (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`), and a Claude model (`CLAUDE_MODEL` or `ANTHROPIC_MODEL`).
 
-Runtime configuration is centralized in `core.config` and is loaded from `.env` plus process environment variables. Empty strings are treated as missing values.
+Runtime configuration is centralized in `core.config` and is loaded from `.env` plus process environment variables. Empty strings are treated as missing values. `.env.example` lists variable names and recommended model defaults only; it must not contain real keys.
 
 Common variables:
 
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
+- `OPENAI_TIMEOUT_SECONDS`
+- `OPENAI_MAX_OUTPUT_TOKENS`
+- `OPENAI_MAX_RETRIES`
 - `ANTHROPIC_API_KEY`
+- `ANTHROPIC_AUTH_TOKEN`
+- `CLAUDE_BASE_URL`
+- `ANTHROPIC_BASE_URL`
+- `CLAUDE_USER_AGENT`
 - `CLAUDE_MODEL`
+- `ANTHROPIC_MODEL`
 - `CLAUDE_MAX_TOKENS`
+- `CLAUDE_TIMEOUT_SECONDS`
 - `NOVELAGENT_MEMORY_PATH`
 - `NOTION_API_KEY`
 - `NOTION_DATABASE_ID`
 - `NOVELAGENT_NOTION_DATABASE_ID`
+- `NOTION_TIMEOUT_SECONDS`

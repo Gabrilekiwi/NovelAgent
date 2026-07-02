@@ -1,3 +1,11 @@
 from modules.chapter_generator.generator import generate_chapter
+from modules.chapter_generator.pipeline import PIPELINE_STAGE_NAMES, generate_scenes, merge_scenes, plan_chapter, run_chapter_pipeline
 
-__all__ = ["generate_chapter"]
+__all__ = [
+    "PIPELINE_STAGE_NAMES",
+    "generate_chapter",
+    "generate_scenes",
+    "merge_scenes",
+    "plan_chapter",
+    "run_chapter_pipeline",
+]

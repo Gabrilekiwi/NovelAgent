@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import main as cli
 from core.engine.run_record import build_run_record
+from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 
 
 class CliTest(unittest.TestCase):
@@ -65,6 +66,14 @@ class CliTest(unittest.TestCase):
         self.assertIn("skipped_checks: continuity, spatial", summary)
         self.assertNotIn('"trace"', summary)
         self.assertNotIn('"snapshot_builder"', summary)
+
+    def test_parse_args_defaults_to_local_runtime_paths(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--dry-run"]):
+            args = cli.parse_args()
+
+        self.assertEqual(str(DEFAULT_SNAPSHOT_PATH), args.snapshot)
+        self.assertEqual(str(DEFAULT_RUN_DIR), args.run_dir)
+        self.assertEqual(str(DEFAULT_CHAPTER_DIR), args.chapter_dir)
 
     def test_format_run_summary_includes_failure_diagnostics(self) -> None:
         summary = cli.format_run_summary(
@@ -279,6 +288,33 @@ class CliTest(unittest.TestCase):
         self.assertIn("Checks:", text)
         self.assertNotIn('"checks"', text)
         self.assertNotIn("state_builder_audit", text)
+
+    def test_init_runtime_prints_summary(self) -> None:
+        output = io.StringIO()
+        init_result = {
+            "runtime_dir": ".tmp/runtime",
+            "snapshot_path": ".tmp/runtime/snapshot.json",
+            "memory_path": ".tmp/runtime/notion_memory.json",
+            "run_dir": ".tmp/runtime/runs",
+            "chapter_dir": ".tmp/runtime/chapters",
+            "copied": [{"name": "snapshot"}, {"name": "memory"}],
+            "skipped": [],
+        }
+
+        with patch.object(sys, "argv", ["main.py", "--init-runtime"]), patch.object(
+            cli,
+            "init_runtime_state",
+            return_value=init_result,
+        ), contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+        self.assertEqual(0, exit_context.exception.code)
+        text = output.getvalue()
+        self.assertIn("Runtime initialized:", text)
+        self.assertIn(".tmp", text)
+        self.assertIn("snapshot", text)
+        self.assertIn("memory", text)
 
     def test_check_json_prints_full_preflight_json(self) -> None:
         case_dir = self._case_dir("json")

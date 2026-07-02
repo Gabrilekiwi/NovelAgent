@@ -5,6 +5,7 @@ from typing import Any
 from core.schema import validate_schema
 from core.validator.common import enrich_check
 from core.validator.continuity import validate_continuity
+from core.validator.llm import validate_llm
 from core.validator.logic import validate_logic
 from core.validator.spatial import validate_spatial
 
@@ -20,12 +21,18 @@ def validate_chapter(
     snapshot: dict[str, Any],
     chapter_text: str,
     decision: dict[str, Any] | None = None,
+    *,
+    enable_llm: bool = False,
+    llm_validator=validate_llm,
 ) -> dict[str, Any]:
     requested_focus, executed_focus, skipped_checks = _validation_coverage(decision)
     checks = [
         enrich_check(_VALIDATORS[focus](snapshot, chapter_text, decision))
         for focus in executed_focus
     ]
+    if enable_llm:
+        checks.append(llm_validator(snapshot, chapter_text, decision))
+        executed_focus = [*executed_focus, "llm"]
     problems = [problem for check in checks for problem in check.get("problems", [])]
     repair_counts = _repair_action_counts(problems)
     return validate_schema({

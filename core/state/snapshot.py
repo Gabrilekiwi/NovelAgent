@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from core.schema import SchemaValidationError, validate_schema
+from core.runtime_paths import DEFAULT_SNAPSHOT_PATH
 
 
 DEFAULT_SNAPSHOT: dict[str, Any] = {
@@ -82,7 +83,7 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return snapshot
 
 
-def load_snapshot(path: str | Path = "data/snapshot.json") -> dict[str, Any]:
+def load_snapshot(path: str | Path = DEFAULT_SNAPSHOT_PATH) -> dict[str, Any]:
     snapshot_path = Path(path)
     if not snapshot_path.exists():
         return normalize_snapshot({})
@@ -91,7 +92,7 @@ def load_snapshot(path: str | Path = "data/snapshot.json") -> dict[str, Any]:
         return normalize_snapshot(json.load(f))
 
 
-def save_snapshot(snapshot: dict[str, Any], path: str | Path = "data/snapshot.json") -> None:
+def save_snapshot(snapshot: dict[str, Any], path: str | Path = DEFAULT_SNAPSHOT_PATH) -> None:
     snapshot_path = Path(path)
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     with snapshot_path.open("w", encoding="utf-8") as f:

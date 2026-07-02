@@ -7,9 +7,11 @@ from typing import Any, Callable
 
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
+from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.schema import validate_schema
 from core.engine.artifacts import (
     save_chapter_artifact,
+    save_chapter_pipeline_artifacts,
     save_input_pack_artifact,
     save_loop_session_artifact,
     save_snapshot_pack_artifact,
@@ -37,7 +39,7 @@ from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
 from core.state.snapshot import build_state_update_audit, load_snapshot, save_snapshot, update_snapshot
 from core.validator import validate_chapter
-from modules.chapter_generator import generate_chapter
+from modules.chapter_generator import PIPELINE_STAGE_NAMES, generate_chapter, run_chapter_pipeline
 from modules.claude_polish import polish_chapter
 from modules.conflict_engine import analyze_chapter
 from modules.scene_repair import repair_scene
@@ -58,12 +60,13 @@ class AgentExecutor:
     def __init__(
         self,
         *,
-        snapshot_path: str | Path = "data/snapshot.json",
+        snapshot_path: str | Path = DEFAULT_SNAPSHOT_PATH,
         memory_path: str | Path | None = None,
         memory_source: str = "auto",
-        run_dir: str | Path = "data/runs",
-        chapter_dir: str | Path = "data/chapters",
+        run_dir: str | Path = DEFAULT_RUN_DIR,
+        chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
         dry_run: bool = False,
+        enable_llm_validator: bool = False,
         use_run_history: bool = True,
         memory_loader: MemoryLoader | None = None,
         director: Director | None = None,
@@ -80,6 +83,7 @@ class AgentExecutor:
         self.run_dir = Path(run_dir)
         self.chapter_dir = Path(chapter_dir)
         self.dry_run = dry_run
+        self.enable_llm_validator = enable_llm_validator
         self.use_run_history = use_run_history
         self.memory_loader = memory_loader
         self.director = director or decide_next_step
@@ -147,7 +151,7 @@ class AgentExecutor:
         input_pack_metadata = build_input_pack_metadata(input_pack, snapshot, decision, memory_context)
         recovery_context = build_recovery_context(memory_context)
         try:
-            chapter, validation, repair_attempts, workflow_trace = self._execute_workflow(
+            chapter, validation, repair_attempts, workflow_trace, chapter_pipeline = self._execute_workflow(
                 workflow=workflow,
                 workflow_plan=workflow_plan,
                 snapshot=snapshot,
@@ -157,6 +161,14 @@ class AgentExecutor:
             )
         except WorkflowExecutionError as exc:
             if persist:
+                failed_chapter_pipeline = _finalize_chapter_pipeline(
+                    exc.chapter_pipeline,
+                    validation=exc.validation,
+                    repair_deltas=_trace_repair_deltas(exc.trace),
+                    workflow_trace=exc.trace,
+                    committed=False,
+                    commit_status="skipped",
+                )
                 failed_run = build_failed_run_record(
                     started_at=started_at,
                     finished_at=utc_now(),
@@ -176,6 +188,7 @@ class AgentExecutor:
                     error=exc.original,
                     snapshot_pack=snapshot_pack,
                     snapshot_audit=snapshot_audit,
+                    chapter_pipeline=failed_chapter_pipeline,
                 )
                 failed_result = {
                     "run": failed_run,
@@ -196,6 +209,12 @@ class AgentExecutor:
                 )
                 failed_result["run"]["input_pack"]["artifact"] = input_pack_artifact
                 self._attach_snapshot_pack_artifact(failed_result["run"], snapshot_pack)
+                self._attach_chapter_pipeline_artifacts(
+                    failed_result["run"],
+                    failed_chapter_pipeline,
+                    exc.validation,
+                    _trace_repair_deltas(exc.trace),
+                )
                 self._attach_failed_chapter_artifact(failed_result)
                 self._save_run_record(failed_result)
             raise exc.original from exc
@@ -223,6 +242,14 @@ class AgentExecutor:
             )
         except Exception as exc:  # noqa: BLE001 - persist post-validation failure diagnostics.
             if persist:
+                failed_chapter_pipeline = _finalize_chapter_pipeline(
+                    chapter_pipeline,
+                    validation=validation,
+                    repair_deltas=_trace_repair_deltas(workflow_trace),
+                    workflow_trace=workflow_trace,
+                    committed=False,
+                    commit_status="failed" if validation and validation.get("ok") else "skipped",
+                )
                 failed_run = build_failed_run_record(
                     started_at=started_at,
                     finished_at=utc_now(),
@@ -242,6 +269,7 @@ class AgentExecutor:
                     error=exc,
                     snapshot_pack=snapshot_pack,
                     snapshot_audit=snapshot_audit,
+                    chapter_pipeline=failed_chapter_pipeline,
                 )
                 failed_result = {
                     "run": failed_run,
@@ -262,10 +290,23 @@ class AgentExecutor:
                 )
                 failed_result["run"]["input_pack"]["artifact"] = input_pack_artifact
                 self._attach_snapshot_pack_artifact(failed_result["run"], snapshot_pack)
+                self._attach_chapter_pipeline_artifacts(
+                    failed_result["run"],
+                    failed_chapter_pipeline,
+                    None,
+                    _trace_repair_deltas(workflow_trace),
+                )
                 self._attach_failed_chapter_artifact(failed_result)
                 self._save_run_record(failed_result)
             raise
         finished_at = utc_now()
+        chapter_pipeline = _finalize_chapter_pipeline(
+            chapter_pipeline,
+            validation=validation,
+            repair_deltas=_trace_repair_deltas(workflow_trace),
+            workflow_trace=workflow_trace,
+            committed=committed,
+        )
         run_record = build_run_record(
             started_at=started_at,
             finished_at=finished_at,
@@ -287,6 +328,7 @@ class AgentExecutor:
             snapshot_pack=snapshot_pack,
             snapshot_audit=snapshot_audit,
             state_update_audit=state_update_audit,
+            chapter_pipeline=chapter_pipeline,
         )
 
         result = {
@@ -340,6 +382,12 @@ class AgentExecutor:
                 output_dir=self.chapter_dir,
             )
             result["run"]["chapter"]["artifact"] = artifact
+            self._attach_chapter_pipeline_artifacts(
+                result["run"],
+                chapter_pipeline,
+                validation,
+                _trace_repair_deltas(workflow_trace),
+            )
             self._save_run_record(result)
 
         return result
@@ -470,9 +518,11 @@ class AgentExecutor:
         decision: dict[str, Any],
         input_pack: str,
         recovery_context: dict[str, Any],
-    ) -> tuple[str, dict[str, Any], int, list[dict[str, Any]]]:
+    ) -> tuple[str, dict[str, Any], int, list[dict[str, Any]], dict[str, Any] | None]:
         state: dict[str, Any] = {
             "chapter": "",
+            "chapter_pipeline": None,
+            "chapter_index": int(decision.get("chapter_index") or 1),
             "validation": None,
             "repair_attempts": 0,
             "repair_plan": None,
@@ -519,6 +569,7 @@ class AgentExecutor:
                     original=exc,
                     trace=trace,
                     chapter=state["chapter"] if isinstance(state.get("chapter"), str) else "",
+                    chapter_pipeline=state["chapter_pipeline"] if isinstance(state.get("chapter_pipeline"), dict) else None,
                     validation=state["validation"] if isinstance(state.get("validation"), dict) else None,
                     repair_attempts=int(state.get("repair_attempts") or 0),
                 ) from exc
@@ -548,10 +599,20 @@ class AgentExecutor:
                 )
             )
 
-        return state["chapter"], state["validation"], state["repair_attempts"], trace
+        return state["chapter"], state["validation"], state["repair_attempts"], trace, state.get("chapter_pipeline")
 
     def _handle_generate(self, state: dict[str, Any], input_pack: str) -> None:
-        state["chapter"] = self._generate(input_pack)
+        if self.generator:
+            state["chapter"] = self._generate(input_pack)
+            state["chapter_pipeline"] = None
+        else:
+            pipeline = run_chapter_pipeline(
+                input_pack,
+                chapter_index=int(state.get("chapter_index") or 1),
+                dry_run=self.dry_run,
+            )
+            state["chapter"] = str(pipeline["merged_chapter"])
+            state["chapter_pipeline"] = pipeline
         state["validation"] = None
 
     def _handle_polish(self, state: dict[str, Any]) -> None:
@@ -566,7 +627,15 @@ class AgentExecutor:
         decision: dict[str, Any],
     ) -> None:
         chapter = _require_chapter(state)
-        state["validation"] = self.validator(snapshot, chapter, decision)
+        if self.validator is validate_chapter:
+            state["validation"] = validate_chapter(
+                snapshot,
+                chapter,
+                decision,
+                enable_llm=self.enable_llm_validator,
+            )
+        else:
+            state["validation"] = self.validator(snapshot, chapter, decision)
 
     def _handle_repair_if_needed(
         self,
@@ -680,9 +749,29 @@ class AgentExecutor:
         )
         run["chapter"]["artifact"] = artifact
 
+    def _attach_chapter_pipeline_artifacts(
+        self,
+        run: dict[str, Any],
+        chapter_pipeline: dict[str, Any] | None,
+        validation: dict[str, Any] | None,
+        repair_deltas: list[dict[str, Any]] | None,
+    ) -> None:
+        if not isinstance(chapter_pipeline, dict):
+            return
+        artifacts = save_chapter_pipeline_artifacts(
+            pipeline=chapter_pipeline,
+            validation=validation,
+            repair_deltas=repair_deltas,
+            run=run,
+            output_dir=self.run_dir / "chapter_pipeline",
+        )
+        chapter = run.setdefault("chapter", {})
+        pipeline_summary = chapter.setdefault("pipeline", {})
+        pipeline_summary["artifacts"] = artifacts
 
-def run_once(*, dry_run: bool = False, persist: bool = True) -> dict[str, Any]:
-    return AgentExecutor(dry_run=dry_run).run_once(persist=persist)
+
+def run_once(*, dry_run: bool = False, persist: bool = True, enable_llm_validator: bool = False) -> dict[str, Any]:
+    return AgentExecutor(dry_run=dry_run, enable_llm_validator=enable_llm_validator).run_once(persist=persist)
 
 
 def run_loop(
@@ -691,8 +780,9 @@ def run_loop(
     dry_run: bool = False,
     persist: bool = True,
     stop_on_rejection: bool = True,
+    enable_llm_validator: bool = False,
 ) -> dict[str, Any]:
-    return AgentExecutor(dry_run=dry_run).run_loop(
+    return AgentExecutor(dry_run=dry_run, enable_llm_validator=enable_llm_validator).run_loop(
         steps=steps,
         persist=persist,
         stop_on_rejection=stop_on_rejection,
@@ -929,6 +1019,111 @@ def _trace_repair_deltas(workflow_trace: list[dict[str, Any]]) -> list[dict[str,
     return deltas
 
 
+def _finalize_chapter_pipeline(
+    chapter_pipeline: dict[str, Any] | None,
+    *,
+    validation: dict[str, Any] | None,
+    repair_deltas: list[dict[str, Any]] | None,
+    workflow_trace: list[dict[str, Any]],
+    committed: bool,
+    commit_status: str | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(chapter_pipeline, dict):
+        return None
+
+    existing_stages = {
+        str(stage.get("name")): stage
+        for stage in chapter_pipeline.get("stages", [])
+        if isinstance(stage, dict) and stage.get("name")
+    }
+    deltas = repair_deltas or []
+    stage_overrides = {
+        "validate": {
+            "status": _validation_stage_status(validation, workflow_trace),
+            "artifact_key": "validation_report",
+            "summary": _validation_stage_summary(validation),
+        },
+        "repair": {
+            "status": _repair_stage_status(deltas, workflow_trace),
+            "artifact_key": "repair_deltas",
+            "summary": _repair_stage_summary(deltas),
+        },
+        "commit": {
+            "status": commit_status or ("completed" if committed else "skipped"),
+            "artifact_key": "chapter",
+            "summary": {"committed": bool(committed)},
+        },
+    }
+    stages: list[dict[str, Any]] = []
+    for name in PIPELINE_STAGE_NAMES:
+        stage = dict(existing_stages.get(name, {"name": name, "status": "pending"}))
+        override = stage_overrides.get(name)
+        if override:
+            stage.update(override)
+        stages.append(stage)
+
+    finalized = dict(chapter_pipeline)
+    finalized["stages"] = stages
+    return validate_schema(finalized, "chapter_pipeline.schema.json")
+
+
+def _validation_stage_status(validation: dict[str, Any] | None, workflow_trace: list[dict[str, Any]]) -> str:
+    event = _latest_trace_event(workflow_trace, "validate")
+    if event and event.get("status") == "failed":
+        return "failed"
+    if isinstance(validation, dict):
+        return "completed"
+    return "pending"
+
+
+def _validation_stage_summary(validation: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(validation, dict):
+        return {"ok": False, "problem_count": 0}
+    problems = validation.get("problems")
+    problem_count = len(problems) if isinstance(problems, list) else 0
+    return {
+        "ok": bool(validation.get("ok")),
+        "problem_count": problem_count,
+        "blocking_count": _int_value(validation.get("blocking_count"), default=0),
+        "warning_count": _int_value(validation.get("warning_count"), default=0),
+    }
+
+
+def _repair_stage_status(repair_deltas: list[dict[str, Any]], workflow_trace: list[dict[str, Any]]) -> str:
+    event = _latest_trace_event(workflow_trace, "repair_if_needed")
+    if event and event.get("status") == "failed":
+        return "failed"
+    if repair_deltas:
+        return "completed"
+    if event and event.get("skipped"):
+        return "skipped"
+    if event:
+        return "completed"
+    return "skipped"
+
+
+def _repair_stage_summary(repair_deltas: list[dict[str, Any]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {"attempt_count": len(repair_deltas)}
+    if repair_deltas:
+        final_delta = repair_deltas[-1]
+        summary.update(
+            {
+                "after_ok": bool(final_delta.get("after_ok")),
+                "resolved_problem_codes": final_delta.get("resolved_problem_codes", []),
+                "new_problem_codes": final_delta.get("new_problem_codes", []),
+                "remaining_problem_codes": final_delta.get("remaining_problem_codes", []),
+            }
+        )
+    return summary
+
+
+def _latest_trace_event(workflow_trace: list[dict[str, Any]], action: str) -> dict[str, Any] | None:
+    for event in reversed(workflow_trace):
+        if isinstance(event, dict) and event.get("action") == action:
+            return event
+    return None
+
+
 def _blocked_memory_writeback(gate: dict[str, Any]) -> dict[str, Any]:
     return validate_memory_writeback_result({
         "target": None,
@@ -1029,6 +1224,7 @@ class WorkflowExecutionError(RuntimeError):
         original: BaseException,
         trace: list[dict[str, Any]],
         chapter: str,
+        chapter_pipeline: dict[str, Any] | None,
         validation: dict[str, Any] | None,
         repair_attempts: int,
     ) -> None:
@@ -1036,5 +1232,6 @@ class WorkflowExecutionError(RuntimeError):
         self.original = original
         self.trace = trace
         self.chapter = chapter
+        self.chapter_pipeline = chapter_pipeline
         self.validation = validation
         self.repair_attempts = repair_attempts

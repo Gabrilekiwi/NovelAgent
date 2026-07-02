@@ -1,0 +1,608 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProviderSmokeReport",
+  "type": "object",
+  "required": [
+    "id",
+    "work_dir",
+    "request",
+    "limits",
+    "config_status",
+    "providers",
+    "ok",
+    "runtime",
+    "report_path",
+    "required_checks",
+    "required_checks_ok",
+    "diagnostics"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "work_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request": {
+      "type": "object",
+      "required": ["providers", "notion_write", "allow_missing", "ignore_dotenv", "no_proxy"],
+      "additionalProperties": false,
+      "properties": {
+        "providers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["openai", "claude", "notion"]
+          }
+        },
+        "notion_write": {
+          "type": "boolean"
+        },
+        "allow_missing": {
+          "type": "boolean"
+        },
+        "ignore_dotenv": {
+          "type": "boolean"
+        },
+        "no_proxy": {
+          "type": "boolean"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "steps",
+        "max_input_chars",
+        "max_output_tokens",
+        "openai_max_retries",
+        "openai_scene_limit",
+        "request_timeout",
+        "retries",
+        "retry_delay_seconds",
+        "openai_model",
+        "openai_base_url",
+        "claude_model",
+        "claude_base_url",
+        "claude_user_agent",
+        "claude_max_tokens",
+        "require_all_checks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "steps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_input_chars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "openai_max_retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "openai_scene_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_timeout": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retry_delay_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "openai_model": {
+          "type": ["string", "null"]
+        },
+        "openai_base_url": {
+          "type": ["string", "null"],
+          "enum": ["sdk_default", "custom", null]
+        },
+        "claude_model": {
+          "type": ["string", "null"]
+        },
+        "claude_base_url": {
+          "type": "string",
+          "enum": ["set", "missing"]
+        },
+        "claude_user_agent": {
+          "type": "string",
+          "enum": ["set", "missing"]
+        },
+        "claude_max_tokens": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "require_all_checks": {
+          "type": "boolean"
+        }
+      }
+    },
+    "config_status": {
+      "type": "object",
+      "required": ["openai", "claude", "notion", "proxy"],
+      "additionalProperties": false,
+      "properties": {
+        "openai": {
+          "type": "object",
+          "required": ["configured", "api_key", "model", "base_url", "timeout_seconds", "max_output_tokens", "max_retries"],
+          "additionalProperties": false,
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "api_key": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "base_url": {
+              "type": "string",
+              "enum": ["sdk_default", "custom"]
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_retries": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "claude": {
+          "type": "object",
+          "required": ["configured", "api_key", "base_url", "user_agent", "model", "model_status", "timeout_seconds", "max_tokens"],
+          "additionalProperties": false,
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "api_key": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "base_url": {
+              "type": "string",
+              "enum": ["sdk_default", "custom"]
+            },
+            "user_agent": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "model": {
+              "type": ["string", "null"]
+            },
+            "model_status": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_tokens": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "notion": {
+          "type": "object",
+          "required": ["configured", "api_key", "database_id", "timeout_seconds"],
+          "additionalProperties": false,
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "api_key": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "database_id": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "proxy": {
+          "type": "object",
+          "required": ["http_proxy", "https_proxy", "all_proxy", "no_proxy", "proxy_endpoints"],
+          "additionalProperties": false,
+          "properties": {
+            "http_proxy": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "https_proxy": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "all_proxy": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "no_proxy": {
+              "type": "string",
+              "enum": ["set", "missing"]
+            },
+            "proxy_endpoints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "scheme", "host", "port", "has_userinfo"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "scheme": {
+                    "type": ["string", "null"]
+                  },
+                  "host": {
+                    "type": ["string", "null"]
+                  },
+                  "port": {
+                    "type": ["integer", "null"],
+                    "minimum": 1
+                  },
+                  "has_userinfo": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "openai": {
+          "type": "object",
+          "required": ["ok", "status"],
+          "additionalProperties": true,
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string",
+              "enum": ["passed", "failed", "skipped"]
+            }
+          }
+        },
+        "claude": {
+          "type": "object",
+          "required": ["ok", "status"],
+          "additionalProperties": true,
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string",
+              "enum": ["passed", "failed", "skipped"]
+            }
+          }
+        },
+        "notion": {
+          "type": "object",
+          "required": ["ok", "status"],
+          "additionalProperties": true,
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string",
+              "enum": ["passed", "failed", "skipped"]
+            }
+          }
+        }
+      }
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "required_checks": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["provider", "check", "ok", "status", "requested"],
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["openai", "claude", "notion"]
+          },
+          "check": {
+            "type": "string",
+            "enum": ["director", "chapter_generation", "polish", "read", "writeback", "readback"]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "skipped", "not_requested"]
+          },
+          "requested": {
+            "type": "boolean"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error_type": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "failure_category": {
+            "type": "string",
+            "enum": ["connection", "timeout", "transient_provider_error", "configuration", "provider_error", "unexpected"]
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "required_checks_ok": {
+      "type": "boolean"
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": [
+        "status",
+        "missing_config",
+        "missing_config_groups",
+        "failed_checks",
+        "skipped_checks",
+        "unrequested_checks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["passed", "incomplete", "failed"]
+        },
+        "missing_config": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_config_groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["provider", "requirement", "any_of", "status"],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["openai", "claude", "notion"]
+              },
+              "requirement": {
+                "type": "string",
+                "minLength": 1
+              },
+              "any_of": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "status": {
+                "type": "string",
+                "enum": ["missing"]
+              }
+            }
+          }
+        },
+        "failed_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["provider", "check", "status"],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": ["string", "null"],
+                "enum": ["openai", "claude", "notion", null]
+              },
+              "check": {
+                "type": ["string", "null"],
+                "enum": ["director", "chapter_generation", "polish", "read", "writeback", "readback", null]
+              },
+              "status": {
+                "type": ["string", "null"],
+                "enum": ["passed", "failed", "skipped", "not_requested", null]
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "error_type": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "failure_category": {
+                "type": "string",
+                "enum": ["connection", "timeout", "transient_provider_error", "configuration", "provider_error", "unexpected"]
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "skipped_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["provider", "check", "status"],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": ["string", "null"],
+                "enum": ["openai", "claude", "notion", null]
+              },
+              "check": {
+                "type": ["string", "null"],
+                "enum": ["director", "chapter_generation", "polish", "read", "writeback", "readback", null]
+              },
+              "status": {
+                "type": ["string", "null"],
+                "enum": ["passed", "failed", "skipped", "not_requested", null]
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "error_type": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "failure_category": {
+                "type": "string",
+                "enum": ["connection", "timeout", "transient_provider_error", "configuration", "provider_error", "unexpected"]
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "unrequested_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["provider", "check", "status"],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": ["string", "null"],
+                "enum": ["openai", "claude", "notion", null]
+              },
+              "check": {
+                "type": ["string", "null"],
+                "enum": ["director", "chapter_generation", "polish", "read", "writeback", "readback", null]
+              },
+              "status": {
+                "type": ["string", "null"],
+                "enum": ["passed", "failed", "skipped", "not_requested", null]
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "error_type": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["runtime_dir", "snapshot_path", "memory_path", "run_dir", "chapter_dir", "copied", "skipped"],
+      "additionalProperties": true,
+      "properties": {
+        "runtime_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "memory_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chapter_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "copied": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "report_path": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

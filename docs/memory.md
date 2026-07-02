@@ -4,7 +4,7 @@ NovelAgent v1.0 treats memory as data that is normalized before the agent loop r
 
 Supported inputs:
 
-- `data/memory.json`: normalized memory context.
+- `.tmp/runtime/notion_memory.json`: initialized local runtime memory copied from the Notion memory example.
 - `NOVELAGENT_MEMORY_PATH`: environment override.
 - `--memory path/to/file.json`: CLI override.
 - `--memory-source auto|file|notion`: explicit memory input mode.
@@ -12,7 +12,7 @@ Supported inputs:
 - Notion export JSON with a top-level `pages` array.
 - Notion API database query via `NOTION_API_KEY` plus `NOTION_DATABASE_ID` or `NOVELAGENT_NOTION_DATABASE_ID`.
 
-`--memory-source auto` is the default. It reads `--memory` or `NOVELAGENT_MEMORY_PATH` when a path is provided, and falls back to live Notion API only when no memory path is provided and Notion API configuration is present. Use `--memory-source file` to force local file memory even when Notion credentials exist. Use `--memory-source notion` to force live Notion API memory. Preflight reports the resolution under `memory_input`, including whether Notion API credentials are configured, the resolved source, the resolved file path for file-backed memory, and the reason the source was selected.
+`--memory-source auto` is the default. It reads `--memory` or `NOVELAGENT_MEMORY_PATH` when a path is provided, otherwise uses `.tmp/runtime/notion_memory.json`, and falls back to live Notion API only when no memory path is provided and Notion API configuration is present. Use `python main.py --init-runtime` to copy `data/notion_memory.example.json` into that local runtime path. Use `--memory-source file` to force local file memory even when Notion credentials exist. Use `--memory-source notion` to force live Notion API memory. Preflight reports the resolution under `memory_input`, including whether Notion API credentials are configured, the resolved source, the resolved file path for file-backed memory, and the reason the source was selected.
 
 Normalized memory context:
 
@@ -105,10 +105,10 @@ Committed runs can produce memory updates from chapter analysis:
 Local outbox mode:
 
 ```bash
-python main.py --persist-dry-run --dry-run --memory data/notion_memory.example.json --memory-outbox data/memory_outbox.jsonl
+python main.py --persist-dry-run --dry-run --memory data/notion_memory.example.json --memory-writeback file
 ```
 
-The outbox is JSONL, one normalized memory item per line. `--memory-outbox` implies `--memory-writeback file` for compatibility. You can also use `--memory-writeback file`; without an explicit outbox path it writes to `data/memory_outbox.jsonl`. File writeback skips duplicate items that have the same `id`. CLI-created Notion writeback also performs a pre-write database query and skips updates whose `Memory ID` already exists.
+The outbox is JSONL, one normalized memory item per line. `--memory-outbox` implies `--memory-writeback file` for compatibility. You can also use `--memory-writeback file`; without an explicit outbox path it writes to `.tmp/runtime/memory_outbox.jsonl`. File writeback skips duplicate items that have the same `id`. CLI-created Notion writeback also performs a pre-write database query and skips updates whose `Memory ID` already exists.
 
 Writeback is gated by run quality. A committed run writes memory only when final validation is ok and repair deltas do not show new, remaining, or post-repair problem codes. The gate records pending memory update count/type summaries before it allows or blocks writes. Blocked writeback is recorded in the run artifact under `memory.writeback.gate` and writes no JSONL or Notion pages.
 
@@ -117,7 +117,7 @@ Writeback results include `item_mappings`. File writeback maps each memory id to
 The same outbox can be used as memory input for a later run:
 
 ```bash
-python main.py --dry-run --memory data/memory_outbox.jsonl
+python main.py --dry-run --memory .tmp/runtime/memory_outbox.jsonl
 ```
 
 The chapter input pack receives a compact Memory Index rather than a second full copy of every memory item's `data`. Facts needed for generation should be present in the merged Snapshot; the Memory Index keeps ids, names, types, source run ids, and source mappings for traceability. Last-run status, problem codes, validation coverage, and repair summaries are exposed separately as Recovery Context so generation can see recovery intent in the input pack and model-backed scene repair can receive the same context as explicit payload data without scanning the full memory payload.

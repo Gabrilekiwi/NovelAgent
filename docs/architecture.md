@@ -10,7 +10,7 @@ Memory source
   -> core.state.builder
   -> core.director
   -> core.engine.executor
-  -> modules.chapter_generator
+  -> modules.chapter_generator pipeline
   -> modules.claude_polish
   -> core.validator
   -> modules.scene_repair
@@ -116,11 +116,27 @@ Each executed action appends a schema-checked `run.trace` event with timestamps,
 
 Each run record also includes a schema-checked `director` audit block with the decision source, mode, model name when applicable, status, timestamps, duration, and model-call diagnostics when applicable. This keeps rule, model, and injected Director decisions distinguishable when reviewing artifacts.
 
-Multi-step execution also builds a schema-checked loop session record. The session captures requested and completed steps, stop reason, persistence mode, stop-on-rejection policy, committed/rejected/failed counts, first and last chapter indexes, the last run id, compact summaries for each run, validation coverage for each step, compact validation and repair evidence, each run's workflow action list, trace action list, whether the trace remains aligned with the workflow plan, recovery links between a run and the previous run attached as `memory_context.last_run`, and the session-level error when a loop stops on an exception. Persistent sessions are written under `data/runs/loop_sessions/` and include their own `artifact` pointer so the saved session is self-describing. If a failing step persisted a failed run record before raising, that failed run is included in the session summary.
+Multi-step execution also builds a schema-checked loop session record. The session captures requested and completed steps, stop reason, persistence mode, stop-on-rejection policy, committed/rejected/failed counts, first and last chapter indexes, the last run id, compact summaries for each run, validation coverage for each step, compact validation and repair evidence, each run's workflow action list, trace action list, whether the trace remains aligned with the workflow plan, recovery links between a run and the previous run attached as `memory_context.last_run`, and the session-level error when a loop stops on an exception. Persistent sessions are written under `.tmp/runtime/runs/loop_sessions/` by default and include their own `artifact` pointer so the saved session is self-describing. If a failing step persisted a failed run record before raising, that failed run is included in the session summary.
 
-### Generation And Polish
+### Generation Pipeline And Polish
 
-`modules.chapter_generator` calls the OpenAI adapter unless dry-run is enabled. `modules.claude_polish` calls the Claude adapter unless dry-run is enabled.
+`modules.chapter_generator` now runs a chapter pipeline before polish:
+
+- `plan_chapter`
+- `generate_scenes`
+- `merge_scenes`
+
+Dry-run uses deterministic local plan and scene drafts. Non-dry-run uses OpenAI-backed chapter planning and scene drafting, then merges scene text locally before the existing polish, validation, repair, and commit boundary. The executor still exposes this as the `generate_chapter` workflow action for compatibility, but run records store schema-checked `chapter.pipeline.stages` for `plan_chapter`, `generate_scenes`, `merge_scenes`, `validate`, `repair`, and `commit`. The pipeline also records `scene_spans`, mapping each scene draft to its character range in the merged chapter, so later validation or repair can target a scene without rewriting the entire chapter. Each stage records a status plus compact summary data, so validation, repair, and commit outcomes can be audited without reconstructing them from filenames.
+
+Pipeline artifacts are written under `.tmp/runtime/runs/chapter_pipeline/` by default:
+
+- chapter plan JSON
+- scene draft Markdown files
+- merged chapter Markdown
+- validation report JSON
+- repair deltas JSON
+
+`modules.claude_polish` calls the Claude adapter unless dry-run is enabled.
 
 Chapter generation, polish, and repair use model output contracts so empty output, structured data, fenced code, Markdown wrappers/headings, standalone chapter headings such as `Chapter 4`, and common assistant commentary such as `Here is...`, `As an AI...`, or `Error:...` are rejected early as `ModelOutputError`.
 
@@ -130,7 +146,7 @@ Prompt assets live under `prompts/` and are plain UTF-8 Markdown. Snapshot Build
 
 ### Validation
 
-`core.validator` runs continuity, spatial, and logic checks. Validation can reject:
+`core.validator` always runs the cheap rule-validator layer: continuity, spatial, and logic checks. Validation can reject:
 
 - Empty or too-short chapters.
 - Missing conflict signal.
@@ -142,6 +158,8 @@ Prompt assets live under `prompts/` and are plain UTF-8 Markdown. Snapshot Build
 The Validator honors `decision.validation_focus`. A focused recovery run can execute only the selected check groups, while missing or empty focus falls back to the full continuity, spatial, and logic set. Each validation result records `requested_focus`, `executed_checks`, and `skipped_checks`, so a run artifact shows both the Director's requested coverage and the Validator coverage actually applied.
 
 Each validation problem is enriched with its source `validator`, `severity`, `blocking`, `category`, `repair_hint`, `repair_action`, normalized `repair_parameters`, and structured `evidence` entries that capture the concrete mismatch or missing fact. The run record stores a compact `validation.problem_evidence` summary so reports, loop sessions, and recovery diagnostics can show the concrete evidence without opening the full run-result envelope. The top-level validation result also records `blocking_problem_count`, `warning_count`, `severity_counts`, `deterministic_repair_count`, `manual_review_count`, and `repair_action_counts`, so Director, Repair, reports, and run artifacts can distinguish hard failures, lower-priority warnings, deterministic repairs, and manual-review work without reinterpreting problem codes.
+
+An optional OpenAI-backed LLM Validator can be enabled with `--llm-validator`. It checks story-level issues that are expensive or brittle as rules: complex plot logic, character motivation consistency, timeline causality, setup/payoff, and emotional or theme drift. It is disabled by default and dry-run/CI do not enable it implicitly. When enabled, preflight requires OpenAI configuration. The model response must satisfy `schemas/llm_validation.schema.json`; accepted problems are merged into `validation.problems[]` with `validator="llm"`, structured `evidence`, `severity`, `repair_hint`, `area`, and `repair_action="manual_review"`.
 
 ### Repair
 
@@ -184,12 +202,19 @@ Rejected and failed runs do not write memory updates.
 
 Persistent execution writes:
 
-- Run JSON records under `data/runs/`.
-- Loop session JSON records under `data/runs/loop_sessions/`.
-- Snapshot Builder input packs under `data/runs/snapshot_packs/`.
-- Full input pack markdown under `data/runs/input_packs/`.
-- Chapter markdown under `data/chapters/`.
+- Run JSON records under `.tmp/runtime/runs/` by default.
+- Loop session JSON records under `.tmp/runtime/runs/loop_sessions/`.
+- Snapshot Builder input packs under `.tmp/runtime/runs/snapshot_packs/`.
+- Full input pack markdown under `.tmp/runtime/runs/input_packs/`.
+- Chapter pipeline artifacts under `.tmp/runtime/runs/chapter_pipeline/`.
+- Chapter markdown under `.tmp/runtime/chapters/`.
+
+Committed examples stay separate from mutable runtime state: `data/snapshot.example.json` and `data/notion_memory.example.json` are source-control samples, while `python main.py --init-runtime` copies them into `.tmp/runtime/` for local execution.
 
 Run records include State Builder audit details, Director audit details, workflow plan details, Validation coverage and evidence summaries, State Update audit details, workflow trace events, input pack metadata, and pointers to the chapter artifact and input pack artifact. The persisted outer run result envelope is also schema-checked before writing. Committed runs include the memory writeback result under `run.memory.writeback`. These artifacts make debugging and manual review possible without re-running generation.
 
 `core.engine.report.build_run_report()` provides a read-only audit view over persisted run records and loop sessions. It summarizes recent runs, status counts, validation problem counts, compact validation evidence, compact repair evidence, compact Director details, workflow plan summaries, trace status, loop session status, and whether referenced artifacts still exist. The CLI exposes this through `python main.py --report-runs`.
+
+### Real Provider Smoke
+
+`scripts/provider_smoke.py` is the opt-in real-environment gate. It uses `.tmp/runtime/provider_smoke/<timestamp>/`, initializes runtime state from examples, and writes `provider_smoke_report.json` with request intent, redacted config/proxy status, per-provider diagnostics, and a compact `diagnostics` summary for missing config, one-of config groups, failed checks, skipped checks, and unrequested checks. Provider failures are classified with `failure_category` and `retryable` when possible, and `--retry-delay-seconds` controls the wait between non-writing retry attempts. OpenAI smoke covers the model Director plus one compact real chapter-generation probe; the full plan/scene/merge pipeline is covered by local smoke and normal runtime artifacts. Claude smoke covers polish. Notion smoke reads by default and performs writeback/readback only when `--notion-write` is supplied.

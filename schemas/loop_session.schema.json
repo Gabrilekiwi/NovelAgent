@@ -160,19 +160,19 @@
           "requested_focus": {
             "type": "array",
             "items": {
-              "enum": ["continuity", "spatial", "logic"]
+              "enum": ["continuity", "spatial", "logic", "llm"]
             }
           },
           "executed_checks": {
             "type": "array",
             "items": {
-              "enum": ["continuity", "spatial", "logic"]
+              "enum": ["continuity", "spatial", "logic", "llm"]
             }
           },
           "skipped_checks": {
             "type": "array",
             "items": {
-              "enum": ["continuity", "spatial", "logic"]
+              "enum": ["continuity", "spatial", "logic", "llm"]
             }
           },
           "workflow_actions": {

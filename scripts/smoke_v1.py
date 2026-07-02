@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ def main() -> None:
     run_dir = work_dir / "runs"
     chapter_dir = work_dir / "chapters"
     outbox_path = work_dir / "memory_outbox.jsonl"
+    provider_smoke_dir = work_dir / "provider_smoke_missing_config"
     _write_smoke_snapshot(snapshot_path)
 
     commands: list[list[str]] = []
@@ -104,6 +106,27 @@ def main() -> None:
         if "--report-runs" in command:
             report_stdout = completed.stdout
 
+    provider_smoke = _run(
+        [
+            sys.executable,
+            "-B",
+            "scripts/provider_smoke.py",
+            "--providers",
+            "openai",
+            "claude",
+            "notion",
+            "--allow-missing",
+            "--ignore-dotenv",
+            "--no-proxy",
+            "--work-dir",
+            str(provider_smoke_dir),
+        ],
+        echo_stdout=False,
+        env_overrides=_missing_provider_env(),
+    )
+    provider_report = _parse_report(provider_smoke.stdout)
+    _assert_provider_smoke_missing_config(provider_report, provider_smoke_dir)
+
     report = _parse_report(report_stdout)
     latest = _assert_report(report, run_dir)
     run_path = Path(str(latest["path"]))
@@ -115,6 +138,7 @@ def main() -> None:
     print(f"- run: {run_path}")
     print(f"- chapter_artifact: {run_result['run']['chapter']['artifact']['path']}")
     print(f"- memory_outbox: {outbox_path}")
+    print(f"- provider_smoke_report: {provider_smoke_dir / 'provider_smoke_report.json'}")
 
 
 def _default_work_dir() -> Path:
@@ -141,11 +165,20 @@ def _write_smoke_snapshot(path: Path) -> None:
     )
 
 
-def _run(command: list[str], *, echo_stdout: bool = True) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: list[str],
+    *,
+    echo_stdout: bool = True,
+    env_overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     print("+ " + " ".join(_quote(part) for part in command))
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
     completed = subprocess.run(
         command,
         cwd=ROOT,
+        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -157,6 +190,19 @@ def _run(command: list[str], *, echo_stdout: bool = True) -> subprocess.Complete
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
     return completed
+
+
+def _missing_provider_env() -> dict[str, str]:
+    return {
+        "OPENAI_API_KEY": "",
+        "ANTHROPIC_API_KEY": "",
+        "ANTHROPIC_AUTH_TOKEN": "",
+        "ANTHROPIC_MODEL": "",
+        "CLAUDE_MODEL": "",
+        "NOTION_API_KEY": "",
+        "NOTION_DATABASE_ID": "",
+        "NOVELAGENT_NOTION_DATABASE_ID": "",
+    }
 
 
 def _parse_report(stdout: str) -> dict[str, Any]:
@@ -184,11 +230,60 @@ def _assert_report(report: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     if not latest.get("committed"):
         raise RuntimeError("latest run is not committed")
     artifacts = latest.get("artifacts") if isinstance(latest.get("artifacts"), dict) else {}
-    for name in ("snapshot_pack", "input_pack", "chapter"):
+    for name in ("snapshot_pack", "input_pack", "chapter", "chapter_pipeline"):
         artifact = artifacts.get(name) if isinstance(artifacts, dict) else None
         if not isinstance(artifact, dict) or not artifact.get("exists"):
             raise RuntimeError(f"latest run missing existing {name} artifact")
     return latest
+
+
+def _assert_provider_smoke_missing_config(report: dict[str, Any], work_dir: Path) -> None:
+    if report.get("work_dir") != str(work_dir):
+        raise RuntimeError(f"provider smoke work_dir mismatch: {report.get('work_dir')!r}")
+    if not report.get("ok"):
+        raise RuntimeError("provider smoke missing-config report should be ok with --allow-missing")
+    if report.get("required_checks_ok"):
+        raise RuntimeError("provider smoke missing-config report unexpectedly passed required checks")
+    if (report.get("diagnostics") or {}).get("status") != "incomplete":
+        raise RuntimeError("provider smoke missing-config diagnostics should be incomplete")
+    missing = set((report.get("diagnostics") or {}).get("missing_config") or [])
+    expected = {
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_MODEL",
+        "CLAUDE_MODEL",
+        "NOTION_API_KEY",
+        "NOTION_DATABASE_ID",
+        "NOVELAGENT_NOTION_DATABASE_ID",
+    }
+    if missing != expected:
+        raise RuntimeError(f"provider smoke missing-config mismatch: {sorted(missing)!r}")
+    config_status = report.get("config_status")
+    if not isinstance(config_status, dict):
+        raise RuntimeError("provider smoke report missing config_status")
+    if (config_status.get("openai") or {}).get("api_key") != "missing" or (config_status.get("openai") or {}).get("configured"):
+        raise RuntimeError("provider smoke OpenAI config_status should be missing")
+    if (
+        (config_status.get("claude") or {}).get("api_key") != "missing"
+        or (config_status.get("claude") or {}).get("model_status") != "missing"
+        or (config_status.get("claude") or {}).get("configured")
+    ):
+        raise RuntimeError("provider smoke Claude config_status should be missing")
+    if (
+        (config_status.get("notion") or {}).get("api_key") != "missing"
+        or (config_status.get("notion") or {}).get("database_id") != "missing"
+        or (config_status.get("notion") or {}).get("configured")
+    ):
+        raise RuntimeError("provider smoke Notion config_status should be missing")
+    required_checks = report.get("required_checks")
+    if not isinstance(required_checks, list) or len(required_checks) != 6:
+        raise RuntimeError("provider smoke required check summary is incomplete")
+    if any(item.get("status") != "skipped" for item in required_checks if isinstance(item, dict)):
+        raise RuntimeError("provider smoke missing-config checks should all be skipped")
+    report_path = Path(str(report.get("report_path")))
+    if not report_path.exists() or report_path.parent != work_dir:
+        raise RuntimeError(f"provider smoke report was not written under work dir: {report_path}")
 
 
 def _assert_run_result(run_result: dict[str, Any], *, chapter_dir: Path, outbox_path: Path) -> None:
@@ -203,6 +298,42 @@ def _assert_run_result(run_result: dict[str, Any], *, chapter_dir: Path, outbox_
     chapter_path = Path(str(chapter_artifact.get("path")))
     if not chapter_path.exists() or chapter_path.parent != chapter_dir:
         raise RuntimeError(f"chapter artifact is missing or outside expected directory: {chapter_path}")
+    pipeline = (run.get("chapter") or {}).get("pipeline")
+    if not isinstance(pipeline, dict):
+        raise RuntimeError("run artifact is missing chapter pipeline metadata")
+    if int(pipeline.get("scene_count") or 0) < 1:
+        raise RuntimeError("chapter pipeline did not record scene drafts")
+    scene_spans = pipeline.get("scene_spans")
+    if not isinstance(scene_spans, list) or len(scene_spans) != int(pipeline.get("scene_count") or 0):
+        raise RuntimeError("chapter pipeline scene span count does not match scene count")
+    pipeline_artifacts = pipeline.get("artifacts")
+    if not isinstance(pipeline_artifacts, dict):
+        raise RuntimeError("chapter pipeline is missing artifacts")
+    for name in ("plan", "merged_chapter", "validation_report", "repair_deltas"):
+        artifact = pipeline_artifacts.get(name)
+        if not isinstance(artifact, dict) or not Path(str(artifact.get("path"))).exists():
+            raise RuntimeError(f"chapter pipeline missing {name} artifact")
+    merged_text = _artifact_body(Path(str(pipeline_artifacts["merged_chapter"]["path"])))
+    scene_artifacts = pipeline_artifacts.get("scene_drafts")
+    if not isinstance(scene_artifacts, list) or not scene_artifacts:
+        raise RuntimeError("chapter pipeline missing scene draft artifacts")
+    for index, artifact in enumerate(scene_artifacts):
+        if not isinstance(artifact, dict) or not Path(str(artifact.get("path"))).exists():
+            raise RuntimeError("chapter pipeline scene draft artifact is missing")
+        scene_text = Path(str(artifact.get("path"))).read_text(encoding="utf-8")
+        span = scene_spans[index] if index < len(scene_spans) else None
+        if not isinstance(span, dict):
+            raise RuntimeError("chapter pipeline scene span is missing")
+        expected_span = f"Merged Span: `{span.get('start_char')}-{span.get('end_char')}`"
+        if expected_span not in scene_text:
+            raise RuntimeError(f"scene draft artifact missing span metadata: {expected_span}")
+        if int(span.get("end_char") or 0) <= int(span.get("start_char") or 0):
+            raise RuntimeError(f"scene span is invalid: {span!r}")
+        scene_body = _artifact_body(Path(str(artifact.get("path"))))
+        start = int(span["start_char"])
+        end = int(span["end_char"])
+        if merged_text[start:end] != scene_body:
+            raise RuntimeError("scene span does not match merged chapter text")
     writeback = (run.get("memory") or {}).get("writeback")
     if not isinstance(writeback, dict):
         raise RuntimeError("run artifact is missing memory writeback result")
@@ -222,6 +353,14 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RuntimeError(f"{path} must contain a JSON object")
     return payload
+
+
+def _artifact_body(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    marker = "---\n\n"
+    if marker not in text:
+        raise RuntimeError(f"{path} missing artifact body marker")
+    return text.split(marker, 1)[1].strip()
 
 
 def _quote(value: str) -> str:

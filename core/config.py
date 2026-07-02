@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from core.runtime_paths import DEFAULT_MEMORY_PATH
 
 
 _ENV_LOADED = False
@@ -11,6 +14,9 @@ _ENV_LOADED = False
 def load_env() -> None:
     global _ENV_LOADED
     if _ENV_LOADED:
+        return
+    if _skip_dotenv():
+        _ENV_LOADED = True
         return
     try:
         from dotenv import load_dotenv
@@ -26,12 +32,19 @@ class RuntimeConfig:
     openai_api_key: str | None
     openai_base_url: str | None
     openai_model: str
+    openai_timeout_seconds: int
+    openai_max_output_tokens: int
+    openai_max_retries: int
     anthropic_api_key: str | None
+    claude_base_url: str | None
+    claude_user_agent: str | None
     claude_model: str | None
     claude_max_tokens: int
+    claude_timeout_seconds: int
     memory_path: Path
     notion_api_key: str | None
     notion_database_id: str | None
+    notion_timeout_seconds: int
 
     @property
     def has_notion_api(self) -> bool:
@@ -44,13 +57,29 @@ def get_config() -> RuntimeConfig:
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_base_url=_env("OPENAI_BASE_URL"),
         openai_model=_env("OPENAI_MODEL") or "gpt-4.1-mini",
-        anthropic_api_key=_env("ANTHROPIC_API_KEY"),
-        claude_model=_env("CLAUDE_MODEL"),
+        openai_timeout_seconds=_int_env("OPENAI_TIMEOUT_SECONDS", 30),
+        openai_max_output_tokens=_int_env("OPENAI_MAX_OUTPUT_TOKENS", 1200),
+        openai_max_retries=max(0, _int_env("OPENAI_MAX_RETRIES", 0)),
+        anthropic_api_key=_env("ANTHROPIC_API_KEY") or _env("ANTHROPIC_AUTH_TOKEN"),
+        claude_base_url=_env("CLAUDE_BASE_URL") or _env("ANTHROPIC_BASE_URL"),
+        claude_user_agent=_env("CLAUDE_USER_AGENT"),
+        claude_model=_env("CLAUDE_MODEL") or _env("ANTHROPIC_MODEL"),
         claude_max_tokens=_int_env("CLAUDE_MAX_TOKENS", 3000),
-        memory_path=Path(_env("NOVELAGENT_MEMORY_PATH") or "data/memory.json"),
+        claude_timeout_seconds=_int_env("CLAUDE_TIMEOUT_SECONDS", 30),
+        memory_path=Path(_env("NOVELAGENT_MEMORY_PATH") or DEFAULT_MEMORY_PATH),
         notion_api_key=_env("NOTION_API_KEY"),
         notion_database_id=_env("NOTION_DATABASE_ID") or _env("NOVELAGENT_NOTION_DATABASE_ID"),
+        notion_timeout_seconds=_int_env("NOTION_TIMEOUT_SECONDS", 30),
     )
+
+
+def _skip_dotenv() -> bool:
+    if os.getenv("NOVELAGENT_SKIP_DOTENV", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if "unittest" in sys.modules:
+        return True
+    argv = [str(part).replace("\\", "/").lower() for part in sys.argv]
+    return any(part.endswith("/unittest/__main__.py") or part.endswith("/unittest") for part in argv[:1])
 
 
 def _env(name: str) -> str | None:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import sys
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from api.contracts import ModelCallError
 from api.claude_client import _extract_message_text, polish_chapter
@@ -10,6 +12,21 @@ from api.openai_client import _extract_message_content, chat_completion
 
 
 class ApiClientTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._claude_alias_env = {
+            "ANTHROPIC_AUTH_TOKEN": os.environ.get("ANTHROPIC_AUTH_TOKEN"),
+            "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL"),
+        }
+        os.environ["ANTHROPIC_AUTH_TOKEN"] = ""
+        os.environ["ANTHROPIC_MODEL"] = ""
+
+    def tearDown(self) -> None:
+        for name, value in self._claude_alias_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
     def test_openai_client_requires_api_key(self) -> None:
         original_key = os.environ.get("OPENAI_API_KEY")
         original_model = os.environ.get("OPENAI_MODEL")
@@ -72,6 +89,55 @@ class ApiClientTest(unittest.TestCase):
         self.assertEqual("gpt-test", context.exception.model)
         self.assertIn("string", str(context.exception))
 
+    def test_openai_client_passes_timeout_and_max_tokens(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeCompletions:
+            def create(self, **kwargs: object) -> object:
+                captured["request_kwargs"] = kwargs
+                return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                captured["client_kwargs"] = kwargs
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        fake_module = SimpleNamespace(OpenAI=FakeOpenAI)
+        originals = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL"),
+            "OPENAI_MODEL": os.environ.get("OPENAI_MODEL"),
+            "OPENAI_TIMEOUT_SECONDS": os.environ.get("OPENAI_TIMEOUT_SECONDS"),
+            "OPENAI_MAX_OUTPUT_TOKENS": os.environ.get("OPENAI_MAX_OUTPUT_TOKENS"),
+            "OPENAI_MAX_RETRIES": os.environ.get("OPENAI_MAX_RETRIES"),
+        }
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["OPENAI_BASE_URL"] = ""
+        os.environ["OPENAI_MODEL"] = "test-model"
+        os.environ["OPENAI_TIMEOUT_SECONDS"] = "9"
+        os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = "77"
+        os.environ["OPENAI_MAX_RETRIES"] = "3"
+        try:
+            with patch.dict(sys.modules, {"openai": fake_module}):
+                self.assertEqual("ok", chat_completion([{"role": "user", "content": "hello"}]))
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual({"api_key": "test-key", "timeout": 9, "max_retries": 3}, captured["client_kwargs"])
+        self.assertEqual(
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "temperature": 0.8,
+                "max_tokens": 77,
+            },
+            captured["request_kwargs"],
+        )
+
     def test_claude_client_requires_api_key(self) -> None:
         original_key = os.environ.get("ANTHROPIC_API_KEY")
         original_model = os.environ.get("CLAUDE_MODEL")
@@ -94,6 +160,58 @@ class ApiClientTest(unittest.TestCase):
 
     def test_claude_dry_run_returns_input(self) -> None:
         self.assertEqual("chapter text", polish_chapter("chapter text", dry_run=True))
+
+    def test_claude_client_passes_timeout_and_max_tokens(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeMessages:
+            def create(self, **kwargs: object) -> object:
+                captured["request_kwargs"] = kwargs
+                return SimpleNamespace(content=[SimpleNamespace(text="polished")])
+
+        class FakeAnthropic:
+            def __init__(self, **kwargs: object) -> None:
+                captured["client_kwargs"] = kwargs
+                self.messages = FakeMessages()
+
+        fake_module = SimpleNamespace(Anthropic=FakeAnthropic)
+        originals = {
+            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
+            "CLAUDE_BASE_URL": os.environ.get("CLAUDE_BASE_URL"),
+            "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL"),
+            "CLAUDE_USER_AGENT": os.environ.get("CLAUDE_USER_AGENT"),
+            "CLAUDE_MODEL": os.environ.get("CLAUDE_MODEL"),
+            "CLAUDE_MAX_TOKENS": os.environ.get("CLAUDE_MAX_TOKENS"),
+            "CLAUDE_TIMEOUT_SECONDS": os.environ.get("CLAUDE_TIMEOUT_SECONDS"),
+        }
+        os.environ["ANTHROPIC_API_KEY"] = "test-anthropic"
+        os.environ["CLAUDE_BASE_URL"] = "https://claude.example.test"
+        os.environ["ANTHROPIC_BASE_URL"] = ""
+        os.environ["CLAUDE_USER_AGENT"] = "claude-cli/1.0 test"
+        os.environ["CLAUDE_MODEL"] = "claude-test"
+        os.environ["CLAUDE_MAX_TOKENS"] = "55"
+        os.environ["CLAUDE_TIMEOUT_SECONDS"] = "8"
+        try:
+            with patch.dict(sys.modules, {"anthropic": fake_module}):
+                self.assertEqual("polished", polish_chapter("chapter text", dry_run=False))
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual(
+            {
+                "api_key": "test-anthropic",
+                "base_url": "https://claude.example.test",
+                "timeout": 8,
+                "default_headers": {"User-Agent": "claude-cli/1.0 test"},
+            },
+            captured["client_kwargs"],
+        )
+        self.assertEqual("claude-test", captured["request_kwargs"]["model"])
+        self.assertEqual(55, captured["request_kwargs"]["max_tokens"])
 
     def test_claude_response_extraction_wraps_missing_content_blocks(self) -> None:
         with self.assertRaises(ModelCallError) as context:

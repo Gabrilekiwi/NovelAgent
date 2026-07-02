@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from core.validator import validate_chapter
+from core.validator.llm import LLM_VALIDATION_AREAS, llm_payload_to_check
 
 
 class ValidatorTest(unittest.TestCase):
@@ -203,6 +204,90 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(["continuity", "spatial", "logic"], result["requested_focus"])
         self.assertEqual([], result["skipped_checks"])
         self.assertIn("chapter_index_mismatch", {p["code"] for p in result["problems"]})
+
+    def test_optional_llm_validator_merges_schema_checked_problems(self) -> None:
+        snapshot = {
+            "chapter_index": 1,
+            "world_state": {"locations": {}},
+            "characters": {},
+            "timeline": [],
+        }
+
+        def fake_llm_validator(snapshot, chapter_text, decision):
+            return llm_payload_to_check(
+                {
+                    "problems": [
+                        {
+                            "code": "llm_motivation_inconsistent",
+                            "message": "The protagonist changes goals without a cause.",
+                            "area": "character_motivation_consistency",
+                            "severity": "high",
+                            "evidence": [{"kind": "motivation", "value": "Goal shift has no trigger."}],
+                            "repair_hint": "Add a causal beat before the goal changes.",
+                        }
+                    ]
+                }
+            )
+
+        result = validate_chapter(
+            snapshot,
+            "The danger forced a choice that created open conflict in the shelter.",
+            enable_llm=True,
+            llm_validator=fake_llm_validator,
+        )
+
+        problem = [item for item in result["problems"] if item["validator"] == "llm"][0]
+        self.assertFalse(result["ok"])
+        self.assertIn("llm", result["executed_checks"])
+        self.assertEqual("manual_review", problem["repair_action"])
+        self.assertEqual("high", problem["severity"])
+        self.assertEqual("character_motivation_consistency", problem["area"])
+        self.assertEqual("character_motivation_consistency", problem["repair_parameters"]["area"])
+        self.assertEqual([{"kind": "motivation", "value": "Goal shift has no trigger."}], problem["evidence"])
+
+    def test_llm_payload_contract_rejects_missing_evidence(self) -> None:
+        with self.assertRaisesRegex(Exception, "llm_validation.schema.json"):
+            llm_payload_to_check(
+                {
+                    "problems": [
+                        {
+                            "code": "llm_timeline_gap",
+                            "message": "Missing causal bridge.",
+                            "area": "timeline_causality",
+                            "severity": "medium",
+                            "repair_hint": "Add the missing cause.",
+                        }
+                    ]
+                }
+            )
+
+    def test_llm_payload_contract_rejects_missing_area(self) -> None:
+        with self.assertRaisesRegex(Exception, "llm_validation.schema.json"):
+            llm_payload_to_check(
+                {
+                    "problems": [
+                        {
+                            "code": "llm_timeline_gap",
+                            "message": "Missing causal bridge.",
+                            "severity": "medium",
+                            "evidence": [{"kind": "timeline", "value": "Effect appears before cause."}],
+                            "repair_hint": "Add the missing cause.",
+                        }
+                    ]
+                }
+            )
+
+    def test_llm_validation_areas_match_story_level_contract(self) -> None:
+        self.assertEqual(
+            (
+                "complex_plot_logic",
+                "character_motivation_consistency",
+                "timeline_causality",
+                "setup_and_payoff",
+                "emotional_and_theme_drift",
+            ),
+            LLM_VALIDATION_AREAS,
+        )
 
 
 if __name__ == "__main__":

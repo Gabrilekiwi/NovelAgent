@@ -7,6 +7,12 @@ from core.director import ModelDirector
 from core.engine.executor import AgentExecutor, LoopExecutionError
 from core.engine.preflight import run_preflight
 from core.engine.report import build_run_report
+from core.runtime_paths import (
+    DEFAULT_CHAPTER_DIR,
+    DEFAULT_RUN_DIR,
+    DEFAULT_SNAPSHOT_PATH,
+    init_runtime_state,
+)
 from core.state.memory_writer import build_memory_writer
 
 
@@ -24,13 +30,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--snapshot",
-        default="data/snapshot.json",
+        default=str(DEFAULT_SNAPSHOT_PATH),
         help="Snapshot file path.",
     )
     parser.add_argument(
         "--memory",
         default=None,
-        help="Memory context file path. Defaults to NOVELAGENT_MEMORY_PATH or data/memory.json.",
+        help="Memory context file path. Defaults to NOVELAGENT_MEMORY_PATH or .tmp/runtime/notion_memory.json.",
     )
     parser.add_argument(
         "--memory-source",
@@ -40,13 +46,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--chapter-dir",
-        default="data/chapters",
+        default=str(DEFAULT_CHAPTER_DIR),
         help="Directory for persisted chapter markdown artifacts.",
     )
     parser.add_argument(
         "--run-dir",
-        default="data/runs",
+        default=str(DEFAULT_RUN_DIR),
         help="Directory for persisted run JSON records.",
+    )
+    parser.add_argument(
+        "--init-runtime",
+        action="store_true",
+        help="Initialize .tmp/runtime from committed example state and exit.",
+    )
+    parser.add_argument(
+        "--force-init-runtime",
+        action="store_true",
+        help="With --init-runtime, overwrite existing .tmp/runtime snapshot and memory files.",
     )
     parser.add_argument(
         "--memory-outbox",
@@ -68,6 +84,11 @@ def parse_args() -> argparse.Namespace:
         "--director-model",
         default=None,
         help="Use an OpenAI-backed Director with this model name instead of the offline rule Director.",
+    )
+    parser.add_argument(
+        "--llm-validator",
+        action="store_true",
+        help="Run the optional OpenAI-backed story-level validator after rule validation.",
     )
     parser.add_argument(
         "--steps",
@@ -131,6 +152,11 @@ def _positive_int(value: str) -> int:
 
 def main() -> None:
     args = parse_args()
+    if args.init_runtime:
+        result = init_runtime_state(overwrite=args.force_init_runtime)
+        print(format_init_runtime_summary(result))
+        raise SystemExit(0)
+
     if args.report_runs:
         report = build_run_report(run_dir=args.run_dir, limit=args.report_limit)
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -146,6 +172,7 @@ def main() -> None:
             dry_run=args.dry_run,
             require_claude=args.require_claude,
             director_model=args.director_model,
+            enable_llm_validator=args.llm_validator,
             memory_writeback=args.memory_writeback,
             memory_outbox=args.memory_outbox,
             notion_readback=args.notion_readback,
@@ -167,6 +194,7 @@ def main() -> None:
         chapter_dir=args.chapter_dir,
         dry_run=args.dry_run,
         director=ModelDirector(model=args.director_model) if args.director_model else None,
+        enable_llm_validator=args.llm_validator,
         memory_writer=build_memory_writer(
             mode=args.memory_writeback,
             outbox_path=args.memory_outbox,
@@ -244,6 +272,7 @@ def format_preflight_summary(result: dict) -> str:
         ("prompt_assets", "Prompts"),
         ("memory_writeback", "Memory writeback"),
         ("artifact_targets", "Artifacts"),
+        ("llm_validator", "LLM validator"),
         ("director", "Director"),
     ):
         check = _check_by_name(checks, name)
@@ -257,6 +286,24 @@ def format_preflight_summary(result: dict) -> str:
             lines.append(f"- {check.get('name')}: {message}")
         lines.append("Use --check-json for full diagnostics.")
 
+    return "\n".join(lines)
+
+
+def format_init_runtime_summary(result: dict) -> str:
+    lines = [
+        "Runtime initialized:",
+        f"- runtime_dir: {result.get('runtime_dir')}",
+        f"- snapshot: {result.get('snapshot_path')}",
+        f"- memory: {result.get('memory_path')}",
+        f"- run_dir: {result.get('run_dir')}",
+        f"- chapter_dir: {result.get('chapter_dir')}",
+    ]
+    copied = result.get("copied") if isinstance(result.get("copied"), list) else []
+    skipped = result.get("skipped") if isinstance(result.get("skipped"), list) else []
+    if copied:
+        lines.append(f"- copied: {', '.join(str(item.get('name')) for item in copied if isinstance(item, dict))}")
+    if skipped:
+        lines.append(f"- skipped_existing: {', '.join(str(item.get('name')) for item in skipped if isinstance(item, dict))}")
     return "\n".join(lines)
 
 
@@ -381,6 +428,14 @@ def _run_artifacts(run: dict) -> list[tuple[str, str]]:
             artifact = section.get("artifact")
             if isinstance(artifact, dict) and artifact.get("path"):
                 artifacts.append((label, str(artifact["path"])))
+    chapter = run.get("chapter")
+    pipeline = chapter.get("pipeline") if isinstance(chapter, dict) else None
+    pipeline_artifacts = pipeline.get("artifacts") if isinstance(pipeline, dict) else None
+    if isinstance(pipeline_artifacts, dict):
+        for label in ("plan", "merged_chapter", "validation_report", "repair_deltas"):
+            artifact = pipeline_artifacts.get(label)
+            if isinstance(artifact, dict) and artifact.get("path"):
+                artifacts.append((f"pipeline_{label}", str(artifact["path"])))
     return artifacts
 
 
@@ -523,6 +578,8 @@ def _summarize_check(name: str, details) -> str:
     if name == "director" and isinstance(details, dict):
         model = details.get("model")
         return f"{details.get('mode')} ({model})" if model else str(details.get("mode"))
+    if name == "llm_validator" and isinstance(details, dict):
+        return f"enabled={details.get('enabled')}"
     return str(details)
 
 

@@ -103,6 +103,7 @@ def build_run_record(
     snapshot_pack: str = "",
     snapshot_audit: dict[str, Any] | None = None,
     state_update_audit: dict[str, Any] | None = None,
+    chapter_pipeline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     chapter_index = int(decision["chapter_index"])
     problems = validation.get("problems", [])
@@ -133,9 +134,7 @@ def build_run_record(
         "workflow": workflow,
         "workflow_plan": _workflow_plan_summary(workflow_plan),
         "input_pack": _input_pack_summary(input_pack, input_pack_metadata),
-        "chapter": {
-            "chars": len(chapter),
-        },
+        "chapter": _chapter_summary(chapter, chapter_pipeline),
         "validation": {
             "ok": bool(validation.get("ok")),
             "problem_codes": [problem.get("code") for problem in problems],
@@ -185,6 +184,7 @@ def build_failed_run_record(
     director_trace: dict[str, Any] | None = None,
     snapshot_pack: str = "",
     snapshot_audit: dict[str, Any] | None = None,
+    chapter_pipeline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     chapter_index = int(decision["chapter_index"])
     validation_payload = validation or {
@@ -226,9 +226,7 @@ def build_failed_run_record(
         "workflow": workflow,
         "workflow_plan": _workflow_plan_summary(workflow_plan),
         "input_pack": _input_pack_summary(input_pack, input_pack_metadata),
-        "chapter": {
-            "chars": len(chapter),
-        },
+        "chapter": _chapter_summary(chapter, chapter_pipeline),
         "validation": {
             "ok": False,
             "problem_codes": [problem.get("code") for problem in problems],
@@ -466,6 +464,27 @@ def _input_pack_summary(input_pack: str, input_pack_metadata: dict[str, Any] | N
     return summary
 
 
+def _chapter_summary(chapter: str, chapter_pipeline: dict[str, Any] | None = None) -> dict[str, Any]:
+    summary = {
+        "chars": len(chapter),
+    }
+    if chapter_pipeline is not None:
+        summary["pipeline"] = _chapter_pipeline_summary(chapter_pipeline)
+    return summary
+
+
+def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any]:
+    pipeline = validate_schema(chapter_pipeline, "chapter_pipeline.schema.json")
+    return {
+        "chapter_index": pipeline.get("chapter_index"),
+        "scene_count": len(pipeline.get("scene_drafts", [])),
+        "plan_goal": (pipeline.get("plan") or {}).get("goal"),
+        "merged_chars": len(str(pipeline.get("merged_chapter") or "")),
+        "scene_spans": pipeline.get("scene_spans", []),
+        "stages": pipeline.get("stages", []),
+    }
+
+
 def _workflow_plan_summary(workflow_plan: dict[str, Any] | None) -> dict[str, Any] | None:
     if workflow_plan is None:
         return None
@@ -674,7 +693,7 @@ def _validation_coverage_summary(validation: dict[str, Any], decision: dict[str,
         executed_checks = list(requested_focus)
     skipped_checks = _known_validation_names(validation.get("skipped_checks"))
     if not skipped_checks and executed_checks:
-        skipped_checks = [name for name in _VALIDATION_NAMES if name not in executed_checks]
+        skipped_checks = [name for name in _RULE_VALIDATION_NAMES if name not in executed_checks]
     return {
         "requested_focus": requested_focus,
         "executed_checks": executed_checks,
@@ -682,7 +701,8 @@ def _validation_coverage_summary(validation: dict[str, Any], decision: dict[str,
     }
 
 
-_VALIDATION_NAMES = ["continuity", "spatial", "logic"]
+_RULE_VALIDATION_NAMES = ["continuity", "spatial", "logic"]
+_VALIDATION_NAMES = [*_RULE_VALIDATION_NAMES, "llm"]
 
 
 def _known_validation_names(raw_names: Any) -> list[str]:

@@ -10,6 +10,7 @@ from pathlib import Path
 import core.engine.preflight as preflight_module
 from core.engine.preflight import run_preflight
 from core.engine.run_record import build_run_record
+from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_MEMORY_OUTBOX, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 
 
 def _restore_env(name: str, value: str | None) -> None:
@@ -20,6 +21,18 @@ def _restore_env(name: str, value: str | None) -> None:
 
 
 class PreflightTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._claude_alias_env = {
+            "ANTHROPIC_AUTH_TOKEN": os.environ.get("ANTHROPIC_AUTH_TOKEN"),
+            "ANTHROPIC_MODEL": os.environ.get("ANTHROPIC_MODEL"),
+        }
+        os.environ["ANTHROPIC_AUTH_TOKEN"] = ""
+        os.environ["ANTHROPIC_MODEL"] = ""
+
+    def tearDown(self) -> None:
+        for name, value in self._claude_alias_env.items():
+            _restore_env(name, value)
+
     def _case_dir(self, name: str) -> Path:
         case_dir = Path.cwd() / ".tmp" / "test_preflight" / f"{name}_{uuid.uuid4().hex}"
         case_dir.mkdir(parents=True)
@@ -76,6 +89,15 @@ class PreflightTest(unittest.TestCase):
         self.assertTrue(execution["details"]["dry_run"])
         self.assertEqual([], execution["details"]["model_calls"])
         self.assertEqual(str(memory_path), execution["details"]["memory_path"])
+
+    def test_default_preflight_paths_use_local_runtime_dir(self) -> None:
+        result = run_preflight(dry_run=True)
+
+        self.assertTrue(result["ok"])
+        execution = [check for check in result["checks"] if check["name"] == "execution_mode"][0]
+        self.assertEqual(str(DEFAULT_SNAPSHOT_PATH), execution["details"]["snapshot_path"])
+        self.assertEqual(str(DEFAULT_RUN_DIR), execution["details"]["run_dir"])
+        self.assertEqual(str(DEFAULT_CHAPTER_DIR), execution["details"]["chapter_dir"])
 
     def test_preflight_reports_memory_source_mapping_summary(self) -> None:
         tmp_path = self._case_dir("memory_mappings")
@@ -136,6 +158,40 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual("notion-api", details["resolved_source"])
         self.assertEqual("auto_notion_configured", details["resolution_reason"])
         self.assertIsNone(details["resolved_path"])
+
+    def test_forced_notion_memory_source_requires_notion_config(self) -> None:
+        original_key = os.environ.get("NOTION_API_KEY")
+        original_database = os.environ.get("NOTION_DATABASE_ID")
+        original_novelagent_database = os.environ.get("NOVELAGENT_NOTION_DATABASE_ID")
+        os.environ["NOTION_API_KEY"] = ""
+        os.environ["NOTION_DATABASE_ID"] = ""
+        os.environ["NOVELAGENT_NOTION_DATABASE_ID"] = ""
+        tmp_path = self._case_dir("forced_notion_missing_config")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(
+            json.dumps({"chapter_index": 1, "world_state": {}, "characters": {}, "timeline": []}),
+            encoding="utf-8",
+        )
+
+        try:
+            result = run_preflight(
+                snapshot_path=snapshot_path,
+                memory_source="notion",
+                dry_run=True,
+            )
+        finally:
+            _restore_env("NOTION_API_KEY", original_key)
+            _restore_env("NOTION_DATABASE_ID", original_database)
+            _restore_env("NOVELAGENT_NOTION_DATABASE_ID", original_novelagent_database)
+
+        self.assertFalse(result["ok"])
+        memory_input = [check for check in result["checks"] if check["name"] == "memory_input"][0]
+        self.assertTrue(memory_input["ok"])
+        self.assertEqual("notion-api", memory_input["details"]["resolved_source"])
+        self.assertEqual("forced_notion", memory_input["details"]["resolution_reason"])
+        memory = [check for check in result["checks"] if check["name"] == "memory"][0]
+        self.assertFalse(memory["ok"])
+        self.assertIn("NOTION_DATABASE_ID", memory["error"])
 
     def test_preflight_reports_execution_mode_for_persisted_loop(self) -> None:
         tmp_path = self._case_dir("execution_mode")
@@ -595,6 +651,36 @@ class PreflightTest(unittest.TestCase):
         director = [check for check in result["checks"] if check["name"] == "director"][0]
         self.assertEqual("rule", director["details"]["mode"])
 
+    def test_dry_run_with_llm_validator_requires_openai_key(self) -> None:
+        original_key = os.environ.get("OPENAI_API_KEY")
+        os.environ["OPENAI_API_KEY"] = ""
+        tmp_path = self._case_dir("missing_llm_validator_openai")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(
+            json.dumps({"chapter_index": 1, "world_state": {}, "characters": {}, "timeline": []}),
+            encoding="utf-8",
+        )
+
+        try:
+            result = run_preflight(
+                snapshot_path=snapshot_path,
+                dry_run=True,
+                enable_llm_validator=True,
+            )
+        finally:
+            if original_key is None:
+                os.environ.pop("OPENAI_API_KEY", None)
+            else:
+                os.environ["OPENAI_API_KEY"] = original_key
+
+        self.assertFalse(result["ok"])
+        failed_names = {check["name"] for check in result["checks"] if not check["ok"]}
+        self.assertIn("env:OPENAI_API_KEY", failed_names)
+        execution = [check for check in result["checks"] if check["name"] == "execution_mode"][0]
+        self.assertIn("llm_validation_openai", execution["details"]["model_calls"])
+        llm_check = [check for check in result["checks"] if check["name"] == "llm_validator"][0]
+        self.assertTrue(llm_check["details"]["enabled"])
+
     def test_require_claude_checks_even_in_dry_run(self) -> None:
         original_key = os.environ.get("ANTHROPIC_API_KEY")
         original_model = os.environ.get("CLAUDE_MODEL")
@@ -830,7 +916,7 @@ class PreflightTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         writeback = [check for check in result["checks"] if check["name"] == "memory_writeback"][0]
         self.assertEqual("file", writeback["details"]["mode"])
-        self.assertEqual("data/memory_outbox.jsonl", writeback["details"]["path"])
+        self.assertEqual(str(DEFAULT_MEMORY_OUTBOX), writeback["details"]["path"])
 
     def test_notion_writeback_preflight_requires_notion_config(self) -> None:
         original_key = os.environ.get("NOTION_API_KEY")

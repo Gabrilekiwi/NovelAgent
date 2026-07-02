@@ -55,6 +55,7 @@ class AgentExecutorTest(unittest.TestCase):
 
         result = AgentExecutor(
             snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
             run_dir=tmp_path / "runs",
             chapter_dir=tmp_path / "chapters",
             dry_run=True,
@@ -162,6 +163,32 @@ class AgentExecutorTest(unittest.TestCase):
         artifact_path = Path(saved_run["run"]["chapter"]["artifact"]["path"])
         self.assertTrue(artifact_path.exists())
         self.assertIn("# Chapter 2", artifact_path.read_text(encoding="utf-8"))
+        pipeline = saved_run["run"]["chapter"]["pipeline"]
+        self.assertEqual(2, pipeline["chapter_index"])
+        self.assertEqual(3, pipeline["scene_count"])
+        self.assertGreater(pipeline["merged_chars"], 0)
+        self.assertEqual(3, len(pipeline["scene_spans"]))
+        self.assertEqual(0, pipeline["scene_spans"][0]["start_char"])
+        self.assertGreater(pipeline["scene_spans"][0]["end_char"], pipeline["scene_spans"][0]["start_char"])
+        self.assertEqual(
+            ["plan_chapter", "generate_scenes", "merge_scenes", "validate", "repair", "commit"],
+            [stage["name"] for stage in pipeline["stages"]],
+        )
+        stage_statuses = {stage["name"]: stage["status"] for stage in pipeline["stages"]}
+        self.assertEqual("completed", stage_statuses["plan_chapter"])
+        self.assertEqual("completed", stage_statuses["generate_scenes"])
+        self.assertEqual("completed", stage_statuses["merge_scenes"])
+        self.assertEqual("completed", stage_statuses["validate"])
+        self.assertEqual("skipped", stage_statuses["repair"])
+        self.assertEqual("completed", stage_statuses["commit"])
+        pipeline_artifacts = pipeline["artifacts"]
+        for name in ("plan", "merged_chapter", "validation_report", "repair_deltas"):
+            with self.subTest(pipeline_artifact=name):
+                self.assertTrue(Path(pipeline_artifacts[name]["path"]).exists())
+        self.assertEqual(3, len(pipeline_artifacts["scene_drafts"]))
+        for scene_artifact in pipeline_artifacts["scene_drafts"]:
+            self.assertTrue(Path(scene_artifact["path"]).exists())
+            self.assertIn("Merged Span", Path(scene_artifact["path"]).read_text(encoding="utf-8"))
 
     def test_analyzer_failure_persists_failed_run_diagnostics(self) -> None:
         tmp_path = self._case_dir("analyzer_failure")

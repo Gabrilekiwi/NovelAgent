@@ -30,6 +30,7 @@ class SmokeScriptTest(unittest.TestCase):
         self.assertIn("Smoke v1: OK", completed.stdout)
         self.assertTrue((work_dir / "snapshot.json").exists())
         self.assertTrue((work_dir / "memory_outbox.jsonl").exists())
+        self.assertTrue((work_dir / "provider_smoke_missing_config" / "provider_smoke_report.json").exists())
         self.assertEqual(1, len(list((work_dir / "runs").glob("chapter_*.json"))))
         self.assertEqual(1, len(list((work_dir / "chapters").glob("chapter_*.md"))))
 

@@ -513,6 +513,32 @@ class SchemaContractTest(unittest.TestCase):
                 "state_update_audit.schema.json",
             )
 
+    def test_chapter_pipeline_schema_tracks_generation_validation_repair_and_commit(self) -> None:
+        pipeline = _chapter_pipeline_sample()
+
+        self.assertIs(pipeline, validate_schema(pipeline, "chapter_pipeline.schema.json"))
+
+    def test_chapter_pipeline_schema_rejects_unknown_stage_name(self) -> None:
+        pipeline = _chapter_pipeline_sample()
+        pipeline["stages"][0]["name"] = "draft_whole_chapter"
+
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(pipeline, "chapter_pipeline.schema.json")
+
+    def test_chapter_pipeline_schema_rejects_unknown_stage_status(self) -> None:
+        pipeline = _chapter_pipeline_sample()
+        pipeline["stages"][3]["status"] = "waiting"
+
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(pipeline, "chapter_pipeline.schema.json")
+
+    def test_chapter_pipeline_schema_rejects_missing_scene_spans(self) -> None:
+        pipeline = _chapter_pipeline_sample()
+        del pipeline["scene_spans"]
+
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(pipeline, "chapter_pipeline.schema.json")
+
     def test_trace_event_matches_schema(self) -> None:
         event = {
             "action": "repair_if_needed",
@@ -1196,6 +1222,39 @@ class SchemaContractTest(unittest.TestCase):
         self.assertEqual(["workflow_error"], record["validation"]["problem_codes"])
         self.assertEqual(["generate_chapter", "repair_if_needed", "validate"], record["decision"]["actions"])
         self.assertIs(record, validate_schema(record, "run_record.schema.json"))
+
+
+def _chapter_pipeline_sample() -> dict:
+    return {
+        "chapter_index": 2,
+        "plan": {
+            "goal": "Move the chapter through a clear conflict.",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "Open the crisis.",
+                    "required_beats": ["alarm", "choice"],
+                }
+            ],
+        },
+        "scene_drafts": [
+            {
+                "index": 1,
+                "goal": "Open the crisis.",
+                "text": "The alarm forced a hard choice.",
+            }
+        ],
+        "merged_chapter": "The alarm forced a hard choice.",
+        "scene_spans": [{"index": 1, "start_char": 0, "end_char": 31, "chars": 31}],
+        "stages": [
+            {"name": "plan_chapter", "status": "completed", "artifact_key": "plan"},
+            {"name": "generate_scenes", "status": "completed", "artifact_key": "scene_drafts"},
+            {"name": "merge_scenes", "status": "completed", "artifact_key": "merged_chapter"},
+            {"name": "validate", "status": "completed", "artifact_key": "validation_report", "summary": {"problem_count": 0}},
+            {"name": "repair", "status": "skipped", "artifact_key": "repair_deltas", "summary": {"attempt_count": 0}},
+            {"name": "commit", "status": "completed", "artifact_key": "chapter", "summary": {"committed": True}},
+        ],
+    }
 
 
 if __name__ == "__main__":

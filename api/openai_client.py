@@ -12,6 +12,7 @@ def chat_completion(
     model: str | None = None,
     temperature: float = 0.8,
     stage: str = "chat_completion",
+    max_tokens: int | None = None,
 ) -> str:
     config = get_config()
     api_key = config.openai_api_key
@@ -38,14 +39,21 @@ def chat_completion(
     client_kwargs: dict[str, Any] = {"api_key": api_key}
     if config.openai_base_url:
         client_kwargs["base_url"] = config.openai_base_url
+    if config.openai_timeout_seconds > 0:
+        client_kwargs["timeout"] = config.openai_timeout_seconds
+    client_kwargs["max_retries"] = config.openai_max_retries
 
     try:
+        resolved_max_tokens = max_tokens if max_tokens is not None else config.openai_max_output_tokens
+        request_kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if resolved_max_tokens > 0:
+            request_kwargs["max_tokens"] = resolved_max_tokens
         client = OpenAI(**client_kwargs)
-        response = client.chat.completions.create(
-            model=resolved_model,
-            messages=messages,
-            temperature=temperature,
-        )
+        response = client.chat.completions.create(**request_kwargs)
     except Exception as exc:  # noqa: BLE001 - preserve provider failure context.
         raise ModelCallError(
             f"OpenAI chat completion failed: {exc}",
