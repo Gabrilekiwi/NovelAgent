@@ -14,6 +14,8 @@ class MemoryError(ValueError):
 
 ALLOWED_MEMORY_TYPES = {
     "world_state",
+    "story_state",
+    "spatial_state",
     "location",
     "character",
     "constraint",

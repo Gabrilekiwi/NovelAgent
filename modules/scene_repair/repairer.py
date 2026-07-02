@@ -127,7 +127,7 @@ def _insert_opening_bridge(text: str, step: dict[str, Any], steps: list[dict[str
     parameters = _parameters(step)
     bridge = str(parameters.get("bridge", "")).strip()
     location = str(parameters.get("location", "")).strip()
-    bridge_text = bridge or f"The chapter continues directly from {location}."
+    bridge_text = _bridge_sentence(bridge, location)
     return _prepend_sentence(text, bridge_text)
 
 
@@ -136,7 +136,10 @@ def _rewrite_spatial_transition(text: str, step: dict[str, Any], steps: list[dic
     actual = str(_parameters(step).get("actual", "")).strip()
     if not expected or not actual:
         return text
-    return _prepend_sentence(text, f"From {expected}, the scene follows the immediate route into {actual} before anything else changes.")
+    return _prepend_sentence(
+        text,
+        f"From {expected}, the movement into {actual} happens in view, with the last scene's pressure still driving every step.",
+    )
 
 
 def _anchor_last_scene_state(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
@@ -145,7 +148,9 @@ def _anchor_last_scene_state(text: str, step: dict[str, Any], steps: list[dict[s
     parts = [part for part in (location, character) if part]
     if not parts:
         return text
-    return _prepend_sentence(text, f"The opening remains anchored to the last scene state: {', '.join(parts)}.")
+    if location:
+        return _prepend_sentence(text, f"At {location}, {character or 'the group'} is still dealing with the last scene's immediate fallout.")
+    return _prepend_sentence(text, f"{character} is still dealing with the last scene's immediate fallout.")
 
 
 def _repair_character_position(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
@@ -156,7 +161,7 @@ def _repair_character_position(text: str, step: dict[str, Any], steps: list[dict
     if not expected:
         return text
     suffix = f" before any move toward {actual}" if actual else ""
-    return f"{text}\n\n{character} is first grounded at {expected}{suffix}, resolving the position conflict."
+    return f"{text}\n\n{character} starts at {expected}{suffix}, so the next movement follows from a clear position."
 
 
 def _add_transition_event(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
@@ -164,7 +169,7 @@ def _add_transition_event(text: str, step: dict[str, Any], steps: list[dict[str,
     actual = str(_parameters(step).get("actual", "")).strip()
     if not expected or not actual:
         return text
-    return f"{text}\n\nA clear transition event moves the scene from {expected} to {actual} along an unblocked route."
+    return f"{text}\n\nThe route from {expected} to {actual} becomes explicit before the scene commits to the new space."
 
 
 def _flag_unknown_location(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
@@ -221,6 +226,18 @@ def _prepend_sentence(text: str, sentence: str) -> str:
     if sentence[-1] not in ".!?":
         sentence = f"{sentence}."
     return f"{sentence}\n\n{text}" if text else sentence
+
+
+def _bridge_sentence(bridge: str, location: str) -> str:
+    if bridge:
+        cleaned = bridge.strip()
+        if ":" in cleaned:
+            prefix, detail = cleaned.split(":", 1)
+            detail = detail.strip()
+            if detail:
+                return f"From {location or prefix.strip()}, {detail[0].lower()}{detail[1:]}"
+        return cleaned
+    return f"From {location}, the next moment carries the last scene's consequence forward" if location else ""
 
 
 def _parameters(step: dict[str, Any]) -> dict[str, Any]:

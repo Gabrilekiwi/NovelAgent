@@ -32,12 +32,23 @@ class PromptAssetTest(unittest.TestCase):
 
     def test_input_pack_uses_clean_generation_instructions(self) -> None:
         input_pack = build_input_pack(
-            {"chapter_index": 2, "world_state": {}, "characters": {}, "timeline": []},
+            {
+                "chapter_index": 2,
+                "world_state": {},
+                "story_state": {"last_scene_location": "shelter", "required_opening_bridge": "Continue from shelter"},
+                "spatial_state": {"spaces": {"shelter": {}}, "connections": []},
+                "characters": {},
+                "timeline": [],
+            },
             {"goal": "continue", "validation_focus": ["logic"]},
             {"source": "test", "status": "ready", "items": []},
         )
 
         self.assertIn("You are NovelAgent's chapter generation module.", input_pack)
+        self.assertIn("# Story State", input_pack)
+        self.assertIn("# Spatial State", input_pack)
+        self.assertIn('"last_scene_location": "shelter"', input_pack)
+        self.assertIn('"spaces"', input_pack)
         self.assertIn("# Requirements", input_pack)
         self.assertIn("Return only chapter prose", input_pack)
         self.assertNotIn("\ufffd", input_pack)
@@ -46,6 +57,20 @@ class PromptAssetTest(unittest.TestCase):
         snapshot = {
                 "chapter_index": 2,
                 "world_state": {"locations": {"shelter": {"risk": "rising"}}},
+                "story_state": {
+                    "last_chapter_ending": "The alarm rose.",
+                    "last_scene_location": "shelter",
+                    "last_scene_characters": ["Mira"],
+                    "open_threads": ["Keep serum visible."],
+                    "required_opening_bridge": "Continue from shelter",
+                },
+                "spatial_state": {
+                    "spaces": {"shelter": {"risk": "rising"}},
+                    "connections": [{"from": "shelter", "to": "sealed gate"}],
+                    "character_positions": {"Mira": "shelter"},
+                    "blocked_paths": [],
+                    "last_transition": {},
+                },
                 "characters": {},
                 "timeline": [],
                 "constraints": [{"rule": "Keep serum visible."}],
@@ -127,6 +152,8 @@ class PromptAssetTest(unittest.TestCase):
         self.assertIn('"skipped_checks"', input_pack)
         self.assertIn('"continuity"', input_pack)
         self.assertIn("Keep serum visible.", input_pack)
+        self.assertIn("# Story State", input_pack)
+        self.assertIn("# Spatial State", input_pack)
         self.assertNotIn("do not duplicate this payload", input_pack)
 
         metadata = build_input_pack_metadata(input_pack, snapshot, decision, memory)
@@ -135,6 +162,11 @@ class PromptAssetTest(unittest.TestCase):
         self.assertEqual(len(input_pack), metadata["chars"])
         self.assertEqual(1, metadata["memory_index"]["indexed_item_count"])
         self.assertEqual(1, metadata["memory_index"]["source_mapping_count"])
+        self.assertEqual(["last_chapter_ending", "last_scene_characters", "last_scene_location", "open_threads", "required_opening_bridge"], metadata["snapshot"]["story_state_keys"])
+        self.assertEqual(1, metadata["snapshot"]["open_thread_count"])
+        self.assertEqual(1, metadata["snapshot"]["space_count"])
+        self.assertEqual(1, metadata["snapshot"]["connection_count"])
+        self.assertEqual(1, metadata["snapshot"]["character_position_count"])
         self.assertTrue(metadata["memory_index"]["last_run_present"])
         self.assertIn("recovery_context", metadata["sections"])
         self.assertTrue(metadata["recovery_context"]["available"])

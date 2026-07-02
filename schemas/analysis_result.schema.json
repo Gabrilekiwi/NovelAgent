@@ -69,6 +69,68 @@
         "type": "string"
       }
     },
+    "story_state": {
+      "type": "object",
+      "required": [
+        "last_chapter_ending",
+        "last_scene_location",
+        "last_scene_characters",
+        "open_threads",
+        "required_opening_bridge"
+      ],
+      "properties": {
+        "last_chapter_ending": {
+          "type": "string"
+        },
+        "last_scene_location": {
+          "type": "string"
+        },
+        "last_scene_characters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "open_threads": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_opening_bridge": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "spatial_state": {
+      "type": "object",
+      "required": [
+        "spaces",
+        "connections",
+        "character_positions",
+        "blocked_paths",
+        "last_transition"
+      ],
+      "properties": {
+        "spaces": {
+          "type": "object"
+        },
+        "connections": {
+          "type": "array"
+        },
+        "character_positions": {
+          "type": "object"
+        },
+        "blocked_paths": {
+          "type": "array"
+        },
+        "last_transition": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
     "conflicts": {
       "type": "array",
       "items": {

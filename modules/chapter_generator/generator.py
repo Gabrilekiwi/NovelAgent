@@ -7,7 +7,7 @@ from api.openai_client import chat_completion
 
 _PROMPT_PATH = Path("prompts/chapter_prompt.md")
 _DRY_RUN_CHAPTER = (
-    "The first alarm sounded just as the shelter lights dimmed. The protagonist stood before the sealed gate "
+    "Continue from shelter, the first alarm sounded just as the shelter lights dimmed. The protagonist stood before the sealed gate "
     "and saw that the route once marked safe had been cut off by a new infection zone. She had to choose "
     "between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict."
 )

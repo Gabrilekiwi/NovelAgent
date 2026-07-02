@@ -66,13 +66,17 @@ def analyze_chapter(chapter_text: str, validation: dict[str, Any] | None = None)
     sentences = _split_sentences(text)
     conflicts = _detect_conflicts(text)
     world_changes = _extract_world_changes(text)
+    character_changes = _extract_character_changes(sentences)
+    new_locations = _extract_candidate_locations(text)
 
     analysis = {
         "summary": _build_summary(sentences),
         "events": _extract_events(sentences),
-        "character_changes": _extract_character_changes(sentences),
+        "character_changes": character_changes,
         "world_changes": world_changes,
-        "new_locations": _extract_candidate_locations(text),
+        "new_locations": new_locations,
+        "story_state": _extract_story_state(sentences, character_changes, new_locations),
+        "spatial_state": _extract_spatial_state(character_changes, new_locations),
         "conflicts": conflicts,
         "validation_ok": bool((validation or {}).get("ok")),
     }
@@ -120,6 +124,45 @@ def _extract_candidate_locations(text: str) -> list[str]:
     return [term for term in _KNOWN_LOCATION_TERMS if term in lowered or term in text]
 
 
+def _extract_story_state(
+    sentences: list[str],
+    character_changes: list[dict[str, str]],
+    new_locations: list[str],
+) -> dict[str, Any]:
+    last_sentence = sentences[-1][:500] if sentences else ""
+    last_location = _last_known_location(character_changes, new_locations)
+    characters = _unique_strings(change.get("name") for change in character_changes)
+    return {
+        "last_chapter_ending": last_sentence,
+        "last_scene_location": last_location,
+        "last_scene_characters": characters,
+        "open_threads": _open_threads(last_sentence),
+        "required_opening_bridge": _required_opening_bridge(last_location, last_sentence),
+    }
+
+
+def _extract_spatial_state(
+    character_changes: list[dict[str, str]],
+    new_locations: list[str],
+) -> dict[str, Any]:
+    spaces = {location: {"source": "chapter_analysis"} for location in new_locations}
+    character_positions = {
+        change["name"]: change["current_location"]
+        for change in character_changes
+        if change.get("name") and change.get("current_location")
+    }
+    last_transition = {}
+    if new_locations:
+        last_transition = {"to": new_locations[-1], "source": "chapter_analysis"}
+    return {
+        "spaces": spaces,
+        "connections": [],
+        "character_positions": character_positions,
+        "blocked_paths": [],
+        "last_transition": last_transition,
+    }
+
+
 def _extract_character_changes(sentences: list[str]) -> list[dict[str, str]]:
     changes: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -156,6 +199,37 @@ def _extract_character_changes(sentences: list[str]) -> list[dict[str, str]]:
             )
 
     return changes[:10]
+
+
+def _last_known_location(character_changes: list[dict[str, str]], new_locations: list[str]) -> str:
+    for change in reversed(character_changes):
+        location = change.get("current_location")
+        if location:
+            return location
+    return new_locations[-1] if new_locations else ""
+
+
+def _required_opening_bridge(last_location: str, last_sentence: str) -> str:
+    if not last_location:
+        return ""
+    return f"Continue from {last_location}: {last_sentence[:240]}" if last_sentence else f"Continue from {last_location}"
+
+
+def _open_threads(last_sentence: str) -> list[str]:
+    lowered = last_sentence.lower()
+    threads: list[str] = []
+    if any(term in lowered for term in ("choice", "choose", "conflict", "danger", "threat", "cost", "infection", "serum", "rescue")):
+        threads.append(last_sentence[:240])
+    return threads
+
+
+def _unique_strings(values: Any) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result
 
 
 def _append_unique(

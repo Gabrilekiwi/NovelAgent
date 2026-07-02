@@ -30,6 +30,45 @@
       "current_goal": "protect the serum sample"
     }
   },
+  "story_state": {
+    "last_chapter_ending": "She had to choose between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict.",
+    "last_scene_location": "shelter",
+    "last_scene_characters": [
+      "protagonist"
+    ],
+    "open_threads": [
+      "The serum choice is unresolved.",
+      "The safe route has been cut off by a new infection zone."
+    ],
+    "required_opening_bridge": "Continue from shelter: resolve the immediate consequence of the serum choice before moving toward the sealed gate."
+  },
+  "spatial_state": {
+    "spaces": {
+      "shelter": {
+        "risk": "rising",
+        "status": "unstable"
+      },
+      "sealed gate": {
+        "status": "blocked"
+      }
+    },
+    "connections": [
+      {
+        "from": "shelter",
+        "to": "sealed gate",
+        "bidirectional": true
+      }
+    ],
+    "character_positions": {
+      "protagonist": "shelter"
+    },
+    "blocked_paths": [],
+    "last_transition": {
+      "from": "shelter",
+      "to": "sealed gate",
+      "reason": "safe route cut off"
+    }
+  },
   "timeline": [
     {
       "events": [],

@@ -982,6 +982,8 @@
                   "chapter_index",
                   "director_decision",
                   "world_state",
+                  "story_state",
+                  "spatial_state",
                   "characters",
                   "timeline",
                   "constraints",
@@ -1056,6 +1058,34 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "story_state_keys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "spatial_state_keys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "open_thread_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "space_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "connection_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "character_position_count": {
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "character_count": {
                   "type": "integer",
@@ -1607,6 +1637,12 @@
           "type": "integer",
           "minimum": 0
         },
+        "story_state_updated": {
+          "type": "boolean"
+        },
+        "spatial_state_updated": {
+          "type": "boolean"
+        },
         "memory_update_count": {
           "type": "integer",
           "minimum": 0
@@ -1623,6 +1659,8 @@
               "type": {
                 "enum": [
                   "world_state",
+                  "story_state",
+                  "spatial_state",
                   "location",
                   "character",
                   "constraint",
@@ -2187,6 +2225,38 @@
               },
               "additionalProperties": false
             }
+          },
+          "bridge_precheck": {
+            "type": "object",
+            "required": [
+              "name",
+              "ok",
+              "problems",
+              "problem_codes"
+            ],
+            "properties": {
+              "name": {
+                "enum": [
+                  "pre_validate_bridge"
+                ]
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "problem_codes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
           },
           "model_call": {
             "type": "object",

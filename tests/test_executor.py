@@ -190,6 +190,105 @@ class AgentExecutorTest(unittest.TestCase):
             self.assertTrue(Path(scene_artifact["path"]).exists())
             self.assertIn("Merged Span", Path(scene_artifact["path"]).read_text(encoding="utf-8"))
 
+
+    def test_pre_validate_bridge_records_real_precheck(self) -> None:
+        tmp_path = self._case_dir("pre_validate_bridge")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    "chapter_index": 2,
+                    "world_state": {"locations": {}},
+                    "characters": {},
+                    "timeline": [],
+                    "story_state": {
+                        "last_chapter_ending": "Mira was trapped in the train car.",
+                        "last_scene_location": "train car",
+                        "last_scene_characters": ["Mira"],
+                        "open_threads": [],
+                        "required_opening_bridge": "Continue from train car",
+                    },
+                    "spatial_state": {
+                        "spaces": {"train car": {}, "connector passage": {}},
+                        "connections": [{"from": "train car", "to": "connector passage"}],
+                        "character_positions": {"Mira": "train car"},
+                        "blocked_paths": [],
+                        "last_transition": {},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            dry_run=True,
+            director=lambda snapshot, memory: {
+                "chapter_index": 2,
+                "goal": "continue_existing_arc",
+                "actions": ["build_snapshot", "pre_validate_bridge", "generate_chapter", "validate"],
+                "validation_focus": ["spatial", "logic"],
+                "max_repair_attempts": 0,
+                "notes": [],
+            },
+            generator=lambda input_pack: (
+                "Continue from train car through the connector passage, Mira faced danger and conflict over the serum choice."
+            ),
+        ).run_once(persist=False)
+
+        precheck_event = [event for event in result["run"]["trace"] if event["action"] == "pre_validate_bridge"][0]
+        self.assertTrue(precheck_event["bridge_precheck"]["ok"])
+        self.assertEqual([], precheck_event["bridge_precheck"]["problem_codes"])
+
+    def test_pre_validate_bridge_fails_before_generation_when_bridge_missing(self) -> None:
+        tmp_path = self._case_dir("pre_validate_bridge_missing")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    "chapter_index": 2,
+                    "world_state": {"locations": {"train car": {}}},
+                    "characters": {},
+                    "timeline": [],
+                    "story_state": {
+                        "last_chapter_ending": "Mira was trapped in the train car.",
+                        "last_scene_location": "train car",
+                        "last_scene_characters": ["Mira"],
+                        "open_threads": [],
+                        "required_opening_bridge": "",
+                    },
+                    "spatial_state": {
+                        "spaces": {"train car": {}},
+                        "connections": [],
+                        "character_positions": {"Mira": "train car"},
+                        "blocked_paths": [],
+                        "last_transition": {},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        calls: list[str] = []
+
+        with self.assertRaisesRegex(ValueError, "missing_opening_bridge"):
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                run_dir=tmp_path / "runs",
+                dry_run=True,
+                director=lambda snapshot, memory: {
+                    "chapter_index": 2,
+                    "goal": "continue_existing_arc",
+                    "actions": ["build_snapshot", "pre_validate_bridge", "generate_chapter", "validate"],
+                    "validation_focus": ["spatial"],
+                    "max_repair_attempts": 0,
+                    "notes": [],
+                },
+                generator=lambda input_pack: calls.append(input_pack) or "unreached",
+            ).run_once(persist=False)
+
+        self.assertEqual([], calls)
+
     def test_analyzer_failure_persists_failed_run_diagnostics(self) -> None:
         tmp_path = self._case_dir("analyzer_failure")
         snapshot_path = tmp_path / "snapshot.json"

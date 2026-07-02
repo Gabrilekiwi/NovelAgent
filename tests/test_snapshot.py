@@ -20,6 +20,8 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual({}, snapshot["characters"])
         self.assertEqual([], snapshot["timeline"])
         self.assertEqual({}, snapshot["world_state"]["locations"])
+        self.assertEqual("", snapshot["story_state"]["last_chapter_ending"])
+        self.assertEqual({}, snapshot["spatial_state"]["spaces"])
 
     def test_rejects_non_object_locations(self) -> None:
         with self.assertRaises(SnapshotError):
@@ -56,6 +58,20 @@ class SnapshotTest(unittest.TestCase):
                 "events": [{"text": "The alarm sounded."}],
                 "world_changes": [{"type": "infection_pressure"}],
                 "new_locations": ["shelter"],
+                "story_state": {
+                    "last_chapter_ending": "Mira was injured at the shelter.",
+                    "last_scene_location": "shelter",
+                    "last_scene_characters": ["Mira"],
+                    "open_threads": ["Mira needs help."],
+                    "required_opening_bridge": "Continue from shelter",
+                },
+                "spatial_state": {
+                    "spaces": {"shelter": {"risk": "rising"}},
+                    "connections": [{"from": "shelter", "to": "sealed gate"}],
+                    "character_positions": {"Mira": "shelter"},
+                    "blocked_paths": [],
+                    "last_transition": {"from": "shelter", "to": "sealed gate"},
+                },
                 "character_changes": [
                     {
                         "name": "Mira",
@@ -78,7 +94,14 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual("injured", updated["characters"]["Mira"]["status"])
         self.assertEqual("shelter", updated["characters"]["Mira"]["current_location"])
         self.assertEqual(2, updated["characters"]["Mira"]["last_seen_chapter"])
+        self.assertEqual("Mira was injured at the shelter.", updated["story_state"]["last_chapter_ending"])
+        self.assertEqual("shelter", updated["story_state"]["last_scene_location"])
+        self.assertEqual("Mira", updated["story_state"]["last_scene_characters"][0])
+        self.assertEqual("shelter", updated["spatial_state"]["character_positions"]["Mira"])
+        self.assertEqual(2, updated["spatial_state"]["spaces"]["shelter"]["last_seen_chapter"])
         self.assertEqual("A shelter conflict escalates.", updated["timeline"][0]["summary"])
+        self.assertEqual("shelter", updated["timeline"][0]["story_state"]["last_scene_location"])
+        self.assertEqual("shelter", updated["timeline"][0]["spatial_state"]["character_positions"]["Mira"])
         self.assertEqual("chapter_2:timeline_event:chapter_2_summary", updated["timeline"][0]["memory_id"])
         self.assertEqual(
             [
@@ -157,6 +180,8 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(1, audit["character_update_count"])
         self.assertEqual(1, audit["location_update_count"])
         self.assertEqual(1, audit["world_change_count"])
+        self.assertFalse(audit["story_state_updated"])
+        self.assertFalse(audit["spatial_state_updated"])
         self.assertEqual(3, audit["memory_update_count"])
         self.assertIn({"type": "timeline_event", "count": 1}, audit["memory_update_types"])
         self.assertIs(audit, validate_schema(audit, "state_update_audit.schema.json"))

@@ -21,6 +21,9 @@ class AnalyzerTest(unittest.TestCase):
         self.assertIn("infection_pressure", {item["type"] for item in analysis["world_changes"]})
         self.assertIn("serum_focus", {item["type"] for item in analysis["world_changes"]})
         self.assertIn("shelter", analysis["new_locations"])
+        self.assertEqual("corridor", analysis["story_state"]["last_scene_location"])
+        self.assertIn("infection zone", analysis["story_state"]["open_threads"][0])
+        self.assertIn("corridor", analysis["spatial_state"]["spaces"])
         self.assertTrue(analysis["validation_ok"])
         self.assertIs(analysis, validate_schema(analysis, "analysis_result.schema.json"))
 

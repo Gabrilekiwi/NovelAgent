@@ -46,6 +46,12 @@ def build_snapshot_state_with_audit(
         if item_type == "world_state":
             _merge_world_state(state, data)
             _record_applied(audit, index, item, "merge_world_state", "world_state", source_mapping)
+        elif item_type == "story_state":
+            _merge_story_state(state, data)
+            _record_applied(audit, index, item, "merge_story_state", "story_state", source_mapping)
+        elif item_type == "spatial_state":
+            _merge_spatial_state(state, data)
+            _record_applied(audit, index, item, "merge_spatial_state", "spatial_state", source_mapping)
         elif item_type == "location":
             name = _apply_named_item(state["world_state"].setdefault("locations", {}), item, data)
             if name:
@@ -86,10 +92,36 @@ def build_snapshot_state_with_audit(
 def _merge_world_state(snapshot: dict[str, Any], data: dict[str, Any]) -> None:
     world_state = snapshot.setdefault("world_state", {})
     for key, value in data.items():
-        if key == "locations" and isinstance(value, dict):
+        if key == "story_state" and isinstance(value, dict):
+            _merge_story_state(snapshot, value)
+        elif key == "spatial_state" and isinstance(value, dict):
+            _merge_spatial_state(snapshot, value)
+        elif key == "locations" and isinstance(value, dict):
             world_state.setdefault("locations", {}).update(value)
         else:
             world_state[key] = value
+
+
+def _merge_story_state(snapshot: dict[str, Any], data: dict[str, Any]) -> None:
+    story_state = snapshot.setdefault("story_state", {})
+    for key, value in data.items():
+        if key in {"last_scene_characters", "open_threads"} and isinstance(value, list):
+            story_state[key] = [str(item) for item in value if item]
+        elif key in {"last_chapter_ending", "last_scene_location", "required_opening_bridge"} and value is not None:
+            story_state[key] = str(value)
+        else:
+            story_state[key] = copy.deepcopy(value)
+
+
+def _merge_spatial_state(snapshot: dict[str, Any], data: dict[str, Any]) -> None:
+    spatial_state = snapshot.setdefault("spatial_state", {})
+    for key, value in data.items():
+        if key in {"spaces", "character_positions", "last_transition"} and isinstance(value, dict):
+            spatial_state.setdefault(key, {}).update(copy.deepcopy(value))
+        elif key in {"connections", "blocked_paths"} and isinstance(value, list):
+            spatial_state[key] = copy.deepcopy(value)
+        else:
+            spatial_state[key] = copy.deepcopy(value)
 
 
 def _apply_named_item(target: dict[str, Any], item: dict[str, Any], data: dict[str, Any]) -> str | None:

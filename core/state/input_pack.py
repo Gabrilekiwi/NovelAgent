@@ -12,6 +12,8 @@ INPUT_PACK_SECTIONS = [
     "chapter_index",
     "director_decision",
     "world_state",
+    "story_state",
+    "spatial_state",
     "characters",
     "timeline",
     "constraints",
@@ -61,6 +63,12 @@ def build_input_pack(
 # World State
 {_dump(snapshot.get("world_state", {}))}
 
+# Story State
+{_dump(snapshot.get("story_state", {}))}
+
+# Spatial State
+{_dump(snapshot.get("spatial_state", {}))}
+
 # Characters
 {_dump(snapshot.get("characters", {}))}
 
@@ -82,6 +90,7 @@ def build_input_pack(
 # Requirements
 - Advance the plot instead of restating setup.
 - Preserve character, location, and timeline continuity from the Snapshot.
+- Continue directly from Story State and explain Spatial State transitions before changing locations.
 - Introduce or intensify at least one concrete conflict.
 - Treat Snapshot and Memory Index as read-only runtime context.
 - If Recovery Context is available, address its problem codes and validation coverage gaps without contradicting the Snapshot.
@@ -108,6 +117,12 @@ def build_input_pack_metadata(
         },
         "snapshot": {
             "world_state_keys": sorted(str(key) for key in (snapshot.get("world_state") or {}).keys()),
+            "story_state_keys": sorted(str(key) for key in (snapshot.get("story_state") or {}).keys()),
+            "spatial_state_keys": sorted(str(key) for key in (snapshot.get("spatial_state") or {}).keys()),
+            "open_thread_count": len((snapshot.get("story_state") or {}).get("open_threads") or []),
+            "space_count": len((snapshot.get("spatial_state") or {}).get("spaces") or {}),
+            "connection_count": len((snapshot.get("spatial_state") or {}).get("connections") or []),
+            "character_position_count": len((snapshot.get("spatial_state") or {}).get("character_positions") or {}),
             "character_count": len(snapshot.get("characters") or {}),
             "timeline_count": len(snapshot.get("timeline") or []),
             "constraint_count": len(snapshot.get("constraints") or []),

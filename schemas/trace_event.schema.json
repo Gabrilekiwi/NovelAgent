@@ -539,6 +539,38 @@
         "additionalProperties": false
       }
     },
+    "bridge_precheck": {
+      "type": "object",
+      "required": [
+        "name",
+        "ok",
+        "problems",
+        "problem_codes"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "pre_validate_bridge"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "problem_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "model_call": {
       "type": "object",
       "required": [

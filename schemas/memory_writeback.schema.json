@@ -2,10 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MemoryWriteback",
   "type": "object",
-  "required": ["target", "written", "item_mappings", "verification"],
+  "required": [
+    "target",
+    "written",
+    "item_mappings",
+    "verification"
+  ],
   "properties": {
     "target": {
-      "enum": ["file", "notion", null]
+      "enum": [
+        "file",
+        "notion",
+        null
+      ]
     },
     "path": {
       "type": "string"
@@ -15,18 +24,31 @@
       "minimum": 0
     },
     "skipped": {
-      "type": ["integer", "boolean"],
+      "type": [
+        "integer",
+        "boolean"
+      ],
       "minimum": 0
     },
     "page_ids": {
       "type": "array",
       "items": {
-        "type": ["string", "null"]
+        "type": [
+          "string",
+          "null"
+        ]
       }
     },
     "gate": {
       "type": "object",
-      "required": ["allowed", "reasons", "pending_update_count", "pending_update_types", "repair_attempt_count", "final_repair_delta"],
+      "required": [
+        "allowed",
+        "reasons",
+        "pending_update_count",
+        "pending_update_types",
+        "repair_attempt_count",
+        "final_repair_delta"
+      ],
       "properties": {
         "allowed": {
           "type": "boolean"
@@ -51,10 +73,21 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["type", "count"],
+            "required": [
+              "type",
+              "count"
+            ],
             "properties": {
               "type": {
-                "enum": ["world_state", "location", "character", "constraint", "timeline_event"]
+                "enum": [
+                  "world_state",
+                  "story_state",
+                  "spatial_state",
+                  "location",
+                  "character",
+                  "constraint",
+                  "timeline_event"
+                ]
               },
               "count": {
                 "type": "integer",
@@ -69,7 +102,10 @@
           "minimum": 0
         },
         "final_repair_delta": {
-          "type": ["object", "null"]
+          "type": [
+            "object",
+            "null"
+          ]
         }
       },
       "additionalProperties": false
@@ -78,22 +114,45 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["memory_id", "type", "name", "target", "status"],
+        "required": [
+          "memory_id",
+          "type",
+          "name",
+          "target",
+          "status"
+        ],
         "properties": {
           "memory_id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "type": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "name": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "target": {
-            "enum": ["file", "notion", null]
+            "enum": [
+              "file",
+              "notion",
+              null
+            ]
           },
           "status": {
-            "enum": ["written", "skipped_duplicate", "skipped_no_writer"]
+            "enum": [
+              "written",
+              "skipped_duplicate",
+              "skipped_no_writer"
+            ]
           },
           "path": {
             "type": "string"
@@ -109,7 +168,10 @@
             "type": "string"
           },
           "database_id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "property_names": {
             "type": "array",
@@ -123,7 +185,10 @@
     },
     "verification": {
       "type": "object",
-      "required": ["status", "target"],
+      "required": [
+        "status",
+        "target"
+      ],
       "properties": {
         "status": {
           "enum": [
@@ -136,7 +201,11 @@
           ]
         },
         "target": {
-          "enum": ["file", "notion", null]
+          "enum": [
+            "file",
+            "notion",
+            null
+          ]
         },
         "checked": {
           "type": "integer",

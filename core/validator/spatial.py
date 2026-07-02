@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from core.validator.common import get_location_terms, get_locations
@@ -100,6 +101,70 @@ def validate_spatial(
     problems.extend(_validate_character_positions(snapshot, chapter_text, locations))
 
     return {"name": "spatial", "ok": not problems, "problems": problems}
+
+
+def validate_bridge_preconditions(snapshot: dict[str, Any]) -> dict[str, Any]:
+    story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
+    spatial_state = snapshot.get("spatial_state") if isinstance(snapshot.get("spatial_state"), dict) else {}
+    locations = get_locations(snapshot)
+    last_location = str(story_state.get("last_scene_location") or "").strip()
+    required_bridge = str(story_state.get("required_opening_bridge") or "").strip()
+    problems: list[dict[str, Any]] = []
+
+    if not last_location and required_bridge:
+        problems.append(
+            {
+                "code": "missing_last_scene_continuity",
+                "message": "required_opening_bridge is set but story_state.last_scene_location is missing.",
+                "location": "",
+                "character": "",
+                "evidence": [{"kind": "required_opening_bridge", "value": required_bridge}],
+            }
+        )
+    if last_location and last_location not in locations:
+        problems.append(
+            {
+                "code": "missing_last_scene_continuity",
+                "message": f"story_state.last_scene_location {last_location} is not a known space or location.",
+                "location": last_location,
+                "character": "",
+                "evidence": [{"kind": "last_scene_location", "value": last_location}],
+            }
+        )
+    if last_location and not required_bridge:
+        problems.append(
+            {
+                "code": "missing_opening_bridge",
+                "message": "story_state.last_scene_location is set but required_opening_bridge is missing.",
+                "bridge": "",
+                "location": last_location,
+                "evidence": [{"kind": "last_scene_location", "value": last_location}],
+            }
+        )
+    if last_location and isinstance(spatial_state.get("connections"), list) and spatial_state["connections"]:
+        has_available_route = any(
+            _connection_starts_at(connection, last_location)
+            and not _path_blocked(spatial_state.get("blocked_paths"), *_connection_endpoints(connection))
+            for connection in spatial_state["connections"]
+            if _connection_endpoints(connection) is not None
+        )
+        if not has_available_route:
+            problems.append(
+                {
+                    "code": "invalid_spatial_transition",
+                    "message": f"No unblocked connection leaves story_state.last_scene_location {last_location}.",
+                    "expected": last_location,
+                    "actual": "",
+                    "evidence": [{"kind": "last_scene_location", "value": last_location}],
+                }
+            )
+
+    return {
+        "name": "pre_validate_bridge",
+        "ok": not problems,
+        "problems": problems,
+        "problem_codes": [problem["code"] for problem in problems],
+    }
 
 
 def _validate_opening_bridge(
@@ -244,8 +309,34 @@ def _contains_bridge_signal(opening: str, bridge: str) -> bool:
     bridge_lower = bridge.lower()
     if bridge_lower and bridge_lower in lowered:
         return True
-    bridge_terms = [term for term in bridge_lower.replace("->", " ").replace("→", " ").split() if len(term) >= 2]
-    return bool(bridge_terms) and all(term in lowered for term in bridge_terms[:4])
+    opening_terms = set(_word_terms(lowered))
+    all_bridge_terms = _word_terms(bridge_lower)
+    bridge_terms = [term for term in all_bridge_terms if len(term) >= 3]
+    if not bridge_terms:
+        return False
+    source_terms = _bridge_source_terms(all_bridge_terms)
+    if source_terms and not all(term in opening_terms for term in source_terms):
+        return False
+    checked_terms = bridge_terms[:4]
+    matched = sum(1 for term in checked_terms if term in opening_terms)
+    return matched >= min(2, len(checked_terms))
+
+
+def _word_terms(value: str) -> list[str]:
+    return re.findall(r"[\w\u4e00-\u9fff]+", value.lower())
+
+
+def _bridge_source_terms(bridge_terms: list[str]) -> list[str]:
+    if "from" in bridge_terms:
+        index = bridge_terms.index("from")
+        candidates = [term for term in bridge_terms[index + 1:index + 3] if term not in {"the", "a", "an"}]
+        if len(candidates) > 1 and candidates[1] in {"show", "resolve", "continue", "explain", "move", "moving", "before"}:
+            return candidates[:1]
+        return candidates
+    if "to" in bridge_terms:
+        index = bridge_terms.index("to")
+        return [term for term in bridge_terms[max(0, index - 2):index] if term not in {"the", "a", "an"}]
+    return []
 
 
 def _has_transition_language(opening: str) -> bool:
@@ -338,3 +429,21 @@ def _parse_connection(value: Any) -> tuple[str, str, bool] | None:
     if not left or not right:
         return None
     return left, right, bidirectional
+
+
+def _connection_endpoints(value: Any) -> tuple[str, str] | None:
+    parsed = _parse_connection(value)
+    if parsed is None:
+        return None
+    return parsed[0], parsed[1]
+
+
+def _connection_starts_at(value: Any, source: str) -> bool:
+    parsed = _parse_connection(value)
+    if parsed is None:
+        return False
+    left, right, bidirectional = parsed
+    return left == source or (bidirectional and right == source)
+
+
+__all__ = ["validate_bridge_preconditions", "validate_spatial"]

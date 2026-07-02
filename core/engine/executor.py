@@ -39,6 +39,7 @@ from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
 from core.state.snapshot import build_state_update_audit, load_snapshot, save_snapshot, update_snapshot
 from core.validator import validate_chapter
+from core.validator.spatial import validate_bridge_preconditions
 from modules.chapter_generator import PIPELINE_STAGE_NAMES, generate_chapter, run_chapter_pipeline
 from modules.claude_polish import polish_chapter
 from modules.conflict_engine import analyze_chapter
@@ -625,12 +626,12 @@ class AgentExecutor:
         state["snapshot_ready"] = True
 
     def _handle_pre_validate_bridge(self, state: dict[str, Any], snapshot: dict[str, Any]) -> None:
-        story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
         state["snapshot_ready"] = True
-        state["bridge_prevalidated"] = bool(
-            str(story_state.get("required_opening_bridge") or "").strip()
-            or str(story_state.get("last_scene_location") or "").strip()
-        )
+        precheck = validate_bridge_preconditions(snapshot)
+        state["bridge_prevalidated"] = True
+        state["bridge_precheck"] = precheck
+        if not precheck["ok"]:
+            raise ValueError(f"bridge pre-validation failed: {', '.join(precheck['problem_codes'])}")
 
     def _handle_commit_snapshot(self, state: dict[str, Any]) -> None:
         if state["validation"] is None:
@@ -819,6 +820,20 @@ def _empty_analysis(validation: dict[str, Any]) -> dict[str, Any]:
         "character_changes": [],
         "world_changes": [],
         "new_locations": [],
+        "story_state": {
+            "last_chapter_ending": "",
+            "last_scene_location": "",
+            "last_scene_characters": [],
+            "open_threads": [],
+            "required_opening_bridge": "",
+        },
+        "spatial_state": {
+            "spaces": {},
+            "connections": [],
+            "character_positions": {},
+            "blocked_paths": [],
+            "last_transition": {},
+        },
         "conflicts": [],
         "validation_ok": bool(validation.get("ok")),
         "summary": "",
@@ -895,6 +910,8 @@ def _trace_event(
         event["repair_plan"] = state["repair_plan"]
     if isinstance(state.get("repair_deltas"), list) and state["repair_deltas"]:
         event["repair_deltas"] = state["repair_deltas"]
+    if isinstance(state.get("bridge_precheck"), dict):
+        event["bridge_precheck"] = state["bridge_precheck"]
     if action == "repair_if_needed":
         skip_reason = state.get("workflow_skip_reason")
         event["skipped"] = bool(skip_reason)
@@ -1027,7 +1044,7 @@ def _memory_update_type_counts(memory_updates: list[dict[str, Any]]) -> list[dic
             continue
         key = str(update_type)
         counts[key] = counts.get(key, 0) + 1
-    order = ["world_state", "location", "character", "constraint", "timeline_event"]
+    order = ["world_state", "story_state", "spatial_state", "location", "character", "constraint", "timeline_event"]
     return [{"type": item_type, "count": counts[item_type]} for item_type in order if item_type in counts]
 
 

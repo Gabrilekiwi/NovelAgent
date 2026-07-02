@@ -42,6 +42,12 @@
       "type": "integer",
       "minimum": 0
     },
+    "story_state_updated": {
+      "type": "boolean"
+    },
+    "spatial_state_updated": {
+      "type": "boolean"
+    },
     "memory_update_count": {
       "type": "integer",
       "minimum": 0
@@ -50,10 +56,21 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["type", "count"],
+        "required": [
+          "type",
+          "count"
+        ],
         "properties": {
           "type": {
-            "enum": ["world_state", "location", "character", "constraint", "timeline_event"]
+            "enum": [
+              "world_state",
+              "story_state",
+              "spatial_state",
+              "location",
+              "character",
+              "constraint",
+              "timeline_event"
+            ]
           },
           "count": {
             "type": "integer",

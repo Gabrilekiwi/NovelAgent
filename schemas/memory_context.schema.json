@@ -2,7 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MemoryContext",
   "type": "object",
-  "required": ["source", "status", "items"],
+  "required": [
+    "source",
+    "status",
+    "items"
+  ],
   "properties": {
     "source": {
       "type": "string",
@@ -19,20 +23,40 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["type", "data"],
+        "required": [
+          "type",
+          "data"
+        ],
         "properties": {
           "id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "type": {
             "type": "string",
-            "enum": ["world_state", "location", "character", "constraint", "timeline_event"]
+            "enum": [
+              "world_state",
+              "story_state",
+              "spatial_state",
+              "location",
+              "character",
+              "constraint",
+              "timeline_event"
+            ]
           },
           "name": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "source_run_id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "data": {
             "type": "object"
@@ -48,7 +72,12 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["index", "source", "type", "name"],
+        "required": [
+          "index",
+          "source",
+          "type",
+          "name"
+        ],
         "properties": {
           "index": {
             "type": "integer",
@@ -58,13 +87,22 @@
             "type": "string"
           },
           "memory_id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "type": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "name": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "path": {
             "type": "string"

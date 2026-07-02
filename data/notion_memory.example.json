@@ -10,6 +10,52 @@
     },
     {
       "properties": {
+        "Type": "story_state",
+        "Data": {
+          "last_chapter_ending": "The protagonist chose between rescue and the serum sample as open conflict broke out.",
+          "last_scene_location": "shelter",
+          "last_scene_characters": [
+            "protagonist"
+          ],
+          "open_threads": [
+            "The serum choice remains unresolved."
+          ],
+          "required_opening_bridge": "Continue from shelter: show the immediate consequence of the serum choice before moving."
+        }
+      }
+    },
+    {
+      "properties": {
+        "Type": "spatial_state",
+        "Data": {
+          "spaces": {
+            "shelter": {
+              "risk": "rising"
+            },
+            "sealed gate": {
+              "status": "blocked"
+            }
+          },
+          "connections": [
+            {
+              "from": "shelter",
+              "to": "sealed gate",
+              "bidirectional": true
+            }
+          ],
+          "character_positions": {
+            "protagonist": "shelter"
+          },
+          "blocked_paths": [],
+          "last_transition": {
+            "from": "shelter",
+            "to": "sealed gate"
+          }
+        }
+      }
+    },
+    {
+      "properties": {
         "Type": "location",
         "Name": "shelter",
         "Risk": "rising",

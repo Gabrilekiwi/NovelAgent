@@ -152,6 +152,8 @@ def update_snapshot(
     chapter_index = next_snapshot["chapter_index"]
     _apply_analysis_to_world_state(next_snapshot, analysis, chapter_index)
     _apply_analysis_to_characters(next_snapshot, analysis, chapter_index)
+    _apply_analysis_to_story_state(next_snapshot, analysis)
+    _apply_analysis_to_spatial_state(next_snapshot, analysis, chapter_index)
     next_snapshot["chapter_index"] += 1
     timeline_entry = {
         "chapter_index": chapter_index,
@@ -163,6 +165,8 @@ def update_snapshot(
         "character_changes": analysis.get("character_changes", []),
         "world_changes": analysis.get("world_changes", []),
         "new_locations": analysis.get("new_locations", []),
+        "story_state": analysis.get("story_state", {}),
+        "spatial_state": analysis.get("spatial_state", {}),
         "conflicts": analysis.get("conflicts", []),
         "validation": validation or {},
     }
@@ -192,6 +196,8 @@ def build_state_update_audit(
         "character_update_count": len(_named_character_changes(analysis.get("character_changes"))),
         "location_update_count": len(_named_locations(analysis.get("new_locations"))),
         "world_change_count": len(_objects(analysis.get("world_changes"))),
+        "story_state_updated": bool(analysis.get("story_state")),
+        "spatial_state_updated": bool(analysis.get("spatial_state")),
         "memory_update_count": len(updates),
         "memory_update_types": _memory_update_type_counts(updates),
         "analysis_validation_ok": bool(analysis.get("validation_ok")),
@@ -248,6 +254,40 @@ def _apply_analysis_to_characters(
         if isinstance(text, str) and text.strip():
             existing["last_observation"] = text.strip()
         existing["last_seen_chapter"] = chapter_index
+
+
+def _apply_analysis_to_story_state(snapshot: dict[str, Any], analysis: dict[str, Any]) -> None:
+    story_state = analysis.get("story_state")
+    if not isinstance(story_state, dict):
+        return
+    current = snapshot.setdefault("story_state", {})
+    for key, value in story_state.items():
+        if key in {"last_scene_characters", "open_threads"} and isinstance(value, list):
+            current[key] = [str(item) for item in value if item]
+        elif key in {"last_chapter_ending", "last_scene_location", "required_opening_bridge"}:
+            current[key] = str(value or "")
+        else:
+            current[key] = copy.deepcopy(value)
+
+
+def _apply_analysis_to_spatial_state(snapshot: dict[str, Any], analysis: dict[str, Any], chapter_index: int) -> None:
+    spatial_state = analysis.get("spatial_state")
+    if not isinstance(spatial_state, dict):
+        return
+    current = snapshot.setdefault("spatial_state", {})
+    for key, value in spatial_state.items():
+        if key == "spaces" and isinstance(value, dict):
+            spaces = current.setdefault("spaces", {})
+            for name, data in value.items():
+                space = copy.deepcopy(data) if isinstance(data, dict) else {"value": data}
+                space.setdefault("last_seen_chapter", chapter_index)
+                spaces[str(name)] = space
+        elif key in {"character_positions", "last_transition"} and isinstance(value, dict):
+            current.setdefault(key, {}).update(copy.deepcopy(value))
+        elif key in {"connections", "blocked_paths"} and isinstance(value, list):
+            current[key] = copy.deepcopy(value)
+        else:
+            current[key] = copy.deepcopy(value)
 
 
 def _normalize_story_state(value: Any) -> dict[str, Any]:

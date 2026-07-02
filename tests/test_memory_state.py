@@ -142,6 +142,26 @@ class MemoryStateTest(unittest.TestCase):
                 "status": "ready",
                 "items": [
                     {"type": "world_state", "data": {"infection_level": "high"}},
+                    {
+                        "type": "story_state",
+                        "data": {
+                            "last_chapter_ending": "The door opened.",
+                            "last_scene_location": "Safehouse",
+                            "last_scene_characters": ["Mira"],
+                            "open_threads": ["Find the serum."],
+                            "required_opening_bridge": "Continue from Safehouse",
+                        },
+                    },
+                    {
+                        "type": "spatial_state",
+                        "data": {
+                            "spaces": {"Safehouse": {"risk": "rising"}},
+                            "connections": [{"from": "Safehouse", "to": "Bridge"}],
+                            "character_positions": {"Mira": "Safehouse"},
+                            "blocked_paths": [],
+                            "last_transition": {"to": "Safehouse"},
+                        },
+                    },
                     {"type": "location", "name": "Safehouse", "data": {"risk": "rising"}},
                     {"type": "character", "name": "Mira", "data": {"role": "lead"}},
                     {"type": "constraint", "data": {"rule": "Keep the serum unresolved."}},
@@ -150,10 +170,49 @@ class MemoryStateTest(unittest.TestCase):
         )
 
         self.assertEqual("high", snapshot["world_state"]["infection_level"])
+        self.assertEqual("The door opened.", snapshot["story_state"]["last_chapter_ending"])
+        self.assertEqual("Safehouse", snapshot["story_state"]["last_scene_location"])
+        self.assertEqual("Mira", snapshot["story_state"]["last_scene_characters"][0])
+        self.assertEqual("Safehouse", snapshot["spatial_state"]["character_positions"]["Mira"])
+        self.assertEqual("Bridge", snapshot["spatial_state"]["connections"][0]["to"])
         self.assertEqual("rising", snapshot["world_state"]["locations"]["Safehouse"]["risk"])
         self.assertEqual("lead", snapshot["characters"]["Mira"]["role"])
         self.assertEqual(1, len(snapshot["constraints"]))
-        self.assertEqual(4, snapshot["memory"]["item_count"])
+        self.assertEqual(6, snapshot["memory"]["item_count"])
+
+    def test_build_snapshot_state_merges_story_and_spatial_from_world_state_memory(self) -> None:
+        snapshot = build_snapshot_state(
+            {"chapter_index": 1},
+            {
+                "source": "test",
+                "status": "ready",
+                "items": [
+                    {
+                        "type": "world_state",
+                        "data": {
+                            "story_state": {
+                                "last_chapter_ending": "The train stopped.",
+                                "last_scene_location": "train car",
+                                "last_scene_characters": ["Mira"],
+                                "open_threads": [],
+                                "required_opening_bridge": "Continue from train car",
+                            },
+                            "spatial_state": {
+                                "spaces": {"train car": {}, "connector passage": {}},
+                                "connections": [{"from": "train car", "to": "connector passage"}],
+                                "character_positions": {"Mira": "train car"},
+                                "blocked_paths": [],
+                                "last_transition": {},
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual("train car", snapshot["story_state"]["last_scene_location"])
+        self.assertIn("connector passage", snapshot["spatial_state"]["spaces"])
+        self.assertEqual("train car", snapshot["spatial_state"]["character_positions"]["Mira"])
 
     def test_build_snapshot_state_deduplicates_list_memory_items(self) -> None:
         snapshot = build_snapshot_state(

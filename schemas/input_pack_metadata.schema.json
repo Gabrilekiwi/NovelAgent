@@ -34,6 +34,8 @@
           "chapter_index",
           "director_decision",
           "world_state",
+          "story_state",
+          "spatial_state",
           "characters",
           "timeline",
           "constraints",
@@ -108,6 +110,34 @@
           "items": {
             "type": "string"
           }
+        },
+        "story_state_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "spatial_state_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "open_thread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "space_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "connection_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "character_position_count": {
+          "type": "integer",
+          "minimum": 0
         },
         "character_count": {
           "type": "integer",
