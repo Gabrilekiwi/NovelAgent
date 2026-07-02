@@ -1,8 +1,10 @@
 # NovelAgent
 
-NovelAgent is being rebuilt from an MVP single-pass generator into a v1.0 agent loop for long-form fiction generation.
+Version: 1.2
 
-Current v1.0 flow:
+NovelAgent is fixed at the v1.2 baseline: a schema-checked agent loop for long-form fiction generation with memory ingestion, directed execution, validation, repair, and auditable runtime artifacts.
+
+Current v1.2 flow:
 
 ```text
 Notion / Memory
@@ -64,7 +66,7 @@ Run tests:
 python -B -m unittest discover -s tests
 ```
 
-Run the local v1.0 smoke gate:
+Run the local v1.2 smoke gate:
 
 ```bash
 python -B scripts/smoke_v1.py
@@ -126,9 +128,9 @@ Run records, run reports, and loop session summaries expose compact validation a
 
 Local `.env` is ignored. Use `.env.example` for variable names and recommended default model names only; real configuration is still checked by preflight before live provider calls.
 
-Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.0 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.0 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.0 executor and orchestrator entrypoints.
+Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.2 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.2 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.2 executor and orchestrator entrypoints.
 
-The v1.0 directory layout and legacy wrapper boundaries are covered by `tests/test_repo_hygiene.py`, so structural drift is caught alongside runtime tests.
+The v1.2 project contract keeps the established directory layout and legacy wrapper boundaries covered by `tests/test_repo_hygiene.py`, so structural drift is caught alongside runtime tests.
 
 ## More Docs
 
