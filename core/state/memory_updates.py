@@ -79,6 +79,34 @@ def build_memory_updates(run: dict[str, Any], analysis: dict[str, Any]) -> list[
                 )
             )
 
+    story_state = analysis.get("story_state")
+    if isinstance(story_state, dict) and _has_content(story_state):
+        updates.append(
+            _memory_item(
+                "story_state",
+                f"chapter_{chapter_index}_story_state",
+                {
+                    "chapter_index": chapter_index,
+                    **story_state,
+                },
+                run_id,
+            )
+        )
+
+    spatial_state = analysis.get("spatial_state")
+    if isinstance(spatial_state, dict) and _has_content(spatial_state):
+        updates.append(
+            _memory_item(
+                "spatial_state",
+                f"chapter_{chapter_index}_spatial_state",
+                {
+                    "chapter_index": chapter_index,
+                    **spatial_state,
+                },
+                run_id,
+            )
+        )
+
     return updates
 
 
@@ -116,6 +144,17 @@ def _objects(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _has_content(value: dict[str, Any]) -> bool:
+    for item in value.values():
+        if isinstance(item, str) and item.strip():
+            return True
+        if isinstance(item, (list, dict)) and item:
+            return True
+        if item not in (None, "", [], {}):
+            return True
+    return False
 
 
 __all__ = ["build_memory_updates"]

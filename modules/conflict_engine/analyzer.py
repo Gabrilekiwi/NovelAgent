@@ -44,6 +44,8 @@ _KNOWN_LOCATION_TERMS = [
     "sealed gate",
     "corridor",
     "\u907f\u96be\u6240",
+    "A\u7ebf\u8f66\u53a2",
+    "\u5907\u7528\u901a\u9053",
 ]
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?\u3002\uff01\uff1f])\s*")
 _CHARACTER_STATUS_RE = re.compile(
@@ -57,6 +59,11 @@ _CHARACTER_LOCATION_RE = re.compile(
     r"(?:moved|retreated|returned|arrived|entered|stayed|remained)\s+"
     r"(?:to|at|in|inside)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9 _-]{1,60}?)(?=[.!?,;]|$)",
     re.IGNORECASE,
+)
+_CN_CHARACTER_LOCATION_RE = re.compile(
+    r"([\u4e00-\u9fff]{2,4})"
+    r"(?:\u5728|\u8fdb\u5165|\u8fdb\u4e86|\u9000\u5230|\u8fd4\u56de|\u62b5\u8fbe|\u7559\u5728|\u7559\u5230)"
+    r"([A-Za-z0-9\u4e00-\u9fff_-]{2,20})"
 )
 _NAME_STOPWORDS = {"a", "an", "he", "it", "she", "the", "they", "we"}
 
@@ -198,6 +205,21 @@ def _extract_character_changes(sentences: list[str]) -> list[dict[str, str]]:
                 },
             )
 
+        for match in _CN_CHARACTER_LOCATION_RE.finditer(sentence):
+            name = _clean_name(match.group(1))
+            location = _clean_location(match.group(2))
+            if not name or not location:
+                continue
+            _append_unique(
+                changes,
+                seen,
+                {
+                    "name": name,
+                    "current_location": location,
+                    "text": sentence[:300],
+                },
+            )
+
     return changes[:10]
 
 
@@ -256,10 +278,11 @@ def _clean_name(value: str) -> str:
 
 
 def _clean_location(value: str) -> str:
-    location = value.strip(" ,.;:!?").lower()
+    raw_location = value.strip(" ,.;:!?，。；：！？")
+    location = raw_location.lower()
     if location.startswith("the "):
         location = location[4:]
     for known_location in sorted(_KNOWN_LOCATION_TERMS, key=len, reverse=True):
-        if known_location in location:
+        if known_location.lower() in location or known_location in raw_location:
             return known_location
     return location

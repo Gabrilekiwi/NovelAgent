@@ -48,6 +48,37 @@ class AnalyzerTest(unittest.TestCase):
             analysis["character_changes"],
         )
 
+    def test_extracts_minimum_chinese_character_and_location_changes(self) -> None:
+        chapter = (
+            "林雪在A线车厢听见第二次警报。"
+            "她必须选择是否打开备用门。"
+            "林雪退到备用通道，车厢后的灯全部熄灭。"
+        )
+
+        analysis = analyze_chapter(chapter, {"ok": True})
+
+        self.assertIn("A线车厢", analysis["new_locations"])
+        self.assertIn("备用通道", analysis["new_locations"])
+        self.assertIn(
+            {
+                "name": "林雪",
+                "current_location": "A线车厢",
+                "text": "林雪在A线车厢听见第二次警报。",
+            },
+            analysis["character_changes"],
+        )
+        self.assertIn(
+            {
+                "name": "林雪",
+                "current_location": "备用通道",
+                "text": "林雪退到备用通道，车厢后的灯全部熄灭。",
+            },
+            analysis["character_changes"],
+        )
+        self.assertEqual("备用通道", analysis["story_state"]["last_scene_location"])
+        self.assertEqual("备用通道", analysis["spatial_state"]["character_positions"]["林雪"])
+        self.assertEqual({"to": "备用通道", "source": "chapter_analysis"}, analysis["spatial_state"]["last_transition"])
+
 
 if __name__ == "__main__":
     unittest.main()

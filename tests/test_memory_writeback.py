@@ -82,6 +82,36 @@ class MemoryWritebackTest(unittest.TestCase):
         self.assertEqual("shelter", updates[0]["data"]["current_location"])
         self.assertEqual("run-1", updates[0]["data"]["source_run_id"])
 
+    def test_memory_updates_includes_story_and_spatial_state(self) -> None:
+        updates = build_memory_updates(
+            {"id": "run-1", "chapter_index": 3},
+            {
+                "story_state": {
+                    "last_chapter_ending": "Mira reached the connector passage.",
+                    "last_scene_location": "connector passage",
+                    "last_scene_characters": ["Mira"],
+                    "open_threads": ["The sealed gate remains blocked."],
+                    "required_opening_bridge": "Continue from connector passage.",
+                },
+                "spatial_state": {
+                    "spaces": {"connector passage": {"source": "chapter_analysis"}},
+                    "connections": [{"from": "train car", "to": "connector passage"}],
+                    "character_positions": {"Mira": "connector passage"},
+                    "blocked_paths": [],
+                    "last_transition": {"from": "train car", "to": "connector passage"},
+                },
+            },
+        )
+
+        self.assertEqual(["story_state", "spatial_state"], [item["type"] for item in updates])
+        self.assertEqual("chapter_3:story_state:chapter_3_story_state", updates[0]["id"])
+        self.assertEqual("connector passage", updates[0]["data"]["last_scene_location"])
+        self.assertEqual(["Mira"], updates[0]["data"]["last_scene_characters"])
+        self.assertEqual("chapter_3:spatial_state:chapter_3_spatial_state", updates[1]["id"])
+        self.assertEqual("connector passage", updates[1]["data"]["character_positions"]["Mira"])
+        self.assertEqual("run-1", updates[0]["data"]["source_run_id"])
+        self.assertEqual("run-1", updates[1]["data"]["source_run_id"])
+
     def test_file_memory_writer_appends_jsonl(self) -> None:
         tmp_path = self._case_dir("file_writer")
         outbox = tmp_path / "memory_outbox.jsonl"
