@@ -14,6 +14,20 @@ DEFAULT_SNAPSHOT: dict[str, Any] = {
     "world_state": {"locations": {}},
     "characters": {},
     "timeline": [],
+    "story_state": {
+        "last_chapter_ending": "",
+        "last_scene_location": "",
+        "last_scene_characters": [],
+        "open_threads": [],
+        "required_opening_bridge": "",
+    },
+    "spatial_state": {
+        "spaces": {},
+        "connections": [],
+        "character_positions": {},
+        "blocked_paths": [],
+        "last_transition": {},
+    },
 }
 
 
@@ -44,6 +58,8 @@ def normalize_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
 
     if data.get("timeline") is None:
         data["timeline"] = []
+    data["story_state"] = _normalize_story_state(data.get("story_state"))
+    data["spatial_state"] = _normalize_spatial_state(data.get("spatial_state"))
     validate_snapshot(data)
     return data
 
@@ -76,6 +92,32 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         for index, entry in enumerate(timeline):
             if not isinstance(entry, dict):
                 errors.append(f"timeline[{index}] must be an object")
+
+    story_state = snapshot.get("story_state")
+    if not isinstance(story_state, dict):
+        errors.append("story_state must be an object")
+    else:
+        for field in ("last_chapter_ending", "last_scene_location", "required_opening_bridge"):
+            if not isinstance(story_state.get(field), str):
+                errors.append(f"story_state.{field} must be a string")
+        for field in ("last_scene_characters", "open_threads"):
+            if not isinstance(story_state.get(field), list):
+                errors.append(f"story_state.{field} must be a list")
+
+    spatial_state = snapshot.get("spatial_state")
+    if not isinstance(spatial_state, dict):
+        errors.append("spatial_state must be an object")
+    else:
+        if not isinstance(spatial_state.get("spaces"), dict):
+            errors.append("spatial_state.spaces must be an object")
+        if not isinstance(spatial_state.get("connections"), list):
+            errors.append("spatial_state.connections must be a list")
+        if not isinstance(spatial_state.get("character_positions"), dict):
+            errors.append("spatial_state.character_positions must be an object")
+        if not isinstance(spatial_state.get("blocked_paths"), list):
+            errors.append("spatial_state.blocked_paths must be a list")
+        if not isinstance(spatial_state.get("last_transition"), dict):
+            errors.append("spatial_state.last_transition must be an object")
 
     if errors:
         raise SnapshotError("; ".join(errors))
@@ -206,6 +248,35 @@ def _apply_analysis_to_characters(
         if isinstance(text, str) and text.strip():
             existing["last_observation"] = text.strip()
         existing["last_seen_chapter"] = chapter_index
+
+
+def _normalize_story_state(value: Any) -> dict[str, Any]:
+    base = copy.deepcopy(DEFAULT_SNAPSHOT["story_state"])
+    if isinstance(value, dict):
+        base.update(copy.deepcopy(value))
+    for field in ("last_chapter_ending", "last_scene_location", "required_opening_bridge"):
+        base[field] = str(base.get(field) or "")
+    for field in ("last_scene_characters", "open_threads"):
+        raw_items = base.get(field)
+        base[field] = [str(item) for item in raw_items if item] if isinstance(raw_items, list) else []
+    return base
+
+
+def _normalize_spatial_state(value: Any) -> dict[str, Any]:
+    base = copy.deepcopy(DEFAULT_SNAPSHOT["spatial_state"])
+    if isinstance(value, dict):
+        base.update(copy.deepcopy(value))
+    if not isinstance(base.get("spaces"), dict):
+        base["spaces"] = {}
+    if not isinstance(base.get("connections"), list):
+        base["connections"] = []
+    if not isinstance(base.get("character_positions"), dict):
+        base["character_positions"] = {}
+    if not isinstance(base.get("blocked_paths"), list):
+        base["blocked_paths"] = []
+    if not isinstance(base.get("last_transition"), dict):
+        base["last_transition"] = {}
+    return base
 
 
 def _objects(value: Any) -> list[dict[str, Any]]:

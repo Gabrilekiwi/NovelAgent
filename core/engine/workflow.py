@@ -8,6 +8,24 @@ from core.schema import SchemaValidationError, validate_schema
 DEFAULT_ACTIONS = ["generate_chapter", "polish", "validate", "repair_if_needed"]
 REQUIRED_ACTIONS = {"generate_chapter", "validate"}
 ACTION_METADATA = {
+    "build_snapshot": {
+        "requires": [],
+        "produces": ["snapshot"],
+        "purpose": "Confirm the runtime snapshot state prepared before Director execution.",
+        "mode": "required",
+        "skippable": False,
+        "skip_condition": None,
+        "failure_policy": "fail_run",
+    },
+    "pre_validate_bridge": {
+        "requires": ["snapshot"],
+        "produces": ["bridge_validation"],
+        "purpose": "Prepare last-scene bridge expectations before chapter generation.",
+        "mode": "required",
+        "skippable": False,
+        "skip_condition": None,
+        "failure_policy": "fail_run",
+    },
     "generate_chapter": {
         "requires": [],
         "produces": ["chapter"],
@@ -42,6 +60,15 @@ ACTION_METADATA = {
         "mode": "conditional",
         "skippable": True,
         "skip_condition": "Runs only when validation is not ok and max_repair_attempts is greater than 0.",
+        "failure_policy": "fail_run",
+    },
+    "commit_snapshot": {
+        "requires": ["chapter", "validation"],
+        "produces": ["snapshot"],
+        "purpose": "Mark the workflow commit boundary; the executor applies snapshot writes after successful validation.",
+        "mode": "conditional",
+        "skippable": True,
+        "skip_condition": "The executor commits only after validation succeeds.",
         "failure_policy": "fail_run",
     },
 }
@@ -128,11 +155,17 @@ def validate_workflow(workflow: list[str]) -> list[str]:
             errors.append(f"duplicate action: {action}")
         seen.add(action)
 
-        if action in {"polish", "validate", "repair_if_needed"} and "generate_chapter" not in seen:
+        if action == "pre_validate_bridge" and "build_snapshot" not in seen:
+            errors.append("pre_validate_bridge requires build_snapshot before it")
+        if action in {"polish", "validate", "repair_if_needed", "commit_snapshot"} and "generate_chapter" not in seen:
             errors.append(f"{action} requires generate_chapter before it")
         if action == "repair_if_needed" and "validate" not in seen:
             errors.append("repair_if_needed requires validate before it")
-        if "validate" in seen and action not in {"validate", "repair_if_needed"} and index > workflow.index("validate"):
+        if action == "commit_snapshot" and "validate" not in seen:
+            errors.append("commit_snapshot requires validate before it")
+        if "generate_chapter" in seen and action in {"build_snapshot", "pre_validate_bridge"} and index > workflow.index("generate_chapter"):
+            errors.append(f"{action} cannot run after generate_chapter")
+        if "validate" in seen and action not in {"validate", "repair_if_needed", "commit_snapshot"} and index > workflow.index("validate"):
             errors.append(f"{action} cannot run after validate")
 
     missing_actions = sorted(REQUIRED_ACTIONS - seen)

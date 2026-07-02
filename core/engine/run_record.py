@@ -864,7 +864,15 @@ def _known_workflow_actions(raw_actions: Any) -> list[str]:
     return [str(action) for action in raw_actions if str(action) in _WORKFLOW_ACTIONS]
 
 
-_WORKFLOW_ACTIONS = {"generate_chapter", "polish", "validate", "repair_if_needed"}
+_WORKFLOW_ACTIONS = {
+    "build_snapshot",
+    "pre_validate_bridge",
+    "generate_chapter",
+    "polish",
+    "validate",
+    "repair_if_needed",
+    "commit_snapshot",
+}
 
 
 def load_latest_run_summary(run_dir: str | Path) -> dict[str, Any] | None:

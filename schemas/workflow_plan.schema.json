@@ -2,7 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WorkflowPlan",
   "type": "object",
-  "required": ["goal", "actions", "steps", "validation_focus", "max_repair_attempts", "recovery"],
+  "required": [
+    "goal",
+    "actions",
+    "steps",
+    "validation_focus",
+    "max_repair_attempts",
+    "recovery"
+  ],
   "properties": {
     "goal": {
       "type": "string"
@@ -11,7 +18,15 @@
       "type": "array",
       "minItems": 1,
       "items": {
-        "enum": ["generate_chapter", "polish", "validate", "repair_if_needed"]
+        "enum": [
+          "build_snapshot",
+          "pre_validate_bridge",
+          "generate_chapter",
+          "polish",
+          "validate",
+          "repair_if_needed",
+          "commit_snapshot"
+        ]
       }
     },
     "steps": {
@@ -36,19 +51,37 @@
             "minimum": 1
           },
           "action": {
-            "enum": ["generate_chapter", "polish", "validate", "repair_if_needed"]
+            "enum": [
+              "build_snapshot",
+              "pre_validate_bridge",
+              "generate_chapter",
+              "polish",
+              "validate",
+              "repair_if_needed",
+              "commit_snapshot"
+            ]
           },
           "requires": {
             "type": "array",
             "items": {
-              "enum": ["chapter", "validation"]
+              "enum": [
+                "snapshot",
+                "bridge_validation",
+                "chapter",
+                "validation"
+              ]
             }
           },
           "produces": {
             "type": "array",
             "minItems": 1,
             "items": {
-              "enum": ["chapter", "validation"]
+              "enum": [
+                "snapshot",
+                "bridge_validation",
+                "chapter",
+                "validation"
+              ]
             }
           },
           "purpose": {
@@ -56,16 +89,25 @@
             "minLength": 1
           },
           "mode": {
-            "enum": ["required", "optional", "conditional"]
+            "enum": [
+              "required",
+              "optional",
+              "conditional"
+            ]
           },
           "skippable": {
             "type": "boolean"
           },
           "skip_condition": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "failure_policy": {
-            "enum": ["fail_run"]
+            "enum": [
+              "fail_run"
+            ]
           }
         },
         "additionalProperties": false
@@ -74,7 +116,11 @@
     "validation_focus": {
       "type": "array",
       "items": {
-        "enum": ["continuity", "spatial", "logic"]
+        "enum": [
+          "continuity",
+          "spatial",
+          "logic"
+        ]
       }
     },
     "max_repair_attempts": {

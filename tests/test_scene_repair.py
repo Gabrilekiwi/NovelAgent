@@ -75,6 +75,42 @@ class SceneRepairTest(unittest.TestCase):
         self.assertEqual({"raw_problem": {}}, plan["steps"][0]["parameters"])
         self.assertIs(plan, validate_schema(plan, "repair_plan.schema.json"))
 
+    def test_build_repair_plan_registers_bridge_actions(self) -> None:
+        plan = build_repair_plan(
+            {
+                "ok": False,
+                "problems": [
+                    {
+                        "code": "missing_opening_bridge",
+                        "message": "Missing bridge.",
+                        "validator": "spatial",
+                        "severity": "high",
+                        "blocking": True,
+                        "repair_action": "insert_opening_bridge",
+                        "repair_parameters": {"bridge": "train car to connector passage", "location": "train car"},
+                        "evidence": [{"kind": "required_opening_bridge", "value": "train car to connector passage"}],
+                    },
+                    {
+                        "code": "invalid_spatial_transition",
+                        "message": "Invalid transition.",
+                        "validator": "spatial",
+                        "severity": "critical",
+                        "blocking": True,
+                        "repair_action": "add_transition_event",
+                        "repair_parameters": {"expected": "train car", "actual": "connector passage"},
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(["insert_opening_bridge", "add_transition_event"], plan["actions"])
+        self.assertEqual(
+            {"bridge": "train car to connector passage", "location": "train car"},
+            plan["steps"][0]["parameters"],
+        )
+        self.assertEqual({"expected": "train car", "actual": "connector passage"}, plan["steps"][1]["parameters"])
+        self.assertIs(plan, validate_schema(plan, "repair_plan.schema.json"))
+
     def test_build_repair_plan_records_budget_attempt_and_risk(self) -> None:
         plan = build_repair_plan(
             {
@@ -338,6 +374,74 @@ class SceneRepairTest(unittest.TestCase):
         )
 
         self.assertEqual(text, repaired)
+
+    def test_apply_repair_plan_inserts_opening_bridge_and_transition(self) -> None:
+        repaired = apply_repair_plan(
+            "The connector passage shook as the choice became dangerous.",
+            {
+                "problem_count": 2,
+                "blocking_problem_count": 2,
+                "warning_count": 0,
+                "severity_counts": [{"severity": "high", "count": 2}],
+                "risk_level": "high",
+                "repair_budget": 1,
+                "attempt": 1,
+                "deterministic_step_count": 2,
+                "manual_review_count": 0,
+                "actions": ["insert_opening_bridge", "rewrite_spatial_transition"],
+                "recovery": {
+                    "available": False,
+                    "source_run_id": None,
+                    "source_status": None,
+                    "source_problem_codes": [],
+                    "repeated_problem_codes": [],
+                    "unresolved_problem_codes": [],
+                    "new_problem_codes": [],
+                    "skipped_checks": [],
+                    "previous_repair_attempts": 0,
+                    "previous_repair_risk_level": None,
+                    "previous_manual_review_count": 0,
+                    "repair_stalled": False,
+                    "repair_introduced_new_problems": False,
+                    "repair_budget_exhausted": False,
+                    "failure_modes": [],
+                },
+                "steps": [
+                    {
+                        "index": 1,
+                        "code": "missing_opening_bridge",
+                        "message": "Missing bridge.",
+                        "validator": "spatial",
+                        "severity": "high",
+                        "blocking": True,
+                        "repair_hint": "Insert bridge.",
+                        "evidence": [],
+                        "action": "insert_opening_bridge",
+                        "priority": 55,
+                        "strategy": "Insert bridge.",
+                        "parameters": {"bridge": "train car to connector passage", "location": "train car"},
+                    },
+                    {
+                        "index": 2,
+                        "code": "unexplained_location_shift",
+                        "message": "Shift.",
+                        "validator": "spatial",
+                        "severity": "high",
+                        "blocking": True,
+                        "repair_hint": "Rewrite transition.",
+                        "evidence": [],
+                        "action": "rewrite_spatial_transition",
+                        "priority": 56,
+                        "strategy": "Rewrite transition.",
+                        "parameters": {"expected": "train car", "actual": "connector passage"},
+                    },
+                ],
+            },
+        )
+
+        self.assertIn("train car to connector passage", repaired)
+        self.assertIn("From train car", repaired)
+        self.assertLess(repaired.index("train car to connector passage"), repaired.index("The connector passage"))
 
 
 if __name__ == "__main__":

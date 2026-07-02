@@ -523,6 +523,9 @@ class AgentExecutor:
             "chapter": "",
             "chapter_pipeline": None,
             "chapter_index": int(decision.get("chapter_index") or 1),
+            "snapshot_ready": False,
+            "bridge_prevalidated": False,
+            "commit_snapshot_requested": False,
             "validation": None,
             "repair_attempts": 0,
             "repair_plan": None,
@@ -532,6 +535,8 @@ class AgentExecutor:
         trace: list[dict[str, Any]] = []
         planned_steps = _workflow_steps_by_action(workflow_plan)
         handlers = {
+            "build_snapshot": lambda: self._handle_build_snapshot(state),
+            "pre_validate_bridge": lambda: self._handle_pre_validate_bridge(state, snapshot),
             "generate_chapter": lambda: self._handle_generate(state, input_pack),
             "polish": lambda: self._handle_polish(state),
             "validate": lambda: self._handle_validate(state, snapshot, decision),
@@ -542,6 +547,7 @@ class AgentExecutor:
                 input_pack,
                 recovery_context,
             ),
+            "commit_snapshot": lambda: self._handle_commit_snapshot(state),
         }
 
         for action in workflow:
@@ -614,6 +620,22 @@ class AgentExecutor:
             state["chapter"] = str(pipeline["merged_chapter"])
             state["chapter_pipeline"] = pipeline
         state["validation"] = None
+
+    def _handle_build_snapshot(self, state: dict[str, Any]) -> None:
+        state["snapshot_ready"] = True
+
+    def _handle_pre_validate_bridge(self, state: dict[str, Any], snapshot: dict[str, Any]) -> None:
+        story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
+        state["snapshot_ready"] = True
+        state["bridge_prevalidated"] = bool(
+            str(story_state.get("required_opening_bridge") or "").strip()
+            or str(story_state.get("last_scene_location") or "").strip()
+        )
+
+    def _handle_commit_snapshot(self, state: dict[str, Any]) -> None:
+        if state["validation"] is None:
+            raise ValueError("commit_snapshot requires validation before commit")
+        state["commit_snapshot_requested"] = True
 
     def _handle_polish(self, state: dict[str, Any]) -> None:
         chapter = _require_chapter(state)
@@ -695,6 +717,8 @@ class AgentExecutor:
 
     def _model_trace_metadata(self, action: str, state: dict[str, Any]) -> dict[str, Any] | None:
         config = get_config()
+        if action in {"build_snapshot", "pre_validate_bridge", "commit_snapshot"}:
+            return None
         if action == "generate_chapter":
             if self.generator:
                 return _model_trace("chapter_generation", provider="injected", model=None, invocation="injected")

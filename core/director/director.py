@@ -7,7 +7,15 @@ from core.schema import SchemaValidationError, validate_schema
 
 
 REQUIRED_ACTIONS = {"generate_chapter", "validate"}
-ALLOWED_ACTIONS = {"generate_chapter", "polish", "validate", "repair_if_needed"}
+ALLOWED_ACTIONS = {
+    "build_snapshot",
+    "pre_validate_bridge",
+    "generate_chapter",
+    "polish",
+    "validate",
+    "repair_if_needed",
+    "commit_snapshot",
+}
 ALLOWED_VALIDATION_FOCUS = {"continuity", "spatial", "logic"}
 
 
@@ -105,6 +113,8 @@ def decide_next_step(
     validation_focus = ["continuity", "spatial", "logic"]
     goal = "continue_existing_arc" if timeline else "establish_story_baseline"
     actions = ["generate_chapter", "polish", "validate", "repair_if_needed"]
+    if _needs_bridge_workflow(snapshot):
+        actions = ["build_snapshot", "pre_validate_bridge", "generate_chapter", "polish", "validate", "repair_if_needed", "commit_snapshot"]
     snapshot_audit = (memory_context or {}).get("snapshot_builder_audit") if isinstance(memory_context, dict) else None
     skipped_reason_counts = _reason_counts((snapshot_audit or {}).get("skipped_reason_counts") if isinstance(snapshot_audit, dict) else None)
     skipped_severity_counts = _severity_counts(
@@ -133,6 +143,8 @@ def decide_next_step(
         max_repair_attempts = _recovery_repair_budget(blocking_problem_count, severity_counts)
         goal = "recover_from_failed_run" if last_run.get("status") == "failed" else "recover_from_rejected_run"
         actions = ["generate_chapter", "validate", "repair_if_needed"]
+        if _needs_bridge_workflow(snapshot):
+            actions = ["build_snapshot", "pre_validate_bridge", "generate_chapter", "validate", "repair_if_needed", "commit_snapshot"]
         notes.append(f"Previous run {last_run.get('status')} with problem codes: {', '.join(last_problem_codes) or 'unknown'}.")
         notes.append(
             "Previous validation blocking problems: "
@@ -205,6 +217,8 @@ def decide_next_step(
         max_repair_attempts = max(max_repair_attempts, 2)
         if "polish" in actions:
             actions = ["generate_chapter", "validate", "repair_if_needed"]
+            if _needs_bridge_workflow(snapshot):
+                actions = ["build_snapshot", "pre_validate_bridge", "generate_chapter", "validate", "repair_if_needed", "commit_snapshot"]
             goal = "resolve_memory_quality_risk"
             notes.append("Skip polish until memory quality risks are validated and scene repair can run first.")
         else:
@@ -229,6 +243,11 @@ def _focus_from_problem_codes(problem_codes: list[str]) -> list[str]:
         "no_known_location": "spatial",
         "character_unknown_location": "spatial",
         "character_location_not_mentioned": "spatial",
+        "missing_opening_bridge": "spatial",
+        "unexplained_location_shift": "spatial",
+        "invalid_spatial_transition": "spatial",
+        "missing_last_scene_continuity": "spatial",
+        "character_position_conflict": "spatial",
         "missing_conflict_marker": "logic",
         "chapter_too_short": "logic",
         "forbidden_constraint_term": "logic",
@@ -245,6 +264,17 @@ def _focus_from_problem_codes(problem_codes: list[str]) -> list[str]:
         if item not in focus:
             focus.append(item)
     return focus
+
+
+def _needs_bridge_workflow(snapshot: dict[str, Any]) -> bool:
+    story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
+    spatial_state = snapshot.get("spatial_state") if isinstance(snapshot.get("spatial_state"), dict) else {}
+    return bool(
+        str(story_state.get("required_opening_bridge") or "").strip()
+        or str(story_state.get("last_scene_location") or "").strip()
+        or spatial_state.get("connections")
+        or spatial_state.get("character_positions")
+    )
 
 
 def _int_value(value: Any, *, default: int) -> int:

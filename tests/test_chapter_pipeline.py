@@ -19,6 +19,16 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(1, len(pipeline["plan"]["scenes"]))
         self.assertEqual(1, len(pipeline["scene_drafts"]))
         self.assertEqual(1, len(pipeline["scene_spans"]))
+        self.assertEqual("opening_bridge", pipeline["plan"]["scenes"][0]["type"])
+        self.assertEqual("Continue directly from last_chapter_ending", pipeline["plan"]["scenes"][0]["goal"])
+        self.assertEqual(
+            [
+                "repeat last known location",
+                "show immediate consequence",
+                "explain transition before new scene",
+            ],
+            pipeline["plan"]["scenes"][0]["required_beats"],
+        )
         span = pipeline["scene_spans"][0]
         scene_text = pipeline["scene_drafts"][0]["text"]
         self.assertEqual(0, span["start_char"])

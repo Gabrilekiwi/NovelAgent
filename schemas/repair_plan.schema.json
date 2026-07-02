@@ -33,10 +33,18 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["severity", "count"],
+        "required": [
+          "severity",
+          "count"
+        ],
         "properties": {
           "severity": {
-            "enum": ["critical", "high", "medium", "low"]
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
           },
           "count": {
             "type": "integer",
@@ -47,15 +55,27 @@
       }
     },
     "risk_level": {
-      "enum": ["critical", "high", "medium", "low", "none"]
+      "enum": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ]
     },
     "repair_budget": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 0,
       "maximum": 5
     },
     "attempt": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 1
     },
     "deterministic_step_count": {
@@ -76,6 +96,11 @@
           "remove_forbidden_term",
           "add_required_term",
           "anchor_known_location",
+          "insert_opening_bridge",
+          "rewrite_spatial_transition",
+          "anchor_last_scene_state",
+          "repair_character_position",
+          "add_transition_event",
           "flag_unknown_location",
           "add_character_location",
           "rewrite_inactive_character_action",
@@ -108,10 +133,16 @@
           "type": "boolean"
         },
         "source_run_id": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "source_status": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "source_problem_codes": {
           "type": "array",
@@ -140,7 +171,11 @@
         "skipped_checks": {
           "type": "array",
           "items": {
-            "enum": ["continuity", "spatial", "logic"]
+            "enum": [
+              "continuity",
+              "spatial",
+              "logic"
+            ]
           }
         },
         "previous_repair_attempts": {
@@ -148,7 +183,14 @@
           "minimum": 0
         },
         "previous_repair_risk_level": {
-          "enum": ["critical", "high", "medium", "low", "none", null]
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "none",
+            null
+          ]
         },
         "previous_manual_review_count": {
           "type": "integer",
@@ -183,7 +225,19 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["index", "code", "message", "validator", "severity", "blocking", "repair_hint", "action", "priority", "strategy", "parameters"],
+        "required": [
+          "index",
+          "code",
+          "message",
+          "validator",
+          "severity",
+          "blocking",
+          "repair_hint",
+          "action",
+          "priority",
+          "strategy",
+          "parameters"
+        ],
         "properties": {
           "index": {
             "type": "integer",
@@ -200,7 +254,12 @@
             "type": "string"
           },
           "severity": {
-            "enum": ["critical", "high", "medium", "low"]
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
           },
           "blocking": {
             "type": "boolean"
@@ -212,7 +271,10 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["kind", "value"],
+              "required": [
+                "kind",
+                "value"
+              ],
               "properties": {
                 "kind": {
                   "type": "string",
@@ -234,6 +296,11 @@
               "remove_forbidden_term",
               "add_required_term",
               "anchor_known_location",
+              "insert_opening_bridge",
+              "rewrite_spatial_transition",
+              "anchor_last_scene_state",
+              "repair_character_position",
+              "add_transition_event",
               "flag_unknown_location",
               "add_character_location",
               "rewrite_inactive_character_action",
@@ -272,6 +339,9 @@
               },
               "raw_problem": {
                 "type": "object"
+              },
+              "bridge": {
+                "type": "string"
               }
             },
             "additionalProperties": false

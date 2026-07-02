@@ -46,6 +46,31 @@ REPAIR_ACTIONS = {
         "priority": 80,
         "strategy": "Mention the character with their current known location.",
     },
+    "missing_opening_bridge": {
+        "action": "insert_opening_bridge",
+        "priority": 55,
+        "strategy": "Insert a direct opening bridge from the previous chapter ending before any new scene movement.",
+    },
+    "unexplained_location_shift": {
+        "action": "rewrite_spatial_transition",
+        "priority": 56,
+        "strategy": "Rewrite the opening movement so the route from the last location to the new location is explicit.",
+    },
+    "invalid_spatial_transition": {
+        "action": "add_transition_event",
+        "priority": 57,
+        "strategy": "Add a transition event that explains a valid unblocked route between spaces.",
+    },
+    "missing_last_scene_continuity": {
+        "action": "anchor_last_scene_state",
+        "priority": 58,
+        "strategy": "Anchor the opening to the last scene location, characters, and immediate consequence.",
+    },
+    "character_position_conflict": {
+        "action": "repair_character_position",
+        "priority": 59,
+        "strategy": "Correct the character's position or add a valid transition before their action.",
+    },
     "inactive_character_action": {
         "action": "rewrite_inactive_character_action",
         "priority": 90,
@@ -65,6 +90,11 @@ PARAMETER_FIELDS = {
     "remove_forbidden_term": ("term",),
     "add_required_term": ("term",),
     "anchor_known_location": ("suggested_term",),
+    "insert_opening_bridge": ("bridge", "location"),
+    "rewrite_spatial_transition": ("expected", "actual"),
+    "anchor_last_scene_state": ("location", "character"),
+    "repair_character_position": ("character", "expected", "actual"),
+    "add_transition_event": ("expected", "actual"),
     "flag_unknown_location": ("character", "location"),
     "add_character_location": ("character", "location"),
     "rewrite_inactive_character_action": ("character",),

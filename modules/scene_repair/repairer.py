@@ -123,6 +123,50 @@ def _repair_known_location(text: str, step: dict[str, Any], steps: list[dict[str
     return f"{text}\n\nThe action remains anchored at {location}."
 
 
+def _insert_opening_bridge(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    parameters = _parameters(step)
+    bridge = str(parameters.get("bridge", "")).strip()
+    location = str(parameters.get("location", "")).strip()
+    bridge_text = bridge or f"The chapter continues directly from {location}."
+    return _prepend_sentence(text, bridge_text)
+
+
+def _rewrite_spatial_transition(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    expected = str(_parameters(step).get("expected", "")).strip()
+    actual = str(_parameters(step).get("actual", "")).strip()
+    if not expected or not actual:
+        return text
+    return _prepend_sentence(text, f"From {expected}, the scene follows the immediate route into {actual} before anything else changes.")
+
+
+def _anchor_last_scene_state(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    location = str(_parameters(step).get("location", "")).strip()
+    character = str(_parameters(step).get("character", "")).strip()
+    parts = [part for part in (location, character) if part]
+    if not parts:
+        return text
+    return _prepend_sentence(text, f"The opening remains anchored to the last scene state: {', '.join(parts)}.")
+
+
+def _repair_character_position(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    parameters = _parameters(step)
+    character = str(parameters.get("character", "The character")).strip()
+    expected = str(parameters.get("expected", "")).strip()
+    actual = str(parameters.get("actual", "")).strip()
+    if not expected:
+        return text
+    suffix = f" before any move toward {actual}" if actual else ""
+    return f"{text}\n\n{character} is first grounded at {expected}{suffix}, resolving the position conflict."
+
+
+def _add_transition_event(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    expected = str(_parameters(step).get("expected", "")).strip()
+    actual = str(_parameters(step).get("actual", "")).strip()
+    if not expected or not actual:
+        return text
+    return f"{text}\n\nA clear transition event moves the scene from {expected} to {actual} along an unblocked route."
+
+
 def _flag_unknown_location(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
     character = str(_parameters(step).get("character", "The scene")).strip()
     return f"{text}\n\n{character} avoids relying on an unknown offstage location; the movement stays spatially explicit."
@@ -170,6 +214,15 @@ def _manual_review(text: str, step: dict[str, Any], steps: list[dict[str, Any]])
     return text
 
 
+def _prepend_sentence(text: str, sentence: str) -> str:
+    sentence = sentence.strip()
+    if not sentence:
+        return text
+    if sentence[-1] not in ".!?":
+        sentence = f"{sentence}."
+    return f"{sentence}\n\n{text}" if text else sentence
+
+
 def _parameters(step: dict[str, Any]) -> dict[str, Any]:
     parameters = step.get("parameters")
     return parameters if isinstance(parameters, dict) else {}
@@ -193,6 +246,11 @@ REPAIR_STRATEGIES: dict[str, RepairStrategy] = {
     "remove_forbidden_term": _repair_forbidden_term,
     "add_required_term": _repair_required_term,
     "anchor_known_location": _repair_known_location,
+    "insert_opening_bridge": _insert_opening_bridge,
+    "rewrite_spatial_transition": _rewrite_spatial_transition,
+    "anchor_last_scene_state": _anchor_last_scene_state,
+    "repair_character_position": _repair_character_position,
+    "add_transition_event": _add_transition_event,
     "flag_unknown_location": _flag_unknown_location,
     "add_character_location": _repair_character_location,
     "rewrite_inactive_character_action": _repair_inactive_character_action,

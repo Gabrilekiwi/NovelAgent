@@ -47,6 +47,36 @@ PROBLEM_METADATA = {
         "repair_action": "add_character_location",
         "repair_hint": "Mention the character together with their current known location.",
     },
+    "missing_opening_bridge": {
+        "severity": "high",
+        "blocking": True,
+        "repair_action": "insert_opening_bridge",
+        "repair_hint": "Insert an opening bridge that directly continues the last chapter ending before moving scenes.",
+    },
+    "unexplained_location_shift": {
+        "severity": "high",
+        "blocking": True,
+        "repair_action": "rewrite_spatial_transition",
+        "repair_hint": "Explain the movement from the last scene location before introducing the new location.",
+    },
+    "invalid_spatial_transition": {
+        "severity": "critical",
+        "blocking": True,
+        "repair_action": "add_transition_event",
+        "repair_hint": "Add or correct a transition event that uses a valid unblocked spatial connection.",
+    },
+    "missing_last_scene_continuity": {
+        "severity": "high",
+        "blocking": True,
+        "repair_action": "anchor_last_scene_state",
+        "repair_hint": "Start from the last scene location, characters, and immediate consequence.",
+    },
+    "character_position_conflict": {
+        "severity": "high",
+        "blocking": True,
+        "repair_action": "repair_character_position",
+        "repair_hint": "Resolve the character's position conflict before continuing their action.",
+    },
     "chapter_too_short": {
         "severity": "medium",
         "blocking": True,
@@ -79,6 +109,11 @@ PROBLEM_PARAMETER_FIELDS = {
     "no_known_location": ("suggested_term",),
     "character_unknown_location": ("character", "location"),
     "character_location_not_mentioned": ("character", "location"),
+    "missing_opening_bridge": ("bridge", "location"),
+    "unexplained_location_shift": ("expected", "actual"),
+    "invalid_spatial_transition": ("expected", "actual"),
+    "missing_last_scene_continuity": ("location", "character"),
+    "character_position_conflict": ("character", "expected", "actual"),
     "forbidden_constraint_term": ("term",),
     "missing_required_constraint_term": ("term",),
 }
@@ -115,7 +150,13 @@ def get_constraints(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 def get_locations(snapshot: dict[str, Any]) -> dict[str, Any]:
     world_state = snapshot.get("world_state") or {}
     locations = world_state.get("locations") or {}
-    return locations if isinstance(locations, dict) else {}
+    normalized = dict(locations) if isinstance(locations, dict) else {}
+    spatial_state = snapshot.get("spatial_state") or {}
+    spaces = spatial_state.get("spaces") if isinstance(spatial_state, dict) else {}
+    if isinstance(spaces, dict):
+        for name, data in spaces.items():
+            normalized.setdefault(str(name), data)
+    return normalized
 
 
 def get_location_terms(name: str, data: Any) -> list[str]:

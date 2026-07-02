@@ -39,7 +39,11 @@
       "minimum": 0
     },
     "stopped_reason": {
-      "enum": ["max_steps", "rejected", "failed"]
+      "enum": [
+        "max_steps",
+        "rejected",
+        "failed"
+      ]
     },
     "persist": {
       "type": "boolean"
@@ -60,15 +64,24 @@
       "minimum": 0
     },
     "first_chapter_index": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 1
     },
     "last_chapter_index": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 1
     },
     "last_run_id": {
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "runs": {
       "type": "array",
@@ -87,7 +100,11 @@
             "type": "string"
           },
           "status": {
-            "enum": ["committed", "rejected", "failed"]
+            "enum": [
+              "committed",
+              "rejected",
+              "failed"
+            ]
           },
           "committed": {
             "type": "boolean"
@@ -99,14 +116,24 @@
           "problem_codes": {
             "type": "array",
             "items": {
-              "type": ["string", "null"]
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "problem_evidence": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["code", "validator", "severity", "blocking", "repair_action", "evidence"],
+              "required": [
+                "code",
+                "validator",
+                "severity",
+                "blocking",
+                "repair_action",
+                "evidence"
+              ],
               "properties": {
                 "code": {
                   "type": "string"
@@ -115,7 +142,12 @@
                   "type": "string"
                 },
                 "severity": {
-                  "enum": ["critical", "high", "medium", "low"]
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low"
+                  ]
                 },
                 "blocking": {
                   "type": "boolean"
@@ -128,6 +160,11 @@
                     "remove_forbidden_term",
                     "add_required_term",
                     "anchor_known_location",
+                    "insert_opening_bridge",
+                    "rewrite_spatial_transition",
+                    "anchor_last_scene_state",
+                    "repair_character_position",
+                    "add_transition_event",
                     "flag_unknown_location",
                     "add_character_location",
                     "rewrite_inactive_character_action",
@@ -139,7 +176,10 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "required": ["kind", "value"],
+                    "required": [
+                      "kind",
+                      "value"
+                    ],
                     "properties": {
                       "kind": {
                         "type": "string",
@@ -160,31 +200,62 @@
           "requested_focus": {
             "type": "array",
             "items": {
-              "enum": ["continuity", "spatial", "logic", "llm"]
+              "enum": [
+                "continuity",
+                "spatial",
+                "logic",
+                "llm"
+              ]
             }
           },
           "executed_checks": {
             "type": "array",
             "items": {
-              "enum": ["continuity", "spatial", "logic", "llm"]
+              "enum": [
+                "continuity",
+                "spatial",
+                "logic",
+                "llm"
+              ]
             }
           },
           "skipped_checks": {
             "type": "array",
             "items": {
-              "enum": ["continuity", "spatial", "logic", "llm"]
+              "enum": [
+                "continuity",
+                "spatial",
+                "logic",
+                "llm"
+              ]
             }
           },
           "workflow_actions": {
             "type": "array",
             "items": {
-              "enum": ["generate_chapter", "polish", "validate", "repair_if_needed"]
+              "enum": [
+                "build_snapshot",
+                "pre_validate_bridge",
+                "generate_chapter",
+                "polish",
+                "validate",
+                "repair_if_needed",
+                "commit_snapshot"
+              ]
             }
           },
           "trace_actions": {
             "type": "array",
             "items": {
-              "enum": ["generate_chapter", "polish", "validate", "repair_if_needed"]
+              "enum": [
+                "build_snapshot",
+                "pre_validate_bridge",
+                "generate_chapter",
+                "polish",
+                "validate",
+                "repair_if_needed",
+                "commit_snapshot"
+              ]
             }
           },
           "trace_plan_aligned": {
@@ -198,7 +269,12 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["code", "validator", "action", "evidence"],
+              "required": [
+                "code",
+                "validator",
+                "action",
+                "evidence"
+              ],
               "properties": {
                 "code": {
                   "type": "string"
@@ -214,6 +290,11 @@
                     "remove_forbidden_term",
                     "add_required_term",
                     "anchor_known_location",
+                    "insert_opening_bridge",
+                    "rewrite_spatial_transition",
+                    "anchor_last_scene_state",
+                    "repair_character_position",
+                    "add_transition_event",
                     "flag_unknown_location",
                     "add_character_location",
                     "rewrite_inactive_character_action",
@@ -225,7 +306,10 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "required": ["kind", "value"],
+                    "required": [
+                      "kind",
+                      "value"
+                    ],
                     "properties": {
                       "kind": {
                         "type": "string",
@@ -266,28 +350,50 @@
         ],
         "properties": {
           "run_id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "run_status": {
-            "enum": ["committed", "rejected", "failed"]
+            "enum": [
+              "committed",
+              "rejected",
+              "failed"
+            ]
           },
           "director_goal": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "source_run_id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "source_status": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "source_chapter_index": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1
           },
           "source_problem_codes": {
             "type": "array",
             "items": {
-              "type": ["string", "null"]
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "repair_stalled": {
@@ -297,8 +403,18 @@
             "type": "boolean"
           },
           "repair_risk_level": {
-            "type": ["string", "null"],
-            "enum": ["critical", "high", "medium", "low", "none", null]
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "none",
+              null
+            ]
           },
           "repair_budget_exhausted": {
             "type": "boolean"
@@ -312,7 +428,10 @@
     },
     "error": {
       "type": "object",
-      "required": ["type", "message"],
+      "required": [
+        "type",
+        "message"
+      ],
       "properties": {
         "type": {
           "type": "string"

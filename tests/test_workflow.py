@@ -80,6 +80,40 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(build_workflow(decision), build_dynamic_flow(decision))
         self.assertEqual(build_workflow_plan(decision), build_dynamic_flow_plan(decision))
 
+    def test_builds_extended_bridge_workflow_plan(self) -> None:
+        plan = build_workflow_plan(
+            {
+                "goal": "continue_existing_arc",
+                "actions": [
+                    "build_snapshot",
+                    "pre_validate_bridge",
+                    "generate_chapter",
+                    "validate",
+                    "repair_if_needed",
+                    "commit_snapshot",
+                ],
+                "validation_focus": ["spatial"],
+                "max_repair_attempts": 2,
+            }
+        )
+
+        self.assertEqual(
+            [
+                "build_snapshot",
+                "pre_validate_bridge",
+                "generate_chapter",
+                "validate",
+                "repair_if_needed",
+                "commit_snapshot",
+            ],
+            plan["actions"],
+        )
+        self.assertEqual(["snapshot"], plan["steps"][0]["produces"])
+        self.assertEqual(["snapshot"], plan["steps"][1]["requires"])
+        self.assertEqual(["bridge_validation"], plan["steps"][1]["produces"])
+        self.assertEqual("commit_snapshot", plan["steps"][-1]["action"])
+        self.assertIs(plan, validate_schema(plan, "workflow_plan.schema.json"))
+
     def test_rejects_repair_before_validate(self) -> None:
         with self.assertRaises(WorkflowError):
             build_workflow(

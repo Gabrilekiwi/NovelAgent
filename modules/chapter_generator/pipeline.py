@@ -68,8 +68,9 @@ def plan_chapter(input_pack: str, *, chapter_index: int, dry_run: bool = False) 
 
     prompt = (
         "Create a compact chapter plan as JSON only. "
-        "Schema: {\"goal\": string, \"scenes\": [{\"index\": int, \"goal\": string, "
-        "\"required_beats\": [string]}]}. Keep it to 2-4 scenes."
+        "Schema: {\"goal\": string, \"scenes\": [{\"index\": int, \"type\": string, \"goal\": string, "
+        "\"required_beats\": [string]}]}. Keep it to 2-4 scenes. "
+        "Scene 1 must be type opening_bridge and continue directly from the last chapter ending."
     )
     payload = chat_completion(
         [
@@ -141,10 +142,21 @@ def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
         beats = scene.get("required_beats")
         if not isinstance(beats, list) or not beats:
             beats = [str(scene.get("goal") or "Move the scene forward.")]
+        scene_type = str(scene.get("type") or "development")
+        goal = str(scene.get("goal") or f"Scene {index}")
+        if index == 1:
+            scene_type = "opening_bridge"
+            goal = "Continue directly from last_chapter_ending"
+            beats = [
+                "repeat last known location",
+                "show immediate consequence",
+                "explain transition before new scene",
+            ]
         normalized["scenes"].append(
             {
                 "index": int(scene.get("index") or index),
-                "goal": str(scene.get("goal") or f"Scene {index}"),
+                "type": scene_type,
+                "goal": goal,
                 "required_beats": [str(beat) for beat in beats if str(beat).strip()],
             }
         )
@@ -178,7 +190,10 @@ def _validate_scene_drafts(scene_drafts: list[dict[str, Any]]) -> list[dict[str,
     pipeline = validate_schema(
         {
             "chapter_index": 1,
-            "plan": {"goal": "placeholder", "scenes": [{"index": 1, "goal": "placeholder", "required_beats": ["placeholder"]}]},
+            "plan": {
+                "goal": "placeholder",
+                "scenes": [{"index": 1, "type": "opening_bridge", "goal": "placeholder", "required_beats": ["placeholder"]}],
+            },
             "scene_drafts": scene_drafts,
             "merged_chapter": "placeholder",
             "scene_spans": [{"index": 1, "start_char": 0, "end_char": 11, "chars": 11}],
@@ -195,16 +210,23 @@ def _dry_run_plan(chapter_index: int) -> dict[str, Any]:
         "scenes": [
             {
                 "index": 1,
-                "goal": "Open with the shelter alarm and immediate danger.",
-                "required_beats": ["shelter lights dim", "alarm sounds"],
+                "type": "opening_bridge",
+                "goal": "Continue directly from last_chapter_ending",
+                "required_beats": [
+                    "repeat last known location",
+                    "show immediate consequence",
+                    "explain transition before new scene",
+                ],
             },
             {
                 "index": 2,
+                "type": "development",
                 "goal": "Reveal the sealed gate and new infection zone.",
                 "required_beats": ["sealed gate", "safe route cut off", "infection zone"],
             },
             {
                 "index": 3,
+                "type": "development",
                 "goal": "Force the protagonist into a serum-centered choice.",
                 "required_beats": ["rescue teammate", "protect serum sample", "open conflict"],
             },

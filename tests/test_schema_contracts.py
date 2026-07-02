@@ -1232,6 +1232,7 @@ def _chapter_pipeline_sample() -> dict:
             "scenes": [
                 {
                     "index": 1,
+                    "type": "opening_bridge",
                     "goal": "Open the crisis.",
                     "required_beats": ["alarm", "choice"],
                 }

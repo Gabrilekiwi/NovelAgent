@@ -121,6 +121,108 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual("add_character_location", problem["repair_action"])
         self.assertEqual({"character": "Mira", "location": "shelter"}, problem["repair_parameters"])
 
+    def test_rejects_missing_opening_bridge_with_dedicated_code(self) -> None:
+        snapshot = {
+            "chapter_index": 2,
+            "world_state": {"locations": {"train car": {}, "connector passage": {}}},
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "The team was trapped in the train car.",
+                "last_scene_location": "train car",
+                "last_scene_characters": ["Mira"],
+                "open_threads": [],
+                "required_opening_bridge": "train car to connector passage",
+            },
+            "spatial_state": {
+                "spaces": {},
+                "connections": [{"from": "train car", "to": "connector passage"}],
+                "character_positions": {},
+                "blocked_paths": [],
+                "last_transition": {},
+            },
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "The connector passage shook as danger forced the team into conflict and a costly choice.",
+            {"validation_focus": ["spatial"]},
+        )
+
+        problems = {p["code"]: p for p in result["problems"]}
+        self.assertIn("missing_opening_bridge", problems)
+        self.assertEqual("insert_opening_bridge", problems["missing_opening_bridge"]["repair_action"])
+        self.assertEqual("spatial", problems["missing_opening_bridge"]["validator"])
+        self.assertIn("missing_last_scene_continuity", problems)
+        self.assertEqual("anchor_last_scene_state", problems["missing_last_scene_continuity"]["repair_action"])
+
+    def test_rejects_invalid_spatial_transition_with_dedicated_code(self) -> None:
+        snapshot = {
+            "chapter_index": 2,
+            "world_state": {"locations": {"train car": {}, "platform": {}, "connector passage": {}}},
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "",
+                "last_scene_location": "train car",
+                "last_scene_characters": [],
+                "open_threads": [],
+                "required_opening_bridge": "",
+            },
+            "spatial_state": {
+                "spaces": {},
+                "connections": [{"from": "train car", "to": "platform"}],
+                "character_positions": {},
+                "blocked_paths": [],
+                "last_transition": {},
+            },
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "Through a service door, the team entered the connector passage as danger forced open conflict.",
+            {"validation_focus": ["spatial"]},
+        )
+
+        problem = [p for p in result["problems"] if p["code"] == "invalid_spatial_transition"][0]
+        self.assertEqual("add_transition_event", problem["repair_action"])
+        self.assertEqual({"expected": "train car", "actual": "connector passage"}, problem["repair_parameters"])
+
+    def test_rejects_character_position_conflict_with_dedicated_code(self) -> None:
+        snapshot = {
+            "chapter_index": 2,
+            "world_state": {"locations": {"train car": {}, "platform": {}, "connector passage": {}}},
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "",
+                "last_scene_location": "",
+                "last_scene_characters": [],
+                "open_threads": [],
+                "required_opening_bridge": "",
+            },
+            "spatial_state": {
+                "spaces": {},
+                "connections": [{"from": "train car", "to": "platform"}],
+                "character_positions": {"Mira": "train car"},
+                "blocked_paths": [],
+                "last_transition": {},
+            },
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "Mira waited in the connector passage while danger forced a conflict and a choice.",
+            {"validation_focus": ["spatial"]},
+        )
+
+        problem = [p for p in result["problems"] if p["code"] == "character_position_conflict"][0]
+        self.assertEqual("repair_character_position", problem["repair_action"])
+        self.assertEqual(
+            {"character": "Mira", "expected": "train car", "actual": "connector passage"},
+            problem["repair_parameters"],
+        )
+
     def test_rejects_forbidden_constraint_terms(self) -> None:
         snapshot = {
             "chapter_index": 1,

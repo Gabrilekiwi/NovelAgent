@@ -104,7 +104,10 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["source", "count"],
+            "required": [
+              "source",
+              "count"
+            ],
             "properties": {
               "source": {
                 "type": "string"
@@ -813,10 +816,13 @@
           "minItems": 1,
           "items": {
             "enum": [
+              "build_snapshot",
+              "pre_validate_bridge",
               "generate_chapter",
               "polish",
               "validate",
-              "repair_if_needed"
+              "repair_if_needed",
+              "commit_snapshot"
             ]
           }
         },
@@ -843,16 +849,21 @@
               },
               "action": {
                 "enum": [
+                  "build_snapshot",
+                  "pre_validate_bridge",
                   "generate_chapter",
                   "polish",
                   "validate",
-                  "repair_if_needed"
+                  "repair_if_needed",
+                  "commit_snapshot"
                 ]
               },
               "requires": {
                 "type": "array",
                 "items": {
                   "enum": [
+                    "snapshot",
+                    "bridge_validation",
                     "chapter",
                     "validation"
                   ]
@@ -863,6 +874,8 @@
                 "minItems": 1,
                 "items": {
                   "enum": [
+                    "snapshot",
+                    "bridge_validation",
                     "chapter",
                     "validation"
                   ]
@@ -998,10 +1011,13 @@
                   "type": "array",
                   "items": {
                     "enum": [
+                      "build_snapshot",
+                      "pre_validate_bridge",
                       "generate_chapter",
                       "polish",
                       "validate",
-                      "repair_if_needed"
+                      "repair_if_needed",
+                      "commit_snapshot"
                     ]
                   }
                 },
@@ -1400,6 +1416,11 @@
                   "remove_forbidden_term",
                   "add_required_term",
                   "anchor_known_location",
+                  "insert_opening_bridge",
+                  "rewrite_spatial_transition",
+                  "anchor_last_scene_state",
+                  "repair_character_position",
+                  "add_transition_event",
                   "flag_unknown_location",
                   "add_character_location",
                   "rewrite_inactive_character_action",
@@ -1457,6 +1478,11 @@
                   "remove_forbidden_term",
                   "add_required_term",
                   "anchor_known_location",
+                  "insert_opening_bridge",
+                  "rewrite_spatial_transition",
+                  "anchor_last_scene_state",
+                  "repair_character_position",
+                  "add_transition_event",
                   "flag_unknown_location",
                   "add_character_location",
                   "rewrite_inactive_character_action",
@@ -1636,10 +1662,13 @@
         "properties": {
           "action": {
             "enum": [
+              "build_snapshot",
+              "pre_validate_bridge",
               "generate_chapter",
               "polish",
               "validate",
-              "repair_if_needed"
+              "repair_if_needed",
+              "commit_snapshot"
             ]
           },
           "status": {
@@ -1833,6 +1862,11 @@
                     "remove_forbidden_term",
                     "add_required_term",
                     "anchor_known_location",
+                    "insert_opening_bridge",
+                    "rewrite_spatial_transition",
+                    "anchor_last_scene_state",
+                    "repair_character_position",
+                    "add_transition_event",
                     "flag_unknown_location",
                     "add_character_location",
                     "rewrite_inactive_character_action",
@@ -2028,6 +2062,11 @@
                         "remove_forbidden_term",
                         "add_required_term",
                         "anchor_known_location",
+                        "insert_opening_bridge",
+                        "rewrite_spatial_transition",
+                        "anchor_last_scene_state",
+                        "repair_character_position",
+                        "add_transition_event",
                         "flag_unknown_location",
                         "add_character_location",
                         "rewrite_inactive_character_action",
@@ -2066,6 +2105,9 @@
                         },
                         "raw_problem": {
                           "type": "object"
+                        },
+                        "bridge": {
+                          "type": "string"
                         }
                       },
                       "additionalProperties": false
