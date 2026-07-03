@@ -178,6 +178,7 @@ def validate_text_output(value: object, contract: TextContract) -> str:
 
 def validate_polished_output(value: object, source_text: str, *, language: str | None = None) -> str:
     text = validate_text_output(value, POLISH_CONTRACT)
+    _validate_polish_completeness(text, source_text)
     if _requires_simplified_chinese(language) or _cjk_ratio(source_text) >= 0.35:
         _validate_simplified_chinese_ratio(text, "polished_chapter output did not preserve Simplified Chinese prose")
     return text
@@ -206,6 +207,44 @@ def _markdown_wrapper_marker(text: str) -> str | None:
     if re.match(r"^\*\*[^*]+\*\*\s*$", first_line):
         return first_line[:20]
     return None
+
+
+def _validate_polish_completeness(text: str, source_text: str) -> None:
+    source = str(source_text or "").strip()
+    output = str(text or "").strip()
+    if len(source) >= 1200 and len(output) < int(len(source) * 0.65):
+        raise ModelOutputError(
+            "polished_chapter output appears truncated or over-compressed: "
+            f"{len(output)} chars from {len(source)} source chars"
+        )
+    if len(output) >= 120 and not _ends_like_complete_prose(output):
+        raise ModelOutputError("polished_chapter output appears truncated: missing terminal prose punctuation")
+
+
+def _ends_like_complete_prose(text: str) -> bool:
+    stripped = text.rstrip()
+    if not stripped:
+        return False
+    terminal = stripped[-1]
+    terminal_punctuation = {
+        ".",
+        "!",
+        "?",
+        "\u3002",
+        "\uff01",
+        "\uff1f",
+        "\u2026",
+        '"',
+        "'",
+        "\u201d",
+        "\u2019",
+        "\uff09",
+        "\u300d",
+        "\u300f",
+        "\u3011",
+        "\u300b",
+    }
+    return terminal in terminal_punctuation
 
 
 def _cjk_ratio(text: str) -> float:

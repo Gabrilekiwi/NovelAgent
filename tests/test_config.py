@@ -116,6 +116,19 @@ class ConfigTest(unittest.TestCase):
         self.assertFalse(config.claude_stream)
         self.assertEqual(13, config.notion_timeout_seconds)
 
+    def test_claude_max_tokens_default_supports_long_polish(self) -> None:
+        original_max_tokens = os.environ.get("CLAUDE_MAX_TOKENS")
+        os.environ["CLAUDE_MAX_TOKENS"] = ""
+        try:
+            config = get_config()
+        finally:
+            if original_max_tokens is None:
+                os.environ.pop("CLAUDE_MAX_TOKENS", None)
+            else:
+                os.environ["CLAUDE_MAX_TOKENS"] = original_max_tokens
+
+        self.assertEqual(8000, config.claude_max_tokens)
+
     def test_claude_base_url_and_user_agent_parse_env(self) -> None:
         originals = {
             "CLAUDE_BASE_URL": os.environ.get("CLAUDE_BASE_URL"),

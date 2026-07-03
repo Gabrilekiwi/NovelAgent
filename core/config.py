@@ -68,7 +68,7 @@ def get_config() -> RuntimeConfig:
         claude_base_url=_env("CLAUDE_BASE_URL") or _env("ANTHROPIC_BASE_URL"),
         claude_user_agent=_env("CLAUDE_USER_AGENT"),
         claude_model=_env("CLAUDE_MODEL") or _env("ANTHROPIC_MODEL"),
-        claude_max_tokens=_int_env("CLAUDE_MAX_TOKENS", 3000),
+        claude_max_tokens=_int_env("CLAUDE_MAX_TOKENS", 8000),
         claude_timeout_seconds=_int_env("CLAUDE_TIMEOUT_SECONDS", 90),
         claude_stream=_bool_env("CLAUDE_STREAM", True),
         memory_path=Path(_env("NOVELAGENT_MEMORY_PATH") or DEFAULT_MEMORY_PATH),

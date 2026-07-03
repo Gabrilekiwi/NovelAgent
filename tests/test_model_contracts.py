@@ -159,6 +159,31 @@ class ModelContractTest(unittest.TestCase):
         finally:
             polish_module.polish_with_claude = original_polisher
 
+    def test_polisher_rejects_truncated_shortened_output(self) -> None:
+        source = "陆砚站在第七码头，黑水推着无桅窄船向前。" * 120
+        original_polisher = polish_module.polish_with_claude
+        polish_module.polish_with_claude = lambda chapter_text, dry_run=False: (
+            "陆砚站在第七码头，黑水推着无桅窄船向前。" * 20
+        )
+        try:
+            with self.assertRaisesRegex(ModelOutputError, "truncated|over-compressed"):
+                polish_module.polish_chapter(source, dry_run=False)
+        finally:
+            polish_module.polish_with_claude = original_polisher
+
+    def test_polisher_rejects_missing_terminal_punctuation(self) -> None:
+        source = "陆砚站在第七码头，黑水推着无桅窄船向前。" * 20
+        original_polisher = polish_module.polish_with_claude
+        polish_module.polish_with_claude = lambda chapter_text, dry_run=False: (
+            ("陆砚站在第七码头，黑水推着无桅窄船向前。" * 8) +
+            "阿照听见铜灯一起震动，船身猛地向下一沉，两侧铜灯同"
+        )
+        try:
+            with self.assertRaisesRegex(ModelOutputError, "truncated"):
+                polish_module.polish_chapter(source, dry_run=False)
+        finally:
+            polish_module.polish_with_claude = original_polisher
+
     def test_polish_contract_accepts_chinese_prose_with_some_terms(self) -> None:
         text = "黑月集市的灯齐齐暗下，Lu Yan 这个旧译名只在账页边缘闪了一瞬，陆砚没有回头。"
 
