@@ -917,7 +917,8 @@
               },
               "failure_policy": {
                 "enum": [
-                  "fail_run"
+                  "fail_run",
+                  "continue_unpolished"
                 ]
               }
             },
@@ -1783,7 +1784,8 @@
           },
           "plan_failure_policy": {
             "enum": [
-              "fail_run"
+              "fail_run",
+              "continue_unpolished"
             ]
           },
           "model_stage": {

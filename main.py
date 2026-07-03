@@ -391,6 +391,18 @@ def format_run_summary(result: dict) -> str:
         if isinstance(loop.get("artifact"), dict) and loop["artifact"].get("path"):
             lines.append(f"- loop_artifact: {loop['artifact']['path']}")
 
+    polish_failure = _recoverable_polish_failure(run)
+    if polish_failure:
+        lines.extend(
+            [
+                "",
+                "Polish:",
+                "- status: failed",
+                "- result: using unpolished generated chapter",
+                "- diagnostics: recorded in run trace",
+            ]
+        )
+
     error = run.get("error") if isinstance(run.get("error"), dict) else None
     if error:
         lines.extend(
@@ -506,11 +518,31 @@ def _run_model_calls(run: dict) -> list[tuple[str, dict]]:
         for event in trace:
             if not isinstance(event, dict):
                 continue
+            if _is_recoverable_polish_failure_event(event):
+                continue
             model_call = event.get("model_call")
             if isinstance(model_call, dict):
                 label = str(event.get("action") or "workflow")
                 model_calls.append((label, model_call))
     return model_calls
+
+
+def _recoverable_polish_failure(run: dict) -> dict | None:
+    trace = run.get("trace")
+    if not isinstance(trace, list):
+        return None
+    for event in trace:
+        if isinstance(event, dict) and _is_recoverable_polish_failure_event(event):
+            return event
+    return None
+
+
+def _is_recoverable_polish_failure_event(event: dict) -> bool:
+    return (
+        event.get("action") == "polish"
+        and event.get("status") == "failed"
+        and event.get("plan_failure_policy") == "continue_unpolished"
+    )
 
 
 def _format_model_call(model_call: dict) -> str:

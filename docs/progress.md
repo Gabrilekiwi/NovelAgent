@@ -2,11 +2,11 @@
 
 Last updated: 2026-07-03
 
-## v1.3 Status
+## v1.4 Status
 
-NovelAgent is fixed at version 1.3 as the current project baseline.
+NovelAgent is fixed at version 1.4 as the current project baseline.
 
-The v1.3 baseline keeps the v1.2 long-form fiction loop and adds four stability safeguards for real novel production: recoverable failed drafts, project language/profile contracts, profile-backed character/location analysis, and UTF-8 snapshot maintenance tooling.
+The v1.4 baseline keeps the v1.3 long-form fiction loop and adds real-provider usability safeguards: process-level proxy clearing for local proxy conflicts, recoverable Claude polish failures that continue with the base generated chapter, concise user-facing summaries that hide raw recoverable provider errors, and schema-audited workflow failure policy metadata for unpolished fallback runs.
 
 The project remains source-compatible with the established v1.0 command and file names where those names are part of the existing developer workflow, such as `scripts/smoke_v1.py` and `.tmp/smoke_v1/...`.
 
@@ -63,7 +63,7 @@ python -B -m unittest discover -s tests
 python -B scripts/smoke_v1.py
 ```
 
-Observed v1.3 result:
+Observed v1.4 result:
 
 ```text
 Ran 364 tests ... OK

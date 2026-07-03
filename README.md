@@ -1,10 +1,10 @@
 # NovelAgent
 
-Version: 1.3
+Version: 1.4
 
-NovelAgent is fixed at the v1.3 baseline: a schema-checked agent loop for long-form fiction generation with memory ingestion, directed execution, validation, repair, language/profile safeguards, recoverable drafts, and auditable runtime artifacts.
+NovelAgent is fixed at the v1.4 baseline: a schema-checked agent loop for long-form fiction generation with memory ingestion, directed execution, validation, repair, language/profile safeguards, recoverable drafts, provider failure tolerance, and auditable runtime artifacts.
 
-Current v1.3 flow:
+Current v1.4 flow:
 
 ```text
 Notion / Memory
@@ -46,7 +46,7 @@ python main.py --init-runtime
 python main.py --dry-run --memory data/notion_memory.example.json
 ```
 
-Generation commands print a concise summary by default. Add `--output-json` for the full result or `--output-run-json` for only the run record.
+Generation commands print a concise summary by default. Add `--output-json` for the full result or `--output-run-json` for only the run record. If Claude polish fails after base chapter generation, the run continues with the unpolished generated chapter and records the polish error in the run trace.
 If local proxy environment variables interfere with provider API calls, run with `--no-proxy` or set `NOVELAGENT_NO_PROXY=1` in `.env` to clear `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` for the NovelAgent process.
 
 Select the memory source explicitly when needed:
@@ -142,9 +142,9 @@ Run records, run reports, and loop session summaries expose compact validation a
 
 Local `.env` is ignored. Use `.env.example` for variable names and recommended default model names only; real configuration is still checked by preflight before live provider calls.
 
-Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.3 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.3 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.3 executor and orchestrator entrypoints.
+Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.4 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.4 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.4 executor and orchestrator entrypoints.
 
-The v1.3 project contract keeps the established directory layout and legacy wrapper boundaries covered by `tests/test_repo_hygiene.py`, so structural drift is caught alongside runtime tests.
+The v1.4 project contract keeps the established directory layout and legacy wrapper boundaries covered by `tests/test_repo_hygiene.py`, so structural drift is caught alongside runtime tests.
 
 ## More Docs
 

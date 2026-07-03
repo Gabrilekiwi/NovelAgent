@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from api.contracts import ModelCallError
+from api.contracts import ModelCallError, ModelOutputError
 from core.director import DirectorDecisionError
 from core.engine.executor import AgentExecutor, LoopExecutionError
 from core.engine.run_record import build_run_record
@@ -614,8 +614,8 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(["generate_chapter", "validate"], result["workflow"])
         self.assertTrue(result["validation"]["ok"])
 
-    def test_transient_claude_polish_error_continues_with_generated_chapter(self) -> None:
-        tmp_path = self._case_dir("transient_polish")
+    def test_claude_polish_api_error_continues_with_generated_chapter(self) -> None:
+        tmp_path = self._case_dir("provider_polish")
         snapshot_path = tmp_path / "snapshot.json"
         self._write_snapshot(snapshot_path)
 
@@ -628,7 +628,7 @@ class AgentExecutorTest(unittest.TestCase):
         def director(snapshot, memory_context):
             return {
                 "chapter_index": snapshot["chapter_index"],
-                "goal": "continue_after_transient_polish",
+                "goal": "continue_after_provider_polish_error",
                 "actions": ["generate_chapter", "polish", "validate"],
                 "validation_focus": ["logic"],
                 "max_repair_attempts": 0,
@@ -637,12 +637,12 @@ class AgentExecutorTest(unittest.TestCase):
 
         def fail_polish(chapter: str) -> str:
             raise ModelCallError(
-                "Claude polish failed: Error code: 500 - upstream error",
+                "Claude polish failed: invalid provider response",
                 provider="anthropic",
                 stage="claude_polish",
                 model="claude-test",
-                failure_category="transient_provider_error",
-                retryable=True,
+                failure_category="provider_error",
+                retryable=False,
                 attempts=1,
                 elapsed_ms=50,
             )
@@ -662,8 +662,53 @@ class AgentExecutorTest(unittest.TestCase):
         trace = result["run"]["trace"]
         self.assertEqual(["generate_chapter", "polish", "validate"], [event["action"] for event in trace])
         self.assertEqual("failed", trace[1]["status"])
-        self.assertEqual("transient_provider_error", trace[1]["model_call"]["failure_category"])
-        self.assertTrue(trace[1]["model_call"]["retryable"])
+        self.assertEqual("continue_unpolished", trace[1]["plan_failure_policy"])
+        self.assertEqual("provider_error", trace[1]["model_call"]["failure_category"])
+        self.assertFalse(trace[1]["model_call"]["retryable"])
+        self.assertEqual("completed", trace[2]["status"])
+        self.assertTrue(result["validation"]["ok"])
+
+    def test_claude_polish_output_error_continues_with_generated_chapter(self) -> None:
+        tmp_path = self._case_dir("polish_output_error")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+
+        generated = (
+            "The shelter faced danger as the team had to choose between a costly rescue "
+            "and protecting the serum, creating open conflict. The generated chapter "
+            "remained complete even though the polish response was unusable."
+        )
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "continue_after_bad_polish_output",
+                "actions": ["generate_chapter", "polish", "validate"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 0,
+                "notes": [],
+            }
+
+        def fail_polish(chapter: str) -> str:
+            raise ModelOutputError("polished_chapter output is empty")
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            director=director,
+            generator=lambda input_pack: generated,
+            polisher=fail_polish,
+        ).run_once(persist=True)
+
+        self.assertTrue(result["committed"])
+        self.assertEqual(generated, result["chapter"])
+        trace = result["run"]["trace"]
+        self.assertEqual(["generate_chapter", "polish", "validate"], [event["action"] for event in trace])
+        self.assertEqual("failed", trace[1]["status"])
+        self.assertEqual("continue_unpolished", trace[1]["plan_failure_policy"])
+        self.assertEqual("ModelOutputError", trace[1]["error_type"])
         self.assertEqual("completed", trace[2]["status"])
         self.assertTrue(result["validation"]["ok"])
 

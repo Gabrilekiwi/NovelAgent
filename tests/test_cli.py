@@ -174,6 +174,46 @@ class CliTest(unittest.TestCase):
         self.assertIn("problem_codes: execution_error", summary)
         self.assertNotIn('"trace"', summary)
 
+    def test_format_run_summary_hides_recoverable_polish_error_message(self) -> None:
+        summary = cli.format_run_summary(
+            {
+                "chapter": "The generated chapter remains usable.",
+                "run": {
+                    "id": "chapter_1_polish_failed",
+                    "status": "committed",
+                    "committed": True,
+                    "chapter_index": 1,
+                    "workflow": ["generate_chapter", "polish", "validate"],
+                    "repair_attempts": 0,
+                    "validation": {"problem_codes": []},
+                    "trace": [
+                        {
+                            "action": "polish",
+                            "status": "failed",
+                            "plan_failure_policy": "continue_unpolished",
+                            "model_call": {
+                                "provider": "anthropic",
+                                "stage": "claude_polish",
+                                "model": "claude-test",
+                                "cause_type": None,
+                                "message": "Claude polish failed: invalid provider response",
+                                "failure_category": "provider_error",
+                                "retryable": False,
+                            },
+                        },
+                        {"action": "validate", "status": "completed"},
+                    ],
+                },
+                "validation": {"ok": True, "problems": []},
+                "analysis": {},
+            }
+        )
+
+        self.assertIn("Polish:", summary)
+        self.assertIn("using unpolished generated chapter", summary)
+        self.assertNotIn("Claude polish failed", summary)
+        self.assertNotIn("invalid provider response", summary)
+
     def test_format_loop_failure_summary_is_concise(self) -> None:
         summary = cli.format_loop_failure_summary(
             {

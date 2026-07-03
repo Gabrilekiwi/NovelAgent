@@ -42,7 +42,7 @@ ACTION_METADATA = {
         "mode": "optional",
         "skippable": True,
         "skip_condition": "Director omits polish when recovery or repair should run before prose refinement.",
-        "failure_policy": "fail_run",
+        "failure_policy": "continue_unpolished",
     },
     "validate": {
         "requires": ["chapter"],

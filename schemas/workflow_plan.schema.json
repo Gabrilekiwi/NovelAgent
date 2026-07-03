@@ -106,7 +106,8 @@
           },
           "failure_policy": {
             "enum": [
-              "fail_run"
+              "fail_run",
+              "continue_unpolished"
             ]
           }
         },

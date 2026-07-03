@@ -5,7 +5,7 @@ import inspect
 from pathlib import Path
 from typing import Any, Callable
 
-from api.contracts import ModelCallError
+from api.contracts import ModelCallError, ModelOutputError
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
@@ -581,7 +581,7 @@ class AgentExecutor:
                         error=exc,
                     )
                 )
-                if _can_continue_after_transient_polish_error(action, exc):
+                if _can_continue_after_polish_error(action, state, exc):
                     state["validation"] = None
                     continue
                 raise WorkflowExecutionError(
@@ -967,14 +967,17 @@ def _workflow_steps_by_action(workflow_plan: dict[str, Any]) -> dict[str, dict[s
     }
 
 
-def _can_continue_after_transient_polish_error(action: str, exc: BaseException) -> bool:
-    if action != "polish" or not isinstance(exc, ModelCallError):
+def _can_continue_after_polish_error(action: str, state: dict[str, Any], exc: BaseException) -> bool:
+    if action != "polish" or not _has_generated_chapter(state):
         return False
-    return (
-        exc.provider == "anthropic"
-        and exc.stage == "claude_polish"
-        and bool(exc.retryable)
-    )
+    if isinstance(exc, ModelOutputError):
+        return True
+    return isinstance(exc, ModelCallError) and exc.provider == "anthropic" and exc.stage == "claude_polish"
+
+
+def _has_generated_chapter(state: dict[str, Any]) -> bool:
+    chapter = state.get("chapter")
+    return isinstance(chapter, str) and bool(chapter.strip())
 
 
 def _repair_delta(*, attempt: int, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:

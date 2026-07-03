@@ -51,7 +51,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual("fail_run", plan["steps"][2]["failure_policy"])
         self.assertIs(plan, validate_schema(plan, "workflow_plan.schema.json"))
 
-    def test_polish_step_is_optional_but_failure_still_fails_run(self) -> None:
+    def test_polish_step_is_optional_and_failure_uses_unpolished_chapter(self) -> None:
         plan = build_workflow_plan(
             {
                 "goal": "continue_existing_arc",
@@ -66,7 +66,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual("optional", polish_step["mode"])
         self.assertTrue(polish_step["skippable"])
         self.assertIn("Director omits polish", polish_step["skip_condition"])
-        self.assertEqual("fail_run", polish_step["failure_policy"])
+        self.assertEqual("continue_unpolished", polish_step["failure_policy"])
         self.assertIs(plan, validate_schema(plan, "workflow_plan.schema.json"))
 
     def test_dynamic_flow_uses_workflow_plan_builder(self) -> None:
