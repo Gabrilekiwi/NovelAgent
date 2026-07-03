@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
 
 _CONFLICT_MARKERS = [
@@ -46,6 +47,27 @@ _KNOWN_LOCATION_TERMS = [
     "\u907f\u96be\u6240",
     "A\u7ebf\u8f66\u53a2",
     "\u5907\u7528\u901a\u9053",
+    "旧天文馆",
+    "裂隙中庭",
+    "镜砂荒原",
+    "回声井",
+    "火雨城门",
+    "火雨城",
+    "潮汐图书馆",
+    "逆塔底层",
+    "空钟层",
+    "玻璃海岸",
+    "幸存岛",
+    "废灯塔",
+    "黑月集市",
+    "第七码头",
+]
+_KNOWN_CHARACTER_NAMES = [
+    "陆砚",
+    "陆敬衡",
+    "阿照",
+    "林雪",
+    "鏋楅洩",
 ]
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?\u3002\uff01\uff1f])\s*")
 _CHARACTER_STATUS_RE = re.compile(
@@ -68,13 +90,22 @@ _CN_CHARACTER_LOCATION_RE = re.compile(
 _NAME_STOPWORDS = {"a", "an", "he", "it", "she", "the", "they", "we"}
 
 
-def analyze_chapter(chapter_text: str, validation: dict[str, Any] | None = None) -> dict[str, Any]:
+def analyze_chapter(
+    chapter_text: str,
+    validation: dict[str, Any] | None = None,
+    *,
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     text = chapter_text.strip()
+    profile = normalize_project_profile(snapshot)
+    known_locations = _known_locations(profile)
+    known_characters = _known_characters(profile)
     sentences = _split_sentences(text)
     conflicts = _detect_conflicts(text)
     world_changes = _extract_world_changes(text)
-    character_changes = _extract_character_changes(sentences)
-    new_locations = _extract_candidate_locations(text)
+    character_changes = _extract_character_changes(sentences, known_characters, known_locations)
+    new_locations = _extract_candidate_locations(text, known_locations)
+    story_state = _extract_story_state(text, sentences, character_changes, new_locations)
 
     analysis = {
         "summary": _build_summary(sentences),
@@ -82,8 +113,8 @@ def analyze_chapter(chapter_text: str, validation: dict[str, Any] | None = None)
         "character_changes": character_changes,
         "world_changes": world_changes,
         "new_locations": new_locations,
-        "story_state": _extract_story_state(sentences, character_changes, new_locations),
-        "spatial_state": _extract_spatial_state(character_changes, new_locations),
+        "story_state": story_state,
+        "spatial_state": _extract_spatial_state(text, character_changes, new_locations),
         "conflicts": conflicts,
         "validation_ok": bool((validation or {}).get("ok")),
     }
@@ -93,7 +124,11 @@ def analyze_chapter(chapter_text: str, validation: dict[str, Any] | None = None)
 def _split_sentences(text: str) -> list[str]:
     if not text:
         return []
-    return [part.strip() for part in _SENTENCE_SPLIT_RE.split(text) if part.strip()]
+    return [
+        part.strip()
+        for part in _SENTENCE_SPLIT_RE.split(text)
+        if part.strip() and part.strip() not in {"\"", "'", "“", "”", "‘", "’"}
+    ]
 
 
 def _build_summary(sentences: list[str]) -> str:
@@ -126,41 +161,53 @@ def _extract_world_changes(text: str) -> list[dict[str, str]]:
     return changes
 
 
-def _extract_candidate_locations(text: str) -> list[str]:
+def _extract_candidate_locations(text: str, known_locations: list[str] | None = None) -> list[str]:
     lowered = text.lower()
-    return [term for term in _KNOWN_LOCATION_TERMS if term in lowered or term in text]
+    candidates = [
+        (text.find(term) if term in text else lowered.find(term.lower()), term)
+        for term in (known_locations or _KNOWN_LOCATION_TERMS)
+        if term in text or term.lower() in lowered
+    ]
+    return [term for _position, term in sorted(candidates, key=lambda item: item[0])]
 
 
 def _extract_story_state(
+    text: str,
     sentences: list[str],
     character_changes: list[dict[str, str]],
     new_locations: list[str],
 ) -> dict[str, Any]:
     last_sentence = sentences[-1][:500] if sentences else ""
-    last_location = _last_known_location(character_changes, new_locations)
+    last_location = _last_known_location(text, character_changes, new_locations)
     characters = _unique_strings(change.get("name") for change in character_changes)
     return {
         "last_chapter_ending": last_sentence,
         "last_scene_location": last_location,
         "last_scene_characters": characters,
         "open_threads": _open_threads(last_sentence),
-        "required_opening_bridge": _required_opening_bridge(last_location, last_sentence),
+        "required_opening_bridge": _required_opening_bridge(last_location, last_sentence, characters),
     }
 
 
 def _extract_spatial_state(
+    text: str,
     character_changes: list[dict[str, str]],
     new_locations: list[str],
 ) -> dict[str, Any]:
     spaces = {location: {"source": "chapter_analysis"} for location in new_locations}
+    last_location = _last_known_location(text, character_changes, new_locations)
     character_positions = {
-        change["name"]: change["current_location"]
+        change["name"]: (
+            last_location
+            if last_location and _contains_cjk(str(change.get("name") or ""))
+            else change["current_location"]
+        )
         for change in character_changes
         if change.get("name") and change.get("current_location")
     }
     last_transition = {}
-    if new_locations:
-        last_transition = {"to": new_locations[-1], "source": "chapter_analysis"}
+    if last_location:
+        last_transition = {"to": last_location, "source": "chapter_analysis"}
     return {
         "spaces": spaces,
         "connections": [],
@@ -170,13 +217,17 @@ def _extract_spatial_state(
     }
 
 
-def _extract_character_changes(sentences: list[str]) -> list[dict[str, str]]:
+def _extract_character_changes(
+    sentences: list[str],
+    known_characters: list[str] | None = None,
+    known_locations: list[str] | None = None,
+) -> list[dict[str, str]]:
     changes: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
 
     for sentence in sentences:
         for match in _CHARACTER_STATUS_RE.finditer(sentence):
-            name = _clean_name(match.group(1))
+            name = _clean_name(match.group(1), known_characters)
             status = match.group(2).lower()
             if not name:
                 continue
@@ -191,8 +242,8 @@ def _extract_character_changes(sentences: list[str]) -> list[dict[str, str]]:
             )
 
         for match in _CHARACTER_LOCATION_RE.finditer(sentence):
-            name = _clean_name(match.group(1))
-            location = _clean_location(match.group(2))
+            name = _clean_name(match.group(1), known_characters)
+            location = _clean_location(match.group(2), known_locations)
             if not name or not location:
                 continue
             _append_unique(
@@ -206,9 +257,11 @@ def _extract_character_changes(sentences: list[str]) -> list[dict[str, str]]:
             )
 
         for match in _CN_CHARACTER_LOCATION_RE.finditer(sentence):
-            name = _clean_name(match.group(1))
-            location = _clean_location(match.group(2))
+            name = _clean_name(match.group(1), known_characters)
+            location = _clean_location(match.group(2), known_locations)
             if not name or not location:
+                continue
+            if not _is_known_location(location, known_locations):
                 continue
             _append_unique(
                 changes,
@@ -223,7 +276,18 @@ def _extract_character_changes(sentences: list[str]) -> list[dict[str, str]]:
     return changes[:10]
 
 
-def _last_known_location(character_changes: list[dict[str, str]], new_locations: list[str]) -> str:
+def _last_known_location(
+    text: str,
+    character_changes: list[dict[str, str]],
+    new_locations: list[str],
+) -> str:
+    mentioned_locations = [
+        (text.rfind(location), location)
+        for location in new_locations
+        if location and text.rfind(location) >= 0
+    ]
+    if mentioned_locations:
+        return max(mentioned_locations, key=lambda item: item[0])[1]
     for change in reversed(character_changes):
         location = change.get("current_location")
         if location:
@@ -231,9 +295,12 @@ def _last_known_location(character_changes: list[dict[str, str]], new_locations:
     return new_locations[-1] if new_locations else ""
 
 
-def _required_opening_bridge(last_location: str, last_sentence: str) -> str:
+def _required_opening_bridge(last_location: str, last_sentence: str, characters: list[str]) -> str:
     if not last_location:
         return ""
+    if _contains_cjk(last_location):
+        character = characters[0] if characters else ""
+        return f"{last_location} {character}".strip()
     return f"Continue from {last_location}: {last_sentence[:240]}" if last_sentence else f"Continue from {last_location}"
 
 
@@ -243,6 +310,10 @@ def _open_threads(last_sentence: str) -> list[str]:
     if any(term in lowered for term in ("choice", "choose", "conflict", "danger", "threat", "cost", "infection", "serum", "rescue")):
         threads.append(last_sentence[:240])
     return threads
+
+
+def _contains_cjk(value: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", value))
 
 
 def _unique_strings(values: Any) -> list[str]:
@@ -270,19 +341,37 @@ def _append_unique(
     changes.append(change)
 
 
-def _clean_name(value: str) -> str:
+def _clean_name(value: str, known_characters: list[str] | None = None) -> str:
     name = value.strip(" ,.;:!?")
+    for known_name in sorted(known_characters or _KNOWN_CHARACTER_NAMES, key=len, reverse=True):
+        if name == known_name or name.startswith(known_name):
+            return known_name
+    if re.search(r"[\u4e00-\u9fff]", name):
+        return ""
     if name.lower() in _NAME_STOPWORDS:
         return ""
     return name
 
 
-def _clean_location(value: str) -> str:
+def _clean_location(value: str, known_locations: list[str] | None = None) -> str:
     raw_location = value.strip(" ,.;:!?，。；：！？")
     location = raw_location.lower()
     if location.startswith("the "):
         location = location[4:]
-    for known_location in sorted(_KNOWN_LOCATION_TERMS, key=len, reverse=True):
+    for known_location in sorted(known_locations or _KNOWN_LOCATION_TERMS, key=len, reverse=True):
         if known_location.lower() in location or known_location in raw_location:
             return known_location
     return location
+
+
+def _is_known_location(value: str, known_locations: list[str] | None = None) -> bool:
+    lowered = value.lower()
+    return any(term.lower() == lowered or term == value for term in (known_locations or _KNOWN_LOCATION_TERMS))
+
+
+def _known_locations(profile: dict[str, Any]) -> list[str]:
+    return _unique_strings([*_KNOWN_LOCATION_TERMS, *profile.get("known_locations", [])])
+
+
+def _known_characters(profile: dict[str, Any]) -> list[str]:
+    return _unique_strings([*_KNOWN_CHARACTER_NAMES, *profile.get("known_characters", [])])

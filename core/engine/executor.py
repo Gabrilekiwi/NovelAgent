@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
+from core.project_profile import project_language
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.schema import validate_schema
 from core.engine.artifacts import (
@@ -68,6 +69,7 @@ class AgentExecutor:
         chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
         dry_run: bool = False,
         enable_llm_validator: bool = False,
+        scene_limit: int | None = None,
         use_run_history: bool = True,
         memory_loader: MemoryLoader | None = None,
         director: Director | None = None,
@@ -85,6 +87,7 @@ class AgentExecutor:
         self.chapter_dir = Path(chapter_dir)
         self.dry_run = dry_run
         self.enable_llm_validator = enable_llm_validator
+        self.scene_limit = scene_limit
         self.use_run_history = use_run_history
         self.memory_loader = memory_loader
         self.director = director or decide_next_step
@@ -224,7 +227,7 @@ class AgentExecutor:
         planned_run_id = build_run_id(int(decision["chapter_index"]), started_at)
         try:
             analysis = (
-                validate_schema(self.analyzer(chapter, validation), "analysis_result.schema.json")
+                validate_schema(self._analyze(chapter, validation, snapshot), "analysis_result.schema.json")
                 if committed
                 else _empty_analysis(validation)
             )
@@ -510,6 +513,11 @@ class AgentExecutor:
             recovery_context=recovery_context,
         )
 
+    def _analyze(self, chapter: str, validation: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+        if self.analyzer is analyze_chapter:
+            return analyze_chapter(chapter, validation, snapshot=snapshot)
+        return self.analyzer(chapter, validation)
+
     def _execute_workflow(
         self,
         *,
@@ -538,7 +546,7 @@ class AgentExecutor:
         handlers = {
             "build_snapshot": lambda: self._handle_build_snapshot(state),
             "pre_validate_bridge": lambda: self._handle_pre_validate_bridge(state, snapshot),
-            "generate_chapter": lambda: self._handle_generate(state, input_pack),
+            "generate_chapter": lambda: self._handle_generate(state, input_pack, snapshot),
             "polish": lambda: self._handle_polish(state),
             "validate": lambda: self._handle_validate(state, snapshot, decision),
             "repair_if_needed": lambda: self._handle_repair_if_needed(
@@ -608,7 +616,7 @@ class AgentExecutor:
 
         return state["chapter"], state["validation"], state["repair_attempts"], trace, state.get("chapter_pipeline")
 
-    def _handle_generate(self, state: dict[str, Any], input_pack: str) -> None:
+    def _handle_generate(self, state: dict[str, Any], input_pack: str, snapshot: dict[str, Any]) -> None:
         if self.generator:
             state["chapter"] = self._generate(input_pack)
             state["chapter_pipeline"] = None
@@ -617,6 +625,8 @@ class AgentExecutor:
                 input_pack,
                 chapter_index=int(state.get("chapter_index") or 1),
                 dry_run=self.dry_run,
+                scene_limit=self.scene_limit,
+                language=project_language(snapshot),
             )
             state["chapter"] = str(pipeline["merged_chapter"])
             state["chapter_pipeline"] = pipeline

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import unittest
 import uuid
@@ -74,6 +75,66 @@ class CliTest(unittest.TestCase):
         self.assertEqual(str(DEFAULT_SNAPSHOT_PATH), args.snapshot)
         self.assertEqual(str(DEFAULT_RUN_DIR), args.run_dir)
         self.assertEqual(str(DEFAULT_CHAPTER_DIR), args.chapter_dir)
+        self.assertFalse(args.no_proxy)
+
+    def test_parse_args_accepts_no_proxy(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--dry-run", "--no-proxy"]):
+            args = cli.parse_args()
+
+        self.assertTrue(args.no_proxy)
+
+    def test_no_proxy_clears_proxy_environment(self) -> None:
+        case_dir = self._case_dir("no_proxy")
+        run_dir = case_dir / "runs"
+        run_dir.mkdir()
+        output = io.StringIO()
+
+        env = {
+            "HTTP_PROXY": "http://127.0.0.1:7890",
+            "HTTPS_PROXY": "http://127.0.0.1:7890",
+            "ALL_PROXY": "socks5://127.0.0.1:7890",
+            "http_proxy": "http://127.0.0.1:7890",
+            "https_proxy": "http://127.0.0.1:7890",
+            "all_proxy": "socks5://127.0.0.1:7890",
+        }
+
+        with patch.dict(os.environ, env, clear=False), patch.object(
+            sys,
+            "argv",
+            ["main.py", "--no-proxy", "--report-runs", "--run-dir", str(run_dir)],
+        ), contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+            self.assertEqual(0, exit_context.exception.code)
+            for name in env:
+                self.assertNotIn(name, os.environ)
+
+    def test_env_no_proxy_clears_proxy_environment(self) -> None:
+        case_dir = self._case_dir("env_no_proxy")
+        run_dir = case_dir / "runs"
+        run_dir.mkdir()
+        output = io.StringIO()
+
+        env = {
+            "NOVELAGENT_NO_PROXY": "1",
+            "HTTP_PROXY": "http://127.0.0.1:7890",
+            "HTTPS_PROXY": "http://127.0.0.1:7890",
+            "ALL_PROXY": "socks5://127.0.0.1:7890",
+        }
+
+        with patch.dict(os.environ, env, clear=False), patch.object(
+            sys,
+            "argv",
+            ["main.py", "--report-runs", "--run-dir", str(run_dir)],
+        ), contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+            self.assertEqual(0, exit_context.exception.code)
+            self.assertNotIn("HTTP_PROXY", os.environ)
+            self.assertNotIn("HTTPS_PROXY", os.environ)
+            self.assertNotIn("ALL_PROXY", os.environ)
 
     def test_format_run_summary_includes_failure_diagnostics(self) -> None:
         summary = cli.format_run_summary(
@@ -315,6 +376,40 @@ class CliTest(unittest.TestCase):
         self.assertIn(".tmp", text)
         self.assertIn("snapshot", text)
         self.assertIn("memory", text)
+
+    def test_recover_latest_prints_summary(self) -> None:
+        output = io.StringIO()
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--recover-latest",
+                "--run-dir",
+                "runs",
+                "--chapter-dir",
+                "chapters",
+            ],
+        ), patch.object(
+            cli,
+            "recover_latest_chapter_draft",
+            return_value={
+                "ok": True,
+                "source_run_id": "chapter_2_failed",
+                "source_status": "failed",
+                "chapter_index": 2,
+                "chars": 42,
+                "artifact": {"path": "chapters/chapter_0002_recovered.md"},
+            },
+        ), contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+        self.assertEqual(0, exit_context.exception.code)
+        text = output.getvalue()
+        self.assertIn("Recovered chapter draft:", text)
+        self.assertIn("chapter_2_failed", text)
+        self.assertIn("snapshot_updated: False", text)
 
     def test_check_json_prints_full_preflight_json(self) -> None:
         case_dir = self._case_dir("json")

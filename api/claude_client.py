@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Any
 
-from api.contracts import ModelCallError
+from api.contracts import ModelCallError, classify_model_failure, is_retryable_failure
 from core.config import get_config
 
 
@@ -58,29 +59,69 @@ def polish_chapter(chapter_text: str, *, dry_run: bool = False) -> str:
     if config.claude_user_agent:
         client_kwargs["default_headers"] = {"User-Agent": config.claude_user_agent}
 
+    request_kwargs = {
+        "model": model,
+        "max_tokens": config.claude_max_tokens,
+        "system": _load_prompt(),
+        "messages": [
+            {
+                "role": "user",
+                "content": chapter_text,
+            }
+        ],
+    }
+
     client = Anthropic(**client_kwargs)
+    started = time.monotonic()
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=config.claude_max_tokens,
-            system=_load_prompt(),
-            messages=[
-                {
-                    "role": "user",
-                    "content": chapter_text,
-                }
-            ],
-        )
+        if config.claude_stream:
+            return _stream_message_text(client, request_kwargs, model=model)
+        response = client.messages.create(**request_kwargs)
     except Exception as exc:  # noqa: BLE001 - preserve provider failure context.
+        failure_category = classify_model_failure(type(exc).__name__, str(exc))
+        elapsed_ms = int(max(0.0, (time.monotonic() - started) * 1000))
         raise ModelCallError(
             f"Claude polish failed: {exc}",
             provider="anthropic",
             stage="claude_polish",
             model=model,
             cause=exc,
+            failure_category=failure_category,
+            retryable=is_retryable_failure(failure_category),
+            attempts=1,
+            elapsed_ms=elapsed_ms,
         ) from exc
 
     return _extract_message_text(response, model=model)
+
+
+def _stream_message_text(client: Any, request_kwargs: dict[str, Any], *, model: str | None) -> str:
+    stream_factory = getattr(client.messages, "stream", None)
+    if stream_factory is None:
+        response = client.messages.create(**request_kwargs)
+        return _extract_message_text(response, model=model)
+
+    with stream_factory(**request_kwargs) as stream:
+        text_stream = getattr(stream, "text_stream", None)
+        if text_stream is not None:
+            text = "".join(str(part) for part in text_stream if part)
+            if text.strip():
+                return text
+
+        parts: list[str] = []
+        for event in stream:
+            text = getattr(event, "text", None)
+            if text:
+                parts.append(str(text))
+        if parts:
+            return "".join(parts)
+
+    raise ModelCallError(
+        "Claude streamed response did not include text content.",
+        provider="anthropic",
+        stage="claude_polish",
+        model=model,
+    )
 
 
 def _extract_message_text(response: Any, *, model: str | None) -> str:

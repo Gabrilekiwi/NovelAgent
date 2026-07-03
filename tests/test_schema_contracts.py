@@ -235,6 +235,7 @@ class SchemaContractTest(unittest.TestCase):
             "chars": 512,
             "sections": [
                 "chapter_index",
+                "project_profile",
                 "director_decision",
                 "world_state",
                 "characters",
@@ -252,6 +253,11 @@ class SchemaContractTest(unittest.TestCase):
                 "max_repair_attempts": 1,
             },
             "snapshot": {
+                "project_profile": {
+                    "language": "",
+                    "known_characters": [],
+                    "known_locations": [],
+                },
                 "world_state_keys": ["locations"],
                 "character_count": 2,
                 "timeline_count": 3,
@@ -296,6 +302,11 @@ class SchemaContractTest(unittest.TestCase):
                         "max_repair_attempts": 1,
                     },
                     "snapshot": {
+                        "project_profile": {
+                            "language": "",
+                            "known_characters": [],
+                            "known_locations": [],
+                        },
                         "world_state_keys": [],
                         "character_count": 0,
                         "timeline_count": 0,

@@ -1,10 +1,10 @@
 # NovelAgent
 
-Version: 1.2
+Version: 1.3
 
-NovelAgent is fixed at the v1.2 baseline: a schema-checked agent loop for long-form fiction generation with memory ingestion, directed execution, validation, repair, and auditable runtime artifacts.
+NovelAgent is fixed at the v1.3 baseline: a schema-checked agent loop for long-form fiction generation with memory ingestion, directed execution, validation, repair, language/profile safeguards, recoverable drafts, and auditable runtime artifacts.
 
-Current v1.2 flow:
+Current v1.3 flow:
 
 ```text
 Notion / Memory
@@ -13,6 +13,7 @@ Notion / Memory
   -> Execution Engine
   -> Chapter Pipeline (plan -> scenes -> merge)
   -> Claude Polish
+  -> Language / Meta-output Contracts
   -> Rule Validator
   -> optional LLM Validator
   -> Scene Repair
@@ -46,6 +47,7 @@ python main.py --dry-run --memory data/notion_memory.example.json
 ```
 
 Generation commands print a concise summary by default. Add `--output-json` for the full result or `--output-run-json` for only the run record.
+If local proxy environment variables interfere with provider API calls, run with `--no-proxy` or set `NOVELAGENT_NO_PROXY=1` in `.env` to clear `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` for the NovelAgent process.
 
 Select the memory source explicitly when needed:
 
@@ -66,13 +68,25 @@ Run tests:
 python -B -m unittest discover -s tests
 ```
 
-Run the local v1.2 smoke gate:
+Run the local v1 smoke gate:
 
 ```bash
 python -B scripts/smoke_v1.py
 ```
 
 This runs tests, preflight, one persisted dry-run, file memory writeback, run reporting, and the provider-smoke missing-config diagnostic path inside `.tmp/smoke_v1/...`.
+
+Recover the latest failed or rejected pre-polish draft without advancing the snapshot:
+
+```bash
+python main.py --recover-latest --run-dir .tmp/runtime/runs --chapter-dir .tmp/runtime/chapters
+```
+
+Inspect and normalize a snapshot with explicit UTF-8 JSON handling:
+
+```bash
+python -B scripts/snapshot_utf8.py --snapshot .tmp/runtime/snapshot.json --write-normalized
+```
 
 The optional LLM Validator is off by default, including dry-run and CI. Enable it explicitly with `--llm-validator`; preflight will then require OpenAI configuration and schema-check the LLM validation output before any problems are merged into `validation.problems[]`.
 
@@ -85,7 +99,7 @@ python -B scripts/provider_smoke.py --providers notion --notion-write
 
 These write diagnostics under `.tmp/runtime/provider_smoke/...` and use isolated runtime state.
 Use `--openai-model`, `--openai-base-url` or `--no-openai-base-url`, `--max-input-chars`, `--max-output-tokens`, `--openai-max-retries`, `--openai-scene-limit`, `--claude-model`, `--claude-base-url`, `--claude-user-agent`, `--claude-max-tokens`, `--request-timeout`, `--retries`, and `--retry-delay-seconds` to keep live provider diagnostics bounded. Claude uses the Anthropic Messages-compatible path through the Anthropic SDK; for MicuAPI-style Claude external compatibility, set `CLAUDE_BASE_URL` or `ANTHROPIC_BASE_URL` to the Anthropic-compatible root URL, not an OpenAI `/v1` endpoint. The Claude key can be `ANTHROPIC_API_KEY` or the Micu-style `ANTHROPIC_AUTH_TOKEN`, and the model can be `CLAUDE_MODEL` or `ANTHROPIC_MODEL`. OpenAI chapter-generation smoke uses one compact scene-generation probe so it proves the real chapter-generation API path without spending a full chapter budget; the full plan/scene/merge pipeline remains covered by local smoke and normal runs. OpenAI SDK retries default to 0 in smoke so `--retries` remains the visible retry budget. Retries apply to non-writing subchecks only; Notion writeback is not retried. Add `--no-proxy` when local `HTTP_PROXY` / `HTTPS_PROXY` variables point at a proxy you do not want provider smoke to use. Add `--require-all-checks` for Phase 4 acceptance, and add `--ignore-dotenv --allow-missing` when checking the missing-credential path on a machine that has local keys.
-The JSON report includes `request`, `required_checks[]`, `required_checks_ok`, and a compact `diagnostics` block with missing config names plus failed, skipped, and unrequested subchecks. Provider failures include `failure_category` and `retryable` when they can be classified. Missing provider config is aggregated per provider so one run reports all required variables it can prove are absent; `diagnostics.missing_config_groups[]` preserves alternatives such as `NOTION_DATABASE_ID` or `NOVELAGENT_NOTION_DATABASE_ID`.
+The JSON report includes `request`, `required_checks[]`, `required_checks_ok`, and a compact `diagnostics` block with missing config names plus failed, skipped, and unrequested subchecks. Provider failures include `failure_category` and `retryable` when they can be classified. Runtime OpenAI and Claude calls default to streamed responses and timeout defaults are tuned for longer chapter-generation and polish calls, so long prose generations can begin returning content before the full response is complete. Snapshots can include `project_profile.language`, `project_profile.known_characters`, and `project_profile.known_locations`; language-aware contracts then prevent configured Chinese projects from committing English model output, and the analyzer uses profile terms to avoid inventing characters or locations. Missing provider config is aggregated per provider so one run reports all required variables it can prove are absent; `diagnostics.missing_config_groups[]` preserves alternatives such as `NOTION_DATABASE_ID` or `NOVELAGENT_NOTION_DATABASE_ID`.
 The OpenAI check reports Director and chapter-generation subchecks separately.
 Claude reports a `polish` subcheck, and Notion reports `read`, `writeback`, and `readback` subchecks once real credentials are available.
 The report also includes `config_status` with redacted set/missing flags, selected models, timeout/token/retry limits, SDK/default endpoint status, and redacted proxy endpoint metadata; no secrets are written.
@@ -128,9 +142,9 @@ Run records, run reports, and loop session summaries expose compact validation a
 
 Local `.env` is ignored. Use `.env.example` for variable names and recommended default model names only; real configuration is still checked by preflight before live provider calls.
 
-Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.2 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.2 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.2 executor and orchestrator entrypoints.
+Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.3 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.3 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.3 executor and orchestrator entrypoints.
 
-The v1.2 project contract keeps the established directory layout and legacy wrapper boundaries covered by `tests/test_repo_hygiene.py`, so structural drift is caught alongside runtime tests.
+The v1.3 project contract keeps the established directory layout and legacy wrapper boundaries covered by `tests/test_repo_hygiene.py`, so structural drift is caught alongside runtime tests.
 
 ## More Docs
 

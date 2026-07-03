@@ -255,6 +255,22 @@ def _apply_analysis_to_characters(
             existing["last_observation"] = text.strip()
         existing["last_seen_chapter"] = chapter_index
 
+    spatial_state = analysis.get("spatial_state")
+    if isinstance(spatial_state, dict):
+        positions = spatial_state.get("character_positions")
+        if isinstance(positions, dict):
+            for name, location in positions.items():
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                if not isinstance(location, str) or not location.strip():
+                    continue
+                existing = characters.get(name.strip())
+                if not isinstance(existing, dict):
+                    existing = {}
+                    characters[name.strip()] = existing
+                existing["current_location"] = location.strip()
+                existing["last_seen_chapter"] = chapter_index
+
 
 def _apply_analysis_to_story_state(snapshot: dict[str, Any], analysis: dict[str, Any]) -> None:
     story_state = analysis.get("story_state")

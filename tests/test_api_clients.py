@@ -110,6 +110,7 @@ class ApiClientTest(unittest.TestCase):
             "OPENAI_TIMEOUT_SECONDS": os.environ.get("OPENAI_TIMEOUT_SECONDS"),
             "OPENAI_MAX_OUTPUT_TOKENS": os.environ.get("OPENAI_MAX_OUTPUT_TOKENS"),
             "OPENAI_MAX_RETRIES": os.environ.get("OPENAI_MAX_RETRIES"),
+            "OPENAI_STREAM": os.environ.get("OPENAI_STREAM"),
         }
         os.environ["OPENAI_API_KEY"] = "test-key"
         os.environ["OPENAI_BASE_URL"] = ""
@@ -117,6 +118,7 @@ class ApiClientTest(unittest.TestCase):
         os.environ["OPENAI_TIMEOUT_SECONDS"] = "9"
         os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = "77"
         os.environ["OPENAI_MAX_RETRIES"] = "3"
+        os.environ["OPENAI_STREAM"] = "false"
         try:
             with patch.dict(sys.modules, {"openai": fake_module}):
                 self.assertEqual("ok", chat_completion([{"role": "user", "content": "hello"}]))
@@ -137,6 +139,77 @@ class ApiClientTest(unittest.TestCase):
             },
             captured["request_kwargs"],
         )
+
+    def test_openai_client_streams_response_by_default(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeCompletions:
+            def create(self, **kwargs: object) -> object:
+                captured["request_kwargs"] = kwargs
+                return [
+                    SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="streamed "))]),
+                    SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="ok"))]),
+                ]
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        fake_module = SimpleNamespace(OpenAI=FakeOpenAI)
+        originals = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "OPENAI_MODEL": os.environ.get("OPENAI_MODEL"),
+            "OPENAI_STREAM": os.environ.get("OPENAI_STREAM"),
+        }
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["OPENAI_MODEL"] = "test-model"
+        os.environ["OPENAI_STREAM"] = ""
+        try:
+            with patch.dict(sys.modules, {"openai": fake_module}):
+                self.assertEqual("streamed ok", chat_completion([{"role": "user", "content": "hello"}]))
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertTrue(captured["request_kwargs"]["stream"])
+
+    def test_openai_client_timeout_failure_records_attempt_diagnostics(self) -> None:
+        class FakeCompletions:
+            def create(self, **kwargs: object) -> object:
+                raise TimeoutError("Request timed out.")
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        fake_module = SimpleNamespace(OpenAI=FakeOpenAI)
+        originals = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "OPENAI_MODEL": os.environ.get("OPENAI_MODEL"),
+            "OPENAI_STREAM": os.environ.get("OPENAI_STREAM"),
+        }
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["OPENAI_MODEL"] = "test-model"
+        os.environ["OPENAI_STREAM"] = "false"
+        try:
+            with patch.dict(sys.modules, {"openai": fake_module}):
+                with self.assertRaises(ModelCallError) as context:
+                    chat_completion([{"role": "user", "content": "hello"}])
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        diagnostic = context.exception.to_dict()
+        self.assertEqual("timeout", diagnostic["failure_category"])
+        self.assertTrue(diagnostic["retryable"])
+        self.assertEqual(1, diagnostic["attempts"])
+        self.assertIsInstance(diagnostic["elapsed_ms"], int)
 
     def test_claude_client_requires_api_key(self) -> None:
         original_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -183,6 +256,7 @@ class ApiClientTest(unittest.TestCase):
             "CLAUDE_MODEL": os.environ.get("CLAUDE_MODEL"),
             "CLAUDE_MAX_TOKENS": os.environ.get("CLAUDE_MAX_TOKENS"),
             "CLAUDE_TIMEOUT_SECONDS": os.environ.get("CLAUDE_TIMEOUT_SECONDS"),
+            "CLAUDE_STREAM": os.environ.get("CLAUDE_STREAM"),
         }
         os.environ["ANTHROPIC_API_KEY"] = "test-anthropic"
         os.environ["CLAUDE_BASE_URL"] = "https://claude.example.test"
@@ -191,6 +265,7 @@ class ApiClientTest(unittest.TestCase):
         os.environ["CLAUDE_MODEL"] = "claude-test"
         os.environ["CLAUDE_MAX_TOKENS"] = "55"
         os.environ["CLAUDE_TIMEOUT_SECONDS"] = "8"
+        os.environ["CLAUDE_STREAM"] = "false"
         try:
             with patch.dict(sys.modules, {"anthropic": fake_module}):
                 self.assertEqual("polished", polish_chapter("chapter text", dry_run=False))
@@ -212,6 +287,84 @@ class ApiClientTest(unittest.TestCase):
         )
         self.assertEqual("claude-test", captured["request_kwargs"]["model"])
         self.assertEqual(55, captured["request_kwargs"]["max_tokens"])
+
+    def test_claude_client_streams_response_by_default(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeStream:
+            text_stream = ["streamed ", "polish"]
+
+            def __enter__(self) -> "FakeStream":
+                return self
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+                return None
+
+        class FakeMessages:
+            def stream(self, **kwargs: object) -> object:
+                captured["request_kwargs"] = kwargs
+                return FakeStream()
+
+        class FakeAnthropic:
+            def __init__(self, **kwargs: object) -> None:
+                captured["client_kwargs"] = kwargs
+                self.messages = FakeMessages()
+
+        fake_module = SimpleNamespace(Anthropic=FakeAnthropic)
+        originals = {
+            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
+            "CLAUDE_MODEL": os.environ.get("CLAUDE_MODEL"),
+            "CLAUDE_STREAM": os.environ.get("CLAUDE_STREAM"),
+        }
+        os.environ["ANTHROPIC_API_KEY"] = "test-anthropic"
+        os.environ["CLAUDE_MODEL"] = "claude-test"
+        os.environ["CLAUDE_STREAM"] = ""
+        try:
+            with patch.dict(sys.modules, {"anthropic": fake_module}):
+                self.assertEqual("streamed polish", polish_chapter("chapter text", dry_run=False))
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual("claude-test", captured["request_kwargs"]["model"])
+
+    def test_claude_timeout_failure_records_attempt_diagnostics(self) -> None:
+        class FakeMessages:
+            def create(self, **kwargs: object) -> object:
+                raise TimeoutError("Request timed out or interrupted.")
+
+        class FakeAnthropic:
+            def __init__(self, **kwargs: object) -> None:
+                self.messages = FakeMessages()
+
+        fake_module = SimpleNamespace(Anthropic=FakeAnthropic)
+        originals = {
+            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
+            "CLAUDE_MODEL": os.environ.get("CLAUDE_MODEL"),
+            "CLAUDE_STREAM": os.environ.get("CLAUDE_STREAM"),
+        }
+        os.environ["ANTHROPIC_API_KEY"] = "test-anthropic"
+        os.environ["CLAUDE_MODEL"] = "claude-test"
+        os.environ["CLAUDE_STREAM"] = "false"
+        try:
+            with patch.dict(sys.modules, {"anthropic": fake_module}):
+                with self.assertRaises(ModelCallError) as context:
+                    polish_chapter("chapter text", dry_run=False)
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        diagnostic = context.exception.to_dict()
+        self.assertEqual("timeout", diagnostic["failure_category"])
+        self.assertTrue(diagnostic["retryable"])
+        self.assertEqual(1, diagnostic["attempts"])
+        self.assertIsInstance(diagnostic["elapsed_ms"], int)
 
     def test_claude_response_extraction_wraps_missing_content_blocks(self) -> None:
         with self.assertRaises(ModelCallError) as context:

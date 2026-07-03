@@ -746,6 +746,20 @@
             },
             "message": {
               "type": "string"
+            },
+            "failure_category": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "attempts": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "elapsed_ms": {
+              "type": "integer",
+              "minimum": 0
             }
           },
           "additionalProperties": false
@@ -980,6 +994,7 @@
               "items": {
                 "enum": [
                   "chapter_index",
+                  "project_profile",
                   "director_decision",
                   "world_state",
                   "story_state",
@@ -1053,6 +1068,32 @@
                 "memory_item_count"
               ],
               "properties": {
+                "project_profile": {
+                  "type": "object",
+                  "required": [
+                    "language",
+                    "known_characters",
+                    "known_locations"
+                  ],
+                  "properties": {
+                    "language": {
+                      "type": "string"
+                    },
+                    "known_characters": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "known_locations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "world_state_keys": {
                   "type": "array",
                   "items": {
@@ -2288,6 +2329,20 @@
               },
               "message": {
                 "type": "string"
+              },
+              "failure_category": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "elapsed_ms": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "additionalProperties": false

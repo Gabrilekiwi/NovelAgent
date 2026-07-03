@@ -399,6 +399,8 @@ class ProviderSmokeScriptTest(unittest.TestCase):
                 "model": "gpt-test",
                 "cause_type": "TimeoutError",
                 "message": "OpenAI chat completion failed: Request timed out.",
+                "failure_category": "timeout",
+                "retryable": True,
             },
             result["model_call"],
         )

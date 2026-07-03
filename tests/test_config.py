@@ -81,12 +81,27 @@ class ConfigTest(unittest.TestCase):
 
         self.assertEqual(4, config.openai_max_retries)
 
+    def test_openai_stream_defaults_and_parses_env(self) -> None:
+        original_stream = os.environ.get("OPENAI_STREAM")
+        os.environ["OPENAI_STREAM"] = "false"
+        try:
+            config = get_config()
+        finally:
+            if original_stream is None:
+                os.environ.pop("OPENAI_STREAM", None)
+            else:
+                os.environ["OPENAI_STREAM"] = original_stream
+
+        self.assertFalse(config.openai_stream)
+
     def test_provider_timeouts_parse_env(self) -> None:
         originals = {
             "CLAUDE_TIMEOUT_SECONDS": os.environ.get("CLAUDE_TIMEOUT_SECONDS"),
+            "CLAUDE_STREAM": os.environ.get("CLAUDE_STREAM"),
             "NOTION_TIMEOUT_SECONDS": os.environ.get("NOTION_TIMEOUT_SECONDS"),
         }
         os.environ["CLAUDE_TIMEOUT_SECONDS"] = "11"
+        os.environ["CLAUDE_STREAM"] = "false"
         os.environ["NOTION_TIMEOUT_SECONDS"] = "13"
         try:
             config = get_config()
@@ -98,6 +113,7 @@ class ConfigTest(unittest.TestCase):
                     os.environ[name] = value
 
         self.assertEqual(11, config.claude_timeout_seconds)
+        self.assertFalse(config.claude_stream)
         self.assertEqual(13, config.notion_timeout_seconds)
 
     def test_claude_base_url_and_user_agent_parse_env(self) -> None:

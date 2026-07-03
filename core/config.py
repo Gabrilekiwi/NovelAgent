@@ -9,6 +9,7 @@ from core.runtime_paths import DEFAULT_MEMORY_PATH
 
 
 _ENV_LOADED = False
+PROXY_ENV_NAMES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 
 
 def load_env() -> None:
@@ -35,12 +36,14 @@ class RuntimeConfig:
     openai_timeout_seconds: int
     openai_max_output_tokens: int
     openai_max_retries: int
+    openai_stream: bool
     anthropic_api_key: str | None
     claude_base_url: str | None
     claude_user_agent: str | None
     claude_model: str | None
     claude_max_tokens: int
     claude_timeout_seconds: int
+    claude_stream: bool
     memory_path: Path
     notion_api_key: str | None
     notion_database_id: str | None
@@ -57,20 +60,32 @@ def get_config() -> RuntimeConfig:
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_base_url=_env("OPENAI_BASE_URL"),
         openai_model=_env("OPENAI_MODEL") or "gpt-4.1-mini",
-        openai_timeout_seconds=_int_env("OPENAI_TIMEOUT_SECONDS", 30),
+        openai_timeout_seconds=_int_env("OPENAI_TIMEOUT_SECONDS", 90),
         openai_max_output_tokens=_int_env("OPENAI_MAX_OUTPUT_TOKENS", 1200),
         openai_max_retries=max(0, _int_env("OPENAI_MAX_RETRIES", 0)),
+        openai_stream=_bool_env("OPENAI_STREAM", True),
         anthropic_api_key=_env("ANTHROPIC_API_KEY") or _env("ANTHROPIC_AUTH_TOKEN"),
         claude_base_url=_env("CLAUDE_BASE_URL") or _env("ANTHROPIC_BASE_URL"),
         claude_user_agent=_env("CLAUDE_USER_AGENT"),
         claude_model=_env("CLAUDE_MODEL") or _env("ANTHROPIC_MODEL"),
         claude_max_tokens=_int_env("CLAUDE_MAX_TOKENS", 3000),
-        claude_timeout_seconds=_int_env("CLAUDE_TIMEOUT_SECONDS", 30),
+        claude_timeout_seconds=_int_env("CLAUDE_TIMEOUT_SECONDS", 90),
+        claude_stream=_bool_env("CLAUDE_STREAM", True),
         memory_path=Path(_env("NOVELAGENT_MEMORY_PATH") or DEFAULT_MEMORY_PATH),
         notion_api_key=_env("NOTION_API_KEY"),
         notion_database_id=_env("NOTION_DATABASE_ID") or _env("NOVELAGENT_NOTION_DATABASE_ID"),
         notion_timeout_seconds=_int_env("NOTION_TIMEOUT_SECONDS", 30),
     )
+
+
+def proxy_disabled_by_env() -> bool:
+    load_env()
+    return _bool_env("NOVELAGENT_NO_PROXY", False)
+
+
+def clear_proxy_env() -> None:
+    for name in PROXY_ENV_NAMES:
+        os.environ.pop(name, None)
 
 
 def _skip_dotenv() -> bool:
@@ -98,3 +113,10 @@ def _int_env(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = _env(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}

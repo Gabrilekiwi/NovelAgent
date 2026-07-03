@@ -601,6 +601,20 @@
         },
         "message": {
           "type": "string"
+        },
+        "failure_category": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": false

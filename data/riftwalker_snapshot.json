@@ -1,0 +1,175 @@
+{
+  "chapter_index": 1,
+  "project_profile": {
+    "language": "zh-CN",
+    "known_characters": [
+      "\u9646\u781a",
+      "\u9646\u656c\u8861",
+      "\u963f\u7167"
+    ],
+    "known_locations": [
+      "\u65e7\u5929\u6587\u9986",
+      "\u88c2\u9699\u4e2d\u5ead",
+      "\u955c\u7802\u8352\u539f",
+      "\u56de\u58f0\u4e95",
+      "\u706b\u96e8\u57ce\u95e8",
+      "\u706b\u96e8\u57ce",
+      "\u6f6e\u6c50\u56fe\u4e66\u9986",
+      "\u9006\u5854\u5e95\u5c42",
+      "\u7a7a\u949f\u5c42",
+      "\u73bb\u7483\u6d77\u5cb8",
+      "\u5e78\u5b58\u5c9b",
+      "\u5e9f\u706f\u5854",
+      "\u9ed1\u6708\u96c6\u5e02",
+      "\u7b2c\u4e03\u7801\u5934"
+    ]
+  },
+  "world_state": {
+    "title": "裂隙行者",
+    "genre": "奇幻冒险",
+    "language": "Simplified Chinese",
+    "premise": "平行世界会在特定天象下短暂重叠，被称为裂隙潮。少数人能穿越裂隙，在不同宇宙中冒险并获得能力，但每一种能力都带有代价。",
+    "power_system": "穿越者会获得来自目标宇宙规则的能力碎片。能力越强，越容易被裂隙回声标记。",
+    "locations": {
+      "旧天文馆": {
+        "status": "abandoned",
+        "risk": "rising",
+        "description": "临海市北山上的废弃天文馆，十年前发生过一次观测事故。地下观测大厅仍保存着父亲留下的旧设备。",
+        "aliases": [
+          "天文馆",
+          "观测大厅"
+        ]
+      },
+      "裂隙中庭": {
+        "status": "unstable",
+        "risk": "high",
+        "description": "旧天文馆穹顶开启后显露的夹层空间，像一座由星光和碎石拼成的中庭，是通往平行宇宙的门槛。",
+        "aliases": [
+          "中庭",
+          "星门"
+        ]
+      },
+      "镜砂荒原": {
+        "status": "unknown",
+        "risk": "high",
+        "description": "第一个平行宇宙，地面由会映照记忆的银色砂砾构成，风暴中潜伏着以回声为食的生物。",
+        "aliases": [
+          "荒原",
+          "镜砂世界"
+        ]
+      }
+    },
+    "last_world_changes": []
+  },
+  "characters": {
+    "陆砚": {
+      "role": "lead",
+      "age": 27,
+      "status": "alive",
+      "current_location": "旧天文馆",
+      "current_goal": "查清父亲失踪真相并确认黄铜星盘的来源",
+      "background": "临海市博物馆的文物修复师，习惯用细节推理，不相信奇迹，却被父亲留下的星盘拖入平行宇宙。"
+    },
+    "陆敬衡": {
+      "role": "missing_father",
+      "status": "missing",
+      "current_location": "",
+      "current_goal": "",
+      "background": "十年前主持裂隙潮观测的天体物理学家，事故后被官方记录为失踪。"
+    }
+  },
+  "story_state": {
+    "last_chapter_ending": "",
+    "last_scene_location": "",
+    "last_scene_characters": [],
+    "open_threads": [
+      "陆砚父亲十年前在一次观测事故后失踪。",
+      "父亲留下的黄铜星盘会在裂隙潮来临前发热。",
+      "第一个平行宇宙可能藏着父亲失踪的线索。"
+    ],
+    "required_opening_bridge": ""
+  },
+  "spatial_state": {
+    "spaces": {
+      "旧天文馆": {
+        "status": "abandoned",
+        "risk": "rising",
+        "aliases": [
+          "天文馆",
+          "观测大厅"
+        ]
+      },
+      "裂隙中庭": {
+        "status": "unstable",
+        "risk": "high",
+        "aliases": [
+          "中庭",
+          "星门"
+        ]
+      },
+      "镜砂荒原": {
+        "status": "unknown",
+        "risk": "high",
+        "aliases": [
+          "荒原",
+          "镜砂世界"
+        ]
+      }
+    },
+    "connections": [
+      {
+        "from": "旧天文馆",
+        "to": "裂隙中庭",
+        "bidirectional": true
+      },
+      {
+        "from": "裂隙中庭",
+        "to": "镜砂荒原",
+        "bidirectional": false
+      }
+    ],
+    "character_positions": {
+      "陆砚": "旧天文馆"
+    },
+    "blocked_paths": [],
+    "last_transition": {}
+  },
+  "timeline": [
+    {
+      "chapter_index": 0,
+      "summary": "十年前，陆砚的父亲陆敬衡在旧天文馆观测裂隙潮时失踪，只留下一个会在异常天象前发热的黄铜星盘。",
+      "events": [
+        {
+          "text": "陆敬衡在旧天文馆的观测事故后失踪。"
+        },
+        {
+          "text": "黄铜星盘成为陆砚追查父亲下落的唯一线索。"
+        }
+      ],
+      "character_changes": [],
+      "world_changes": [],
+      "new_locations": [
+        "旧天文馆"
+      ],
+      "conflicts": [
+        "失踪",
+        "秘密"
+      ],
+      "validation": {
+        "ok": true,
+        "checks": [],
+        "problems": []
+      }
+    }
+  ],
+  "constraints": [
+    {
+      "rule": "使用简体中文连续小说正文。不要输出章节标题、Markdown、JSON、分析、注释或作者说明。节奏偏冒险推进，第一章必须出现明确危险、秘密、选择或代价。"
+    }
+  ],
+  "memory": {
+    "source": "file",
+    "status": "ready",
+    "item_count": 6
+  }
+}

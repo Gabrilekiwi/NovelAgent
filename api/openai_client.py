@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
-from api.contracts import ModelCallError
+from api.contracts import ModelCallError, classify_model_failure, is_retryable_failure
 from core.config import get_config
 
 
@@ -43,24 +44,35 @@ def chat_completion(
         client_kwargs["timeout"] = config.openai_timeout_seconds
     client_kwargs["max_retries"] = config.openai_max_retries
 
+    resolved_max_tokens = max_tokens if max_tokens is not None else config.openai_max_output_tokens
+    request_kwargs: dict[str, Any] = {
+        "model": resolved_model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if resolved_max_tokens > 0:
+        request_kwargs["max_tokens"] = resolved_max_tokens
+
+    started = time.monotonic()
     try:
-        resolved_max_tokens = max_tokens if max_tokens is not None else config.openai_max_output_tokens
-        request_kwargs: dict[str, Any] = {
-            "model": resolved_model,
-            "messages": messages,
-            "temperature": temperature,
-        }
-        if resolved_max_tokens > 0:
-            request_kwargs["max_tokens"] = resolved_max_tokens
         client = OpenAI(**client_kwargs)
+        if config.openai_stream:
+            response = client.chat.completions.create(**request_kwargs, stream=True)
+            return _extract_streamed_message_content(response, stage=stage, model=resolved_model)
         response = client.chat.completions.create(**request_kwargs)
     except Exception as exc:  # noqa: BLE001 - preserve provider failure context.
+        failure_category = classify_model_failure(type(exc).__name__, str(exc))
+        elapsed_ms = int(max(0.0, (time.monotonic() - started) * 1000))
         raise ModelCallError(
             f"OpenAI chat completion failed: {exc}",
             provider="openai",
             stage=stage,
             model=resolved_model,
             cause=exc,
+            failure_category=failure_category,
+            retryable=is_retryable_failure(failure_category),
+            attempts=1,
+            elapsed_ms=elapsed_ms,
         ) from exc
 
     return _extract_message_content(response, stage=stage, model=resolved_model)
@@ -93,3 +105,24 @@ def _extract_message_content(response: Any, *, stage: str, model: str | None) ->
             model=model,
         )
     return content
+
+
+def _extract_streamed_message_content(response: Any, *, stage: str, model: str | None) -> str:
+    parts: list[str] = []
+    for chunk in response:
+        choices = getattr(chunk, "choices", None)
+        if not isinstance(choices, list) or not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        content = getattr(delta, "content", None)
+        if isinstance(content, str):
+            parts.append(content)
+    text = "".join(parts)
+    if not text:
+        raise ModelCallError(
+            "OpenAI streamed response did not include message content.",
+            provider="openai",
+            stage=stage,
+            model=model,
+        )
+    return text

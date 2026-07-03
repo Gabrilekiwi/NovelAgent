@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
-from api.contracts import CHAPTER_CONTRACT, validate_text_output
+from api.contracts import CHAPTER_CONTRACT, validate_language_output, validate_text_output
 from api.openai_client import chat_completion
 from core.schema import validate_schema
 from modules.chapter_generator.generator import _DRY_RUN_CHAPTER, _load_prompt
@@ -25,12 +26,13 @@ def run_chapter_pipeline(
     chapter_index: int,
     dry_run: bool = False,
     scene_limit: int | None = None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     plan = plan_chapter(input_pack, chapter_index=chapter_index, dry_run=dry_run)
     plan = _limit_plan_scenes(plan, scene_limit)
-    scenes = generate_scenes(input_pack, plan, dry_run=dry_run)
+    scenes = generate_scenes(input_pack, plan, dry_run=dry_run, language=language)
     merged, scene_spans = _merge_scene_texts(scenes)
-    merged = validate_text_output(merged, CHAPTER_CONTRACT)
+    merged = validate_language_output(merged, CHAPTER_CONTRACT, language=language)
     return validate_schema(
         {
             "chapter_index": int(chapter_index),
@@ -81,7 +83,7 @@ def plan_chapter(input_pack: str, *, chapter_index: int, dry_run: bool = False) 
         stage="chapter_generation",
     )
     try:
-        plan = json.loads(payload)
+        plan = _load_plan_json(payload)
     except json.JSONDecodeError as exc:
         raise ValueError("Chapter plan response was not valid JSON") from exc
     if not isinstance(plan, dict):
@@ -89,7 +91,28 @@ def plan_chapter(input_pack: str, *, chapter_index: int, dry_run: bool = False) 
     return _validate_plan(plan)
 
 
-def generate_scenes(input_pack: str, plan: dict[str, Any], *, dry_run: bool = False) -> list[dict[str, Any]]:
+def _load_plan_json(payload: str) -> Any:
+    text = str(payload or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        return json.loads(text[start : end + 1])
+
+
+def generate_scenes(
+    input_pack: str,
+    plan: dict[str, Any],
+    *,
+    dry_run: bool = False,
+    language: str | None = None,
+) -> list[dict[str, Any]]:
     if dry_run:
         return _dry_run_scene_drafts(plan)
 
@@ -118,7 +141,7 @@ def generate_scenes(input_pack: str, plan: dict[str, Any], *, dry_run: bool = Fa
             {
                 "index": int(scene["index"]),
                 "goal": str(scene["goal"]),
-                "text": validate_text_output(scene_text, CHAPTER_CONTRACT),
+                "text": validate_language_output(scene_text, CHAPTER_CONTRACT, language=language),
             }
         )
     return _validate_scene_drafts(scene_drafts)

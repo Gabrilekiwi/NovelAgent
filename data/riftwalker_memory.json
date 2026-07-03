@@ -1,0 +1,74 @@
+[
+  {
+    "id": "riftwalker:world:premise",
+    "type": "world_state",
+    "name": "裂隙行者世界基线",
+    "data": {
+      "title": "裂隙行者",
+      "genre": "奇幻冒险",
+      "language": "Simplified Chinese",
+      "premise": "平行世界会在特定天象下短暂重叠，被称为裂隙潮。少数人能穿越裂隙，在不同宇宙中冒险并获得能力，但每一种能力都带有代价。",
+      "power_system": "穿越者会获得来自目标宇宙规则的能力碎片。能力越强，越容易被裂隙回声标记。",
+      "central_tension": "主角必须在不断升级的平行宇宙冒险中寻找父亲失踪真相，同时避免被裂隙回声吞没。"
+    }
+  },
+  {
+    "id": "riftwalker:location:old_observatory",
+    "type": "location",
+    "name": "旧天文馆",
+    "data": {
+      "status": "abandoned",
+      "risk": "rising",
+      "description": "临海市北山上的废弃天文馆，十年前发生过一次观测事故。地下观测大厅仍保存着父亲留下的旧设备。",
+      "aliases": [
+        "天文馆",
+        "观测大厅"
+      ]
+    }
+  },
+  {
+    "id": "riftwalker:location:rift_court",
+    "type": "location",
+    "name": "裂隙中庭",
+    "data": {
+      "status": "unstable",
+      "risk": "high",
+      "description": "旧天文馆穹顶开启后显露的夹层空间，像一座由星光和碎石拼成的中庭，是通往平行宇宙的门槛。",
+      "aliases": [
+        "中庭",
+        "星门"
+      ]
+    }
+  },
+  {
+    "id": "riftwalker:location:mirror_sand_waste",
+    "type": "location",
+    "name": "镜砂荒原",
+    "data": {
+      "status": "unknown",
+      "risk": "high",
+      "description": "第一个平行宇宙，地面由会映照记忆的银色砂砾构成，风暴中潜伏着以回声为食的生物。",
+      "aliases": [
+        "荒原",
+        "镜砂世界"
+      ]
+    }
+  },
+  {
+    "id": "riftwalker:timeline:opening_event",
+    "type": "timeline_event",
+    "name": "第一章起点事件",
+    "data": {
+      "summary": "七月三日午夜，陆砚带着父亲留下的黄铜星盘潜入旧天文馆。星盘在流星雨中启动，穹顶投下不存在的星图，旧观测大厅被撕开成通往裂隙中庭的入口。",
+      "chapter_index": 1
+    }
+  },
+  {
+    "id": "riftwalker:constraint:style",
+    "type": "constraint",
+    "name": "写作基线",
+    "data": {
+      "rule": "使用简体中文连续小说正文。不要输出章节标题、Markdown、JSON、分析、注释或作者说明。节奏偏冒险推进，第一章必须出现明确危险、秘密、选择或代价。"
+    }
+  }
+]

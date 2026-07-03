@@ -81,6 +81,8 @@ python main.py --llm-validator
 
 This uses OpenAI and is never enabled implicitly by dry-run or CI. Preflight requires `OPENAI_API_KEY` and the OpenAI package before this stage can run. LLM validation output is schema-checked and merged as `validator="llm"` problems with evidence, severity, repair hints, and an `area` enum covering complex plot logic, character motivation consistency, timeline causality, setup/payoff, and emotional/theme drift.
 
+If local proxy variables point provider SDK traffic at an unavailable proxy, add `--no-proxy` to `main.py` commands or set `NOVELAGENT_NO_PROXY=1` in `.env`. This clears `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lowercase variants before OpenAI, Claude, or Notion calls run.
+
 Run real provider smoke checks after local gates are stable:
 
 ```bash
@@ -175,6 +177,20 @@ Run records include Snapshot Builder artifact links, State Builder memory-applic
 
 Model output contracts reject non-prose returns before they can be committed as chapter text. Empty output, JSON-like structured data, fenced code blocks, Markdown wrappers/headings, standalone chapter headings such as `Chapter 4`, and assistant commentary such as `Here is...`, `As an AI...`, or `Error:...` raise `ModelOutputError` and are persisted as failed-run diagnostics when persistence is enabled.
 
+Snapshots may include a `project_profile` object:
+
+```json
+{
+  "project_profile": {
+    "language": "zh-CN",
+    "known_characters": ["陆砚", "阿照"],
+    "known_locations": ["黑月集市", "第七码头"]
+  }
+}
+```
+
+The profile is included in the input pack. When `language` is set to `zh-CN`, scene generation and Claude polish output must remain Simplified Chinese before the chapter can pass the model output contract. Known characters and locations are also available to the analyzer, which reduces false character/location extraction for Chinese novels and new projects.
+
 Committed runs validate the full chapter analysis result before the Snapshot is advanced or memory writeback is considered. The run record stores a compact analysis summary, while the state update path consumes the schema-checked full analysis object. Memory writeback then passes through a quality gate: final validation must be ok, and the final repair delta must not contain new, remaining, or post-repair problem codes. The gate records pending memory update count/type summaries before it allows or blocks writes. If the gate blocks writeback, the run still records schema-checked `run.memory.writeback.gate` with the reasons and writes no outbox or Notion pages. Successful or skipped writeback records schema-checked `item_mappings` so each generated memory item can be traced to an outbox line or Notion page id/URL. File writeback records readback `verification` for written JSONL lines. CLI-created Notion writeback queries existing pages before writing and skips duplicate `Memory ID` values while recording the existing page mapping. Notion writeback records response-level verification by default, and `--notion-readback` upgrades this to database readback verification with `status="verified"` when every written memory item can be queried back by `Memory ID`.
 
 Schema consistency checks compare duplicated embedded run-record blocks with their standalone schema files, including the nullable embedded workflow plan and state update audit, so artifact contracts fail fast if one side changes without the other. The same guard runs in automated tests and preflight.
@@ -189,11 +205,27 @@ Continue after a rejected or failed run so the next step can use recovery contex
 python main.py --steps 2 --continue-on-rejection --memory data/notion_memory.example.json
 ```
 
+Recover the latest failed or rejected pre-polish draft without updating the snapshot:
+
+```bash
+python main.py --recover-latest --run-dir .tmp/runtime/runs --chapter-dir .tmp/runtime/chapters
+```
+
+This writes `chapter_XXXX_recovered_<run_id>.md` to the chapter directory. It is intentionally separate from normal commit logic, so it cannot silently advance chapter state.
+
 Recovery context includes validation problem codes plus blocking/warning counts, severity counts, validation coverage, compact validation evidence, compact repair plan summaries, compact repair evidence, and compact repair delta summaries from the last run. The rule Director uses that structured summary to choose validation focus and repair budget, model-backed Director receives the same compact `last_run` payload, chapter generation receives a first-class `# Recovery Context` section in the runtime input pack, and scene repair receives the same structure as explicit model payload context. Each run record stores which last run was attached under `recovery_context`; loop sessions collect those edges under `recovery_links` so multi-step recovery can be audited after the fact. If the previous run skipped continuity, spatial, or logic checks, the next recovery decision prioritizes those skipped checks before commit. If the previous repair plan carried critical risk, needed manual review, or exhausted its budget without a commit, the next recovery budget is raised before polish. If the previous repair stalled or introduced new problem codes, recovery budget is also raised and validation focus is derived from remaining/new problem codes. The current run's `snapshot_builder_audit` is also attached before Director executes; it includes applied/skipped memory type counts, skipped reason/severity counts, blocking skipped counts, and source mapping samples. Medium-or-higher skipped memory quality issues can raise the repair budget, prioritize continuity/spatial validation, and skip polish before repair.
 
 Non-dry-run preflight requires the `openai` package and `OPENAI_API_KEY`. Use `--require-claude` to also require the `anthropic` package, a Claude key (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`), and a Claude model (`CLAUDE_MODEL` or `ANTHROPIC_MODEL`).
 
 Runtime configuration is centralized in `core.config` and is loaded from `.env` plus process environment variables. Empty strings are treated as missing values. `.env.example` lists variable names and recommended model defaults only; it must not contain real keys.
+
+Use the UTF-8 snapshot maintenance helper after manual snapshot edits, especially on Windows shells:
+
+```bash
+python -B scripts/snapshot_utf8.py --snapshot .tmp/runtime/snapshot.json --write-normalized
+```
+
+The script loads JSON as UTF-8, validates it through the runtime snapshot normalizer, reports suspicious replacement text such as `????` or `\ufffd`, and optionally rewrites normalized UTF-8 JSON.
 
 Common variables:
 
@@ -203,6 +235,7 @@ Common variables:
 - `OPENAI_TIMEOUT_SECONDS`
 - `OPENAI_MAX_OUTPUT_TOKENS`
 - `OPENAI_MAX_RETRIES`
+- `OPENAI_STREAM`
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_AUTH_TOKEN`
 - `CLAUDE_BASE_URL`
@@ -212,6 +245,7 @@ Common variables:
 - `ANTHROPIC_MODEL`
 - `CLAUDE_MAX_TOKENS`
 - `CLAUDE_TIMEOUT_SECONDS`
+- `CLAUDE_STREAM`
 - `NOVELAGENT_MEMORY_PATH`
 - `NOTION_API_KEY`
 - `NOTION_DATABASE_ID`

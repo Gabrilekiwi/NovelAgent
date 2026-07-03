@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
 
 
 _SNAPSHOT_PROMPT_PATH = Path("prompts/snapshot_prompt.md")
 INPUT_PACK_SECTIONS = [
     "chapter_index",
+    "project_profile",
     "director_decision",
     "world_state",
     "story_state",
@@ -57,6 +59,9 @@ def build_input_pack(
 # Chapter Index
 {snapshot.get("chapter_index")}
 
+# Project Profile
+{_dump(normalize_project_profile(snapshot))}
+
 # Director Decision
 {_dump(decision or {})}
 
@@ -90,6 +95,7 @@ def build_input_pack(
 # Requirements
 - Advance the plot instead of restating setup.
 - Preserve character, location, and timeline continuity from the Snapshot.
+- If Project Profile sets a language, write the chapter only in that language.
 - Continue directly from Story State and explain Spatial State transitions before changing locations.
 - Introduce or intensify at least one concrete conflict.
 - Treat Snapshot and Memory Index as read-only runtime context.
@@ -116,6 +122,7 @@ def build_input_pack_metadata(
             "max_repair_attempts": int((decision or {}).get("max_repair_attempts") or 0),
         },
         "snapshot": {
+            "project_profile": normalize_project_profile(snapshot),
             "world_state_keys": sorted(str(key) for key in (snapshot.get("world_state") or {}).keys()),
             "story_state_keys": sorted(str(key) for key in (snapshot.get("story_state") or {}).keys()),
             "spatial_state_keys": sorted(str(key) for key in (snapshot.get("spatial_state") or {}).keys()),

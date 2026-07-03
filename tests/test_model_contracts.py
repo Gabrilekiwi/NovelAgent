@@ -5,7 +5,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from api.contracts import CHAPTER_CONTRACT, ModelCallError, ModelOutputError, validate_text_output
+from api.contracts import CHAPTER_CONTRACT, POLISH_CONTRACT, ModelCallError, ModelOutputError, validate_text_output
 from core.engine.executor import AgentExecutor
 from core.schema import validate_schema
 import modules.chapter_generator.generator as chapter_module
@@ -134,6 +134,35 @@ class ModelContractTest(unittest.TestCase):
                 polish_module.polish_chapter("A long enough chapter placeholder.", dry_run=False)
         finally:
             polish_module.polish_with_claude = original_polisher
+
+    def test_polisher_rejects_english_translation_of_chinese_chapter(self) -> None:
+        original_polisher = polish_module.polish_with_claude
+        polish_module.polish_with_claude = lambda chapter_text, dry_run=False: (
+            "In the Black-Moon Market, Lu Yan and A-Zhao stood beside the ferry while the ledger "
+            "opened again. The Ferryman asked for a higher price, and Lu Yan had to choose."
+        )
+        try:
+            with self.assertRaisesRegex(ModelOutputError, "Simplified Chinese"):
+                polish_module.polish_chapter("黑月集市里，陆砚和阿照站在船边。", dry_run=False)
+        finally:
+            polish_module.polish_with_claude = original_polisher
+
+    def test_polisher_rejects_interactive_claude_confirmation(self) -> None:
+        original_polisher = polish_module.polish_with_claude
+        polish_module.polish_with_claude = lambda chapter_text, dry_run=False: (
+            "黑潮在他们脚下合拢。\n\n"
+            "如果你希望我对这一章进行润色，请确认这段就是待润色的原稿。"
+        )
+        try:
+            with self.assertRaisesRegex(ModelOutputError, "assistant commentary"):
+                polish_module.polish_chapter("黑潮在他们脚下合拢。", dry_run=False)
+        finally:
+            polish_module.polish_with_claude = original_polisher
+
+    def test_polish_contract_accepts_chinese_prose_with_some_terms(self) -> None:
+        text = "黑月集市的灯齐齐暗下，Lu Yan 这个旧译名只在账页边缘闪了一瞬，陆砚没有回头。"
+
+        self.assertEqual(text, validate_text_output(text, POLISH_CONTRACT))
 
     def test_scene_repair_rejects_meta_model_response(self) -> None:
         original_chat_completion = repair_module.chat_completion

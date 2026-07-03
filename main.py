@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 
+from core.config import clear_proxy_env, proxy_disabled_by_env
 from core.director import ModelDirector
 from core.engine.executor import AgentExecutor, LoopExecutionError
 from core.engine.preflight import run_preflight
+from core.engine.recovery import RecoveryError, recover_latest_chapter_draft
 from core.engine.report import build_run_report
 from core.runtime_paths import (
     DEFAULT_CHAPTER_DIR,
@@ -91,6 +93,12 @@ def parse_args() -> argparse.Namespace:
         help="Run the optional OpenAI-backed story-level validator after rule validation.",
     )
     parser.add_argument(
+        "--scene-limit",
+        type=_positive_int,
+        default=None,
+        help="Limit generated chapter scenes for bounded provider runs. Defaults to the full model plan.",
+    )
+    parser.add_argument(
         "--steps",
         type=_positive_int,
         default=1,
@@ -117,6 +125,11 @@ def parse_args() -> argparse.Namespace:
         help="Print a JSON report for persisted run records and exit.",
     )
     parser.add_argument(
+        "--recover-latest",
+        action="store_true",
+        help="Recover the latest failed or rejected pre-polish chapter draft into chapter-dir and exit.",
+    )
+    parser.add_argument(
         "--output-json",
         action="store_true",
         help="After generation, print the full result JSON instead of the concise summary.",
@@ -137,6 +150,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="During --check, require Claude polish environment variables.",
     )
+    parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        help="Clear HTTP(S)/ALL proxy environment variables before provider calls.",
+    )
     return parser.parse_args()
 
 
@@ -152,6 +170,9 @@ def _positive_int(value: str) -> int:
 
 def main() -> None:
     args = parse_args()
+    if args.no_proxy or proxy_disabled_by_env():
+        clear_proxy_env()
+
     if args.init_runtime:
         result = init_runtime_state(overwrite=args.force_init_runtime)
         print(format_init_runtime_summary(result))
@@ -160,6 +181,22 @@ def main() -> None:
     if args.report_runs:
         report = build_run_report(run_dir=args.run_dir, limit=args.report_limit)
         print(json.dumps(report, ensure_ascii=False, indent=2))
+        raise SystemExit(0)
+
+    if args.recover_latest:
+        try:
+            result = recover_latest_chapter_draft(run_dir=args.run_dir, chapter_dir=args.chapter_dir)
+        except RecoveryError as exc:
+            payload = {"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}
+            if args.output_json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(format_recovery_summary(payload))
+            raise SystemExit(1) from exc
+        if args.output_json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(format_recovery_summary(result))
         raise SystemExit(0)
 
     if args.check:
@@ -193,6 +230,7 @@ def main() -> None:
         run_dir=args.run_dir,
         chapter_dir=args.chapter_dir,
         dry_run=args.dry_run,
+        scene_limit=args.scene_limit,
         director=ModelDirector(model=args.director_model) if args.director_model else None,
         enable_llm_validator=args.llm_validator,
         memory_writer=build_memory_writer(
@@ -305,6 +343,23 @@ def format_init_runtime_summary(result: dict) -> str:
     if skipped:
         lines.append(f"- skipped_existing: {', '.join(str(item.get('name')) for item in skipped if isinstance(item, dict))}")
     return "\n".join(lines)
+
+
+def format_recovery_summary(result: dict) -> str:
+    if not result.get("ok"):
+        error = result.get("error") if isinstance(result.get("error"), dict) else {}
+        return f"Recovery failed: {error.get('type')}: {error.get('message')}"
+    artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else {}
+    return "\n".join(
+        [
+            "Recovered chapter draft:",
+            f"- source_run: {result.get('source_run_id')} ({result.get('source_status')})",
+            f"- chapter_index: {result.get('chapter_index')}",
+            f"- chars: {result.get('chars')}",
+            f"- artifact: {artifact.get('path')}",
+            "- snapshot_updated: False",
+        ]
+    )
 
 
 def format_run_summary(result: dict) -> str:
@@ -467,6 +522,14 @@ def _format_model_call(model_call: dict) -> str:
         parts.append(f"model={model_call.get('model')}")
     if model_call.get("cause_type"):
         parts.append(f"cause={model_call.get('cause_type')}")
+    if model_call.get("failure_category"):
+        parts.append(f"category={model_call.get('failure_category')}")
+    if model_call.get("retryable") is not None:
+        parts.append(f"retryable={str(bool(model_call.get('retryable'))).lower()}")
+    if model_call.get("attempts"):
+        parts.append(f"attempts={model_call.get('attempts')}")
+    if model_call.get("elapsed_ms") is not None:
+        parts.append(f"elapsed_ms={model_call.get('elapsed_ms')}")
     if model_call.get("message"):
         parts.append(f"message={model_call.get('message')}")
     return " ".join(parts)
