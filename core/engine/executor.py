@@ -5,6 +5,7 @@ import inspect
 from pathlib import Path
 from typing import Any, Callable
 
+from api.contracts import ModelCallError
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
@@ -580,6 +581,9 @@ class AgentExecutor:
                         error=exc,
                     )
                 )
+                if _can_continue_after_transient_polish_error(action, exc):
+                    state["validation"] = None
+                    continue
                 raise WorkflowExecutionError(
                     original=exc,
                     trace=trace,
@@ -961,6 +965,16 @@ def _workflow_steps_by_action(workflow_plan: dict[str, Any]) -> dict[str, dict[s
         for step in steps
         if isinstance(step, dict) and step.get("action")
     }
+
+
+def _can_continue_after_transient_polish_error(action: str, exc: BaseException) -> bool:
+    if action != "polish" or not isinstance(exc, ModelCallError):
+        return False
+    return (
+        exc.provider == "anthropic"
+        and exc.stage == "claude_polish"
+        and bool(exc.retryable)
+    )
 
 
 def _repair_delta(*, attempt: int, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
