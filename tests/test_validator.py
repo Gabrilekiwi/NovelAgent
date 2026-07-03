@@ -4,6 +4,7 @@ import unittest
 
 from core.validator import validate_chapter
 from core.validator.llm import LLM_VALIDATION_AREAS, llm_payload_to_check
+from core.validator.spatial import validate_bridge_preconditions
 
 
 class ValidatorTest(unittest.TestCase):
@@ -187,6 +188,33 @@ class ValidatorTest(unittest.TestCase):
         problem = [p for p in result["problems"] if p["code"] == "invalid_spatial_transition"][0]
         self.assertEqual("add_transition_event", problem["repair_action"])
         self.assertEqual({"expected": "train car", "actual": "connector passage"}, problem["repair_parameters"])
+
+    def test_bridge_preconditions_allow_terminal_last_location(self) -> None:
+        snapshot = {
+            "chapter_index": 15,
+            "world_state": {"locations": {"market": {}, "pier": {}}},
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "The ferryman said, now board.",
+                "last_scene_location": "pier",
+                "last_scene_characters": ["Mira"],
+                "open_threads": [],
+                "required_opening_bridge": "Continue from pier",
+            },
+            "spatial_state": {
+                "spaces": {"market": {}, "pier": {}},
+                "connections": [{"from": "market", "to": "pier"}],
+                "character_positions": {"Mira": "pier"},
+                "blocked_paths": [],
+                "last_transition": {"to": "pier"},
+            },
+        }
+
+        result = validate_bridge_preconditions(snapshot)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([], result["problem_codes"])
 
     def test_rejects_character_position_conflict_with_dedicated_code(self) -> None:
         snapshot = {

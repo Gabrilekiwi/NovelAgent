@@ -135,7 +135,11 @@ def decide_next_step(
             f"blocking={skipped_blocking_count}."
         )
 
-    if isinstance(last_run, dict) and last_run.get("status") in {"rejected", "failed"}:
+    if isinstance(last_run, dict) and _is_pre_generation_bridge_failure(last_run):
+        notes.append(
+            "Previous run failed during bridge pre-validation before generation; rerun the normal prose workflow."
+        )
+    elif isinstance(last_run, dict) and last_run.get("status") in {"rejected", "failed"}:
         raw_codes = last_run.get("problem_codes") or []
         last_problem_codes = [str(code) for code in raw_codes if code]
         blocking_problem_count = _int_value(last_run.get("blocking_problem_count"), default=len(last_problem_codes))
@@ -264,6 +268,16 @@ def _focus_from_problem_codes(problem_codes: list[str]) -> list[str]:
         if item not in focus:
             focus.append(item)
     return focus
+
+
+def _is_pre_generation_bridge_failure(last_run: dict[str, Any]) -> bool:
+    if last_run.get("status") != "failed":
+        return False
+    message = str(last_run.get("error_message") or "").lower()
+    if not message.startswith("bridge pre-validation failed:"):
+        return False
+    workflow = [str(action) for action in last_run.get("workflow") or []]
+    return "pre_validate_bridge" in workflow and "generate_chapter" in workflow
 
 
 def _needs_bridge_workflow(snapshot: dict[str, Any]) -> bool:

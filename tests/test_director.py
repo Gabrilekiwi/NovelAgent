@@ -79,6 +79,41 @@ class DirectorDecisionTest(unittest.TestCase):
         self.assertTrue(any("ModelOutputError" in note for note in decision["notes"]))
         self.assertTrue(any("Previous workflow" in note for note in decision["notes"]))
 
+    def test_pre_generation_bridge_failure_keeps_normal_polish_workflow(self) -> None:
+        decision = decide_next_step(
+            {
+                "chapter_index": 15,
+                "world_state": {"locations": {"pier": {}}},
+                "characters": {},
+                "timeline": [{"summary": "prior chapter"}],
+                "story_state": {
+                    "last_scene_location": "pier",
+                    "required_opening_bridge": "Continue from pier",
+                },
+                "spatial_state": {
+                    "spaces": {"pier": {}},
+                    "connections": [],
+                    "character_positions": {},
+                },
+            },
+            {
+                "source": "test",
+                "status": "ready",
+                "items": [],
+                "last_run": {
+                    "status": "failed",
+                    "problem_codes": ["execution_error"],
+                    "workflow": ["build_snapshot", "pre_validate_bridge", "generate_chapter", "validate"],
+                    "error_type": "ValueError",
+                    "error_message": "bridge pre-validation failed: invalid_spatial_transition",
+                },
+            },
+        )
+
+        self.assertEqual("continue_existing_arc", decision["goal"])
+        self.assertIn("polish", decision["actions"])
+        self.assertTrue(any("pre-validation before generation" in note for note in decision["notes"]))
+
     def test_recovery_prioritizes_previous_skipped_validation_checks(self) -> None:
         decision = decide_next_step(
             {"chapter_index": 2, "world_state": {}, "characters": {}, "timeline": []},

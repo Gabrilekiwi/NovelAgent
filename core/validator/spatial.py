@@ -141,24 +141,6 @@ def validate_bridge_preconditions(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "evidence": [{"kind": "last_scene_location", "value": last_location}],
             }
         )
-    if last_location and isinstance(spatial_state.get("connections"), list) and spatial_state["connections"]:
-        has_available_route = any(
-            _connection_starts_at(connection, last_location)
-            and not _path_blocked(spatial_state.get("blocked_paths"), *_connection_endpoints(connection))
-            for connection in spatial_state["connections"]
-            if _connection_endpoints(connection) is not None
-        )
-        if not has_available_route:
-            problems.append(
-                {
-                    "code": "invalid_spatial_transition",
-                    "message": f"No unblocked connection leaves story_state.last_scene_location {last_location}.",
-                    "expected": last_location,
-                    "actual": "",
-                    "evidence": [{"kind": "last_scene_location", "value": last_location}],
-                }
-            )
-
     return {
         "name": "pre_validate_bridge",
         "ok": not problems,
