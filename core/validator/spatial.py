@@ -297,15 +297,27 @@ def _contains_bridge_signal(opening: str, bridge: str) -> bool:
     if not bridge_terms:
         return False
     source_terms = _bridge_source_terms(all_bridge_terms)
-    if source_terms and not all(term in opening_terms for term in source_terms):
+    if source_terms and not all(_term_in_opening(term, lowered, opening_terms) for term in source_terms):
         return False
     checked_terms = bridge_terms[:4]
-    matched = sum(1 for term in checked_terms if term in opening_terms)
+    matched = sum(1 for term in checked_terms if _term_in_opening(term, lowered, opening_terms))
     return matched >= min(2, len(checked_terms))
 
 
 def _word_terms(value: str) -> list[str]:
     return re.findall(r"[\w\u4e00-\u9fff]+", value.lower())
+
+
+def _term_in_opening(term: str, lowered_opening: str, opening_terms: set[str]) -> bool:
+    if term in opening_terms:
+        return True
+    if _contains_cjk(term):
+        return term in lowered_opening
+    return False
+
+
+def _contains_cjk(value: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in value)
 
 
 def _bridge_source_terms(bridge_terms: list[str]) -> list[str]:

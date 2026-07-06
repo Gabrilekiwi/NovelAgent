@@ -61,7 +61,7 @@ def polish_chapter(chapter_text: str, *, dry_run: bool = False) -> str:
 
     request_kwargs = {
         "model": model,
-        "max_tokens": config.claude_max_tokens,
+        "max_tokens": _polish_max_tokens(chapter_text, config.claude_max_tokens),
         "system": _load_prompt(),
         "messages": [
             {
@@ -93,6 +93,15 @@ def polish_chapter(chapter_text: str, *, dry_run: bool = False) -> str:
         ) from exc
 
     return _extract_message_text(response, model=model)
+
+
+def _polish_max_tokens(chapter_text: str, configured_max_tokens: int) -> int:
+    configured = max(1, int(configured_max_tokens or 0))
+    source_chars = len(str(chapter_text or ""))
+    if source_chars < 1200:
+        return configured
+    dynamic_budget = source_chars * 2
+    return max(configured, dynamic_budget)
 
 
 def _stream_message_text(client: Any, request_kwargs: dict[str, Any], *, model: str | None) -> str:

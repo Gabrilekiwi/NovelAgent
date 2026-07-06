@@ -157,6 +157,38 @@ class ValidatorTest(unittest.TestCase):
         self.assertIn("missing_last_scene_continuity", problems)
         self.assertEqual("anchor_last_scene_state", problems["missing_last_scene_continuity"]["repair_action"])
 
+    def test_accepts_chinese_opening_bridge_with_punctuation_between_terms(self) -> None:
+        snapshot = {
+            "chapter_index": 23,
+            "world_state": {"locations": {"旧天文馆": {}}},
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "他只是安静地站在第一道门前。",
+                "last_scene_location": "旧天文馆",
+                "last_scene_characters": ["陆敬衡"],
+                "open_threads": [],
+                "required_opening_bridge": "旧天文馆 陆敬衡",
+            },
+            "spatial_state": {
+                "spaces": {},
+                "connections": [],
+                "character_positions": {},
+                "blocked_paths": [],
+                "last_transition": {},
+            },
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "旧天文馆，陆敬衡只是安静地站在第一道门前，抬头看向陆砚和阿照手中的黄铜星盘。",
+            {"validation_focus": ["spatial"]},
+        )
+
+        problem_codes = {p["code"] for p in result["problems"]}
+        self.assertNotIn("missing_opening_bridge", problem_codes)
+        self.assertNotIn("missing_last_scene_continuity", problem_codes)
+
     def test_rejects_invalid_spatial_transition_with_dedicated_code(self) -> None:
         snapshot = {
             "chapter_index": 2,

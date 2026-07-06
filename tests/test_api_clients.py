@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from api.contracts import ModelCallError
-from api.claude_client import _extract_message_text, polish_chapter
+from api.claude_client import _extract_message_text, _polish_max_tokens, polish_chapter
 from api.openai_client import _extract_message_content, chat_completion
 
 
@@ -287,6 +287,44 @@ class ApiClientTest(unittest.TestCase):
         )
         self.assertEqual("claude-test", captured["request_kwargs"]["model"])
         self.assertEqual(55, captured["request_kwargs"]["max_tokens"])
+
+    def test_claude_client_raises_polish_budget_for_long_chapters(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeMessages:
+            def create(self, **kwargs: object) -> object:
+                captured["request_kwargs"] = kwargs
+                return SimpleNamespace(content=[SimpleNamespace(text="polished")])
+
+        class FakeAnthropic:
+            def __init__(self, **kwargs: object) -> None:
+                self.messages = FakeMessages()
+
+        fake_module = SimpleNamespace(Anthropic=FakeAnthropic)
+        originals = {
+            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
+            "CLAUDE_MODEL": os.environ.get("CLAUDE_MODEL"),
+            "CLAUDE_MAX_TOKENS": os.environ.get("CLAUDE_MAX_TOKENS"),
+            "CLAUDE_STREAM": os.environ.get("CLAUDE_STREAM"),
+        }
+        os.environ["ANTHROPIC_API_KEY"] = "test-anthropic"
+        os.environ["CLAUDE_MODEL"] = "claude-test"
+        os.environ["CLAUDE_MAX_TOKENS"] = "55"
+        os.environ["CLAUDE_STREAM"] = "false"
+        try:
+            with patch.dict(sys.modules, {"anthropic": fake_module}):
+                self.assertEqual("polished", polish_chapter("章" * 10085, dry_run=False))
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual(20170, captured["request_kwargs"]["max_tokens"])
+
+    def test_polish_max_tokens_uses_configured_floor_for_short_chapters(self) -> None:
+        self.assertEqual(8000, _polish_max_tokens("short chapter", 8000))
 
     def test_claude_client_streams_response_by_default(self) -> None:
         captured: dict[str, object] = {}
