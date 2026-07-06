@@ -127,6 +127,7 @@ def _summarize_loop_session(session: dict[str, Any], path: Path) -> dict[str, An
         "last_run_id": session.get("last_run_id"),
         "run_ids": [run.get("id") for run in session.get("runs", []) if isinstance(run, dict)],
         "run_summaries": _loop_session_run_summaries(session.get("runs")),
+        "step_timings": _loop_step_timings(session.get("step_timings")),
         "artifact": _loop_session_artifact_summary(session, path),
         "recovery_link_count": len(session.get("recovery_links", [])) if isinstance(session.get("recovery_links"), list) else 0,
         "recovery_links": session.get("recovery_links", []) if isinstance(session.get("recovery_links"), list) else [],
@@ -137,6 +138,27 @@ def _summarize_loop_session(session: dict[str, Any], path: Path) -> dict[str, An
         if isinstance(error, dict) and error
         else None,
     }
+
+
+def _loop_step_timings(step_timings: Any) -> list[dict[str, Any]]:
+    if not isinstance(step_timings, list):
+        return []
+    summary: list[dict[str, Any]] = []
+    for item in step_timings:
+        if not isinstance(item, dict):
+            continue
+        summary.append(
+            {
+                "step": item.get("step"),
+                "status": item.get("status"),
+                "duration_ms": item.get("duration_ms"),
+                "run_id": item.get("run_id"),
+                "chapter_index": item.get("chapter_index"),
+                "committed": item.get("committed"),
+                "error_type": item.get("error_type"),
+            }
+        )
+    return summary
 
 
 def _summarize_run(run_result: dict[str, Any], path: Path) -> dict[str, Any]:

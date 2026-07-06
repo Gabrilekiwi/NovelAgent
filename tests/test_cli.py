@@ -83,6 +83,30 @@ class CliTest(unittest.TestCase):
 
         self.assertTrue(args.no_proxy)
 
+    def test_apply_notion_shortcuts(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--notion-sync"]):
+            args = cli.apply_notion_shortcuts(cli.parse_args())
+
+        self.assertEqual("notion", args.memory_source)
+        self.assertEqual("notion", args.memory_writeback)
+        self.assertTrue(args.notion_readback)
+
+    def test_format_loop_progress_event(self) -> None:
+        line = cli.format_loop_progress_event(
+            {
+                "event": "step_end",
+                "step": 1,
+                "requested_steps": 3,
+                "status": "committed",
+                "committed": True,
+                "duration_ms": 123,
+                "run_id": "chapter_1_test",
+            }
+        )
+
+        self.assertIn("step 1/3 committed", line)
+        self.assertIn("duration_ms=123", line)
+
     def test_no_proxy_clears_proxy_environment(self) -> None:
         case_dir = self._case_dir("no_proxy")
         run_dir = case_dir / "runs"

@@ -331,6 +331,68 @@
         "additionalProperties": false
       }
     },
+    "step_timings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "step",
+          "status",
+          "started_at",
+          "finished_at",
+          "duration_ms"
+        ],
+        "properties": {
+          "step": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "enum": [
+              "committed",
+              "rejected",
+              "failed"
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "finished_at": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "chapter_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "error_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "recovery_links": {
       "type": "array",
       "items": {

@@ -1,10 +1,10 @@
 # NovelAgent
 
-Version: 1.4
+Version: 1.5
 
-NovelAgent is fixed at the v1.4 baseline: a schema-checked agent loop for long-form fiction generation with memory ingestion, directed execution, validation, repair, language/profile safeguards, recoverable drafts, provider failure tolerance, and auditable runtime artifacts.
+NovelAgent is fixed at the v1.5 baseline: a schema-checked agent loop for long-form fiction generation with memory ingestion, directed execution, validation, repair, language/profile safeguards, recoverable drafts, provider failure tolerance, output-quality guards, loop progress telemetry, easier Notion runtime modes, and auditable runtime artifacts.
 
-Current v1.4 flow:
+Current v1.5 flow:
 
 ```text
 Notion / Memory
@@ -13,7 +13,7 @@ Notion / Memory
   -> Execution Engine
   -> Chapter Pipeline (plan -> scenes -> merge)
   -> Claude Polish
-  -> Language / Meta-output Contracts
+  -> Language / Meta-output / Mojibake Contracts
   -> Rule Validator
   -> optional LLM Validator
   -> Scene Repair
@@ -48,12 +48,20 @@ python main.py --dry-run --memory data/notion_memory.example.json
 
 Generation commands print a concise summary by default. Add `--output-json` for the full result or `--output-run-json` for only the run record. If Claude polish fails after base chapter generation, the run continues with the unpolished generated chapter and records the polish error in the run trace.
 If local proxy environment variables interfere with provider API calls, run with `--no-proxy` or set `NOVELAGENT_NO_PROXY=1` in `.env` to clear `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` for the NovelAgent process.
+High-confidence mojibake output is rejected before it can be committed as chapter prose. If OpenAI returns an invalid chapter-plan JSON payload, the pipeline makes one schema-focused JSON repair request before failing the generation step.
 
 Select the memory source explicitly when needed:
 
 ```bash
 python main.py --check --dry-run --memory-source file --memory data/notion_memory.example.json
 python main.py --check --dry-run --memory-source notion
+python main.py --check --dry-run --notion-memory
+```
+
+Use `--notion-sync` when a real run should read live Notion memory, write committed memory updates back to Notion, and verify them with readback:
+
+```bash
+python main.py --notion-sync --no-proxy
 ```
 
 Run multiple local dry-run steps:
@@ -61,6 +69,8 @@ Run multiple local dry-run steps:
 ```bash
 python main.py --dry-run --steps 2 --memory data/notion_memory.example.json
 ```
+
+Multi-step runs print progress lines to stderr by default, including step start/end, commit status, run id, and duration. Add `--no-progress` to suppress those lines, or use `--output-json` for a clean machine-readable loop result.
 
 Run tests:
 
@@ -132,19 +142,19 @@ Persistent runs write schema-checked run result envelopes:
 - `.tmp/runtime/snapshot.json`: default mutable runtime snapshot.
 - `.tmp/runtime/notion_memory.json`: optional initialized runtime memory copied from the sample.
 - `.tmp/runtime/runs/*.json`: structured run records with Director audit, workflow plan, state update audit, trace, model output failure diagnostics, validation, analysis summaries, and schema-checked `chapter.pipeline.stages`.
-- `.tmp/runtime/runs/loop_sessions/*.json`: schema-checked multi-step loop session records.
+- `.tmp/runtime/runs/loop_sessions/*.json`: schema-checked multi-step loop session records with per-step timing.
 - `.tmp/runtime/runs/snapshot_packs/*.md`: Snapshot Builder input packs.
 - `.tmp/runtime/runs/input_packs/*.md`: full input packs; run records include input pack metadata.
 - `.tmp/runtime/runs/chapter_pipeline/*`: chapter plan, scene drafts with merged-chapter spans, merged chapter, validation report, and repair delta artifacts for the pipeline stages.
 - `.tmp/runtime/chapters/*.md`: chapter body artifacts.
 
-Run records, run reports, and loop session summaries expose compact validation and repair evidence, so common Validator/Repair failures can be diagnosed without opening the full run-result envelope. Both directories are ignored by git by default.
+Run records, run reports, and loop session summaries expose compact validation, repair evidence, and per-step timing, so common Validator/Repair/provider stalls can be diagnosed without opening the full run-result envelope. Both directories are ignored by git by default.
 
 Local `.env` is ignored. Use `.env.example` for variable names and recommended default model names only; real configuration is still checked by preflight before live provider calls.
 
-Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.4 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.4 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.4 executor and orchestrator entrypoints.
+Legacy imports under `core.*` remain available as compatibility wrappers. `core.orchestrator` delegates to the v1.5 executor and supports custom snapshot, memory, run, chapter, preflight, loop, and report paths. Compatibility package exports point at the v1.5 implementations for input pack metadata, snapshot builder audit, state update audit, dynamic flow plans, feature modules, and API adapters. The root `core` package lazily exposes the v1.5 executor and orchestrator entrypoints.
 
-The v1.4 project contract keeps the established directory layout and legacy wrapper boundaries covered by `tests/test_repo_hygiene.py`, so structural drift is caught alongside runtime tests.
+The v1.5 project contract keeps the established directory layout and legacy wrapper boundaries covered by `tests/test_repo_hygiene.py`, so structural drift is caught alongside runtime tests.
 
 ## More Docs
 

@@ -1169,6 +1169,28 @@ class AgentExecutorTest(unittest.TestCase):
             saved_session["runs"][0]["requested_focus"],
         )
         self.assertTrue(saved_session["runs"][0]["trace_plan_aligned"])
+        self.assertEqual(2, len(saved_session["step_timings"]))
+        self.assertEqual([1, 2], [item["step"] for item in saved_session["step_timings"]])
+        self.assertEqual(["committed", "committed"], [item["status"] for item in saved_session["step_timings"]])
+        self.assertTrue(all("duration_ms" in item for item in saved_session["step_timings"]))
+
+    def test_run_loop_notifies_observer_for_progress(self) -> None:
+        tmp_path = self._case_dir("loop_observer")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        events: list[dict] = []
+
+        loop_result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            dry_run=True,
+        ).run_loop(steps=2, persist=True, observer=events.append)
+
+        self.assertEqual("loop_start", events[0]["event"])
+        self.assertEqual(["step_start", "step_end", "step_start", "step_end"], [event["event"] for event in events[1:5]])
+        self.assertEqual("loop_end", events[-1]["event"])
+        self.assertEqual(loop_result["runs"][0]["run"]["id"], events[2]["run_id"])
+        self.assertIn("duration_ms", events[2])
 
     def test_run_loop_stops_on_rejection_by_default(self) -> None:
         tmp_path = self._case_dir("loop_stop_rejection")

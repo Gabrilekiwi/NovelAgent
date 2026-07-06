@@ -65,6 +65,39 @@ class ChapterPipelineTest(unittest.TestCase):
 
         self.assertEqual("Enter the mirror waste.", plan["goal"])
 
+    def test_model_plan_repairs_invalid_json_once(self) -> None:
+        calls: list[tuple[list[dict[str, str]], dict]] = []
+        outputs = [
+            "goal: Open the first rift\nscenes: opening bridge",
+            '{"goal": "Open the first rift.", "scenes": [{"index": 1, "type": "opening_bridge", "goal": "Begin at the observatory.", "required_beats": ["old observatory"]}]}',
+        ]
+        original_chat_completion = pipeline_module.chat_completion
+
+        def completion(messages, **kwargs):
+            calls.append((messages, kwargs))
+            return outputs.pop(0)
+
+        pipeline_module.chat_completion = completion
+        try:
+            plan = pipeline_module.plan_chapter("# Chapter Index\n3\n\ninput pack", chapter_index=3, dry_run=False)
+        finally:
+            pipeline_module.chat_completion = original_chat_completion
+
+        self.assertEqual("Open the first rift.", plan["goal"])
+        self.assertEqual(2, len(calls))
+        self.assertEqual(0.0, calls[1][1]["temperature"])
+        self.assertIn("invalid_response", calls[1][0][1]["content"])
+
+    def test_model_plan_still_fails_when_json_repair_fails(self) -> None:
+        outputs = ["not json", "still not json"]
+        original_chat_completion = pipeline_module.chat_completion
+        pipeline_module.chat_completion = lambda messages, **kwargs: outputs.pop(0)
+        try:
+            with self.assertRaisesRegex(ValueError, "not valid JSON"):
+                pipeline_module.plan_chapter("input pack", chapter_index=1, dry_run=False)
+        finally:
+            pipeline_module.chat_completion = original_chat_completion
+
     def test_scene_generation_respects_configured_chinese_language(self) -> None:
         original_chat_completion = pipeline_module.chat_completion
         pipeline_module.chat_completion = lambda messages, **kwargs: "The ferry crossed the black water."

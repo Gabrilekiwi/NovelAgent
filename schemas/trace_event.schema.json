@@ -34,6 +34,10 @@
     "finished_at": {
       "type": "string"
     },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
     "chapter_chars": {
       "type": "integer",
       "minimum": 0

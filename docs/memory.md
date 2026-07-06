@@ -8,11 +8,13 @@ Supported inputs:
 - `NOVELAGENT_MEMORY_PATH`: environment override.
 - `--memory path/to/file.json`: CLI override.
 - `--memory-source auto|file|notion`: explicit memory input mode.
+- `--notion-memory`: shortcut for live Notion API memory input.
+- `--notion-sync`: shortcut for live Notion memory input plus Notion writeback and readback verification.
 - `--memory path/to/memory_outbox.jsonl`: JSONL outbox produced by writeback.
 - Notion export JSON with a top-level `pages` array.
 - Notion API database query via `NOTION_API_KEY` plus `NOTION_DATABASE_ID` or `NOVELAGENT_NOTION_DATABASE_ID`.
 
-`--memory-source auto` is the default. It reads `--memory` or `NOVELAGENT_MEMORY_PATH` when a path is provided, otherwise uses `.tmp/runtime/notion_memory.json`, and falls back to live Notion API only when no memory path is provided and Notion API configuration is present. Use `python main.py --init-runtime` to copy `data/notion_memory.example.json` into that local runtime path. Use `--memory-source file` to force local file memory even when Notion credentials exist. Use `--memory-source notion` to force live Notion API memory. Preflight reports the resolution under `memory_input`, including whether Notion API credentials are configured, the resolved source, the resolved file path for file-backed memory, and the reason the source was selected.
+`--memory-source auto` is the default. It reads `--memory` or `NOVELAGENT_MEMORY_PATH` when a path is provided, otherwise uses `.tmp/runtime/notion_memory.json`, and falls back to live Notion API only when no memory path is provided and Notion API configuration is present. Use `python main.py --init-runtime` to copy `data/notion_memory.example.json` into that local runtime path. Use `--memory-source file` to force local file memory even when Notion credentials exist. Use `--memory-source notion` or `--notion-memory` to force live Notion API memory. Preflight reports the resolution under `memory_input`, including whether Notion API credentials are configured, the resolved source, the resolved file path for file-backed memory, and the reason the source was selected.
 
 Normalized memory context:
 
@@ -89,6 +91,7 @@ Notion API mode:
 set NOTION_API_KEY=secret_xxx
 set NOTION_DATABASE_ID=your_database_id
 python main.py --check --dry-run --memory-source notion
+python main.py --check --dry-run --notion-memory
 ```
 
 The API response is normalized through the same `pages[].properties` converter used by the export format, but the runtime memory source is recorded as `notion-api`. Real Notion property wrappers are unwrapped before memory validation, including `select`, `status`, `title`, `rich_text`, `multi_select`, `date`, `url`, `email`, `phone_number`, `people`, `relation`, `files`, and created/edited metadata.
@@ -128,9 +131,11 @@ CLI Notion writeback:
 
 ```bash
 python main.py --memory data/notion_memory.example.json --memory-writeback notion
+python main.py --notion-sync
 ```
 
 This requires `NOTION_API_KEY` plus `NOTION_DATABASE_ID` or `NOVELAGENT_NOTION_DATABASE_ID`.
+`--notion-sync` also enables live Notion memory input and readback verification, so it is the shortest command for normal Notion-backed generation after credentials are configured.
 
 To verify that Notion pages can be queried back after writeback:
 

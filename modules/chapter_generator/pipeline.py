@@ -74,7 +74,22 @@ def plan_chapter(input_pack: str, *, chapter_index: int, dry_run: bool = False) 
         "\"required_beats\": [string]}]}. Keep it to 2-4 scenes. "
         "Scene 1 must be type opening_bridge and continue directly from the last chapter ending."
     )
-    payload = chat_completion(
+    payload = _request_chapter_plan(input_pack, prompt)
+    try:
+        plan = _load_plan_json(payload)
+    except json.JSONDecodeError as first_exc:
+        repair_payload = _request_chapter_plan_json_repair(input_pack, chapter_index, payload, first_exc)
+        try:
+            plan = _load_plan_json(repair_payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Chapter plan response was not valid JSON") from exc
+    if not isinstance(plan, dict):
+        raise ValueError("Chapter plan response must be a JSON object")
+    return _validate_plan(plan)
+
+
+def _request_chapter_plan(input_pack: str, prompt: str) -> str:
+    return chat_completion(
         [
             {"role": "system", "content": prompt},
             {"role": "user", "content": input_pack},
@@ -82,13 +97,43 @@ def plan_chapter(input_pack: str, *, chapter_index: int, dry_run: bool = False) 
         temperature=0.2,
         stage="chapter_generation",
     )
-    try:
-        plan = _load_plan_json(payload)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Chapter plan response was not valid JSON") from exc
-    if not isinstance(plan, dict):
-        raise ValueError("Chapter plan response must be a JSON object")
-    return _validate_plan(plan)
+
+
+def _request_chapter_plan_json_repair(
+    input_pack: str,
+    chapter_index: int,
+    invalid_payload: str,
+    error: json.JSONDecodeError,
+) -> str:
+    return chat_completion(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "Repair the chapter plan response into JSON only. "
+                    "Return exactly one object with shape "
+                    "{\"goal\": string, \"scenes\": [{\"index\": int, \"type\": string, "
+                    "\"goal\": string, \"required_beats\": [string]}]}. "
+                    "No prose, no Markdown, no explanation."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "chapter_index": chapter_index,
+                        "json_error": str(error),
+                        "invalid_response": invalid_payload,
+                        "input_pack_excerpt": input_pack[:6000],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            },
+        ],
+        temperature=0.0,
+        stage="chapter_generation",
+    )
 
 
 def _load_plan_json(payload: str) -> Any:

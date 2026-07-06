@@ -57,6 +57,7 @@ ChapterAnalyzer = Callable[[str, dict[str, Any]], dict[str, Any]]
 ChapterValidator = Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any]]
 Director = Callable[[dict[str, Any], dict[str, Any] | None], dict[str, Any]]
 MemoryLoader = Callable[[], dict[str, Any]]
+LoopObserver = Callable[[dict[str, Any]], None]
 
 
 class AgentExecutor:
@@ -403,15 +404,20 @@ class AgentExecutor:
         steps: int,
         persist: bool = True,
         stop_on_rejection: bool = True,
+        observer: LoopObserver | None = None,
     ) -> dict[str, Any]:
         if steps < 1:
             raise ValueError("steps must be at least 1")
 
         started_at = utc_now()
         runs: list[dict[str, Any]] = []
+        step_timings: list[dict[str, Any]] = []
         stopped_reason = "max_steps"
-        for _ in range(steps):
+        _notify_loop(observer, {"event": "loop_start", "requested_steps": steps})
+        for step_number in range(1, steps + 1):
             known_run_ids = _persisted_run_ids(self.run_dir) if persist else set()
+            step_started_at = utc_now()
+            _notify_loop(observer, {"event": "step_start", "step": step_number, "requested_steps": steps})
             try:
                 result = self.run_once(persist=persist)
             except Exception as exc:
@@ -419,6 +425,22 @@ class AgentExecutor:
                     failed_result = _load_newest_persisted_result(self.run_dir, known_run_ids)
                     if failed_result is not None:
                         runs.append(failed_result)
+                        step_timings.append(_loop_step_timing(step_number, step_started_at, failed_result, error=exc))
+                    else:
+                        step_timings.append(_loop_step_timing(step_number, step_started_at, None, error=exc))
+                else:
+                    step_timings.append(_loop_step_timing(step_number, step_started_at, None, error=exc))
+                _notify_loop(
+                    observer,
+                    {
+                        "event": "step_failed",
+                        "step": step_number,
+                        "requested_steps": steps,
+                        "duration_ms": step_timings[-1]["duration_ms"],
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
                 stopped_reason = "failed"
                 session = self._build_loop_session(
                     started_at=started_at,
@@ -427,11 +449,26 @@ class AgentExecutor:
                     persist=persist,
                     stop_on_rejection=stop_on_rejection,
                     runs=runs,
+                    step_timings=step_timings,
                     error=exc,
                 )
                 raise LoopExecutionError(original=exc, session=session, runs=runs) from exc
             else:
                 runs.append(result)
+                step_timings.append(_loop_step_timing(step_number, step_started_at, result))
+                _notify_loop(
+                    observer,
+                    {
+                        "event": "step_end",
+                        "step": step_number,
+                        "requested_steps": steps,
+                        "duration_ms": step_timings[-1]["duration_ms"],
+                        "run_id": result["run"]["id"],
+                        "chapter_index": result["run"]["chapter_index"],
+                        "committed": result["committed"],
+                        "status": result["run"]["status"],
+                    },
+                )
                 if stop_on_rejection and not result["committed"]:
                     stopped_reason = "rejected"
                     break
@@ -443,6 +480,16 @@ class AgentExecutor:
             persist=persist,
             stop_on_rejection=stop_on_rejection,
             runs=runs,
+            step_timings=step_timings,
+        )
+        _notify_loop(
+            observer,
+            {
+                "event": "loop_end",
+                "requested_steps": steps,
+                "completed_steps": len(runs),
+                "stopped_reason": stopped_reason,
+            },
         )
 
         return {
@@ -462,6 +509,7 @@ class AgentExecutor:
         persist: bool,
         stop_on_rejection: bool,
         runs: list[dict[str, Any]],
+        step_timings: list[dict[str, Any]],
         error: BaseException | None = None,
     ) -> dict[str, Any]:
         session = build_loop_session_record(
@@ -473,6 +521,7 @@ class AgentExecutor:
             persist=persist,
             stop_on_rejection=stop_on_rejection,
             runs=runs,
+            step_timings=step_timings,
             error=error,
         )
         if persist:
@@ -828,6 +877,38 @@ def run_loop(
     )
 
 
+def _notify_loop(observer: LoopObserver | None, event: dict[str, Any]) -> None:
+    if observer is None:
+        return
+    observer(event)
+
+
+def _loop_step_timing(
+    step: int,
+    started_at,
+    result: dict[str, Any] | None,
+    *,
+    error: BaseException | None = None,
+) -> dict[str, Any]:
+    finished_at = utc_now()
+    run = result.get("run") if isinstance(result, dict) else None
+    run = run if isinstance(run, dict) else {}
+    status = str(run.get("status") or "failed")
+    duration_ms = int(max(0.0, (finished_at - started_at).total_seconds() * 1000))
+    timing: dict[str, Any] = {
+        "step": int(step),
+        "status": status if status in {"committed", "rejected", "failed"} else "failed",
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "duration_ms": duration_ms,
+        "run_id": run.get("id"),
+        "chapter_index": run.get("chapter_index"),
+        "committed": result.get("committed") if isinstance(result, dict) else None,
+        "error_type": type(error).__name__ if error is not None else None,
+    }
+    return timing
+
+
 def _empty_analysis(validation: dict[str, Any]) -> dict[str, Any]:
     return validate_schema({
         "events": [],
@@ -902,11 +983,13 @@ def _trace_event(
 ) -> dict[str, Any]:
     chapter = state.get("chapter")
     validation = state.get("validation")
+    duration_ms = int(max(0.0, (finished_at - started_at).total_seconds() * 1000))
     event: dict[str, Any] = {
         "action": action,
         "status": status,
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
+        "duration_ms": duration_ms,
         "chapter_chars": len(chapter) if isinstance(chapter, str) else 0,
         "repair_attempts": int(state.get("repair_attempts") or 0),
     }

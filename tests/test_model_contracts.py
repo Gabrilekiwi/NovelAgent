@@ -5,7 +5,14 @@ import unittest
 import uuid
 from pathlib import Path
 
-from api.contracts import CHAPTER_CONTRACT, POLISH_CONTRACT, ModelCallError, ModelOutputError, validate_text_output
+from api.contracts import (
+    CHAPTER_CONTRACT,
+    POLISH_CONTRACT,
+    ModelCallError,
+    ModelOutputError,
+    detect_mojibake,
+    validate_text_output,
+)
 from core.engine.executor import AgentExecutor
 from core.schema import validate_schema
 import modules.chapter_generator.generator as chapter_module
@@ -64,6 +71,18 @@ class ModelContractTest(unittest.TestCase):
                 "---\n\nThe shelter faced danger and a costly choice.",
                 CHAPTER_CONTRACT,
             )
+
+    def test_rejects_latin_mojibake_output(self) -> None:
+        with self.assertRaisesRegex(ModelOutputError, "mojibake"):
+            validate_text_output(
+                "ç¼å œç°³é—„å—™ç‰ƒæµ ãƒ¤è´Ÿé‘·î„ç¹æµ¼æ°¬æƒ‰",
+                CHAPTER_CONTRACT,
+            )
+
+    def test_rejects_cjk_mojibake_output(self) -> None:
+        text = "榛戞湀闆嗗競鐨勭伅榻愰綈鏆椾笅锛岄檰鐮佺珯鍦ㄨ埞杈广€?"
+        self.assertTrue(detect_mojibake(text)["looks_corrupted"])
+        self.assertFalse(detect_mojibake(text)["reject"])
 
     def test_chapter_generator_rejects_empty_model_response(self) -> None:
         original_chat_completion = chapter_module.chat_completion

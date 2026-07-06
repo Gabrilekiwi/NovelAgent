@@ -1,12 +1,12 @@
 # Project Progress
 
-Last updated: 2026-07-03
+Last updated: 2026-07-06
 
-## v1.4 Status
+## v1.5 Status
 
-NovelAgent is fixed at version 1.4 as the current project baseline.
+NovelAgent is fixed at version 1.5 as the current project baseline.
 
-The v1.4 baseline keeps the v1.3 long-form fiction loop and adds real-provider usability safeguards: process-level proxy clearing for local proxy conflicts, recoverable Claude polish failures that continue with the base generated chapter, concise user-facing summaries that hide raw recoverable provider errors, and schema-audited workflow failure policy metadata for unpolished fallback runs.
+The v1.5 baseline keeps the v1.4 real-provider safeguards and adds the next usability/stability layer for long real-novel runs: high-confidence mojibake output rejection, one-shot chapter-plan JSON repair, multi-step progress lines, per-step loop timing artifacts, run-report timing summaries, and Notion shortcut flags for live memory and read/write/readback workflows.
 
 The project remains source-compatible with the established v1.0 command and file names where those names are part of the existing developer workflow, such as `scripts/smoke_v1.py` and `.tmp/smoke_v1/...`.
 
@@ -40,6 +40,15 @@ Phase 5, real-novel stability hardening, is complete. Problems found while advan
 - Snapshot `project_profile.known_characters` and `project_profile.known_locations` feed the analyzer so new novels can initialize their own names and places instead of relying only on hardcoded terms.
 - `scripts/snapshot_utf8.py` validates and normalizes snapshots through Python UTF-8 JSON handling, reducing the risk of PowerShell encoding corruption.
 
+Phase 6, v1.5 operational usability, is complete. Problems found during real multi-step provider runs were addressed:
+
+- High-confidence Latin-1/replacement-character mojibake output is rejected by the shared model-output contract before chapter text can be committed.
+- CJK mojibake signatures are exposed through diagnostics for auditing without blindly rejecting rare valid fantasy terms.
+- Chapter-plan JSON failures get one model-backed repair request with a JSON-only schema instruction before the run is failed.
+- Multi-step loops emit progress lines to stderr for concise runs and record `duration_ms` in trace events plus `step_timings[]` in loop sessions.
+- `--report-runs` surfaces loop step timing summaries for provider latency and stall triage.
+- `--notion-memory` and `--notion-sync` reduce the command surface for live Notion memory input and writeback/readback workflows.
+
 ## Current Baseline Capabilities
 
 - Runtime entrypoints: `main.py`, `core.orchestrator`, and `core.engine.executor.AgentExecutor`.
@@ -48,6 +57,7 @@ Phase 5, real-novel stability hardening, is complete. Problems found while advan
 - Validation: continuity, spatial, logic, and optional OpenAI-backed story-level LLM validation.
 - Repair: schema-checked repair plans, deterministic dry-run strategies, model-backed non-dry-run repair payloads, and repair effectiveness deltas.
 - Artifacts: run records, loop sessions, input packs, snapshot packs, chapter pipeline files, chapter bodies, validation reports, repair deltas, and memory writeback mappings.
+- Loop observability: stderr progress for long concise loops, trace event durations, loop-session step timings, and run-report timing summaries.
 - Provider diagnostics: OpenAI Director, OpenAI chapter generation, Claude polish, Notion read, Notion writeback, and Notion readback.
 - Contracts: schema validation for runtime records, memory contexts, workflow plans, trace events, validation results, repair plans, state updates, loop sessions, and provider reports.
 - Project profile: optional snapshot-level language, known character, and known location configuration used by input packs, generation contracts, and analysis.
@@ -63,10 +73,10 @@ python -B -m unittest discover -s tests
 python -B scripts/smoke_v1.py
 ```
 
-Observed v1.4 result:
+Observed v1.5 result:
 
 ```text
-Ran 364 tests ... OK
+Ran 389 tests ... OK
 Runtime preflight for riftwalker: OK, 24 checks passed
 ```
 

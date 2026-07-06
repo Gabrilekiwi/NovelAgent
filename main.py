@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 from core.config import clear_proxy_env, proxy_disabled_by_env
 from core.director import ModelDirector
@@ -47,6 +48,11 @@ def parse_args() -> argparse.Namespace:
         help="Select memory input mode. auto uses Notion API when configured and no --memory path is provided.",
     )
     parser.add_argument(
+        "--notion-memory",
+        action="store_true",
+        help="Shortcut for --memory-source notion.",
+    )
+    parser.add_argument(
         "--chapter-dir",
         default=str(DEFAULT_CHAPTER_DIR),
         help="Directory for persisted chapter markdown artifacts.",
@@ -81,6 +87,11 @@ def parse_args() -> argparse.Namespace:
         "--notion-readback",
         action="store_true",
         help="After Notion memory writeback, query the database and verify written Memory IDs.",
+    )
+    parser.add_argument(
+        "--notion-sync",
+        action="store_true",
+        help="Shortcut for live Notion memory input plus Notion writeback and readback.",
     )
     parser.add_argument(
         "--director-model",
@@ -155,6 +166,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Clear HTTP(S)/ALL proxy environment variables before provider calls.",
     )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable multi-step progress lines printed to stderr.",
+    )
     return parser.parse_args()
 
 
@@ -168,8 +184,58 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def apply_notion_shortcuts(args: argparse.Namespace) -> argparse.Namespace:
+    if getattr(args, "notion_memory", False) or getattr(args, "notion_sync", False):
+        args.memory_source = "notion"
+    if getattr(args, "notion_sync", False):
+        args.memory_writeback = "notion"
+        args.notion_readback = True
+    return args
+
+
+def _loop_progress_observer(args: argparse.Namespace):
+    if args.no_progress or args.output_json or args.output_run_json or args.steps <= 1:
+        return None
+
+    def observe(event: dict) -> None:
+        line = format_loop_progress_event(event)
+        if line:
+            print(line, file=sys.stderr, flush=True)
+
+    return observe
+
+
+def format_loop_progress_event(event: dict) -> str:
+    name = event.get("event")
+    if name == "loop_start":
+        return f"Loop progress: starting {event.get('requested_steps')} steps"
+    if name == "step_start":
+        return f"Loop progress: step {event.get('step')}/{event.get('requested_steps')} started"
+    if name == "step_end":
+        status = event.get("status")
+        run_id = event.get("run_id")
+        duration = event.get("duration_ms")
+        committed = str(bool(event.get("committed"))).lower()
+        return (
+            f"Loop progress: step {event.get('step')}/{event.get('requested_steps')} "
+            f"{status} committed={committed} duration_ms={duration} run={run_id}"
+        )
+    if name == "step_failed":
+        return (
+            f"Loop progress: step {event.get('step')}/{event.get('requested_steps')} failed "
+            f"duration_ms={event.get('duration_ms')} error={event.get('error_type')}: {event.get('message')}"
+        )
+    if name == "loop_end":
+        return (
+            f"Loop progress: finished {event.get('completed_steps')}/{event.get('requested_steps')} "
+            f"reason={event.get('stopped_reason')}"
+        )
+    return ""
+
+
 def main() -> None:
     args = parse_args()
+    apply_notion_shortcuts(args)
     if args.no_proxy or proxy_disabled_by_env():
         clear_proxy_env()
 
@@ -248,6 +314,7 @@ def main() -> None:
                 steps=args.steps,
                 persist=persist,
                 stop_on_rejection=not args.continue_on_rejection,
+                observer=_loop_progress_observer(args),
             )
         except LoopExecutionError as exc:
             payload = {

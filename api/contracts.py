@@ -77,6 +77,36 @@ class ModelOutputError(ValueError):
     pass
 
 
+_LATIN_MOJIBAKE_CHARS = frozenset(
+    "ÃÂâ€™€œ€œ¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿"
+    "åæçèéêëìíîïðñòóôõöøùúûüýþÿ"
+)
+_MOJIBAKE_FRAGMENTS = (
+    "ç¼",
+    "é—",
+    "é",
+    "æ¶",
+    "î†",
+    "î‡",
+    "â‚¬",
+    "â”",
+    "鈥",
+    "锛岄",
+    "銆?",
+    "榛戞",
+    "湀闆",
+    "嗗競",
+    "鐨勭",
+    "鍦ㄤ",
+    "涓€",
+    "绔欏",
+    "闄嗙",
+    "浣犲",
+    "濡傛",
+    "璇风",
+)
+
+
 @dataclass(frozen=True)
 class TextContract:
     name: str
@@ -116,6 +146,10 @@ class TextContract:
         "please confirm",
         "would you like me",
         "the text you provided",
+        "如果你希望",
+        "请确认",
+        "请告诉我",
+        "待润色的原稿",
     )
 
 
@@ -135,6 +169,12 @@ def validate_text_output(value: object, contract: TextContract) -> str:
     if len(text) < contract.min_chars:
         raise ModelOutputError(
             f"{contract.name} output is too short: {len(text)} < {contract.min_chars}"
+        )
+
+    mojibake = detect_mojibake(text)
+    if mojibake["reject"]:
+        raise ModelOutputError(
+            f"{contract.name} output looks mojibake-corrupted: {mojibake['reason']}"
         )
 
     if text.startswith(contract.forbidden_prefixes):
@@ -265,3 +305,87 @@ def _validate_simplified_chinese_ratio(text: str, message: str) -> None:
     cjk_ratio = _cjk_ratio(text)
     if cjk_ratio < 0.35:
         raise ModelOutputError(f"{message}: CJK ratio {cjk_ratio:.2f} < 0.35")
+
+
+def detect_mojibake(text: str) -> dict[str, object]:
+    normalized = str(text or "")
+    visible = re.sub(r"\s+", "", normalized)
+    visible_len = len(visible)
+    if visible_len == 0:
+        return {
+            "looks_corrupted": False,
+            "reject": False,
+            "reason": "",
+            "latin_marker_count": 0,
+            "marker_fragments": [],
+            "marker_density": 0.0,
+        }
+
+    latin_marker_count = sum(1 for char in visible if char in _LATIN_MOJIBAKE_CHARS)
+    replacement_count = visible.count("\ufffd")
+    fragment_hits = [fragment for fragment in _MOJIBAKE_FRAGMENTS if fragment in normalized]
+    marker_count = latin_marker_count + replacement_count + sum(len(fragment) for fragment in fragment_hits)
+    marker_density = marker_count / visible_len
+
+    if replacement_count:
+        return _mojibake_result(
+            True,
+            True,
+            "replacement character present",
+            latin_marker_count,
+            replacement_count,
+            fragment_hits,
+            marker_density,
+        )
+
+    if fragment_hits and (latin_marker_count >= 2 or len(fragment_hits) >= 2):
+        return _mojibake_result(
+            True,
+            latin_marker_count >= 2,
+            "known mojibake fragments present",
+            latin_marker_count,
+            replacement_count,
+            fragment_hits,
+            marker_density,
+        )
+
+    if latin_marker_count >= 6 and marker_density >= 0.01:
+        return _mojibake_result(
+            True,
+            True,
+            "latin-1 mojibake marker density too high",
+            latin_marker_count,
+            replacement_count,
+            fragment_hits,
+            marker_density,
+        )
+
+    return _mojibake_result(
+        False,
+        False,
+        "",
+        latin_marker_count,
+        replacement_count,
+        fragment_hits,
+        marker_density,
+    )
+
+
+def _mojibake_result(
+    looks_corrupted: bool,
+    reject: bool,
+    reason: str,
+    latin_marker_count: int,
+    replacement_count: int,
+    fragment_hits: list[str],
+    marker_density: float,
+) -> dict[str, object]:
+    return {
+        "looks_corrupted": bool(looks_corrupted),
+        "reject": bool(reject),
+        "reason": reason,
+        "latin_marker_count": int(latin_marker_count),
+        "replacement_count": int(replacement_count),
+        "marker_fragments": fragment_hits[:8],
+        "marker_density": round(marker_density, 4),
+    }

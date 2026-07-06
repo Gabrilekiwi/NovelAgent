@@ -45,6 +45,7 @@ def build_loop_session_record(
     persist: bool,
     stop_on_rejection: bool,
     runs: list[dict[str, Any]],
+    step_timings: list[dict[str, Any]] | None = None,
     error: BaseException | None = None,
 ) -> dict[str, Any]:
     run_summaries = [_loop_run_summary(item["run"]) for item in runs]
@@ -72,6 +73,7 @@ def build_loop_session_record(
         "last_run_id": run_summaries[-1]["id"] if run_summaries else None,
         "recovery_links": recovery_links,
         "runs": run_summaries,
+        "step_timings": step_timings or [],
     }
     if error is not None:
         record["error"] = {
