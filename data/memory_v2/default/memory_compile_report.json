@@ -1,0 +1,55 @@
+{
+  "canonical_memory": {
+    "character_count": 1,
+    "constraint_count": 1,
+    "location_count": 2,
+    "open_thread_count": 1,
+    "path": "data\\memory_v2\\default\\canonical_memory.json",
+    "previous_revision": 1,
+    "revision": 11,
+    "timeline_count": 0
+  },
+  "dry_run": false,
+  "events": {
+    "event_count": 10,
+    "first_revision": 2,
+    "last_revision": 11,
+    "path": "data\\memory_v2\\default\\memory_events.jsonl"
+  },
+  "input": {
+    "source_kind": "local_memory",
+    "source_path": "data\\notion_memory.example.json"
+  },
+  "memory_path": "data\\notion_memory.example.json",
+  "output_dir": "data\\memory_v2\\default",
+  "outputs": {
+    "canonical_memory": "data\\memory_v2\\default\\canonical_memory.json",
+    "memory_compile_report": "data\\memory_v2\\default\\memory_compile_report.json",
+    "memory_events": "data\\memory_v2\\default\\memory_events.jsonl",
+    "memory_patch": "data\\memory_v2\\default\\memory_patch.json",
+    "snapshot_preview": "data\\memory_v2\\default\\snapshot_preview.json"
+  },
+  "patch": {
+    "operation_count": 10,
+    "operation_types": {
+      "update_character_state": 1,
+      "update_current_state": 2,
+      "update_world": 1,
+      "upsert_character": 1,
+      "upsert_constraint": 1,
+      "upsert_location": 3,
+      "upsert_open_thread": 1
+    },
+    "patch_id": "patch_import_v1_default"
+  },
+  "reset": true,
+  "schema_version": "2.0",
+  "snapshot_preview": {
+    "chapter_index": 1,
+    "character_count": 1,
+    "open_thread_count": 1,
+    "path": "data\\memory_v2\\default\\snapshot_preview.json",
+    "space_count": 2
+  },
+  "status": "ok"
+}

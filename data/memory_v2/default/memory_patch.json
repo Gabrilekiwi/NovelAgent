@@ -1,0 +1,131 @@
+{
+  "metadata": {
+    "created_by": "NovelAgent Memory System V2",
+    "source_item_count": 6
+  },
+  "operations": [
+    {
+      "op": "update_world",
+      "value": {
+        "infection_level": "medium"
+      }
+    },
+    {
+      "data": {
+        "source_type": "story_state"
+      },
+      "op": "update_current_state",
+      "value": {
+        "last_chapter_ending": "The protagonist chose between rescue and the serum sample as open conflict broke out.",
+        "last_scene_characters": [
+          "protagonist"
+        ],
+        "last_scene_location": "shelter",
+        "required_opening_bridge": "Continue from shelter: show the immediate consequence of the serum choice before moving."
+      }
+    },
+    {
+      "id": "thread_the_serum_choice_remains_unresolved",
+      "op": "upsert_open_thread",
+      "value": {
+        "data": {},
+        "status": "open",
+        "title": "The serum choice remains unresolved."
+      }
+    },
+    {
+      "data": {
+        "source_type": "spatial_state"
+      },
+      "op": "update_current_state",
+      "value": {
+        "spatial_state": {
+          "blocked_paths": [],
+          "connections": [
+            {
+              "bidirectional": true,
+              "from": "shelter",
+              "to": "sealed gate"
+            }
+          ],
+          "last_transition": {
+            "from": "shelter",
+            "to": "sealed gate"
+          }
+        }
+      }
+    },
+    {
+      "data": {
+        "source_field": "character_positions"
+      },
+      "field": "state.current_location",
+      "id": "char_protagonist",
+      "op": "update_character_state",
+      "value": "shelter"
+    },
+    {
+      "id": "loc_sealed_gate",
+      "op": "upsert_location",
+      "value": {
+        "data": {
+          "status": "blocked"
+        },
+        "name": "sealed gate"
+      }
+    },
+    {
+      "id": "loc_shelter",
+      "op": "upsert_location",
+      "value": {
+        "data": {
+          "risk": "rising"
+        },
+        "name": "shelter"
+      }
+    },
+    {
+      "id": "loc_shelter",
+      "op": "upsert_location",
+      "value": {
+        "data": {
+          "risk": "rising",
+          "status": "unstable"
+        },
+        "name": "shelter"
+      }
+    },
+    {
+      "id": "char_protagonist",
+      "op": "upsert_character",
+      "value": {
+        "data": {
+          "current_goal": "protect the serum sample",
+          "current_location": "shelter",
+          "role": "lead"
+        },
+        "name": "protagonist"
+      }
+    },
+    {
+      "id": "constraint_keep_serum_in_focus",
+      "op": "upsert_constraint",
+      "value": {
+        "data": {
+          "required_terms": [
+            "serum"
+          ],
+          "rule": "Keep serum in focus."
+        },
+        "status": "active",
+        "text": "Keep serum in focus."
+      }
+    }
+  ],
+  "patch_id": "patch_import_v1_default",
+  "schema_version": "2.0",
+  "source": {
+    "kind": "local_memory",
+    "path": "data\\notion_memory.example.json"
+  }
+}

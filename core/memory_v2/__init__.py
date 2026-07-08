@@ -8,6 +8,7 @@ from core.memory_v2.events import (
     load_memory_events,
     validate_memory_event,
 )
+from core.memory_v2.compile import MemoryCompileError, compile_memory_v2, validate_memory_compile_report
 from core.memory_v2.importer_v1 import import_v1_memory_file_to_patch, import_v1_memory_to_patch, load_v1_memory_file
 from core.memory_v2.models import create_empty_canonical_memory
 from core.memory_v2.patch import MemoryPatchValidationError, create_memory_patch, validate_memory_patch
@@ -21,10 +22,12 @@ __all__ = [
     "MemoryV2ValidationError",
     "MemoryPatchValidationError",
     "MemoryReducerError",
+    "MemoryCompileError",
     "append_memory_event",
     "append_memory_events",
     "apply_memory_patch",
     "canonical_memory_to_snapshot",
+    "compile_memory_v2",
     "create_empty_canonical_memory",
     "create_memory_event",
     "create_memory_patch",
@@ -37,5 +40,6 @@ __all__ = [
     "save_canonical_memory",
     "validate_canonical_memory",
     "validate_memory_event",
+    "validate_memory_compile_report",
     "validate_memory_patch",
 ]
