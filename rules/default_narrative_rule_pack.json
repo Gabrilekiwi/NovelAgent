@@ -1,0 +1,270 @@
+{
+  "schema_version": "1.0",
+  "rule_pack_id": "default_narrative_rules",
+  "title": "Default Narrative Rule Pack",
+  "language": "zh-CN",
+  "description": "Default structured rules for long-form Chinese chapter generation.",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "code": "continue_previous_ending",
+      "category": "continuity",
+      "severity": "critical",
+      "enabled": true,
+      "title": "必须接住上一章结尾",
+      "instruction": "新章节开头必须承接上一章最后的地点、人物、动作或未完成事件，不得无解释跳转。",
+      "rationale": "长篇小说最容易断裂的地方是章节开头。",
+      "applies_to": ["generation", "evaluation", "validation"],
+      "quality_check_codes": ["continues_previous_ending"],
+      "examples": {
+        "good": "上一章结尾是林雪听见备用通道门后低语，本章开头继续描写备用通道、门后低语和林雪的反应。",
+        "bad": "上一章还在备用通道，本章突然写主角醒在陌生宫殿。"
+      },
+      "tags": ["opening", "bridge"]
+    },
+    {
+      "code": "preserve_last_scene_location",
+      "category": "spatial",
+      "severity": "high",
+      "enabled": true,
+      "title": "保持上一场景地点连续",
+      "instruction": "章节开头不得无解释突然换地点；如果需要转场，必须写清楚从上一地点到新地点的行动或原因。",
+      "rationale": "地点连续性是读者理解行动链的基础。",
+      "applies_to": ["generation", "evaluation", "validation"],
+      "quality_check_codes": ["preserves_last_scene_location"],
+      "examples": {
+        "good": "上一章在备用通道，本章开头仍在备用通道，并通过窄梯转向主控室。",
+        "bad": "上一章在备用通道，本章开头直接写北塔宴会。"
+      },
+      "tags": ["space", "transition"]
+    },
+    {
+      "code": "preserve_last_scene_characters",
+      "category": "character",
+      "severity": "high",
+      "enabled": true,
+      "title": "保留上一场景人物",
+      "instruction": "上一章末尾仍在场的人物不能在新章节开头无故消失；如果离场，必须交代行动、原因或代价。",
+      "rationale": "人物突然消失会破坏场景可信度。",
+      "applies_to": ["generation", "evaluation", "validation"],
+      "quality_check_codes": ["preserves_last_scene_characters"],
+      "examples": {
+        "good": "林雪和陈岚都在开头出现，陈岚的伤势继续影响选择。",
+        "bad": "上一章陈岚在门前受伤，本章完全不提陈岚。"
+      },
+      "tags": ["characters", "continuity"]
+    },
+    {
+      "code": "advance_current_conflict",
+      "category": "conflict",
+      "severity": "high",
+      "enabled": true,
+      "title": "推进当前冲突或伏笔",
+      "instruction": "每章至少推进一个当前冲突、目标、威胁或伏笔，可以升级、揭示局部信息或制造新的选择代价。",
+      "rationale": "章节必须改变读者对当前局势的理解或压力。",
+      "applies_to": ["generation", "evaluation", "validation"],
+      "quality_check_codes": ["advances_open_threads_or_conflicts"],
+      "examples": {
+        "good": "门后低语逼迫林雪在救陈岚和关闭阀门之间选择。",
+        "bad": "整章只重复人物紧张，没有推进任何冲突。"
+      },
+      "tags": ["conflict", "thread"]
+    },
+    {
+      "code": "avoid_premature_resolution",
+      "category": "foreshadowing",
+      "severity": "high",
+      "enabled": true,
+      "title": "避免提前回收伏笔",
+      "instruction": "标记为未解决、不可回收或需要延后的伏笔，不得在没有铺垫和代价的情况下提前彻底解决。",
+      "rationale": "提前回收会削弱长线张力。",
+      "applies_to": ["generation", "evaluation", "validation", "repair"],
+      "quality_check_codes": ["avoids_premature_resolution"],
+      "examples": {
+        "good": "本章触碰门后低语的来源，但只揭示一部分线索。",
+        "bad": "本章突然宣布所有谜底真相大白。"
+      },
+      "tags": ["foreshadowing", "resolution"]
+    },
+    {
+      "code": "prose_only_no_meta_output",
+      "category": "output_contract",
+      "severity": "critical",
+      "enabled": true,
+      "title": "只输出小说正文",
+      "instruction": "只输出小说正文，不要输出分析、总结、JSON、Markdown 标题、作者说明或你将如何写的解释。",
+      "rationale": "章节产物必须可以直接进入小说正文目录。",
+      "applies_to": ["generation", "evaluation", "validation", "repair"],
+      "quality_check_codes": ["no_meta_output"],
+      "examples": {
+        "good": "备用通道里，林雪没有立刻回答门后的低语。",
+        "bad": "以下是本章分析：# Chapter 12"
+      },
+      "tags": ["format", "contract"]
+    },
+    {
+      "code": "follow_target_language",
+      "category": "language",
+      "severity": "high",
+      "enabled": true,
+      "title": "使用目标语言",
+      "instruction": "章节必须使用项目指定目标语言；zh-CN 项目应输出简体中文连续小说正文。",
+      "rationale": "语言漂移会破坏读者体验和后续分析。",
+      "applies_to": ["generation", "evaluation", "validation", "repair"],
+      "quality_check_codes": ["language_consistency"],
+      "examples": {
+        "good": "使用简体中文叙事和对白。",
+        "bad": "整章突然切换成英文叙述。"
+      },
+      "tags": ["language", "zh-CN"]
+    },
+    {
+      "code": "avoid_repetition_and_stalling",
+      "category": "pacing",
+      "severity": "medium",
+      "enabled": true,
+      "title": "避免重复和原地踏步",
+      "instruction": "避免重复段落、水文、反复解释同一情绪或让人物长时间无有效行动。",
+      "rationale": "重复和停滞会降低章节推进感。",
+      "applies_to": ["generation", "evaluation", "validation", "repair"],
+      "quality_check_codes": ["repetition_or_stalling"],
+      "examples": {
+        "good": "每个段落都提供行动、信息或关系变化。",
+        "bad": "连续多段重复人物沉默和不知道该怎么办。"
+      },
+      "tags": ["pacing", "repetition"]
+    },
+    {
+      "code": "reasonable_chapter_length",
+      "category": "pacing",
+      "severity": "medium",
+      "enabled": true,
+      "title": "章节长度合理",
+      "instruction": "章节长度应足以完成一个有效场景推进，也不应长到失去章节边界。",
+      "rationale": "长度异常通常意味着生成失败、截断或过度扩写。",
+      "applies_to": ["generation", "evaluation"],
+      "quality_check_codes": ["chapter_length_reasonable"],
+      "examples": {
+        "good": "章节包含完整场景、冲突推进和结尾钩子。",
+        "bad": "章节只有两三句话，或一次性写成过长的剧情摘要。"
+      },
+      "tags": ["length", "pacing"]
+    },
+    {
+      "code": "preserve_character_state",
+      "category": "character",
+      "severity": "high",
+      "enabled": true,
+      "title": "保持人物状态一致",
+      "instruction": "角色的伤势、目标、立场、知识范围和情绪状态不能无解释改变；变化必须来自本章可见事件。",
+      "rationale": "人物状态是连续叙事的核心记忆。",
+      "applies_to": ["generation", "validation", "repair"],
+      "quality_check_codes": [],
+      "examples": {
+        "good": "陈岚受伤会限制行动，并影响林雪的选择。",
+        "bad": "上一章重伤的人物本章无解释恢复并知道所有秘密。"
+      },
+      "tags": ["character", "state"]
+    },
+    {
+      "code": "preserve_world_rules",
+      "category": "continuity",
+      "severity": "high",
+      "enabled": true,
+      "title": "保持世界规则一致",
+      "instruction": "世界规则、能力代价、空间限制和已建立的危险机制不能被随意改写；例外必须有明确铺垫。",
+      "rationale": "世界规则稳定才能让选择和代价成立。",
+      "applies_to": ["generation", "validation", "repair"],
+      "quality_check_codes": [],
+      "examples": {
+        "good": "黑潮仍按既有规则污染路径和门缝。",
+        "bad": "黑潮突然无害，只因为本章需要人物通过。"
+      },
+      "tags": ["world", "rules"]
+    },
+    {
+      "code": "no_unseeded_major_reveal",
+      "category": "foreshadowing",
+      "severity": "high",
+      "enabled": true,
+      "title": "重大揭示必须有铺垫",
+      "instruction": "重大真相、能力、身份、背叛或世界设定揭示必须有前文铺垫，不得凭空出现解决剧情。",
+      "rationale": "无铺垫揭示会削弱因果链。",
+      "applies_to": ["generation", "validation", "repair"],
+      "quality_check_codes": [],
+      "examples": {
+        "good": "先通过低语、阀门异常和人物反应累积线索。",
+        "bad": "突然宣布门后的人其实一直是主角父亲且掌控所有规则。"
+      },
+      "tags": ["reveal", "foreshadowing"]
+    },
+    {
+      "code": "scene_has_concrete_action",
+      "category": "pacing",
+      "severity": "medium",
+      "enabled": true,
+      "title": "场景必须有具体行动",
+      "instruction": "每个主要场景都应包含具体动作、决策、发现、代价或状态变化，不能只写心理和解释。",
+      "rationale": "动作和状态变化让章节具备可验证推进。",
+      "applies_to": ["generation", "evaluation", "validation"],
+      "quality_check_codes": [],
+      "examples": {
+        "good": "林雪拉下锁扣并进入通向主控室的窄梯。",
+        "bad": "人物连续思考风险，但没有任何行动或新信息。"
+      },
+      "tags": ["action", "scene"]
+    },
+    {
+      "code": "maintain_viewpoint_stability",
+      "category": "style",
+      "severity": "medium",
+      "enabled": true,
+      "title": "保持视角稳定",
+      "instruction": "章节应保持稳定叙事视角，不要无意义频繁切换人物内心或全知解释。",
+      "rationale": "视角稳定有助于悬念和代入感。",
+      "applies_to": ["generation", "validation", "repair"],
+      "quality_check_codes": [],
+      "examples": {
+        "good": "围绕林雪的观察和行动推进场景。",
+        "bad": "一段内频繁跳入多个角色内心并解释全部动机。"
+      },
+      "tags": ["style", "viewpoint"]
+    },
+    {
+      "code": "chapter_must_change_story_state",
+      "category": "conflict",
+      "severity": "high",
+      "enabled": true,
+      "title": "章节结束必须改变故事状态",
+      "instruction": "章节结束时必须产生可记录的状态变化，例如位置变化、关系变化、冲突升级、线索获得、代价产生或目标改变。",
+      "rationale": "章节不是静态描写，应推动长篇状态向前变化。",
+      "applies_to": ["generation", "evaluation", "validation"],
+      "quality_check_codes": [],
+      "examples": {
+        "good": "林雪进入主控室窄梯，陈岚留守备用通道并开枪。",
+        "bad": "章节结束时人物、地点、冲突和线索都没有变化。"
+      },
+      "tags": ["state", "progression"]
+    }
+  ],
+  "output_contract": {
+    "must_output": [
+      "只输出小说正文",
+      "使用目标语言",
+      "延续当前章节状态",
+      "推进至少一个当前冲突或伏笔"
+    ],
+    "must_not_output": [
+      "不要输出分析",
+      "不要输出总结",
+      "不要输出 JSON",
+      "不要输出 Markdown 标题",
+      "不要解释你将如何写"
+    ]
+  },
+  "metadata": {
+    "created_by": "NovelAgent",
+    "source": "internal",
+    "quality_harness_version": "1.0"
+  }
+}
