@@ -14,5 +14,6 @@ data/runs/
 data/chapters/
 data/snapshot.json
 data/memory.json
+data/memory_v2/
 data/memory_outbox.jsonl
 data/memory_outbox*.jsonl
