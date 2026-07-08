@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryPatch",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "patch_id",
+    "source",
+    "operations",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "2.0"
+      ]
+    },
+    "patch_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "upsert_character",
+              "upsert_location",
+              "upsert_constraint",
+              "append_timeline_event",
+              "update_current_state",
+              "upsert_open_thread",
+              "update_character_state",
+              "update_world"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": [
+              "object",
+              "array",
+              "string",
+              "integer",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "created_by"
+      ],
+      "properties": {
+        "created_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_item_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
