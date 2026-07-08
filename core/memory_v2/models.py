@@ -14,14 +14,21 @@ def create_empty_canonical_memory(
 ) -> dict[str, Any]:
     return {
         "schema_version": CANONICAL_MEMORY_SCHEMA_VERSION,
+        "revision": 1,
         "book_id": book_id,
         "title": title,
         "language": language,
         "world": {},
-        "characters": [],
-        "locations": [],
+        "current_state": {},
+        "characters": {},
+        "locations": {},
         "timeline": [],
+        "open_threads": [],
+        "chapter_states": {},
         "constraints": [],
+        "style_rules": [],
+        "source_index": {},
+        "source_resolution": {},
         "metadata": {
             "source": "empty",
             "created_by": "NovelAgent Memory System V2",

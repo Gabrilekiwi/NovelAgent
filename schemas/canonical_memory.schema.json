@@ -4,14 +4,21 @@
   "type": "object",
   "required": [
     "schema_version",
+    "revision",
     "book_id",
     "title",
     "language",
     "world",
+    "current_state",
     "characters",
     "locations",
     "timeline",
+    "open_threads",
+    "chapter_states",
     "constraints",
+    "style_rules",
+    "source_index",
+    "source_resolution",
     "metadata"
   ],
   "properties": {
@@ -20,6 +27,10 @@
       "enum": [
         "2.0"
       ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
     },
     "book_id": {
       "type": "string",
@@ -36,67 +47,14 @@
     "world": {
       "type": "object"
     },
+    "current_state": {
+      "type": "object"
+    },
     "characters": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "data"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "aliases": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object"
-          }
-        },
-        "additionalProperties": false
-      }
+      "type": "object"
     },
     "locations": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "data"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "aliases": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object"
-          }
-        },
-        "additionalProperties": false
-      }
+      "type": "object"
     },
     "timeline": {
       "type": "array",
@@ -109,6 +67,10 @@
         ],
         "properties": {
           "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
             "type": "string",
             "minLength": 1
           },
@@ -126,6 +88,42 @@
         },
         "additionalProperties": false
       }
+    },
+    "open_threads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "data"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ]
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "chapter_states": {
+      "type": "object"
     },
     "constraints": {
       "type": "array",
@@ -160,6 +158,45 @@
         },
         "additionalProperties": false
       }
+    },
+    "style_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "rule",
+          "status",
+          "data"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rule": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive"
+            ]
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "source_index": {
+      "type": "object"
+    },
+    "source_resolution": {
+      "type": "object"
     },
     "metadata": {
       "type": "object",
