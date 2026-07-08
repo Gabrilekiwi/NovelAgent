@@ -174,6 +174,7 @@ def _story_state_operations(item: dict[str, Any], counters: dict[str, int]) -> l
         data,
         "last_chapter_ending",
         "last_scene_location",
+        "last_scene_characters",
         "required_opening_bridge",
         "active_conflicts",
     )
@@ -206,6 +207,21 @@ def _story_state_operations(item: dict[str, Any], counters: dict[str, int]) -> l
 def _spatial_state_operations(item: dict[str, Any], counters: dict[str, int]) -> list[dict[str, Any]]:
     data = _item_data(item)
     operations: list[dict[str, Any]] = []
+    spatial_state = _select_fields(
+        data,
+        "connections",
+        "blocked_paths",
+        "last_transition",
+    )
+    if spatial_state:
+        operations.append(
+            {
+                "op": "update_current_state",
+                "value": {"spatial_state": spatial_state},
+                "data": {"source_type": "spatial_state"},
+            }
+        )
+
     character_positions = data.get("character_positions")
     if isinstance(character_positions, dict):
         for character_name, location_name in sorted(character_positions.items(), key=lambda entry: str(entry[0])):

@@ -56,6 +56,7 @@ class MemoryV2ImporterV1Test(unittest.TestCase):
                     "data": {
                         "last_chapter_ending": "The door opened.",
                         "last_scene_location": "shelter",
+                        "last_scene_characters": ["Lin Xue"],
                         "required_opening_bridge": "Continue from shelter.",
                         "active_conflicts": ["serum choice"],
                         "open_threads": ["Find the serum."],
@@ -67,6 +68,7 @@ class MemoryV2ImporterV1Test(unittest.TestCase):
         thread = next(operation for operation in patch["operations"] if operation["op"] == "upsert_open_thread")
 
         self.assertEqual("The door opened.", current_state["value"]["last_chapter_ending"])
+        self.assertEqual(["Lin Xue"], current_state["value"]["last_scene_characters"])
         self.assertEqual("Find the serum.", thread["value"]["title"])
 
     def test_spatial_state_generates_character_state_and_location_updates(self) -> None:
@@ -77,9 +79,17 @@ class MemoryV2ImporterV1Test(unittest.TestCase):
                     "data": {
                         "character_positions": {"Lin Xue": "备用通道"},
                         "location_states": {"备用通道": {"risk": "high"}},
+                        "connections": [{"from": "shelter", "to": "备用通道"}],
+                        "blocked_paths": ["sealed gate"],
+                        "last_transition": {"from": "shelter", "to": "备用通道"},
                     },
                 }
             ]
+        )
+        spatial_state = next(
+            operation
+            for operation in patch["operations"]
+            if operation["op"] == "update_current_state" and operation.get("data", {}).get("source_type") == "spatial_state"
         )
         character_state = next(
             operation for operation in patch["operations"] if operation["op"] == "update_character_state"
@@ -90,6 +100,12 @@ class MemoryV2ImporterV1Test(unittest.TestCase):
         self.assertEqual("state.current_location", character_state["field"])
         self.assertEqual("备用通道", character_state["value"])
         self.assertEqual("loc_备用通道", location["id"])
+        self.assertEqual([{"from": "shelter", "to": "备用通道"}], spatial_state["value"]["spatial_state"]["connections"])
+        self.assertEqual(["sealed gate"], spatial_state["value"]["spatial_state"]["blocked_paths"])
+        self.assertEqual(
+            {"from": "shelter", "to": "备用通道"},
+            spatial_state["value"]["spatial_state"]["last_transition"],
+        )
 
     def test_item_type_field_is_supported(self) -> None:
         patch = import_v1_memory_to_patch([{"item_type": "character", "title": "林雪", "data": {}}])
