@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Chapter Quality Report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "score",
+    "summary",
+    "checks",
+    "metrics",
+    "snapshot_refs"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "warning", "fail"]
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "summary": {
+      "type": "object",
+      "required": ["passed", "warnings", "failed", "skipped"],
+      "properties": {
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "status", "severity", "message", "evidence"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "warning", "fail", "skip"]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "chapter_length",
+        "cjk_character_count",
+        "paragraph_count",
+        "dialogue_line_count",
+        "repeated_line_count"
+      ],
+      "properties": {
+        "chapter_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cjk_character_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "paragraph_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dialogue_line_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repeated_line_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot_refs": {
+      "type": "object",
+      "required": [
+        "last_scene_location",
+        "last_scene_characters",
+        "open_thread_count",
+        "active_conflict_count"
+      ],
+      "properties": {
+        "last_scene_location": {
+          "type": "string"
+        },
+        "last_scene_characters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "open_thread_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "active_conflict_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

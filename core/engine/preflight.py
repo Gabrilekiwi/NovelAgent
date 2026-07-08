@@ -10,6 +10,7 @@ from core.director import decide_next_step
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.engine.report import build_run_report
 from core.engine.run_record import load_latest_run_summary
+from core.memory_v2.compile import compile_memory_v2
 from core.schema import SchemaValidationError, validate_schema_consistency, validate_schema_keywords
 from core.state.builder import build_snapshot_state_with_audit
 from core.state.memory import load_memory_context
@@ -97,6 +98,8 @@ def run_preflight(
     persist: bool | None = None,
     steps: int = 1,
     continue_on_rejection: bool = False,
+    check_memory_v2: bool = False,
+    memory_v2_output_dir: str | Path = Path("data/memory_v2/default"),
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     planned_workflow: list[str] | None = None
@@ -114,6 +117,13 @@ def run_preflight(
 
     snapshot = _capture_check(checks, "snapshot", lambda: load_snapshot(snapshot_path))
     memory = _capture_memory_check(checks, memory_path=memory_path, memory_source=memory_source)
+    if check_memory_v2:
+        _check_memory_v2_compile(
+            checks,
+            memory_path=memory_path,
+            memory_source=memory_source,
+            output_dir=memory_v2_output_dir,
+        )
     _check_run_history(checks, run_dir=run_dir)
 
     if snapshot is not None and memory is not None:
@@ -405,6 +415,58 @@ def _memory_source_mapping_details(source_mappings: Any) -> dict[str, Any]:
         "notion_page_mapping_count": notion_page_mapping_count,
         "notion_page_url_count": notion_page_url_count,
     }
+
+
+def _check_memory_v2_compile(
+    checks: list[dict[str, Any]],
+    *,
+    memory_path: str | Path | None,
+    memory_source: str,
+    output_dir: str | Path,
+) -> None:
+    input_details = _memory_input_details(memory_path=memory_path, memory_source=memory_source)
+    details: dict[str, Any] = {
+        "enabled": True,
+        "dry_run": True,
+        "reset": True,
+        "input": input_details,
+        "output_dir": str(output_dir),
+    }
+    source_path = input_details.get("resolved_path")
+    if input_details.get("resolved_source") != "file" or not source_path:
+        checks.append(
+            {
+                "name": "memory_v2_compile",
+                "ok": False,
+                "details": details,
+                "error": "Memory V2 compile check requires a file memory input.",
+            }
+        )
+        return
+
+    try:
+        report = compile_memory_v2(
+            memory_path=source_path,
+            output_dir=output_dir,
+            reset=True,
+            dry_run=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - preflight reports all startup failures.
+        checks.append({"name": "memory_v2_compile", "ok": False, "details": details, "error": str(exc)})
+        return
+
+    details.update(
+        {
+            "status": report.get("status"),
+            "memory_path": report.get("memory_path"),
+            "operation_count": (report.get("patch") or {}).get("operation_count"),
+            "operation_types": (report.get("patch") or {}).get("operation_types"),
+            "event_count": (report.get("events") or {}).get("event_count"),
+            "canonical_revision": (report.get("canonical_memory") or {}).get("revision"),
+            "snapshot_preview": report.get("snapshot_preview"),
+        }
+    )
+    checks.append({"name": "memory_v2_compile", "ok": True, "details": details})
 
 
 def _check_value(checks: list[dict[str, Any]], name: str, value: str | None, error: str) -> None:

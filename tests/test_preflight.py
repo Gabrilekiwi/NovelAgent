@@ -59,6 +59,7 @@ class PreflightTest(unittest.TestCase):
         self.assertIn("schema_assets", check_names)
         self.assertIn("v1_structure", check_names)
         self.assertIn("schema_consistency", check_names)
+        self.assertNotIn("memory_v2_compile", check_names)
         self.assertIn("artifact_targets", check_names)
         self.assertIn("planned_flow", check_names)
         self.assertIn("state_builder_audit", check_names)
@@ -98,6 +99,40 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual(str(DEFAULT_SNAPSHOT_PATH), execution["details"]["snapshot_path"])
         self.assertEqual(str(DEFAULT_RUN_DIR), execution["details"]["run_dir"])
         self.assertEqual(str(DEFAULT_CHAPTER_DIR), execution["details"]["chapter_dir"])
+
+    def test_memory_v2_compile_check_is_opt_in_dry_run(self) -> None:
+        tmp_path = self._case_dir("memory_v2")
+        snapshot_path = tmp_path / "snapshot.json"
+        output_dir = tmp_path / "memory_v2_out"
+        snapshot_path.write_text(
+            json.dumps({"chapter_index": 1, "world_state": {}, "characters": {}, "timeline": []}),
+            encoding="utf-8",
+        )
+
+        result = run_preflight(
+            snapshot_path=snapshot_path,
+            memory_path=Path("data/notion_memory.example.json"),
+            memory_source="file",
+            dry_run=True,
+            check_memory_v2=True,
+            memory_v2_output_dir=output_dir,
+        )
+
+        self.assertTrue(result["ok"])
+        memory_v2 = [check for check in result["checks"] if check["name"] == "memory_v2_compile"][0]
+        self.assertTrue(memory_v2["ok"])
+        self.assertTrue(memory_v2["details"]["dry_run"])
+        self.assertTrue(memory_v2["details"]["reset"])
+        self.assertGreater(memory_v2["details"]["operation_count"], 0)
+        self.assertGreater(memory_v2["details"]["event_count"], 0)
+        for name in (
+            "canonical_memory.json",
+            "memory_events.jsonl",
+            "memory_patch.json",
+            "snapshot_preview.json",
+            "memory_compile_report.json",
+        ):
+            self.assertFalse((output_dir / name).exists(), name)
 
     def test_preflight_reports_memory_source_mapping_summary(self) -> None:
         tmp_path = self._case_dir("memory_mappings")

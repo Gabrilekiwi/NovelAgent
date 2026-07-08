@@ -1,0 +1,76 @@
+{
+  "chapter_index": 12,
+  "project_profile": {
+    "language": "zh-CN"
+  },
+  "world_state": {
+    "title": "裂隙行者",
+    "locations": {
+      "备用通道": {
+        "risk": "unstable"
+      },
+      "主控室": {
+        "risk": "occupied"
+      },
+      "北塔": {
+        "risk": "unknown"
+      }
+    }
+  },
+  "characters": {
+    "林雪": {
+      "status": "injured",
+      "current_location": "备用通道"
+    },
+    "陈岚": {
+      "status": "guarding",
+      "current_location": "备用通道"
+    }
+  },
+  "timeline": [
+    {
+      "chapter_index": 11,
+      "summary": "林雪和陈岚抵达备用通道，门后的低语暴露了主控室仍有人操纵阀门。"
+    }
+  ],
+  "story_state": {
+    "last_chapter_ending": "备用通道的门缝里传出低语，林雪按住陈岚的手，听见里面有人提到主控室阀门。",
+    "last_scene_location": "备用通道",
+    "last_scene_characters": ["林雪", "陈岚"],
+    "open_threads": [
+      "未解决的备用通道门后低语",
+      "林雪必须判断主控室阀门是否会放出黑潮"
+    ],
+    "required_opening_bridge": "备用通道 林雪 陈岚 门后低语",
+    "active_conflicts": [
+      "林雪必须在救陈岚和关闭主控室阀门之间做选择"
+    ]
+  },
+  "spatial_state": {
+    "spaces": {
+      "备用通道": {},
+      "主控室": {},
+      "北塔": {}
+    },
+    "connections": [
+      {
+        "from": "备用通道",
+        "to": "主控室"
+      }
+    ],
+    "character_positions": {
+      "林雪": "备用通道",
+      "陈岚": "备用通道"
+    },
+    "blocked_paths": [],
+    "last_transition": {
+      "from": "废弃站台",
+      "to": "备用通道"
+    }
+  },
+  "constraints": [
+    {
+      "rule": "使用简体中文小说正文，不输出分析、标题、JSON 或作者说明。"
+    }
+  ]
+}

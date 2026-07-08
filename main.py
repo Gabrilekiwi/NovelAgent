@@ -131,6 +131,16 @@ def parse_args() -> argparse.Namespace:
         help="With --check, print the full preflight JSON instead of the concise summary.",
     )
     parser.add_argument(
+        "--check-memory-v2",
+        action="store_true",
+        help="With --check, validate the Memory V2 compile chain in dry-run mode.",
+    )
+    parser.add_argument(
+        "--memory-v2-out",
+        default="data/memory_v2/default",
+        help="Output directory path used for --check-memory-v2 dry-run diagnostics.",
+    )
+    parser.add_argument(
         "--report-runs",
         action="store_true",
         help="Print a JSON report for persisted run records and exit.",
@@ -282,6 +292,8 @@ def main() -> None:
             persist=not args.dry_run or args.persist_dry_run,
             steps=args.steps,
             continue_on_rejection=args.continue_on_rejection,
+            check_memory_v2=args.check_memory_v2,
+            memory_v2_output_dir=args.memory_v2_out,
         )
         if args.check_json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -368,6 +380,7 @@ def format_preflight_summary(result: dict) -> str:
         ("execution_mode", "Execution"),
         ("memory_input", "Memory input"),
         ("memory", "Memory"),
+        ("memory_v2_compile", "Memory V2 compile"),
         ("state_builder_audit", "State builder"),
         ("run_history", "Run history"),
         ("planned_workflow", "Workflow"),
@@ -692,6 +705,12 @@ def _summarize_check(name: str, details) -> str:
         if "source_mapping_count" in details:
             summary += f" mappings={details.get('source_mapping_count')}"
         return summary
+    if name == "memory_v2_compile" and isinstance(details, dict):
+        return (
+            f"dry_run={details.get('dry_run')} reset={details.get('reset')} "
+            f"ops={details.get('operation_count')} events={details.get('event_count')} "
+            f"revision={details.get('canonical_revision')}"
+        )
     if name == "state_builder_audit" and isinstance(details, dict):
         return (
             f"items={details.get('item_count')} "

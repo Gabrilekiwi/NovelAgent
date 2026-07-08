@@ -76,6 +76,8 @@ class CliTest(unittest.TestCase):
         self.assertEqual(str(DEFAULT_RUN_DIR), args.run_dir)
         self.assertEqual(str(DEFAULT_CHAPTER_DIR), args.chapter_dir)
         self.assertFalse(args.no_proxy)
+        self.assertFalse(args.check_memory_v2)
+        self.assertEqual("data/memory_v2/default", args.memory_v2_out)
 
     def test_parse_args_accepts_no_proxy(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--dry-run", "--no-proxy"]):
@@ -411,8 +413,45 @@ class CliTest(unittest.TestCase):
         self.assertIn("Memory:", text)
         self.assertIn("State builder:", text)
         self.assertIn("Checks:", text)
+        self.assertNotIn("Memory V2 compile:", text)
         self.assertNotIn('"checks"', text)
         self.assertNotIn("state_builder_audit", text)
+
+    def test_check_memory_v2_prints_summary_when_requested(self) -> None:
+        case_dir = self._case_dir("memory_v2")
+        snapshot = self._snapshot(case_dir)
+        output_dir = case_dir / "memory_v2_out"
+        output = io.StringIO()
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--check",
+                "--dry-run",
+                "--snapshot",
+                str(snapshot),
+                "--memory",
+                "data/notion_memory.example.json",
+                "--memory-source",
+                "file",
+                "--run-dir",
+                str(case_dir / "runs"),
+                "--chapter-dir",
+                str(case_dir / "chapters"),
+                "--check-memory-v2",
+                "--memory-v2-out",
+                str(output_dir),
+            ],
+        ), contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+        self.assertEqual(0, exit_context.exception.code)
+        text = output.getvalue()
+        self.assertIn("Memory V2 compile: dry_run=True reset=True", text)
+        self.assertFalse((output_dir / "canonical_memory.json").exists())
 
     def test_init_runtime_prints_summary(self) -> None:
         output = io.StringIO()
