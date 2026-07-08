@@ -46,16 +46,7 @@
         "properties": {
           "op": {
             "type": "string",
-            "enum": [
-              "upsert_character",
-              "upsert_location",
-              "upsert_constraint",
-              "append_timeline_event",
-              "update_current_state",
-              "upsert_open_thread",
-              "update_character_state",
-              "update_world"
-            ]
+            "minLength": 1
           },
           "id": {
             "type": "string",
