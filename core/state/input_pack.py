@@ -53,6 +53,8 @@ def build_input_pack(
     snapshot: dict[str, Any],
     decision: dict[str, Any] | None = None,
     memory_context: dict[str, Any] | None = None,
+    *,
+    narrative_rules: str | None = None,
 ) -> str:
     return f"""You are NovelAgent's chapter generation module. Generate the next chapter from the runtime Snapshot and Director decision.
 
@@ -63,7 +65,7 @@ def build_input_pack(
 {_dump(normalize_project_profile(snapshot))}
 
 # Director Decision
-{_dump(decision or {})}
+{_dump(decision or {})}{_narrative_rules_section(narrative_rules)}
 
 # World State
 {_dump(snapshot.get("world_state", {}))}
@@ -101,6 +103,12 @@ def build_input_pack(
 - Treat Snapshot and Memory Index as read-only runtime context.
 - If Recovery Context is available, address its problem codes and validation coverage gaps without contradicting the Snapshot.
 - Return only chapter prose, not analysis or JSON."""
+
+
+def _narrative_rules_section(narrative_rules: str | None) -> str:
+    if not isinstance(narrative_rules, str) or not narrative_rules.strip():
+        return ""
+    return "\n\n# 小说生成规则契约\n" + narrative_rules.strip()
 
 
 def build_input_pack_metadata(
