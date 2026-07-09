@@ -1,0 +1,8 @@
+{
+  "expected_decision": "blocked",
+  "expected_fail_rules": ["follow_target_language"],
+  "expected_repair_types": ["enforce_target_language"],
+  "expected_blocking": true,
+  "max_quality_score": 80,
+  "max_rule_score": 80
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "review_regression_metro_v1",
+  "title": "Metro Review Regression Fixtures",
+  "description": "Deterministic fixtures for PR6 through PR12 review behavior.",
+  "cases": [
+    {
+      "case_id": "metro_continuity_good",
+      "title": "Continuity baseline",
+      "category": "good",
+      "snapshot_path": "cases/metro_continuity_good/snapshot.json",
+      "previous_chapter_path": "cases/metro_continuity_good/previous_chapter.md",
+      "chapter_path": "cases/metro_continuity_good/chapter.md",
+      "expected_path": "cases/metro_continuity_good/expected.json"
+    },
+    {
+      "case_id": "metro_meta_output_bad",
+      "title": "Meta output is blocking",
+      "category": "output_contract",
+      "snapshot_path": "cases/metro_meta_output_bad/snapshot.json",
+      "previous_chapter_path": "cases/metro_meta_output_bad/previous_chapter.md",
+      "chapter_path": "cases/metro_meta_output_bad/chapter.md",
+      "expected_path": "cases/metro_meta_output_bad/expected.json"
+    },
+    {
+      "case_id": "metro_location_jump_bad",
+      "title": "Unexplained location jump",
+      "category": "spatial",
+      "snapshot_path": "cases/metro_location_jump_bad/snapshot.json",
+      "previous_chapter_path": "cases/metro_location_jump_bad/previous_chapter.md",
+      "chapter_path": "cases/metro_location_jump_bad/chapter.md",
+      "expected_path": "cases/metro_location_jump_bad/expected.json"
+    },
+    {
+      "case_id": "metro_missing_character_bad",
+      "title": "Missing last-scene character",
+      "category": "character",
+      "snapshot_path": "cases/metro_missing_character_bad/snapshot.json",
+      "previous_chapter_path": "cases/metro_missing_character_bad/previous_chapter.md",
+      "chapter_path": "cases/metro_missing_character_bad/chapter.md",
+      "expected_path": "cases/metro_missing_character_bad/expected.json"
+    },
+    {
+      "case_id": "metro_repetition_stalling_bad",
+      "title": "Repeated stalling prose",
+      "category": "pacing",
+      "snapshot_path": "cases/metro_repetition_stalling_bad/snapshot.json",
+      "previous_chapter_path": "cases/metro_repetition_stalling_bad/previous_chapter.md",
+      "chapter_path": "cases/metro_repetition_stalling_bad/chapter.md",
+      "expected_path": "cases/metro_repetition_stalling_bad/expected.json"
+    },
+    {
+      "case_id": "metro_language_mix_bad",
+      "title": "Target language drift",
+      "category": "language",
+      "snapshot_path": "cases/metro_language_mix_bad/snapshot.json",
+      "previous_chapter_path": "cases/metro_language_mix_bad/previous_chapter.md",
+      "chapter_path": "cases/metro_language_mix_bad/chapter.md",
+      "expected_path": "cases/metro_language_mix_bad/expected.json"
+    }
+  ]
+}

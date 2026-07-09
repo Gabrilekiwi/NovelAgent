@@ -1,0 +1,6 @@
+{
+  "expected_decision": ["needs_revision", "accept_with_warnings"],
+  "expected_fail_or_warning_rules": ["avoid_repetition_and_stalling"],
+  "expected_repair_types": ["reduce_repetition_and_stalling"],
+  "expected_blocking": false
+}

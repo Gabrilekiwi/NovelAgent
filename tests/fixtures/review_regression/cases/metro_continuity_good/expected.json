@@ -1,0 +1,13 @@
+{
+  "expected_decision": ["accept", "accept_with_warnings", "needs_revision"],
+  "min_quality_score": 70,
+  "min_rule_score": 70,
+  "forbidden_fail_rules": [
+    "continue_previous_ending",
+    "preserve_last_scene_location",
+    "preserve_last_scene_characters",
+    "prose_only_no_meta_output",
+    "follow_target_language"
+  ],
+  "expected_blocking": false
+}

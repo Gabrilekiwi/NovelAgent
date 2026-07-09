@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review Regression Summary",
+  "type": "object",
+  "required": ["schema_version", "suite_id", "status", "summary", "cases", "metadata"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "suite_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "summary": {
+      "type": "object",
+      "required": ["case_count", "passed", "failed"],
+      "properties": {
+        "case_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "case_id",
+          "status",
+          "decision",
+          "quality_score",
+          "rule_score",
+          "repair_task_count",
+          "blocking_task_count",
+          "failed_expectations",
+          "metadata"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "fail"]
+          },
+          "decision": {
+            "type": "string",
+            "enum": ["accept", "accept_with_warnings", "needs_revision", "blocked"]
+          },
+          "quality_score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "rule_score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "repair_task_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "blocking_task_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed_expectations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "required": ["category", "quality_status", "rule_validation_status", "repair_plan_status"],
+            "properties": {
+              "category": {
+                "type": "string"
+              },
+              "quality_status": {
+                "type": "string",
+                "enum": ["pass", "warning", "fail"]
+              },
+              "rule_validation_status": {
+                "type": "string",
+                "enum": ["pass", "warning", "fail"]
+              },
+              "repair_plan_status": {
+                "type": "string",
+                "enum": ["no_repair_needed", "needs_repair", "blocked"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["created_by", "source", "manifest_path"],
+      "properties": {
+        "created_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest_path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

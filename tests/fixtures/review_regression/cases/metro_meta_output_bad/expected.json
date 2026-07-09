@@ -1,0 +1,8 @@
+{
+  "expected_decision": "blocked",
+  "expected_fail_rules": ["prose_only_no_meta_output"],
+  "expected_repair_types": ["remove_meta_output"],
+  "expected_blocking": true,
+  "max_quality_score": 80,
+  "max_rule_score": 80
+}

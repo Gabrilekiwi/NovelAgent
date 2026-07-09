@@ -1,0 +1,6 @@
+{
+  "expected_decision": ["needs_revision", "accept_with_warnings"],
+  "expected_fail_or_warning_rules": ["preserve_last_scene_location"],
+  "expected_repair_types": ["fix_location_transition"],
+  "expected_blocking": false
+}
