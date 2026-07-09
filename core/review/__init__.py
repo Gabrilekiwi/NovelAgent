@@ -9,13 +9,25 @@ from core.review.pipeline import (
     run_review_pipeline,
 )
 from core.review.report import build_human_review_report
+from core.review.runtime import (
+    RuntimeReviewConfig,
+    disabled_review_summary,
+    run_runtime_review,
+    summarize_review_pipeline,
+    validate_runtime_review_config,
+)
 
 __all__ = [
     "ReviewPipelineError",
     "ReviewRegressionError",
+    "RuntimeReviewConfig",
     "build_human_review_report",
+    "disabled_review_summary",
     "evaluate_regression_expectations",
     "run_review_pipeline",
     "run_review_regression_case",
     "run_review_regression_suite",
+    "run_runtime_review",
+    "summarize_review_pipeline",
+    "validate_runtime_review_config",
 ]

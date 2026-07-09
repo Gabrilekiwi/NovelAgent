@@ -43,6 +43,9 @@
     },
     "memory_write": {
       "type": "object"
+    },
+    "review_pipeline": {
+      "type": "object"
     }
   },
   "additionalProperties": false

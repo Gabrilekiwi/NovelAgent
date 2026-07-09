@@ -9,6 +9,7 @@ from api.contracts import ModelCallError, ModelOutputError
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
+from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.schema import validate_schema
 from core.engine.artifacts import (
@@ -81,6 +82,7 @@ class AgentExecutor:
         repairer: ChapterRepairer | None = None,
         analyzer: ChapterAnalyzer | None = None,
         memory_writer: MemoryWriter | None = None,
+        review_config: RuntimeReviewConfig | None = None,
     ) -> None:
         self.snapshot_path = Path(snapshot_path)
         self.memory_path = Path(memory_path) if memory_path else None
@@ -99,6 +101,7 @@ class AgentExecutor:
         self.repairer = repairer
         self.analyzer = analyzer or analyze_chapter
         self.memory_writer = memory_writer
+        self.review_config = validate_runtime_review_config(review_config or RuntimeReviewConfig())
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
         started_at = utc_now()
@@ -394,6 +397,13 @@ class AgentExecutor:
                 validation,
                 _trace_repair_deltas(workflow_trace),
             )
+        self._attach_runtime_review(
+            result,
+            snapshot=snapshot,
+            previous_chapter_text=_previous_chapter_text(memory_context),
+        )
+
+        if persist:
             self._save_run_record(result)
 
         return result
@@ -857,6 +867,29 @@ class AgentExecutor:
         pipeline_summary = chapter.setdefault("pipeline", {})
         pipeline_summary["artifacts"] = artifacts
 
+    def _attach_runtime_review(
+        self,
+        result: dict[str, Any],
+        *,
+        snapshot: dict[str, Any],
+        previous_chapter_text: str | None,
+    ) -> None:
+        if not self.review_config.enabled:
+            return
+        run = result.get("run")
+        chapter = result.get("chapter")
+        if not isinstance(run, dict) or not isinstance(chapter, str) or not chapter.strip():
+            return
+        review = run_runtime_review(
+            chapter_text=chapter,
+            snapshot=snapshot,
+            previous_chapter_text=previous_chapter_text,
+            run_id=str(run["id"]),
+            config=self.review_config,
+        )
+        run["review_pipeline"] = review
+        result["review_pipeline"] = review
+
 
 def run_once(*, dry_run: bool = False, persist: bool = True, enable_llm_validator: bool = False) -> dict[str, Any]:
     return AgentExecutor(dry_run=dry_run, enable_llm_validator=enable_llm_validator).run_once(persist=persist)
@@ -881,6 +914,17 @@ def _notify_loop(observer: LoopObserver | None, event: dict[str, Any]) -> None:
     if observer is None:
         return
     observer(event)
+
+
+def _previous_chapter_text(memory_context: dict[str, Any]) -> str | None:
+    last_run = memory_context.get("last_run")
+    if not isinstance(last_run, dict):
+        return None
+    for key in ("chapter_text", "chapter", "draft_text"):
+        value = last_run.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
 
 
 def _loop_step_timing(

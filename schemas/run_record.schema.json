@@ -2357,6 +2357,87 @@
         "additionalProperties": false
       }
     },
+    "review_pipeline": {
+      "type": "object",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warning",
+            "needs_revision",
+            "blocked",
+            "error"
+          ]
+        },
+        "decision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "accept",
+            "accept_with_warnings",
+            "needs_revision",
+            "blocked",
+            "unknown",
+            null
+          ]
+        },
+        "quality_score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "rule_score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "repair_task_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "blocking_task_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "artifacts_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
     "error": {
       "type": "object",
       "required": [

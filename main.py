@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from core.config import clear_proxy_env, proxy_disabled_by_env
 from core.director import ModelDirector
@@ -16,6 +17,7 @@ from core.runtime_paths import (
     DEFAULT_SNAPSHOT_PATH,
     init_runtime_state,
 )
+from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
 from core.state.memory_writer import build_memory_writer
 
 
@@ -102,6 +104,36 @@ def parse_args() -> argparse.Namespace:
         "--llm-validator",
         action="store_true",
         help="Run the optional OpenAI-backed story-level validator after rule validation.",
+    )
+    parser.add_argument(
+        "--enable-review-pipeline",
+        action="store_true",
+        help="After chapter generation, run the optional deterministic Review Pipeline.",
+    )
+    parser.add_argument(
+        "--review-output-dir",
+        default=".tmp/runtime/reviews",
+        help="Root directory for optional runtime review artifacts.",
+    )
+    parser.add_argument(
+        "--review-rules",
+        default=None,
+        help="Optional custom Narrative Rule Pack JSON path for runtime review.",
+    )
+    parser.add_argument(
+        "--review-no-default-rules",
+        action="store_true",
+        help="Disable default review rules. Requires --review-rules.",
+    )
+    parser.add_argument(
+        "--review-no-repair-prompt",
+        action="store_true",
+        help="Run runtime review without generating a repair prompt artifact.",
+    )
+    parser.add_argument(
+        "--review-no-human-report",
+        action="store_true",
+        help="Run runtime review without generating a human-readable review report.",
     )
     parser.add_argument(
         "--scene-limit",
@@ -248,6 +280,11 @@ def main() -> None:
     apply_notion_shortcuts(args)
     if args.no_proxy or proxy_disabled_by_env():
         clear_proxy_env()
+    try:
+        review_config = _runtime_review_config_from_args(args)
+    except ValueError as exc:
+        print(f"Review pipeline configuration failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
     if args.init_runtime:
         result = init_runtime_state(overwrite=args.force_init_runtime)
@@ -316,6 +353,7 @@ def main() -> None:
             outbox_path=args.memory_outbox,
             notion_readback=args.notion_readback,
         ),
+        review_config=review_config,
     )
     persist = not args.dry_run or args.persist_dry_run
     if args.steps == 1:
@@ -506,6 +544,26 @@ def format_run_summary(result: dict) -> str:
         for label, path in artifacts:
             lines.append(f"  - {label}: {path}")
 
+    review = run.get("review_pipeline") if isinstance(run.get("review_pipeline"), dict) else None
+    if review and review.get("enabled"):
+        lines.extend(
+            [
+                "",
+                "Review pipeline:",
+                f"- status: {review.get('status')}",
+                f"- decision: {review.get('decision')}",
+                f"- quality_score: {review.get('quality_score')}",
+                f"- rule_score: {review.get('rule_score')}",
+                f"- repair_tasks: {review.get('repair_task_count')} total, {review.get('blocking_task_count')} blocking",
+            ]
+        )
+        if review.get("artifacts_dir"):
+            lines.append(f"- artifacts: {review.get('artifacts_dir')}")
+        if review.get("summary_path"):
+            lines.append(f"- summary: {review.get('summary_path')}")
+        if review.get("error"):
+            lines.append(f"- error: {review.get('error')}")
+
     lines.extend(
         [
             "",
@@ -584,6 +642,18 @@ def _run_artifacts(run: dict) -> list[tuple[str, str]]:
             if isinstance(artifact, dict) and artifact.get("path"):
                 artifacts.append((f"pipeline_{label}", str(artifact["path"])))
     return artifacts
+
+
+def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewConfig:
+    config = RuntimeReviewConfig(
+        enabled=bool(args.enable_review_pipeline),
+        output_dir=Path(args.review_output_dir) if args.review_output_dir else None,
+        rules_path=Path(args.review_rules) if args.review_rules else None,
+        use_default_rules=not bool(args.review_no_default_rules),
+        build_repair_prompt=not bool(args.review_no_repair_prompt),
+        build_human_report=not bool(args.review_no_human_report),
+    )
+    return validate_runtime_review_config(config)
 
 
 def _run_model_calls(run: dict) -> list[tuple[str, dict]]:
