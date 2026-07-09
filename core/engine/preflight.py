@@ -16,6 +16,7 @@ from core.state.builder import build_snapshot_state_with_audit
 from core.state.memory import load_memory_context
 from core.state.memory_writer import DEFAULT_MEMORY_OUTBOX, resolve_memory_writeback_mode
 from core.state.snapshot import load_snapshot
+from core.story_project.mapper import build_story_project_runtime_context
 from core.story_project.validator import validate_story_project
 from workflows.dynamic_flow import build_dynamic_flow, build_dynamic_flow_plan
 
@@ -120,11 +121,25 @@ def run_preflight(
         _schema_consistency_details,
     )
     _check_loop_parameters(checks, steps=steps)
+    story_project_validation = None
     if story_project is not None:
-        _check_story_project_structure(checks, story_project=story_project, chapter=chapter)
+        story_project_validation = _check_story_project_structure(checks, story_project=story_project, chapter=chapter)
 
     snapshot = _capture_check(checks, "snapshot", lambda: load_snapshot(snapshot_path))
     memory = _capture_memory_check(checks, memory_path=memory_path, memory_source=memory_source)
+    if (
+        story_project is not None
+        and story_project_validation is not None
+        and story_project_validation.ok
+        and snapshot is not None
+        and memory is not None
+    ):
+        _check_story_project_runtime_context(
+            checks,
+            story_project_validation=story_project_validation,
+            snapshot=snapshot,
+            memory=memory,
+        )
     if check_memory_v2:
         _check_memory_v2_compile(
             checks,
@@ -521,12 +536,12 @@ def _check_story_project_structure(
     *,
     story_project: str | Path,
     chapter: str | int | None,
-) -> None:
+) -> Any:
     try:
         result = validate_story_project(story_project=story_project, chapter=chapter)
     except Exception as exc:  # noqa: BLE001 - preflight reports all startup failures.
         checks.append({"name": "story_project_structure", "ok": False, "error": str(exc)})
-        return
+        return None
 
     details = result.to_dict()
     blocking = [problem for problem in details.get("problems", []) if problem.get("blocking")]
@@ -539,8 +554,41 @@ def _check_story_project_structure(
                 "error": "; ".join(str(problem.get("message")) for problem in blocking),
             }
         )
-        return
+        return result
     checks.append({"name": "story_project_structure", "ok": True, "details": details})
+    return result
+
+
+def _check_story_project_runtime_context(
+    checks: list[dict[str, Any]],
+    *,
+    story_project_validation,
+    snapshot: dict[str, Any],
+    memory: dict[str, Any],
+) -> None:
+    root = story_project_validation.root_resolution.root if story_project_validation.root_resolution else None
+    chapter_resolution = story_project_validation.chapter_resolution
+    chapter_index = chapter_resolution.resolved_chapter if chapter_resolution else None
+    if root is None or chapter_index is None:
+        checks.append(
+            {
+                "name": "story_project_runtime_context",
+                "ok": False,
+                "error": "StoryProject runtime context requires a resolved root and chapter.",
+            }
+        )
+        return
+    try:
+        context = build_story_project_runtime_context(
+            root,
+            chapter_index,
+            snapshot=snapshot,
+            memory_context=memory,
+        )
+    except Exception as exc:  # noqa: BLE001 - preflight reports all startup failures.
+        checks.append({"name": "story_project_runtime_context", "ok": False, "error": str(exc)})
+        return
+    checks.append({"name": "story_project_runtime_context", "ok": True, "details": context.to_dict()})
 
 
 def _check_prompt_assets(checks: list[dict[str, Any]]) -> None:

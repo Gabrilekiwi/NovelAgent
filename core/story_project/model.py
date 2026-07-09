@@ -116,3 +116,107 @@ class StoryProjectValidationResult:
             "problems": [problem.to_dict() for problem in self.problems],
             "warnings": [warning.to_dict() for warning in self.warnings],
         }
+
+
+@dataclass(frozen=True)
+class ChapterBlueprint:
+    chapter_index: int
+    outline_path: Path
+    title: str
+    core_event: str | None = None
+    required_beats: tuple[dict[str, Any], ...] = ()
+    ending_pressure: str | None = None
+    source_path: Path | None = None
+    missing_fields: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "chapter_index": self.chapter_index,
+            "outline_path": str(self.outline_path),
+            "title": self.title,
+            "core_event": self.core_event,
+            "required_beats": [dict(beat) for beat in self.required_beats],
+            "ending_pressure": self.ending_pressure,
+            "source_path": str(self.source_path or self.outline_path),
+            "missing_fields": list(self.missing_fields),
+        }
+
+
+@dataclass(frozen=True)
+class SourcePathSet:
+    story_project_root: Path
+    outline_path: Path
+    previous_prose_path: Path | None = None
+    tracking_paths: dict[str, Path] = field(default_factory=dict)
+    setting_paths: dict[str, Path] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "story_project_root": str(self.story_project_root),
+            "outline_path": str(self.outline_path),
+            "previous_prose_path": str(self.previous_prose_path) if self.previous_prose_path else None,
+            "tracking_paths": {name: str(path) for name, path in sorted(self.tracking_paths.items())},
+            "setting_paths": {name: str(path) for name, path in sorted(self.setting_paths.items())},
+        }
+
+
+@dataclass(frozen=True)
+class SourceResolutionEntry:
+    field: str
+    chosen_source: str
+    discarded_sources: tuple[str, ...] = ()
+    reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "field": self.field,
+            "chosen_source": self.chosen_source,
+            "discarded_sources": list(self.discarded_sources),
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class SourceResolution:
+    precedence: tuple[str, ...] = ()
+    entries: tuple[SourceResolutionEntry, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "precedence": list(self.precedence),
+            "entries": [entry.to_dict() for entry in self.entries],
+        }
+
+
+@dataclass(frozen=True)
+class StoryProjectRuntimeContext:
+    story_project_root: Path
+    chapter_index: int
+    outline: dict[str, Any]
+    previous_prose: dict[str, Any] | None
+    tracking_files: dict[str, dict[str, Any]]
+    setting_files: dict[str, dict[str, Any]]
+    snapshot_overlay: dict[str, Any]
+    memory_context_overlay: dict[str, Any]
+    chapter_blueprint: ChapterBlueprint
+    source_paths: SourcePathSet
+    source_resolution: SourceResolution
+    warnings: tuple[str, ...] = ()
+    missing_fields: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "story_project_root": str(self.story_project_root),
+            "chapter_index": self.chapter_index,
+            "outline": dict(self.outline),
+            "previous_prose": dict(self.previous_prose) if self.previous_prose else None,
+            "tracking_files": {name: dict(value) for name, value in sorted(self.tracking_files.items())},
+            "setting_files": {name: dict(value) for name, value in sorted(self.setting_files.items())},
+            "snapshot_overlay": self.snapshot_overlay,
+            "memory_context_overlay": self.memory_context_overlay,
+            "chapter_blueprint": self.chapter_blueprint.to_dict(),
+            "source_paths": self.source_paths.to_dict(),
+            "source_resolution": self.source_resolution.to_dict(),
+            "warnings": list(self.warnings),
+            "missing_fields": list(self.missing_fields),
+        }

@@ -520,6 +520,7 @@ def format_preflight_summary(result: dict) -> str:
         ("memory", "Memory"),
         ("memory_v2_compile", "Memory V2 compile"),
         ("story_project_structure", "StoryProject"),
+        ("story_project_runtime_context", "StoryProject runtime"),
         ("state_builder_audit", "State builder"),
         ("run_history", "Run history"),
         ("planned_workflow", "Workflow"),
@@ -978,6 +979,16 @@ def _summarize_check(name: str, details) -> str:
         return (
             f"root={root.get('root')} source={root.get('source')} "
             f"chapter={chapter.get('resolved_chapter')} problems={len(problems)}"
+        )
+    if name == "story_project_runtime_context" and isinstance(details, dict):
+        source_paths = details.get("source_paths") if isinstance(details.get("source_paths"), dict) else {}
+        memory_overlay = details.get("memory_context_overlay") if isinstance(details.get("memory_context_overlay"), dict) else {}
+        return (
+            f"chapter={details.get('chapter_index')} "
+            f"outline={source_paths.get('outline_path')} "
+            f"items={len(memory_overlay.get('items') or [])} "
+            f"warnings={len(details.get('warnings') or [])} "
+            f"missing={len(details.get('missing_fields') or [])}"
         )
     if name == "state_builder_audit" and isinstance(details, dict):
         return (
