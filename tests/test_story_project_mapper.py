@@ -103,8 +103,9 @@ class StoryProjectMapperTest(unittest.TestCase):
 
         context = build_story_project_runtime_context(root, 2)
 
-        self.assertIn("角色\\主角.md", context.setting_files)
-        self.assertEqual(str(setting_path), context.setting_files["角色\\主角.md"]["path"])
+        self.assertIn("角色/主角.md", context.setting_files)
+        self.assertEqual(str(setting_path), context.setting_files["角色/主角.md"]["path"])
+        self.assertIn("角色/主角.md", context.source_paths.setting_paths)
 
     def test_runtime_context_resolves_previous_prose_for_later_chapters(self) -> None:
         case_dir = self._case_dir("previous")

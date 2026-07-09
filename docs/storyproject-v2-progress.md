@@ -117,6 +117,29 @@ Explicitly not done in Phase 1:
 - No `AgentExecutor` direct StoryProject file reads.
 - No oh-story API provider or JS script execution.
 
+## Phase 1.1: Runtime path normalization
+
+Status: implemented.
+
+Completed:
+
+- Normalized StoryProject runtime relative paths to POSIX-style keys via `Path.as_posix()`.
+- `tracking_files`, `setting_files`, `source_paths.tracking_paths`, and `source_paths.setting_paths` now use `/` separators consistently across Windows, Linux, and macOS.
+- Updated mapper tests to assert `角色/主角.md` instead of Windows-style `角色\主角.md`.
+
+Modified files:
+
+- `core/story_project/mapper.py`
+- `tests/test_story_project_mapper.py`
+- `docs/storyproject-v2-progress.md`
+
+Test results:
+
+- `python -B -m unittest tests.test_story_project_mapper`: passed, 12 tests.
+- `python main.py --check --dry-run --memory data/notion_memory.example.json`: passed, 20 checks.
+- `python -B -m unittest discover -s tests`: passed, 621 tests.
+- `python -B scripts/smoke_v1.py`: passed.
+
 Next recommended step:
 
 - Stop after Phase 1. Phase 2 should separately handle generation integration, StoryProject writeback, and Chapter Pipeline `required_beats` / `ending_pressure` hard-contract enforcement.
