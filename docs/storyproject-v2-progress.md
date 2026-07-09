@@ -220,3 +220,31 @@ Next recommended step:
 
 - Phase 3 can separately add optional oh-story enhanced detection as info/warning-only checks.
 - StoryProject writeback should remain a later, separately scoped phase with explicit write gates.
+
+## Phase 2.1: Run record validation coverage retention
+
+Status: implemented.
+
+Completed:
+
+- Added `story_project` to `core/engine/run_record.py` validation name retention so run record summaries preserve StoryProject validation coverage.
+- Updated run record and loop session schemas to accept `story_project` in validation coverage fields.
+- Added a regression assertion that StoryProject run records keep `validation.executed_checks` containing `story_project`.
+
+Modified files:
+
+- `core/engine/run_record.py`
+- `schemas/run_record.schema.json`
+- `schemas/loop_session.schema.json`
+- `tests/test_executor.py`
+- `docs/storyproject-v2-progress.md`
+
+Test results:
+
+- `python -B -m unittest tests.test_executor.AgentExecutorTest.test_story_project_context_records_blueprint_coverage_without_writeback`: passed.
+
+Explicitly not done in Phase 2.1:
+
+- No StoryProject writeback.
+- No writes to `正文/` or `追踪/`.
+- No Phase 3 oh-story enhanced detection.

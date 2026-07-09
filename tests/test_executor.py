@@ -235,6 +235,7 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertFalse(story_project["writeback"]["attempted"])
         self.assertEqual([], story_project["blueprint_coverage"]["missing_beat_indexes"])
         self.assertTrue(story_project["blueprint_coverage"]["ending_pressure_covered"])
+        self.assertIn("story_project", saved_run["run"]["validation"]["executed_checks"])
 
 
     def test_pre_validate_bridge_records_real_precheck(self) -> None:

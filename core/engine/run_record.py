@@ -709,7 +709,7 @@ def _validation_coverage_summary(validation: dict[str, Any], decision: dict[str,
 
 
 _RULE_VALIDATION_NAMES = ["continuity", "spatial", "logic"]
-_VALIDATION_NAMES = [*_RULE_VALIDATION_NAMES, "llm"]
+_VALIDATION_NAMES = [*_RULE_VALIDATION_NAMES, "story_project", "llm"]
 
 
 def _known_validation_names(raw_names: Any) -> list[str]:
