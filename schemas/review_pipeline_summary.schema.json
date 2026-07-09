@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review Pipeline Summary",
+  "type": "object",
+  "required": ["schema_version", "status", "decision", "scores", "reports", "tasks", "artifacts", "flags", "metadata"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "warning", "needs_revision", "blocked"]
+    },
+    "decision": {
+      "type": "object",
+      "required": ["decision", "label", "allowed_next_steps"],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["accept", "accept_with_warnings", "needs_revision", "blocked", "unknown"]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowed_next_steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "scores": {
+      "type": "object",
+      "required": ["quality_score", "rule_score"],
+      "properties": {
+        "quality_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "rule_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "reports": {
+      "type": "object",
+      "required": ["quality_status", "rule_validation_status", "repair_plan_status", "human_review_decision"],
+      "properties": {
+        "quality_status": {
+          "type": "string",
+          "enum": ["pass", "warning", "fail"]
+        },
+        "rule_validation_status": {
+          "type": "string",
+          "enum": ["pass", "warning", "fail"]
+        },
+        "repair_plan_status": {
+          "type": "string",
+          "enum": ["no_repair_needed", "needs_repair", "blocked"]
+        },
+        "human_review_decision": {
+          "type": "string",
+          "enum": ["accept", "accept_with_warnings", "needs_revision", "blocked", "unknown"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "tasks": {
+      "type": "object",
+      "required": ["repair_task_count", "blocking_task_count", "human_review_task_count"],
+      "properties": {
+        "repair_task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking_task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "human_review_task_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "output_dir",
+        "chapter_quality_report",
+        "rule_validation_report",
+        "rule_repair_plan",
+        "rule_repair_prompt",
+        "rule_repair_prompt_metadata",
+        "human_review_report",
+        "human_review_report_metadata",
+        "review_pipeline_summary"
+      ],
+      "properties": {
+        "output_dir": {
+          "type": ["string", "null"]
+        },
+        "chapter_quality_report": {
+          "type": ["string", "null"]
+        },
+        "rule_validation_report": {
+          "type": ["string", "null"]
+        },
+        "rule_repair_plan": {
+          "type": ["string", "null"]
+        },
+        "rule_repair_prompt": {
+          "type": ["string", "null"]
+        },
+        "rule_repair_prompt_metadata": {
+          "type": ["string", "null"]
+        },
+        "human_review_report": {
+          "type": ["string", "null"]
+        },
+        "human_review_report_metadata": {
+          "type": ["string", "null"]
+        },
+        "review_pipeline_summary": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "flags": {
+      "type": "object",
+      "required": ["has_previous_chapter", "has_repair_prompt", "has_human_review_report", "used_default_rules"],
+      "properties": {
+        "has_previous_chapter": {
+          "type": "boolean"
+        },
+        "has_repair_prompt": {
+          "type": "boolean"
+        },
+        "has_human_review_report": {
+          "type": "boolean"
+        },
+        "used_default_rules": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["created_by", "source"],
+      "properties": {
+        "created_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
