@@ -477,7 +477,7 @@ def _chapter_summary(chapter: str, chapter_pipeline: dict[str, Any] | None = Non
 
 def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any]:
     pipeline = validate_schema(chapter_pipeline, "chapter_pipeline.schema.json")
-    return {
+    summary = {
         "chapter_index": pipeline.get("chapter_index"),
         "scene_count": len(pipeline.get("scene_drafts", [])),
         "plan_goal": (pipeline.get("plan") or {}).get("goal"),
@@ -485,6 +485,11 @@ def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any
         "scene_spans": pipeline.get("scene_spans", []),
         "stages": pipeline.get("stages", []),
     }
+    if pipeline.get("chapter_blueprint") is not None:
+        summary["chapter_blueprint"] = pipeline.get("chapter_blueprint")
+    if pipeline.get("blueprint_coverage") is not None:
+        summary["blueprint_coverage"] = pipeline.get("blueprint_coverage")
+    return summary
 
 
 def _workflow_plan_summary(workflow_plan: dict[str, Any] | None) -> dict[str, Any] | None:

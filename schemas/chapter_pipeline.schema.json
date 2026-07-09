@@ -8,6 +8,55 @@
       "type": "integer",
       "minimum": 1
     },
+    "story_project": {
+      "type": ["object", "null"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "chapter_blueprint": {
+      "type": ["object", "null"]
+    },
+    "blueprint_coverage": {
+      "type": ["object", "null"],
+      "required": [
+        "required_beat_count",
+        "covered_beat_indexes",
+        "missing_beat_indexes",
+        "ending_pressure_required",
+        "ending_pressure_covered"
+      ],
+      "properties": {
+        "required_beat_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "covered_beat_indexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "missing_beat_indexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "ending_pressure_required": {
+          "type": "boolean"
+        },
+        "ending_pressure_covered": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
     "plan": {
       "type": "object",
       "required": ["goal", "scenes"],
@@ -42,6 +91,13 @@
                   "type": "string",
                   "minLength": 1
                 }
+              },
+              "required_beat_indexes": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
               }
             },
             "additionalProperties": false
@@ -68,6 +124,16 @@
           "text": {
             "type": "string",
             "minLength": 1
+          },
+          "covered_beat_indexes": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "ending_pressure_covered": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -126,15 +192,16 @@
             "type": "string",
             "enum": ["pending", "completed", "skipped", "failed"]
           },
-          "artifact_key": {
-            "type": "string",
-            "enum": [
-              "plan",
-              "scene_drafts",
-              "merged_chapter",
-              "validation_report",
-              "repair_deltas",
-              "chapter"
+              "artifact_key": {
+                "type": "string",
+                "enum": [
+                  "plan",
+                  "scene_drafts",
+                  "merged_chapter",
+                  "blueprint_coverage",
+                  "validation_report",
+                  "repair_deltas",
+                  "chapter"
             ]
           },
           "summary": {

@@ -143,3 +143,80 @@ Test results:
 Next recommended step:
 
 - Stop after Phase 1. Phase 2 should separately handle generation integration, StoryProject writeback, and Chapter Pipeline `required_beats` / `ending_pressure` hard-contract enforcement.
+
+## Phase 2: Chapter Blueprint contract and coverage
+
+Status: implemented.
+
+Completed:
+
+- Added `schemas/chapter_blueprint.schema.json` for the stable StoryProject chapter blueprint contract.
+- Added `core/story_project/runtime.py` as the generation-mode StoryProject adapter. It builds an already-resolved `StoryProjectRuntimeContext` for `main.py` and keeps StoryProject file reading out of `AgentExecutor`.
+- Added `core/story_project/coverage.py` for deterministic blueprint plan derivation and coverage validation.
+- Wired `main.py --dry-run --story-project auto --chapter auto` into StoryProject generation mode.
+- Kept `--check --story-project auto` as preflight-only behavior.
+- Extended `AgentExecutor` to consume an already-built `story_project_context` without parsing `.active-book` or reading StoryProject directories.
+- Extended input packs with a StoryProject Chapter Blueprint section only when StoryProject context is present.
+- Made StoryProject `chapter_blueprint.required_beats` a hard Chapter Pipeline contract:
+  - StoryProject mode derives `plan_chapter()` from the blueprint.
+  - StoryProject mode does not call model planning logic.
+  - `scene_limit` groups beats into fewer scenes instead of truncating beats.
+- Added deterministic `blueprint_coverage` with:
+  - `required_beat_count`
+  - `covered_beat_indexes`
+  - `missing_beat_indexes`
+  - `ending_pressure_required`
+  - `ending_pressure_covered`
+- Added StoryProject coverage validation problems:
+  - `missing_required_beat`
+  - `missing_ending_pressure`
+- Used existing `manual_review` repair action for StoryProject coverage problems to avoid expanding repairer responsibility.
+- Recorded StoryProject audit data in persisted run records when StoryProject context is active, including `writeback.attempted=false`.
+- Preserved legacy non-StoryProject pipeline behavior with StoryProject fields absent or null.
+- Preserved check-only behavior: missing `ending_pressure` remains a runtime context `missing_fields` entry and does not fail ordinary preflight.
+- Enforced generation-mode blocking when `core_event`, `required_beats`, or `ending_pressure` is missing from the StoryProject blueprint.
+
+Modified files:
+
+- `core/engine/executor.py`
+- `core/engine/preflight.py`
+- `core/engine/run_record.py`
+- `core/state/input_pack.py`
+- `core/story_project/coverage.py`
+- `core/story_project/runtime.py`
+- `core/validator/__init__.py`
+- `core/validator/common.py`
+- `main.py`
+- `modules/chapter_generator/pipeline.py`
+- `schemas/chapter_blueprint.schema.json`
+- `schemas/chapter_pipeline.schema.json`
+- `schemas/input_pack_metadata.schema.json`
+- `schemas/run_record.schema.json`
+- `schemas/validation_result.schema.json`
+- `tests/test_chapter_pipeline.py`
+- `tests/test_executor.py`
+- `tests/test_story_project_mapper.py`
+- `docs/storyproject-v2-progress.md`
+
+Test results:
+
+- `python -B -m unittest tests.test_chapter_pipeline`: passed, 10 tests.
+- `python main.py --check --dry-run --memory data/notion_memory.example.json`: passed, 20 checks.
+- `python -B -m unittest discover -s tests`: passed, 627 tests.
+- `python -B scripts/smoke_v1.py`: passed.
+
+Explicitly not done in Phase 2:
+
+- No Phase 3 oh-story enhanced detection.
+- No StoryProject writeback.
+- No writes to `正文/` or `追踪/`.
+- No StoryProject writer module.
+- No oh-story JS script execution.
+- No oh-story API provider.
+- No `api/oh_story_client.py`.
+- No requirement for `.story-deployed`, `.codex/hooks.json`, or story agents.
+
+Next recommended step:
+
+- Phase 3 can separately add optional oh-story enhanced detection as info/warning-only checks.
+- StoryProject writeback should remain a later, separately scoped phase with explicit write gates.

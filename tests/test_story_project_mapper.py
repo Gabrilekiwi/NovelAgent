@@ -266,6 +266,36 @@ class StoryProjectMapperTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertNotIn("story_project_runtime_context", {check["name"] for check in result["checks"]})
 
+    def test_preflight_allows_missing_ending_pressure_in_check_only_mode(self) -> None:
+        case_dir = self._case_dir("preflight_missing_ending")
+        root = self._story_project(case_dir)
+        outline = self._write_outline(root, 1)
+        outline.write_text(
+            "\n".join(
+                [
+                    "# Missing Ending",
+                    "核心事件：the gate opens.",
+                    "## 剧情节拍",
+                    "- open the gate",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = run_preflight(
+            snapshot_path=self._snapshot(case_dir, chapter_index=1),
+            memory_path=self._memory(case_dir),
+            run_dir=case_dir / "runs",
+            chapter_dir=case_dir / "chapters",
+            dry_run=True,
+            story_project=root,
+            chapter=1,
+        )
+
+        self.assertTrue(result["ok"])
+        runtime = [check for check in result["checks"] if check["name"] == "story_project_runtime_context"][0]
+        self.assertIn("ending_pressure", runtime["details"]["chapter_blueprint"]["missing_fields"])
+
 
 if __name__ == "__main__":
     unittest.main()

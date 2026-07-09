@@ -20,7 +20,10 @@ from core.runtime_paths import (
 from core.review.dashboard import build_review_dashboard_from_index
 from core.review.index import get_latest_review, list_recent_reviews
 from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
+from core.state.memory import load_memory_context
 from core.state.memory_writer import build_memory_writer
+from core.state.snapshot import load_snapshot
+from core.story_project.runtime import build_generation_story_project_context
 
 
 def parse_args() -> argparse.Namespace:
@@ -432,6 +435,15 @@ def main() -> None:
             print(format_preflight_summary(result))
         raise SystemExit(0 if result["ok"] else 1)
 
+    story_project_context = None
+    if args.story_project is not None:
+        story_project_context = build_generation_story_project_context(
+            story_project=args.story_project,
+            chapter=args.chapter,
+            snapshot=load_snapshot(args.snapshot),
+            memory_context=load_memory_context(args.memory, source=args.memory_source),
+        )
+
     executor = AgentExecutor(
         snapshot_path=args.snapshot,
         memory_path=args.memory,
@@ -448,6 +460,7 @@ def main() -> None:
             notion_readback=args.notion_readback,
         ),
         review_config=review_config,
+        story_project_context=story_project_context,
     )
     persist = not args.dry_run or args.persist_dry_run
     if args.steps == 1:

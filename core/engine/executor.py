@@ -85,6 +85,7 @@ class AgentExecutor:
         analyzer: ChapterAnalyzer | None = None,
         memory_writer: MemoryWriter | None = None,
         review_config: RuntimeReviewConfig | None = None,
+        story_project_context: Any = None,
     ) -> None:
         self.snapshot_path = Path(snapshot_path)
         self.memory_path = Path(memory_path) if memory_path else None
@@ -104,11 +105,13 @@ class AgentExecutor:
         self.analyzer = analyzer or analyze_chapter
         self.memory_writer = memory_writer
         self.review_config = validate_runtime_review_config(review_config or RuntimeReviewConfig())
+        self.story_project_context = story_project_context
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
         started_at = utc_now()
         base_snapshot = load_snapshot(self.snapshot_path)
         memory_context = self._load_memory_context()
+        base_snapshot, memory_context = self._apply_story_project_context(base_snapshot, memory_context)
         if self.use_run_history:
             self._attach_last_run(memory_context)
         snapshot_pack = build_snapshot_input_pack(base_snapshot, memory_context)
@@ -158,8 +161,20 @@ class AgentExecutor:
                 self._save_run_record({"run": failed_run})
             raise
 
-        input_pack = build_input_pack(snapshot, decision, memory_context)
-        input_pack_metadata = build_input_pack_metadata(input_pack, snapshot, decision, memory_context)
+        story_project_context = self._story_project_context_dict()
+        input_pack = build_input_pack(
+            snapshot,
+            decision,
+            memory_context,
+            story_project_context=story_project_context,
+        )
+        input_pack_metadata = build_input_pack_metadata(
+            input_pack,
+            snapshot,
+            decision,
+            memory_context,
+            story_project_context=story_project_context,
+        )
         recovery_context = build_recovery_context(memory_context)
         try:
             chapter, validation, repair_attempts, workflow_trace, chapter_pipeline = self._execute_workflow(
@@ -692,6 +707,7 @@ class AgentExecutor:
                 dry_run=self.dry_run,
                 scene_limit=self.scene_limit,
                 language=project_language(snapshot),
+                chapter_blueprint=self._story_project_chapter_blueprint(),
             )
             state["chapter"] = str(pipeline["merged_chapter"])
             state["chapter_pipeline"] = pipeline
@@ -726,11 +742,14 @@ class AgentExecutor:
     ) -> None:
         chapter = _require_chapter(state)
         if self.validator is validate_chapter:
+            pipeline = state.get("chapter_pipeline") if isinstance(state.get("chapter_pipeline"), dict) else {}
             state["validation"] = validate_chapter(
                 snapshot,
                 chapter,
                 decision,
                 enable_llm=self.enable_llm_validator,
+                chapter_blueprint=self._story_project_chapter_blueprint(),
+                blueprint_coverage=pipeline.get("blueprint_coverage") if isinstance(pipeline, dict) else None,
             )
         else:
             state["validation"] = self.validator(snapshot, chapter, decision)
@@ -791,6 +810,54 @@ class AgentExecutor:
             return self.memory_loader()
         return load_memory_context(self.memory_path, source=self.memory_source)
 
+    def _apply_story_project_context(
+        self,
+        snapshot: dict[str, Any],
+        memory_context: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        context = self._story_project_context_dict()
+        if not context:
+            return snapshot, memory_context
+        merged_snapshot = _deep_merge_dict(snapshot, context.get("snapshot_overlay"))
+        merged_memory = dict(memory_context)
+        overlay = context.get("memory_context_overlay")
+        if isinstance(overlay, dict):
+            base_items = list(merged_memory.get("items") or [])
+            overlay_items = list(overlay.get("items") or [])
+            base_mappings = list(merged_memory.get("source_mappings") or [])
+            adjusted_mappings: list[dict[str, Any]] = []
+            for mapping in overlay.get("source_mappings") or []:
+                if not isinstance(mapping, dict):
+                    continue
+                adjusted = dict(mapping)
+                if isinstance(adjusted.get("index"), int):
+                    adjusted["index"] = int(adjusted["index"]) + len(base_items)
+                adjusted_mappings.append(adjusted)
+            merged_memory["items"] = [*base_items, *overlay_items]
+            merged_memory["source_mappings"] = [*base_mappings, *adjusted_mappings]
+            merged_memory["story_project"] = {
+                "enabled": True,
+                "chapter_index": context.get("chapter_index"),
+            }
+        return merged_snapshot, merged_memory
+
+    def _story_project_context_dict(self) -> dict[str, Any] | None:
+        context = self.story_project_context
+        if context is None:
+            return None
+        if hasattr(context, "to_dict"):
+            return context.to_dict()
+        if isinstance(context, dict):
+            return context
+        return None
+
+    def _story_project_chapter_blueprint(self) -> dict[str, Any] | None:
+        context = self._story_project_context_dict()
+        if not context:
+            return None
+        blueprint = context.get("chapter_blueprint")
+        return blueprint if isinstance(blueprint, dict) else None
+
     def _model_trace_metadata(self, action: str, state: dict[str, Any]) -> dict[str, Any] | None:
         config = get_config()
         if action in {"build_snapshot", "pre_validate_bridge", "commit_snapshot"}:
@@ -823,11 +890,36 @@ class AgentExecutor:
             memory_context["last_run"] = last_run
 
     def _save_run_record(self, result: dict[str, Any]) -> None:
+        self._attach_story_project_audit(result)
         validate_run_result(result)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         path = self.run_dir / f"{result['run']['id']}.json"
         with path.open("w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
+
+    def _attach_story_project_audit(self, result: dict[str, Any]) -> None:
+        context = self._story_project_context_dict()
+        run = result.get("run") if isinstance(result, dict) else None
+        if not context or not isinstance(run, dict):
+            return
+        chapter = run.get("chapter") if isinstance(run.get("chapter"), dict) else {}
+        pipeline_summary = chapter.get("pipeline") if isinstance(chapter.get("pipeline"), dict) else {}
+        run["story_project"] = {
+            "enabled": True,
+            "mode": "compatible",
+            "root": context.get("story_project_root"),
+            "chapter_index": context.get("chapter_index"),
+            "chapter_blueprint": context.get("chapter_blueprint"),
+            "source_paths": context.get("source_paths"),
+            "source_resolution": context.get("source_resolution"),
+            "blueprint_coverage": pipeline_summary.get("blueprint_coverage"),
+            "writeback": {
+                "attempted": False,
+                "applied": False,
+                "targets": [],
+                "blocked_reasons": ["phase_2_no_story_project_writeback"],
+            },
+        }
 
     def _attach_snapshot_pack_artifact(self, run: dict[str, Any], snapshot_pack: str) -> None:
         artifact = save_snapshot_pack_artifact(
@@ -1024,6 +1116,18 @@ def _empty_analysis(validation: dict[str, Any]) -> dict[str, Any]:
         "validation_ok": bool(validation.get("ok")),
         "summary": "",
     }, "analysis_result.schema.json")
+
+
+def _deep_merge_dict(base: dict[str, Any], overlay: Any) -> dict[str, Any]:
+    if not isinstance(overlay, dict):
+        return dict(base)
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _require_chapter(state: dict[str, Any]) -> str:

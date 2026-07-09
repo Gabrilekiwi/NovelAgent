@@ -118,6 +118,7 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual("chapter_generation", model_trace["generate_chapter"]["model_stage"])
         self.assertEqual("local", model_trace["generate_chapter"]["model_provider"])
         self.assertIsNone(model_trace["generate_chapter"]["model_name"])
+
         self.assertEqual("dry_run", model_trace["generate_chapter"]["model_invocation"])
         self.assertEqual("claude_polish", model_trace["polish"]["model_stage"])
         self.assertEqual("local", model_trace["polish"]["model_provider"])
@@ -190,6 +191,50 @@ class AgentExecutorTest(unittest.TestCase):
         for scene_artifact in pipeline_artifacts["scene_drafts"]:
             self.assertTrue(Path(scene_artifact["path"]).exists())
             self.assertIn("Merged Span", Path(scene_artifact["path"]).read_text(encoding="utf-8"))
+
+    def test_story_project_context_records_blueprint_coverage_without_writeback(self) -> None:
+        tmp_path = self._case_dir("story_project_audit")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        story_project_context = {
+            "story_project_root": str(tmp_path / "book"),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": {
+                "chapter_index": 2,
+                "outline_path": "book/大纲/细纲_第002章.md",
+                "title": "Audit",
+                "core_event": "The team chooses a dangerous route.",
+                "required_beats": [
+                    {"index": 1, "text": "danger forces the route choice"},
+                    {"index": 2, "text": "open conflict over the serum"},
+                ],
+                "ending_pressure": "the locked door starts a countdown",
+                "source_path": "book/大纲/细纲_第002章.md",
+                "missing_fields": [],
+            },
+            "source_paths": {"outline_path": "book/大纲/细纲_第002章.md"},
+            "source_resolution": {"entries": []},
+        }
+
+        AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            story_project_context=story_project_context,
+        ).run_once(persist=True)
+
+        run_files = list((tmp_path / "runs").glob("chapter_2_*.json"))
+        self.assertEqual(1, len(run_files))
+        saved_run = json.loads(run_files[0].read_text(encoding="utf-8"))
+        self.assertIs(saved_run, validate_schema(saved_run, "run_result.schema.json"))
+        story_project = saved_run["run"]["story_project"]
+        self.assertFalse(story_project["writeback"]["attempted"])
+        self.assertEqual([], story_project["blueprint_coverage"]["missing_beat_indexes"])
+        self.assertTrue(story_project["blueprint_coverage"]["ending_pressure_covered"])
 
 
     def test_pre_validate_bridge_records_real_precheck(self) -> None:

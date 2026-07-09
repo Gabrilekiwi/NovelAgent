@@ -49,6 +49,77 @@
       "type": "integer",
       "minimum": 1
     },
+    "story_project": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "mode",
+        "root",
+        "chapter_index",
+        "chapter_blueprint",
+        "source_paths",
+        "source_resolution",
+        "writeback"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "root": {
+          "type": ["string", "null"]
+        },
+        "chapter_index": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "chapter_blueprint": {
+          "type": ["object", "null"]
+        },
+        "source_paths": {
+          "type": ["object", "null"]
+        },
+        "source_resolution": {
+          "type": ["object", "null"]
+        },
+        "blueprint_coverage": {
+          "type": ["object", "null"]
+        },
+        "writeback": {
+          "type": "object",
+          "required": [
+            "attempted",
+            "applied",
+            "targets",
+            "blocked_reasons"
+          ],
+          "properties": {
+            "attempted": {
+              "type": "boolean"
+            },
+            "applied": {
+              "type": "boolean"
+            },
+            "targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "blocked_reasons": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "snapshot": {
       "type": "object",
       "required": [
@@ -1006,6 +1077,7 @@
                   "runtime_memory_metadata",
                   "memory_index",
                   "recovery_context",
+                  "story_project_chapter_blueprint",
                   "requirements"
                 ]
               }
@@ -1045,7 +1117,8 @@
                     "enum": [
                       "continuity",
                       "spatial",
-                      "logic"
+                      "logic",
+                      "story_project"
                     ]
                   }
                 },
@@ -1238,7 +1311,8 @@
                     "enum": [
                       "continuity",
                       "spatial",
-                      "logic"
+                      "logic",
+                      "story_project"
                     ]
                   }
                 },
@@ -1248,13 +1322,40 @@
                     "enum": [
                       "continuity",
                       "spatial",
-                      "logic"
+                      "logic",
+                      "story_project"
                     ]
                   }
                 },
                 "repair_attempts": {
                   "type": "integer",
                   "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            },
+            "story_project": {
+              "type": "object",
+              "required": [
+                "enabled",
+                "chapter_index",
+                "required_beat_count",
+                "ending_pressure_present"
+              ],
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "chapter_index": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "required_beat_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "ending_pressure_present": {
+                  "type": "boolean"
                 }
               },
               "additionalProperties": false
@@ -1301,6 +1402,46 @@
             "merged_chars": {
               "type": "integer",
               "minimum": 1
+            },
+            "chapter_blueprint": {
+              "type": "object"
+            },
+            "blueprint_coverage": {
+              "type": "object",
+              "required": [
+                "required_beat_count",
+                "covered_beat_indexes",
+                "missing_beat_indexes",
+                "ending_pressure_required",
+                "ending_pressure_covered"
+              ],
+              "properties": {
+                "required_beat_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "covered_beat_indexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "missing_beat_indexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "ending_pressure_required": {
+                  "type": "boolean"
+                },
+                "ending_pressure_covered": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
             },
             "scene_spans": {
               "type": "array",
@@ -1369,6 +1510,7 @@
                       "plan",
                       "scene_drafts",
                       "merged_chapter",
+                      "blueprint_coverage",
                       "validation_report",
                       "repair_deltas",
                       "chapter"

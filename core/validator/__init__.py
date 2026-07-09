@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.schema import validate_schema
+from core.story_project.coverage import validate_blueprint_coverage
 from core.validator.common import enrich_check
 from core.validator.continuity import validate_continuity
 from core.validator.llm import validate_llm
@@ -24,12 +25,17 @@ def validate_chapter(
     *,
     enable_llm: bool = False,
     llm_validator=validate_llm,
+    chapter_blueprint: dict[str, Any] | None = None,
+    blueprint_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     requested_focus, executed_focus, skipped_checks = _validation_coverage(decision)
     checks = [
         enrich_check(_VALIDATORS[focus](snapshot, chapter_text, decision))
         for focus in executed_focus
     ]
+    if isinstance(chapter_blueprint, dict) and isinstance(blueprint_coverage, dict):
+        checks.append(enrich_check(validate_blueprint_coverage(chapter_blueprint, blueprint_coverage)))
+        executed_focus = [*executed_focus, "story_project"]
     if enable_llm:
         checks.append(llm_validator(snapshot, chapter_text, decision))
         executed_focus = [*executed_focus, "llm"]

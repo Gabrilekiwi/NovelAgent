@@ -101,6 +101,18 @@ PROBLEM_METADATA = {
         "repair_action": "add_required_term",
         "repair_hint": "Mention the required term without resolving the constraint.",
     },
+    "missing_required_beat": {
+        "severity": "critical",
+        "blocking": True,
+        "repair_action": "manual_review",
+        "repair_hint": "Regenerate or revise the chapter so the missing StoryProject required beat is present in prose.",
+    },
+    "missing_ending_pressure": {
+        "severity": "critical",
+        "blocking": True,
+        "repair_action": "manual_review",
+        "repair_hint": "Revise the chapter ending so it preserves the StoryProject ending pressure.",
+    },
 }
 
 PROBLEM_PARAMETER_FIELDS = {
@@ -116,6 +128,8 @@ PROBLEM_PARAMETER_FIELDS = {
     "character_position_conflict": ("character", "expected", "actual"),
     "forbidden_constraint_term": ("term",),
     "missing_required_constraint_term": ("term",),
+    "missing_required_beat": ("beat_index", "beat_text"),
+    "missing_ending_pressure": ("ending_pressure",),
 }
 
 STANDARD_PROBLEM_FIELDS = {

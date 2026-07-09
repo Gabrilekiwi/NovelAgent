@@ -55,6 +55,7 @@ def build_input_pack(
     memory_context: dict[str, Any] | None = None,
     *,
     narrative_rules: str | None = None,
+    story_project_context: dict[str, Any] | None = None,
 ) -> str:
     return f"""You are NovelAgent's chapter generation module. Generate the next chapter from the runtime Snapshot and Director decision.
 
@@ -93,6 +94,7 @@ def build_input_pack(
 
 # Recovery Context
 {_dump(build_recovery_context(memory_context))}
+{_story_project_section(story_project_context)}
 
 # Requirements
 - Advance the plot instead of restating setup.
@@ -102,6 +104,7 @@ def build_input_pack(
 - Introduce or intensify at least one concrete conflict.
 - Treat Snapshot and Memory Index as read-only runtime context.
 - If Recovery Context is available, address its problem codes and validation coverage gaps without contradicting the Snapshot.
+- If StoryProject Chapter Blueprint is present, treat its required_beats and ending_pressure as mandatory chapter contract.
 - Return only chapter prose, not analysis or JSON."""
 
 
@@ -111,18 +114,37 @@ def _narrative_rules_section(narrative_rules: str | None) -> str:
     return "\n\n# 小说生成规则契约\n" + narrative_rules.strip()
 
 
+def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
+    if not isinstance(story_project_context, dict):
+        return ""
+    payload = {
+        "chapter_blueprint": story_project_context.get("chapter_blueprint"),
+        "outline": story_project_context.get("outline"),
+        "previous_prose": story_project_context.get("previous_prose"),
+        "tracking_files": story_project_context.get("tracking_files"),
+        "setting_files": story_project_context.get("setting_files"),
+        "source_paths": story_project_context.get("source_paths"),
+        "source_resolution": story_project_context.get("source_resolution"),
+    }
+    return "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+
+
 def build_input_pack_metadata(
     input_pack: str,
     snapshot: dict[str, Any],
     decision: dict[str, Any] | None = None,
     memory_context: dict[str, Any] | None = None,
+    story_project_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     memory_index = _memory_index(memory_context)
+    sections = list(INPUT_PACK_SECTIONS)
+    if isinstance(story_project_context, dict):
+        sections.append("story_project_chapter_blueprint")
     metadata = {
         "kind": "chapter_input_pack",
         "chapter_index": int(snapshot.get("chapter_index") or 1),
         "chars": len(input_pack),
-        "sections": list(INPUT_PACK_SECTIONS),
+        "sections": sections,
         "decision": {
             "goal": (decision or {}).get("goal"),
             "actions": list((decision or {}).get("actions") or []),
@@ -155,6 +177,14 @@ def build_input_pack_metadata(
         },
         "recovery_context": build_recovery_context_metadata(build_recovery_context(memory_context)),
     }
+    if isinstance(story_project_context, dict):
+        blueprint = story_project_context.get("chapter_blueprint") or {}
+        metadata["story_project"] = {
+            "enabled": True,
+            "chapter_index": story_project_context.get("chapter_index"),
+            "required_beat_count": len(blueprint.get("required_beats") or []),
+            "ending_pressure_present": bool(blueprint.get("ending_pressure")),
+        }
     return validate_schema(metadata, "input_pack_metadata.schema.json")
 
 

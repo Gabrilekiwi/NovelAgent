@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterBlueprint",
+  "type": "object",
+  "required": [
+    "chapter_index",
+    "outline_path",
+    "title",
+    "core_event",
+    "required_beats",
+    "ending_pressure",
+    "source_path",
+    "missing_fields"
+  ],
+  "properties": {
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "outline_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "core_event": {
+      "type": ["string", "null"]
+    },
+    "required_beats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "text"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "function": {
+            "type": "string"
+          },
+          "density": {
+            "type": "string"
+          },
+          "budget_chars": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "ending_pressure": {
+      "type": ["string", "null"]
+    },
+    "source_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "missing_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

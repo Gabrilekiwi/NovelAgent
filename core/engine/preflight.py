@@ -32,6 +32,7 @@ PROMPT_ASSETS = (
 SCHEMA_ASSETS = (
     Path("core/director/schema.json"),
     Path("schemas/analysis_result.schema.json"),
+    Path("schemas/chapter_blueprint.schema.json"),
     Path("schemas/chapter_pipeline.schema.json"),
     Path("schemas/director_decision.schema.json"),
     Path("schemas/director_audit.schema.json"),
