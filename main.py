@@ -46,6 +46,16 @@ def parse_args() -> argparse.Namespace:
         help="Memory context file path. Defaults to NOVELAGENT_MEMORY_PATH or .tmp/runtime/notion_memory.json.",
     )
     parser.add_argument(
+        "--story-project",
+        default=None,
+        help="StoryProject root path, or auto to use .active-book / directory discovery.",
+    )
+    parser.add_argument(
+        "--chapter",
+        default="auto",
+        help="StoryProject chapter number, or auto to infer the next chapter from 正文/.",
+    )
+    parser.add_argument(
         "--memory-source",
         choices=["auto", "file", "notion"],
         default="auto",
@@ -413,6 +423,8 @@ def main() -> None:
             continue_on_rejection=args.continue_on_rejection,
             check_memory_v2=args.check_memory_v2,
             memory_v2_output_dir=args.memory_v2_out,
+            story_project=args.story_project,
+            chapter=args.chapter,
         )
         if args.check_json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -507,6 +519,7 @@ def format_preflight_summary(result: dict) -> str:
         ("memory_input", "Memory input"),
         ("memory", "Memory"),
         ("memory_v2_compile", "Memory V2 compile"),
+        ("story_project_structure", "StoryProject"),
         ("state_builder_audit", "State builder"),
         ("run_history", "Run history"),
         ("planned_workflow", "Workflow"),
@@ -957,6 +970,14 @@ def _summarize_check(name: str, details) -> str:
             f"dry_run={details.get('dry_run')} reset={details.get('reset')} "
             f"ops={details.get('operation_count')} events={details.get('event_count')} "
             f"revision={details.get('canonical_revision')}"
+        )
+    if name == "story_project_structure" and isinstance(details, dict):
+        root = details.get("root") if isinstance(details.get("root"), dict) else {}
+        chapter = details.get("chapter_resolution") if isinstance(details.get("chapter_resolution"), dict) else {}
+        problems = details.get("problems") if isinstance(details.get("problems"), list) else []
+        return (
+            f"root={root.get('root')} source={root.get('source')} "
+            f"chapter={chapter.get('resolved_chapter')} problems={len(problems)}"
         )
     if name == "state_builder_audit" and isinstance(details, dict):
         return (

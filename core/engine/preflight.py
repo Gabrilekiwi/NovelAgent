@@ -16,6 +16,7 @@ from core.state.builder import build_snapshot_state_with_audit
 from core.state.memory import load_memory_context
 from core.state.memory_writer import DEFAULT_MEMORY_OUTBOX, resolve_memory_writeback_mode
 from core.state.snapshot import load_snapshot
+from core.story_project.validator import validate_story_project
 from workflows.dynamic_flow import build_dynamic_flow, build_dynamic_flow_plan
 
 
@@ -103,6 +104,8 @@ def run_preflight(
     continue_on_rejection: bool = False,
     check_memory_v2: bool = False,
     memory_v2_output_dir: str | Path = Path("data/memory_v2/default"),
+    story_project: str | Path | None = None,
+    chapter: str | int | None = "auto",
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     planned_workflow: list[str] | None = None
@@ -117,6 +120,8 @@ def run_preflight(
         _schema_consistency_details,
     )
     _check_loop_parameters(checks, steps=steps)
+    if story_project is not None:
+        _check_story_project_structure(checks, story_project=story_project, chapter=chapter)
 
     snapshot = _capture_check(checks, "snapshot", lambda: load_snapshot(snapshot_path))
     memory = _capture_memory_check(checks, memory_path=memory_path, memory_source=memory_source)
@@ -509,6 +514,33 @@ def _check_loop_parameters(checks: list[dict[str, Any]], *, steps: int) -> None:
         checks.append({"name": "loop_parameters", "ok": False, "details": details, "error": "steps must be at least 1"})
         return
     checks.append({"name": "loop_parameters", "ok": True, "details": details})
+
+
+def _check_story_project_structure(
+    checks: list[dict[str, Any]],
+    *,
+    story_project: str | Path,
+    chapter: str | int | None,
+) -> None:
+    try:
+        result = validate_story_project(story_project=story_project, chapter=chapter)
+    except Exception as exc:  # noqa: BLE001 - preflight reports all startup failures.
+        checks.append({"name": "story_project_structure", "ok": False, "error": str(exc)})
+        return
+
+    details = result.to_dict()
+    blocking = [problem for problem in details.get("problems", []) if problem.get("blocking")]
+    if blocking:
+        checks.append(
+            {
+                "name": "story_project_structure",
+                "ok": False,
+                "details": details,
+                "error": "; ".join(str(problem.get("message")) for problem in blocking),
+            }
+        )
+        return
+    checks.append({"name": "story_project_structure", "ok": True, "details": details})
 
 
 def _check_prompt_assets(checks: list[dict[str, Any]]) -> None:

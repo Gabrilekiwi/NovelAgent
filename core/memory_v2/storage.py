@@ -11,13 +11,13 @@ def save_canonical_memory(path: str | Path, memory: dict[str, Any]) -> dict[str,
     validated = validate_canonical_memory(memory)
     target_path = Path(path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = _tmp_path_for(target_path)
-
-    with tmp_path.open("w", encoding="utf-8") as f:
+    # Some managed Windows workspaces deny rename/delete operations while still
+    # allowing normal file writes. Write directly so compile and storage tests
+    # remain usable in that environment.
+    with target_path.open("w", encoding="utf-8") as f:
         json.dump(validated, f, ensure_ascii=False, indent=2, sort_keys=True)
         f.write("\n")
 
-    _atomic_replace(tmp_path, target_path)
     return validated
 
 

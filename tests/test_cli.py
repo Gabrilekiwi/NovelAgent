@@ -78,6 +78,15 @@ class CliTest(unittest.TestCase):
         self.assertFalse(args.no_proxy)
         self.assertFalse(args.check_memory_v2)
         self.assertEqual("data/memory_v2/default", args.memory_v2_out)
+        self.assertIsNone(args.story_project)
+        self.assertEqual("auto", args.chapter)
+
+    def test_parse_args_accepts_story_project_and_chapter(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--story-project", "auto", "--chapter", "21"]):
+            args = cli.parse_args()
+
+        self.assertEqual("auto", args.story_project)
+        self.assertEqual("21", args.chapter)
 
     def test_parse_args_accepts_no_proxy(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--dry-run", "--no-proxy"]):
