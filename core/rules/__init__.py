@@ -21,13 +21,19 @@ from core.rules.repair_plan import (
     RuleRepairPlanError,
     build_rule_repair_plan,
 )
+from core.rules.repair_prompt import (
+    RuleRepairPromptError,
+    build_rule_repair_prompt,
+)
 
 __all__ = [
     "DEFAULT_NARRATIVE_RULE_PACK_PATH",
     "NarrativeRulePackError",
     "RuleAwareInputPackError",
     "RuleRepairPlanError",
+    "RuleRepairPromptError",
     "RuleValidationError",
+    "build_rule_repair_prompt",
     "build_rule_repair_plan",
     "build_rule_aware_input_pack",
     "count_generation_rules_for_input_pack",

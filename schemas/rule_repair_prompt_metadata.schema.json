@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rule Repair Prompt Metadata",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "chars",
+    "source_plan",
+    "prompt",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["rule_repair_prompt"]
+    },
+    "chars": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source_plan": {
+      "type": "object",
+      "required": [
+        "status",
+        "task_count",
+        "blocking_task_count",
+        "human_review_task_count"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["no_repair_needed", "needs_repair", "blocked"]
+        },
+        "task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking_task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "human_review_task_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "prompt": {
+      "type": "object",
+      "required": [
+        "task_count",
+        "blocking_task_count",
+        "included_non_blocking",
+        "has_previous_chapter",
+        "has_narrative_rules"
+      ],
+      "properties": {
+        "task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking_task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "included_non_blocking": {
+          "type": "boolean"
+        },
+        "has_previous_chapter": {
+          "type": "boolean"
+        },
+        "has_narrative_rules": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["created_by", "source"],
+      "properties": {
+        "created_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
