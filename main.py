@@ -17,6 +17,7 @@ from core.runtime_paths import (
     DEFAULT_SNAPSHOT_PATH,
     init_runtime_state,
 )
+from core.review.dashboard import build_review_dashboard_from_index
 from core.review.index import get_latest_review, list_recent_reviews
 from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
 from core.state.memory_writer import build_memory_writer
@@ -169,6 +170,16 @@ def parse_args() -> argparse.Namespace:
         choices=["disabled", "pass", "fail", "error"],
         default=None,
         help="Filter --review-list by review gate status.",
+    )
+    parser.add_argument(
+        "--review-dashboard",
+        action="store_true",
+        help="Build a static HTML dashboard from review_index.json and exit.",
+    )
+    parser.add_argument(
+        "--review-dashboard-out",
+        default=None,
+        help="Optional output path for --review-dashboard. Defaults to <review-output-dir>/dashboard.html.",
     )
     parser.add_argument(
         "--scene-limit",
@@ -337,6 +348,18 @@ def main() -> None:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
             print(format_review_list_summary(entries))
+        raise SystemExit(0)
+
+    if args.review_dashboard:
+        result = build_review_dashboard_from_index(
+            review_output_dir=args.review_output_dir,
+            output_path=args.review_dashboard_out,
+        )
+        payload = {"ok": True, "dashboard": result["metadata"]}
+        if args.output_json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(format_review_dashboard_summary(result["metadata"]))
         raise SystemExit(0)
 
     try:
@@ -774,6 +797,17 @@ def format_review_list_summary(entries: list[dict]) -> str:
             f"gate={entry.get('gate_status')} - quality={entry.get('quality_score')} - rule={entry.get('rule_score')}"
         )
     return "\n".join(lines)
+
+
+def format_review_dashboard_summary(metadata: dict) -> str:
+    return "\n".join(
+        [
+            "Review dashboard generated:",
+            f"- output: {metadata.get('output_path')}",
+            f"- entries: {metadata.get('entry_count')}",
+            f"- latest_run_id: {metadata.get('latest_run_id')}",
+        ]
+    )
 
 
 def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewConfig:

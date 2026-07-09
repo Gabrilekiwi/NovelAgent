@@ -1,3 +1,7 @@
+from core.review.dashboard import (
+    build_review_dashboard,
+    build_review_dashboard_from_index,
+)
 from core.review.regression import (
     ReviewRegressionError,
     evaluate_regression_expectations,
@@ -29,6 +33,8 @@ __all__ = [
     "ReviewPipelineError",
     "ReviewRegressionError",
     "RuntimeReviewConfig",
+    "build_review_dashboard",
+    "build_review_dashboard_from_index",
     "build_human_review_report",
     "build_review_index_entry",
     "disabled_review_summary",

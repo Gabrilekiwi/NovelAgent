@@ -19,6 +19,14 @@ Add `--review-gate blocked`, `--review-gate needs_revision`, or `--review-gate w
 
 Each enabled runtime review also updates `<review-output-dir>/review_index.json`, which can be queried with `--review-latest` or `--review-list`.
 
+Build a static dashboard from the index after reviews have been written:
+
+```bash
+python main.py --review-dashboard --review-output-dir .tmp/runtime/reviews
+```
+
+The dashboard is not generated automatically during runtime review.
+
 ## Artifacts
 
 Artifacts are written under an isolated run directory:

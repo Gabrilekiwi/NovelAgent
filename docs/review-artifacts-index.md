@@ -31,4 +31,15 @@ python -B scripts/review_latest.py --review-output-dir .tmp/runtime/reviews --js
 python -B scripts/review_latest.py --review-output-dir .tmp/runtime/reviews --list --limit 10
 ```
 
+## Dashboard
+
+Build a static dashboard from the same index:
+
+```bash
+python main.py --review-dashboard --review-output-dir .tmp/runtime/reviews
+python -B scripts/build_review_dashboard.py --review-output-dir .tmp/runtime/reviews --json
+```
+
+The dashboard is generated only on explicit request and defaults to `<review-output-dir>/dashboard.html`.
+
 The index does not call an LLM, does not execute repair, does not modify chapter prose, and does not write to Memory V2.
