@@ -41,6 +41,7 @@ SCHEMA_ASSETS = (
     Path("schemas/provider_smoke_report.schema.json"),
     Path("schemas/repair_plan.schema.json"),
     Path("schemas/review_gate_result.schema.json"),
+    Path("schemas/review_index.schema.json"),
     Path("schemas/review_pipeline_summary.schema.json"),
     Path("schemas/run_record.schema.json"),
     Path("schemas/run_result.schema.json"),

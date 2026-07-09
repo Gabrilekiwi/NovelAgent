@@ -10,6 +10,7 @@ from core.config import get_config
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
 from core.review.gate import evaluate_review_gate
+from core.review.index import build_review_index_entry, review_index_path, update_review_index
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.schema import validate_schema
@@ -897,6 +898,44 @@ class AgentExecutor:
             )
             run["review_gate"] = gate
             result["review_gate"] = gate
+        self._attach_review_index(result)
+
+    def _attach_review_index(self, result: dict[str, Any]) -> None:
+        run = result.get("run")
+        if not isinstance(run, dict):
+            return
+        review = run.get("review_pipeline")
+        if not isinstance(review, dict):
+            return
+        gate = run.get("review_gate") if isinstance(run.get("review_gate"), dict) else None
+        output_dir = self.review_config.output_dir or Path(".tmp/runtime/reviews")
+        index_path = review_index_path(output_dir)
+        try:
+            entry = build_review_index_entry(
+                run_id=str(run["id"]),
+                review_pipeline=review,
+                review_gate=gate,
+                artifacts_dir=review.get("artifacts_dir"),
+            )
+            index = update_review_index(review_output_dir=output_dir, entry=entry)
+            summary = {
+                "enabled": True,
+                "status": "updated",
+                "index_path": str(index_path),
+                "latest_run_id": index["latest_run_id"],
+                "entry_count": index["summary"]["entry_count"],
+            }
+        except Exception as exc:  # noqa: BLE001 - review index is diagnostic; generation remains intact.
+            summary = {
+                "enabled": True,
+                "status": "error",
+                "index_path": str(index_path),
+                "latest_run_id": None,
+                "entry_count": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        run["review_index"] = summary
+        result["review_index"] = summary
 
 
 def run_once(*, dry_run: bool = False, persist: bool = True, enable_llm_validator: bool = False) -> dict[str, Any]:

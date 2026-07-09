@@ -17,6 +17,8 @@ When enabled, runtime generation still follows the existing executor, validator,
 
 Add `--review-gate blocked`, `--review-gate needs_revision`, or `--review-gate warning` when the CLI should exit with code `1` after printing output if the review status meets that threshold. The gate still does not repair, reject, or rewrite the chapter.
 
+Each enabled runtime review also updates `<review-output-dir>/review_index.json`, which can be queried with `--review-latest` or `--review-list`.
+
 ## Artifacts
 
 Artifacts are written under an isolated run directory:
@@ -60,6 +62,8 @@ When review is enabled, the run record includes:
 If review fails, the generated chapter artifact and original run record are preserved, and `review_pipeline.status` is recorded as `error`.
 
 When `--review-gate` is enabled, the run record also includes `review_gate` with the threshold, pass/fail status, matched review status, reason, and exit code. See `docs/review-gate.md` for threshold behavior.
+
+When the index update succeeds, the run record includes `review_index` with the index path, latest run id, and entry count.
 
 ## Rules
 

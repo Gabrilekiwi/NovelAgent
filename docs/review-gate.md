@@ -45,6 +45,8 @@ When enabled, the run record includes:
 
 Gate failure does not change `committed`, `rejected`, snapshot writes, memory writeback, validator behavior, repair behavior, or chapter prose. It does not call an LLM, does not write back to Memory V2, and does not integrate oh-story or external APIs.
 
+Runtime review also updates `review_index.json`; gate status is stored there so `python main.py --review-list --review-gate-status fail` can find recent gate failures.
+
 ## CI Usage
 
 Use `--output-run-json` when CI needs both a machine-readable run record and a failing exit code:

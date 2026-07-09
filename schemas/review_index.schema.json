@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewIndex",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "review_output_dir",
+    "updated_at",
+    "latest_run_id",
+    "summary",
+    "entries",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["review_index"]
+    },
+    "review_output_dir": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "latest_run_id": {
+      "type": ["string", "null"]
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "entry_count",
+        "pass_count",
+        "warning_count",
+        "needs_revision_count",
+        "blocked_count",
+        "error_count",
+        "gate_fail_count"
+      ],
+      "properties": {
+        "entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pass_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warning_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "needs_revision_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocked_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gate_fail_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "created_at",
+          "chapter_index",
+          "review_status",
+          "review_decision",
+          "quality_score",
+          "rule_score",
+          "repair_task_count",
+          "blocking_task_count",
+          "gate_enabled",
+          "gate_threshold",
+          "gate_status",
+          "gate_exit_code",
+          "artifacts_dir",
+          "summary_path",
+          "human_report_path",
+          "repair_prompt_path"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "created_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "chapter_index": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "review_status": {
+            "type": "string",
+            "enum": ["pass", "warning", "needs_revision", "blocked", "error", "unknown"]
+          },
+          "review_decision": {
+            "type": ["string", "null"]
+          },
+          "quality_score": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "rule_score": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "repair_task_count": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "blocking_task_count": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "gate_enabled": {
+            "type": "boolean"
+          },
+          "gate_threshold": {
+            "type": ["string", "null"]
+          },
+          "gate_status": {
+            "type": ["string", "null"],
+            "enum": ["disabled", "pass", "fail", "error", null]
+          },
+          "gate_exit_code": {
+            "type": ["integer", "null"],
+            "enum": [0, 1, null]
+          },
+          "artifacts_dir": {
+            "type": ["string", "null"]
+          },
+          "summary_path": {
+            "type": ["string", "null"]
+          },
+          "human_report_path": {
+            "type": ["string", "null"]
+          },
+          "repair_prompt_path": {
+            "type": ["string", "null"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["created_by", "source"],
+      "properties": {
+        "created_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

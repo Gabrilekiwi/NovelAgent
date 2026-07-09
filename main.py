@@ -17,6 +17,7 @@ from core.runtime_paths import (
     DEFAULT_SNAPSHOT_PATH,
     init_runtime_state,
 )
+from core.review.index import get_latest_review, list_recent_reviews
 from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
 from core.state.memory_writer import build_memory_writer
 
@@ -140,6 +141,34 @@ def parse_args() -> argparse.Namespace:
         choices=["off", "blocked", "needs_revision", "warning"],
         default="off",
         help="Optional review status threshold that can make the CLI exit non-zero.",
+    )
+    parser.add_argument(
+        "--review-latest",
+        action="store_true",
+        help="Print the latest runtime review entry from review_index.json and exit.",
+    )
+    parser.add_argument(
+        "--review-list",
+        action="store_true",
+        help="Print recent runtime review entries from review_index.json and exit.",
+    )
+    parser.add_argument(
+        "--review-list-limit",
+        type=_positive_int,
+        default=10,
+        help="Maximum recent review entries to print with --review-list.",
+    )
+    parser.add_argument(
+        "--review-status",
+        choices=["pass", "warning", "needs_revision", "blocked", "error", "unknown"],
+        default=None,
+        help="Filter --review-list by review status.",
+    )
+    parser.add_argument(
+        "--review-gate-status",
+        choices=["disabled", "pass", "fail", "error"],
+        default=None,
+        help="Filter --review-list by review gate status.",
     )
     parser.add_argument(
         "--scene-limit",
@@ -286,6 +315,30 @@ def main() -> None:
     apply_notion_shortcuts(args)
     if args.no_proxy or proxy_disabled_by_env():
         clear_proxy_env()
+
+    if args.review_latest:
+        latest = get_latest_review(review_output_dir=args.review_output_dir)
+        payload = {"ok": True, "latest": latest}
+        if args.output_json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(format_review_latest_summary(latest))
+        raise SystemExit(0)
+
+    if args.review_list:
+        entries = list_recent_reviews(
+            review_output_dir=args.review_output_dir,
+            limit=args.review_list_limit,
+            status=args.review_status,
+            gate_status=args.review_gate_status,
+        )
+        payload = {"ok": True, "count": len(entries), "entries": entries}
+        if args.output_json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(format_review_list_summary(entries))
+        raise SystemExit(0)
+
     try:
         review_config = _runtime_review_config_from_args(args)
     except ValueError as exc:
@@ -590,6 +643,21 @@ def format_run_summary(result: dict) -> str:
             ]
         )
 
+    review_index = run.get("review_index") if isinstance(run.get("review_index"), dict) else None
+    if review_index and review_index.get("enabled"):
+        lines.extend(
+            [
+                "",
+                "Review index:",
+                f"- status: {review_index.get('status')}",
+                f"- index: {review_index.get('index_path')}",
+                f"- latest_run_id: {review_index.get('latest_run_id')}",
+                f"- entry_count: {review_index.get('entry_count')}",
+            ]
+        )
+        if review_index.get("error"):
+            lines.append(f"- error: {review_index.get('error')}")
+
     lines.extend(
         [
             "",
@@ -668,6 +736,44 @@ def _run_artifacts(run: dict) -> list[tuple[str, str]]:
             if isinstance(artifact, dict) and artifact.get("path"):
                 artifacts.append((f"pipeline_{label}", str(artifact["path"])))
     return artifacts
+
+
+def format_review_latest_summary(entry: dict | None) -> str:
+    if not entry:
+        return "No review entries found."
+    lines = [
+        "Latest review:",
+        f"- run_id: {entry.get('run_id')}",
+        f"- chapter_index: {entry.get('chapter_index')}",
+        f"- review_status: {entry.get('review_status')}",
+        f"- decision: {entry.get('review_decision')}",
+        f"- quality_score: {entry.get('quality_score')}",
+        f"- rule_score: {entry.get('rule_score')}",
+        f"- repair_tasks: {entry.get('repair_task_count')} total, {entry.get('blocking_task_count')} blocking",
+        (
+            f"- gate: {entry.get('gate_status')} threshold={entry.get('gate_threshold')} "
+            f"exit_code={entry.get('gate_exit_code')}"
+        ),
+    ]
+    if entry.get("human_report_path"):
+        lines.append(f"- human_report: {entry.get('human_report_path')}")
+    if entry.get("repair_prompt_path"):
+        lines.append(f"- repair_prompt: {entry.get('repair_prompt_path')}")
+    if entry.get("summary_path"):
+        lines.append(f"- summary: {entry.get('summary_path')}")
+    return "\n".join(lines)
+
+
+def format_review_list_summary(entries: list[dict]) -> str:
+    if not entries:
+        return "No review entries found."
+    lines = ["Recent reviews:"]
+    for index, entry in enumerate(entries, start=1):
+        lines.append(
+            f"{index}. {entry.get('run_id')} - {entry.get('review_status')} - "
+            f"gate={entry.get('gate_status')} - quality={entry.get('quality_score')} - rule={entry.get('rule_score')}"
+        )
+    return "\n".join(lines)
 
 
 def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewConfig:

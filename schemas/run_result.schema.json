@@ -49,6 +49,9 @@
     },
     "review_gate": {
       "type": "object"
+    },
+    "review_index": {
+      "type": "object"
     }
   },
   "additionalProperties": false
