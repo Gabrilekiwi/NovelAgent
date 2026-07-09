@@ -11,12 +11,15 @@ def save_canonical_memory(path: str | Path, memory: dict[str, Any]) -> dict[str,
     validated = validate_canonical_memory(memory)
     target_path = Path(path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    # Some managed Windows workspaces deny rename/delete operations while still
-    # allowing normal file writes. Write directly so compile and storage tests
-    # remain usable in that environment.
-    with target_path.open("w", encoding="utf-8") as f:
-        json.dump(validated, f, ensure_ascii=False, indent=2, sort_keys=True)
-        f.write("\n")
+    tmp_path = _tmp_path_for(target_path)
+
+    _write_json(tmp_path, validated)
+    try:
+        _atomic_replace(tmp_path, target_path)
+    except PermissionError as exc:
+        if not _is_windows_permission_denied(exc):
+            raise
+        _write_json(target_path, validated)
 
     return validated
 
@@ -34,6 +37,16 @@ def _tmp_path_for(path: Path) -> Path:
 
 def _atomic_replace(tmp_path: Path, target_path: Path) -> None:
     tmp_path.replace(target_path)
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def _is_windows_permission_denied(exc: PermissionError) -> bool:
+    return getattr(exc, "winerror", None) == 5 or getattr(exc, "errno", None) == 13
 
 
 __all__ = [

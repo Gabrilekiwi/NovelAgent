@@ -4,7 +4,9 @@ import json
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
+import core.memory_v2.storage as storage_module
 from core.memory_v2 import (
     create_empty_canonical_memory,
     load_canonical_memory,
@@ -31,17 +33,43 @@ class MemoryV2StorageTest(unittest.TestCase):
         self.assertEqual(memory, loaded)
         self.assertTrue(path.exists())
 
-    def test_save_uses_atomic_write_without_tmp_residue(self) -> None:
+    def test_save_prefers_atomic_replace(self) -> None:
         path = self._case_dir("atomic") / "canonical_memory.json"
         memory = create_empty_canonical_memory(book_id="atomic", title="Atomic")
 
-        save_canonical_memory(path, memory)
+        def fake_replace(tmp_path: Path, target_path: Path) -> None:
+            target_path.write_text(tmp_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+        with patch.object(storage_module, "_atomic_replace", side_effect=fake_replace) as replace:
+            save_canonical_memory(path, memory)
+
         loaded = load_canonical_memory(path)
 
+        replace.assert_called_once()
         self.assertTrue(path.exists())
-        self.assertFalse(_tmp_path_for(path).exists())
         self.assertEqual("atomic", json.loads(path.read_text(encoding="utf-8"))["book_id"])
         self.assertIs(loaded, validate_canonical_memory(loaded))
+
+    def test_save_falls_back_to_direct_write_on_windows_permission_denied(self) -> None:
+        path = self._case_dir("fallback") / "canonical_memory.json"
+        memory = create_empty_canonical_memory(book_id="fallback", title="Fallback")
+        error = PermissionError(13, "Access is denied")
+        error.winerror = 5
+
+        with patch.object(storage_module, "_atomic_replace", side_effect=error) as replace:
+            save_canonical_memory(path, memory)
+
+        replace.assert_called_once()
+        self.assertTrue(path.exists())
+        self.assertEqual("fallback", json.loads(path.read_text(encoding="utf-8"))["book_id"])
+
+    def test_save_reraises_non_permission_replace_errors(self) -> None:
+        path = self._case_dir("reraises") / "canonical_memory.json"
+        memory = create_empty_canonical_memory(book_id="reraises", title="Reraises")
+
+        with patch.object(storage_module, "_atomic_replace", side_effect=PermissionError(1, "Different failure")):
+            with self.assertRaises(PermissionError):
+                save_canonical_memory(path, memory)
 
     def test_save_creates_parent_directory(self) -> None:
         path = self._case_dir("parents") / "nested" / "canonical_memory.json"

@@ -21,7 +21,7 @@ def validate_story_project(
     *,
     story_project: str | Path,
     chapter: str | int | None = "auto",
-    workspace_root: str | Path = Path.cwd(),
+    workspace_root: str | Path | None = None,
 ) -> StoryProjectValidationResult:
     root_resolution = resolve_story_project_root(story_project, workspace_root=workspace_root)
     problems: list[ValidationProblem] = []

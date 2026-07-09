@@ -45,9 +45,32 @@ Test results:
 - `python -B -m unittest discover -s tests`: passed, 606 tests.
 - `python -B scripts/smoke_v1.py`: passed.
 
-Additional compatibility note:
+## Phase 0.1: hardening
 
-- `core/memory_v2/storage.py` was adjusted to write canonical memory directly in this managed Windows workspace. The previous temp-file replace path failed with `WinError 5` because the environment denies rename/delete operations while allowing normal file writes.
+Status: implemented.
+
+Completed:
+
+- Replaced `Path.cwd()` default arguments in `core/story_project/paths.py` and `core/story_project/validator.py` with `None`, resolving the workspace root at call time.
+- Restored Memory V2 canonical memory writes to prefer temp file plus replace.
+- Added a managed Windows fallback: if atomic replace raises `PermissionError` / WinError 5, `core/memory_v2/storage.py` writes directly to the target path.
+- Added tests for call-time cwd resolution, preferred atomic replace, Windows permission fallback, and non-fallback replace errors.
+
+Modified files:
+
+- `core/story_project/paths.py`
+- `core/story_project/validator.py`
+- `core/memory_v2/storage.py`
+- `tests/test_story_project.py`
+- `tests/test_memory_v2_storage.py`
+- `docs/storyproject-v2-progress.md`
+
+Test results:
+
+- `python -B -m unittest tests.test_story_project tests.test_memory_v2_storage`: passed, 15 tests.
+- `python main.py --check --dry-run --memory data/notion_memory.example.json`: passed, 20 checks.
+- `python -B -m unittest discover -s tests`: passed, 609 tests.
+- `python -B scripts/smoke_v1.py`: passed.
 
 Next recommended step:
 

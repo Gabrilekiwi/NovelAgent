@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 import uuid
 from pathlib import Path
@@ -53,6 +54,22 @@ class StoryProjectTest(unittest.TestCase):
         self.assertTrue(resolution.ok)
         self.assertEqual(story_project_root, resolution.root)
         self.assertEqual("active_book", resolution.source)
+
+    def test_default_workspace_root_uses_current_cwd_at_call_time(self) -> None:
+        case_dir = self._case_dir("cwd_default")
+        story_project_root = self._story_project(case_dir, "active")
+        (case_dir / ".active-book").write_text("active\n", encoding="utf-8")
+        original_cwd = Path.cwd()
+
+        try:
+            os.chdir(case_dir)
+            self.assertEqual(story_project_root, read_active_book_path())
+            resolution = resolve_story_project_root("auto")
+        finally:
+            os.chdir(original_cwd)
+
+        self.assertTrue(resolution.ok)
+        self.assertEqual(story_project_root, resolution.root)
 
     def test_filename_resolver_uses_canonical_write_paths_and_compatible_reads(self) -> None:
         case_dir = self._case_dir("resolver")

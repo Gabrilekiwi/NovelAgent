@@ -17,8 +17,8 @@ _PROSE_RE = re.compile(r"^第(0*[1-9]\d*)章(?:_.+)?\.md$")
 _WINDOWS_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
-def read_active_book_path(workspace_root: str | Path = Path.cwd()) -> Path | None:
-    root = Path(workspace_root)
+def read_active_book_path(workspace_root: str | Path | None = None) -> Path | None:
+    root = Path.cwd() if workspace_root is None else Path(workspace_root)
     active_book_path = root / ACTIVE_BOOK_FILENAME
     if not active_book_path.exists():
         return None
@@ -37,9 +37,9 @@ def read_active_book_path(workspace_root: str | Path = Path.cwd()) -> Path | Non
 def resolve_story_project_root(
     requested: str | Path | None,
     *,
-    workspace_root: str | Path = Path.cwd(),
+    workspace_root: str | Path | None = None,
 ) -> StoryProjectRootResolution:
-    root = Path(workspace_root)
+    root = Path.cwd() if workspace_root is None else Path(workspace_root)
     requested_text = "auto" if requested is None else str(requested)
     active_book_file = root / ACTIVE_BOOK_FILENAME
 
