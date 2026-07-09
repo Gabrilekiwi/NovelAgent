@@ -38,6 +38,11 @@ EMBEDDED_SCHEMA_CONTRACTS = (
         "path": ("properties", "state_update"),
     },
     {
+        "source": "review_gate_result.schema.json",
+        "embedded_in": "run_record.schema.json",
+        "path": ("properties", "review_gate"),
+    },
+    {
         "source": "repair_plan.schema.json",
         "embedded_in": "trace_event.schema.json",
         "path": ("properties", "repair_plan"),

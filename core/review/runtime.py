@@ -15,6 +15,7 @@ class RuntimeReviewConfig:
     use_default_rules: bool = True
     build_repair_prompt: bool = True
     build_human_report: bool = True
+    gate_threshold: str = "off"
 
 
 def disabled_review_summary() -> dict[str, Any]:
@@ -77,6 +78,10 @@ def summarize_review_pipeline(summary: dict[str, Any], *, artifacts_dir: str | P
 
 
 def validate_runtime_review_config(config: RuntimeReviewConfig) -> RuntimeReviewConfig:
+    if config.gate_threshold not in {"off", "warning", "needs_revision", "blocked"}:
+        raise ValueError(f"unsupported review gate threshold: {config.gate_threshold}")
+    if not config.enabled and config.gate_threshold != "off":
+        raise ValueError("--review-gate requires --enable-review-pipeline")
     if config.enabled and not config.use_default_rules and config.rules_path is None:
         raise ValueError("review rules are required when default review rules are disabled")
     return config

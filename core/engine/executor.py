@@ -9,6 +9,7 @@ from api.contracts import ModelCallError, ModelOutputError
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
+from core.review.gate import evaluate_review_gate
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.schema import validate_schema
@@ -889,6 +890,13 @@ class AgentExecutor:
         )
         run["review_pipeline"] = review
         result["review_pipeline"] = review
+        if self.review_config.gate_threshold != "off":
+            gate = evaluate_review_gate(
+                review_pipeline=review,
+                threshold=self.review_config.gate_threshold,
+            )
+            run["review_gate"] = gate
+            result["review_gate"] = gate
 
 
 def run_once(*, dry_run: bool = False, persist: bool = True, enable_llm_validator: bool = False) -> dict[str, Any]:

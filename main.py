@@ -136,6 +136,12 @@ def parse_args() -> argparse.Namespace:
         help="Run runtime review without generating a human-readable review report.",
     )
     parser.add_argument(
+        "--review-gate",
+        choices=["off", "blocked", "needs_revision", "warning"],
+        default="off",
+        help="Optional review status threshold that can make the CLI exit non-zero.",
+    )
+    parser.add_argument(
         "--scene-limit",
         type=_positive_int,
         default=None,
@@ -384,6 +390,9 @@ def main() -> None:
             raise SystemExit(1) from exc
         if args.output_json:
             print(json.dumps(loop_result, ensure_ascii=False, indent=2))
+            gate_exit_code = _review_gate_exit_code(loop_result.get("last_result"))
+            if gate_exit_code:
+                raise SystemExit(gate_exit_code)
             return
         result = loop_result["last_result"]
         result["loop"] = {
@@ -402,6 +411,9 @@ def main() -> None:
         print(json.dumps(result["run"], ensure_ascii=False, indent=2))
     else:
         print(format_run_summary(result))
+    gate_exit_code = _review_gate_exit_code(result)
+    if gate_exit_code:
+        raise SystemExit(gate_exit_code)
 
 
 def format_preflight_summary(result: dict) -> str:
@@ -564,6 +576,20 @@ def format_run_summary(result: dict) -> str:
         if review.get("error"):
             lines.append(f"- error: {review.get('error')}")
 
+    gate = run.get("review_gate") if isinstance(run.get("review_gate"), dict) else None
+    if gate and gate.get("enabled"):
+        lines.extend(
+            [
+                "",
+                "Review gate:",
+                f"- threshold: {gate.get('threshold')}",
+                f"- status: {gate.get('status')}",
+                f"- matched: {gate.get('matched')}",
+                f"- exit_code: {gate.get('exit_code')}",
+                f"- reason: {gate.get('reason')}",
+            ]
+        )
+
     lines.extend(
         [
             "",
@@ -652,8 +678,19 @@ def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewC
         use_default_rules=not bool(args.review_no_default_rules),
         build_repair_prompt=not bool(args.review_no_repair_prompt),
         build_human_report=not bool(args.review_no_human_report),
+        gate_threshold=str(args.review_gate),
     )
     return validate_runtime_review_config(config)
+
+
+def _review_gate_exit_code(result: dict | None) -> int:
+    if not isinstance(result, dict):
+        return 0
+    run = result.get("run") if isinstance(result.get("run"), dict) else {}
+    gate = run.get("review_gate") if isinstance(run.get("review_gate"), dict) else result.get("review_gate")
+    if not isinstance(gate, dict):
+        return 0
+    return 1 if gate.get("exit_code") == 1 else 0
 
 
 def _run_model_calls(run: dict) -> list[tuple[str, dict]]:

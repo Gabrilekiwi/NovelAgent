@@ -23,7 +23,7 @@ class SchemaContractTest(unittest.TestCase):
     def test_schema_contracts_match_standalone_schemas(self) -> None:
         checked = validate_schema_consistency()
 
-        self.assertEqual(8, len(checked))
+        self.assertEqual(9, len(checked))
         self.assertIn(
             {
                 "source": str(Path("schemas/director_decision.schema.json")),
@@ -52,6 +52,14 @@ class SchemaContractTest(unittest.TestCase):
                 "source": "state_update_audit.schema.json",
                 "embedded_in": "run_record.schema.json",
                 "path": "properties.state_update",
+            },
+            checked,
+        )
+        self.assertIn(
+            {
+                "source": "review_gate_result.schema.json",
+                "embedded_in": "run_record.schema.json",
+                "path": "properties.review_gate",
             },
             checked,
         )

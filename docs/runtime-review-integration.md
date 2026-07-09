@@ -15,6 +15,8 @@ python main.py \
 
 When enabled, runtime generation still follows the existing executor, validator, repair, and commit logic. Review is diagnostic only: a `blocked` review result does not reject a chapter, does not execute repair, and does not modify chapter prose.
 
+Add `--review-gate blocked`, `--review-gate needs_revision`, or `--review-gate warning` when the CLI should exit with code `1` after printing output if the review status meets that threshold. The gate still does not repair, reject, or rewrite the chapter.
+
 ## Artifacts
 
 Artifacts are written under an isolated run directory:
@@ -56,6 +58,8 @@ When review is enabled, the run record includes:
 ```
 
 If review fails, the generated chapter artifact and original run record are preserved, and `review_pipeline.status` is recorded as `error`.
+
+When `--review-gate` is enabled, the run record also includes `review_gate` with the threshold, pass/fail status, matched review status, reason, and exit code. See `docs/review-gate.md` for threshold behavior.
 
 ## Rules
 

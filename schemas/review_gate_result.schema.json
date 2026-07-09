@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewGateResult",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "enabled",
+    "threshold",
+    "status",
+    "matched",
+    "review_status",
+    "reason",
+    "exit_code"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "threshold": {
+      "type": "string",
+      "enum": ["off", "warning", "needs_revision", "blocked"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["disabled", "pass", "fail", "error"]
+    },
+    "matched": {
+      "type": "boolean"
+    },
+    "review_status": {
+      "type": ["string", "null"],
+      "enum": ["pass", "warning", "needs_revision", "blocked", "error", null]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [0, 1]
+    }
+  },
+  "additionalProperties": false
+}

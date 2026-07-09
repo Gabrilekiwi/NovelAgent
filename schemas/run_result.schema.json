@@ -46,6 +46,9 @@
     },
     "review_pipeline": {
       "type": "object"
+    },
+    "review_gate": {
+      "type": "object"
     }
   },
   "additionalProperties": false
