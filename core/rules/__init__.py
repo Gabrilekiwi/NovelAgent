@@ -17,12 +17,18 @@ from core.rules.rule_validator import (
     RuleValidationError,
     validate_chapter_against_rules,
 )
+from core.rules.repair_plan import (
+    RuleRepairPlanError,
+    build_rule_repair_plan,
+)
 
 __all__ = [
     "DEFAULT_NARRATIVE_RULE_PACK_PATH",
     "NarrativeRulePackError",
     "RuleAwareInputPackError",
+    "RuleRepairPlanError",
     "RuleValidationError",
+    "build_rule_repair_plan",
     "build_rule_aware_input_pack",
     "count_generation_rules_for_input_pack",
     "get_enabled_rules",

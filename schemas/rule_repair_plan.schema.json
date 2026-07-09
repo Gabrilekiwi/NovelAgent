@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rule Repair Plan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "summary",
+    "source_report",
+    "tasks",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["no_repair_needed", "needs_repair", "blocked"]
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "task_count",
+        "blocking_task_count",
+        "human_review_task_count",
+        "fail_task_count",
+        "warning_task_count"
+      ],
+      "properties": {
+        "task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking_task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "human_review_task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fail_task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warning_task_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_report": {
+      "type": "object",
+      "required": ["status", "score", "rule_pack_id", "violation_count"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pass", "warning", "fail"]
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "rule_pack_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "violation_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "rule_code",
+          "rule_status",
+          "severity",
+          "category",
+          "priority",
+          "repair_type",
+          "title",
+          "instruction",
+          "source_quality_check_codes",
+          "evidence",
+          "requires_human_review",
+          "blocking"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rule_code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rule_status": {
+            "type": "string",
+            "enum": ["warning", "fail"]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "repair_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "instruction": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_quality_check_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "requires_human_review": {
+            "type": "boolean"
+          },
+          "blocking": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["created_by", "source"],
+      "properties": {
+        "created_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
