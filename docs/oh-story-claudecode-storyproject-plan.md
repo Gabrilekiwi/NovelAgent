@@ -542,6 +542,17 @@ run record / pipeline artifact 应记录：
 - 不自动安装 skills。
 - 不执行 JS 脚本。
 
+#### Phase 5 implementation note
+
+NovelAgent Phase 5 implements this enhanced detection as a read-only compatibility report:
+
+- `core/story_project/oh_story_detection.py` scans optional markers without executing hooks, agents, npm, pnpm, node, or JavaScript.
+- `--check --story-project ...` includes a non-blocking `oh_story_detection` check.
+- StoryProject generation run records may include optional `run.story_project.oh_story`.
+- `--story-project-compat-report` prints the report and exits without generating a chapter.
+
+Missing `.story-deployed`, `.codex/hooks.json`, story agents, package scripts, or oh-story config files remains non-blocking. oh-story is still not an API provider or LLM provider.
+
 ### Phase 4：可选质量脚本
 
 目标：谨慎复用 oh-story 确定性脚本。

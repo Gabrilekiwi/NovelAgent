@@ -24,6 +24,11 @@ from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_con
 from core.state.memory import load_memory_context
 from core.state.memory_writer import build_memory_writer
 from core.state.snapshot import load_snapshot
+from core.story_project.oh_story_detection import (
+    detect_oh_story_compatibility,
+    failed_oh_story_compatibility_report,
+)
+from core.story_project.paths import resolve_story_project_root
 from core.story_project.runtime import build_generation_story_project_context
 from core.story_project.writer import StoryProjectWritebackConfig
 
@@ -74,6 +79,11 @@ def parse_args() -> argparse.Namespace:
         "--story-project-overwrite",
         action="store_true",
         help="Allow StoryProject writeback to overwrite a uniquely resolved existing prose file.",
+    )
+    parser.add_argument(
+        "--story-project-compat-report",
+        action="store_true",
+        help="Print a read-only oh-story compatibility report for the StoryProject root and exit.",
     )
     parser.add_argument(
         "--memory-source",
@@ -419,6 +429,7 @@ def main() -> None:
         review_config = _runtime_review_config_from_args(args)
         review_repair_config = _review_repair_config_from_args(args)
         story_project_writeback = _story_project_writeback_config_from_args(args)
+        _validate_story_project_compat_report_args(args)
     except ValueError as exc:
         print(f"Configuration failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -447,6 +458,14 @@ def main() -> None:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             print(format_recovery_summary(result))
+        raise SystemExit(0)
+
+    if args.story_project_compat_report:
+        report = _build_story_project_compat_report(args)
+        if args.output_json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(format_story_project_compat_report(report))
         raise SystemExit(0)
 
     if args.check:
@@ -478,6 +497,7 @@ def main() -> None:
         raise SystemExit(0 if result["ok"] else 1)
 
     story_project_context = None
+    story_project_oh_story_report = None
     if args.story_project is not None:
         story_project_context = build_generation_story_project_context(
             story_project=args.story_project,
@@ -485,6 +505,7 @@ def main() -> None:
             snapshot=load_snapshot(args.snapshot),
             memory_context=load_memory_context(args.memory, source=args.memory_source),
         )
+        story_project_oh_story_report = _detect_story_project_context_compatibility(story_project_context)
 
     executor = AgentExecutor(
         snapshot_path=args.snapshot,
@@ -504,6 +525,7 @@ def main() -> None:
         review_config=review_config,
         review_repair_config=review_repair_config,
         story_project_context=story_project_context,
+        story_project_oh_story_report=story_project_oh_story_report,
         story_project_writeback=story_project_writeback,
     )
     persist = (
@@ -589,6 +611,7 @@ def format_preflight_summary(result: dict) -> str:
         ("memory_v2_compile", "Memory V2 compile"),
         ("story_project_structure", "StoryProject"),
         ("story_project_runtime_context", "StoryProject runtime"),
+        ("oh_story_detection", "oh-story"),
         ("state_builder_audit", "State builder"),
         ("run_history", "Run history"),
         ("planned_workflow", "Workflow"),
@@ -869,6 +892,22 @@ def format_review_latest_summary(entry: dict | None) -> str:
     return "\n".join(lines)
 
 
+def format_story_project_compat_report(report: dict) -> str:
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    lines = [
+        "oh-story compatibility:",
+        f"- root: {report.get('root')}",
+        f"- detected: {report.get('detected')}",
+        f"- confidence: {report.get('confidence')}",
+        f"- markers: {summary.get('present_count', 0)} present, {summary.get('optional_missing_count', 0)} missing optional",
+        f"- unsupported: {summary.get('unsupported_count', 0)}",
+    ]
+    warnings = report.get("warnings") if isinstance(report.get("warnings"), list) else []
+    if warnings:
+        lines.append(f"- warnings: {len(warnings)}")
+    return "\n".join(lines)
+
+
 def format_review_list_summary(entries: list[dict]) -> str:
     if not entries:
         return "No review entries found."
@@ -903,6 +942,39 @@ def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewC
         gate_threshold=str(args.review_gate),
     )
     return validate_runtime_review_config(config)
+
+
+def _validate_story_project_compat_report_args(args: argparse.Namespace) -> None:
+    if bool(getattr(args, "story_project_compat_report", False)) and getattr(args, "story_project", None) is None:
+        raise ValueError("--story-project-compat-report requires --story-project")
+
+
+def _build_story_project_compat_report(args: argparse.Namespace) -> dict:
+    resolution = resolve_story_project_root(args.story_project)
+    root = resolution.root if resolution.root is not None else None
+    try:
+        report = detect_oh_story_compatibility(root)
+    except Exception as exc:  # noqa: BLE001 - report mode is read-only and diagnostic.
+        report = failed_oh_story_compatibility_report(root, exc)
+    if resolution.error:
+        report = _report_with_warning(report, resolution.error)
+    return report
+
+
+def _detect_story_project_context_compatibility(story_project_context) -> dict | None:
+    root = getattr(story_project_context, "story_project_root", None)
+    try:
+        return detect_oh_story_compatibility(root)
+    except Exception as exc:  # noqa: BLE001 - oh-story detection never blocks generation.
+        return failed_oh_story_compatibility_report(root, exc)
+
+
+def _report_with_warning(report: dict, warning: str) -> dict:
+    updated = dict(report)
+    warnings = list(updated.get("warnings") or [])
+    warnings.append(str(warning))
+    updated["warnings"] = list(dict.fromkeys(warnings))
+    return updated
 
 
 def _review_repair_config_from_args(args: argparse.Namespace) -> ReviewRepairConfig:
@@ -1099,6 +1171,14 @@ def _summarize_check(name: str, details) -> str:
             f"items={len(memory_overlay.get('items') or [])} "
             f"warnings={len(details.get('warnings') or [])} "
             f"missing={len(details.get('missing_fields') or [])}"
+        )
+    if name == "oh_story_detection" and isinstance(details, dict):
+        summary = details.get("summary") if isinstance(details.get("summary"), dict) else {}
+        return (
+            f"detected={details.get('detected')} "
+            f"confidence={details.get('confidence')} "
+            f"markers={summary.get('present_count', 0)} "
+            f"unsupported={summary.get('unsupported_count', 0)}"
         )
     if name == "state_builder_audit" and isinstance(details, dict):
         return (

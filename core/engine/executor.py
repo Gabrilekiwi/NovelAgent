@@ -96,6 +96,7 @@ class AgentExecutor:
         review_config: RuntimeReviewConfig | None = None,
         review_repair_config: ReviewRepairConfig | None = None,
         story_project_context: Any = None,
+        story_project_oh_story_report: dict[str, Any] | None = None,
         story_project_writeback: StoryProjectWritebackConfig | None = None,
     ) -> None:
         self.snapshot_path = Path(snapshot_path)
@@ -118,6 +119,7 @@ class AgentExecutor:
         self.review_config = validate_runtime_review_config(review_config or RuntimeReviewConfig())
         self.review_repair_config = validate_review_repair_config(review_repair_config or ReviewRepairConfig())
         self.story_project_context = story_project_context
+        self.story_project_oh_story_report = story_project_oh_story_report
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
@@ -1152,6 +1154,8 @@ class AgentExecutor:
             "blueprint_coverage": pipeline_summary.get("blueprint_coverage"),
             "writeback": writeback,
         }
+        if isinstance(self.story_project_oh_story_report, dict):
+            run["story_project"]["oh_story"] = self.story_project_oh_story_report
 
     def _run_story_project_writeback(self, result: dict[str, Any]) -> None:
         if not self.story_project_writeback.enabled:

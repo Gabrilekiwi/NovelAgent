@@ -80,6 +80,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual("data/memory_v2/default", args.memory_v2_out)
         self.assertIsNone(args.story_project)
         self.assertEqual("auto", args.chapter)
+        self.assertFalse(args.story_project_compat_report)
 
     def test_parse_args_accepts_story_project_and_chapter(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--story-project", "auto", "--chapter", "21"]):
@@ -101,6 +102,38 @@ class CliTest(unittest.TestCase):
         config = cli._story_project_writeback_config_from_args(args)
         self.assertEqual("dry_run", config.mode)
         self.assertTrue(config.overwrite)
+
+    def test_story_project_compat_report_requires_story_project(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--story-project-compat-report"]):
+            args = cli.parse_args()
+
+        with self.assertRaisesRegex(ValueError, "--story-project"):
+            cli._validate_story_project_compat_report_args(args)
+
+    def test_story_project_compat_report_outputs_without_executor(self) -> None:
+        case_dir = self._case_dir("compat_report")
+        story_project_root = case_dir / "book"
+        for directory in ("设定", "大纲", "正文", "追踪"):
+            (story_project_root / directory).mkdir(parents=True)
+        (story_project_root / ".story-deployed").write_text("ok", encoding="utf-8")
+
+        class FailingExecutor:
+            def __init__(self, **kwargs):
+                raise AssertionError("compat report must not construct AgentExecutor")
+
+        output = io.StringIO()
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--story-project", str(story_project_root), "--story-project-compat-report", "--output-json"],
+        ), patch.object(cli, "AgentExecutor", FailingExecutor), contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+        self.assertEqual(0, exit_context.exception.code)
+        payload = json.loads(output.getvalue())
+        self.assertTrue(payload["detected"])
+        self.assertEqual("low", payload["confidence"])
 
     def test_review_auto_repair_requires_review_pipeline(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--review-auto-repair"]):
@@ -481,6 +514,15 @@ class CliTest(unittest.TestCase):
                         },
                     },
                     {"name": "planned_workflow", "ok": True, "details": ["generate_chapter", "validate"]},
+                    {
+                        "name": "oh_story_detection",
+                        "ok": True,
+                        "details": {
+                            "detected": False,
+                            "confidence": "none",
+                            "summary": {"present_count": 4, "optional_missing_count": 6, "unsupported_count": 2},
+                        },
+                    },
                 ],
             }
         )
@@ -502,6 +544,7 @@ class CliTest(unittest.TestCase):
         )
         self.assertIn("Memory writeback: notion readback=True", summary)
         self.assertIn("Workflow: generate_chapter -> validate", summary)
+        self.assertIn("oh-story: detected=False confidence=none markers=4 unsupported=2", summary)
         self.assertNotIn("applied_items", summary)
 
     def test_check_prints_summary_by_default(self) -> None:

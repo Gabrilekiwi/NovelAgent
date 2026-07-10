@@ -360,6 +360,29 @@ class AgentExecutorTest(unittest.TestCase):
             "source_paths": {"outline_path": "book/大纲/细纲_第002章.md"},
             "source_resolution": {"entries": []},
         }
+        oh_story_report = validate_schema(
+            {
+                "enabled": True,
+                "detected": False,
+                "confidence": "none",
+                "root": str(tmp_path / "book"),
+                "markers": [],
+                "summary": {"present_count": 0, "optional_missing_count": 0, "unsupported_count": 2},
+                "capabilities": {
+                    "story_project_core_dirs": True,
+                    "active_book": True,
+                    "chapter_blueprint": True,
+                    "story_project_writeback": True,
+                    "review_repair_loop": True,
+                    "oh_story_js_execution": False,
+                    "oh_story_provider": False,
+                },
+                "warnings": [],
+                "unsupported": ["oh_story_js_execution", "oh_story_api_provider"],
+                "recommendations": [],
+            },
+            "oh_story_compatibility.schema.json",
+        )
 
         AgentExecutor(
             snapshot_path=snapshot_path,
@@ -368,6 +391,7 @@ class AgentExecutorTest(unittest.TestCase):
             chapter_dir=tmp_path / "chapters",
             dry_run=True,
             story_project_context=story_project_context,
+            story_project_oh_story_report=oh_story_report,
         ).run_once(persist=True)
 
         run_files = list((tmp_path / "runs").glob("chapter_2_*.json"))
@@ -375,6 +399,7 @@ class AgentExecutorTest(unittest.TestCase):
         saved_run = json.loads(run_files[0].read_text(encoding="utf-8"))
         self.assertIs(saved_run, validate_schema(saved_run, "run_result.schema.json"))
         story_project = saved_run["run"]["story_project"]
+        self.assertEqual(oh_story_report, story_project["oh_story"])
         self.assertFalse(story_project["writeback"]["attempted"])
         self.assertEqual([], story_project["blueprint_coverage"]["missing_beat_indexes"])
         self.assertTrue(story_project["blueprint_coverage"]["ending_pressure_covered"])

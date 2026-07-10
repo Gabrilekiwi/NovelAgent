@@ -13,6 +13,10 @@ from core.story_project.model import (
     ValidationProblem,
 )
 from core.story_project.mapper import build_story_project_runtime_context
+from core.story_project.oh_story_detection import (
+    detect_oh_story_compatibility,
+    failed_oh_story_compatibility_report,
+)
 from core.story_project.paths import (
     canonical_outline_path,
     canonical_prose_path,
@@ -45,6 +49,8 @@ __all__ = [
     "build_story_project_writeback_plan",
     "canonical_outline_path",
     "canonical_prose_path",
+    "detect_oh_story_compatibility",
+    "failed_oh_story_compatibility_report",
     "infer_next_chapter",
     "read_active_book_path",
     "resolve_outline",

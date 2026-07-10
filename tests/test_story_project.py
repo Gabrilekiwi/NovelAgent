@@ -154,6 +154,10 @@ class StoryProjectTest(unittest.TestCase):
         check = [item for item in result["checks"] if item["name"] == "story_project_structure"][0]
         self.assertEqual(1, check["details"]["chapter_resolution"]["resolved_chapter"])
         self.assertEqual(str(story_project_root), check["details"]["root"]["root"])
+        oh_story_check = [item for item in result["checks"] if item["name"] == "oh_story_detection"][0]
+        self.assertTrue(oh_story_check["ok"])
+        self.assertFalse(oh_story_check["details"]["detected"])
+        self.assertEqual("none", oh_story_check["details"]["confidence"])
 
     def test_preflight_keeps_legacy_memory_mode_when_story_project_is_not_requested(self) -> None:
         case_dir = self._case_dir("legacy")
@@ -168,6 +172,7 @@ class StoryProjectTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertNotIn("story_project_structure", {item["name"] for item in result["checks"]})
+        self.assertNotIn("oh_story_detection", {item["name"] for item in result["checks"]})
 
 
 if __name__ == "__main__":

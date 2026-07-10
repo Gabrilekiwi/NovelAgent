@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OhStoryCompatibility",
+  "type": "object",
+  "required": [
+    "enabled",
+    "detected",
+    "confidence",
+    "root",
+    "markers",
+    "summary",
+    "capabilities",
+    "warnings",
+    "unsupported",
+    "recommendations"
+  ],
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "detected": {
+      "type": "boolean"
+    },
+    "confidence": {
+      "enum": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "root": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "markers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "present",
+          "required",
+          "kind",
+          "details"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "present": {
+            "type": "boolean"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "present_count",
+        "optional_missing_count",
+        "unsupported_count"
+      ],
+      "properties": {
+        "present_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "optional_missing_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unsupported_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "required": [
+        "story_project_core_dirs",
+        "active_book",
+        "chapter_blueprint",
+        "story_project_writeback",
+        "review_repair_loop",
+        "oh_story_js_execution",
+        "oh_story_provider"
+      ],
+      "properties": {
+        "story_project_core_dirs": {
+          "type": "boolean"
+        },
+        "active_book": {
+          "type": "boolean"
+        },
+        "chapter_blueprint": {
+          "type": "boolean"
+        },
+        "story_project_writeback": {
+          "type": "boolean"
+        },
+        "review_repair_loop": {
+          "type": "boolean"
+        },
+        "oh_story_js_execution": {
+          "type": "boolean"
+        },
+        "oh_story_provider": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unsupported": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -87,6 +87,9 @@
         "blueprint_coverage": {
           "type": ["object", "null"]
         },
+        "oh_story": {
+          "type": "object"
+        },
         "writeback": {
           "type": "object",
           "required": [

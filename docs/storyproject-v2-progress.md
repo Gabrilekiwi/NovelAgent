@@ -368,3 +368,58 @@ Explicitly not done in Phase 4:
 Next recommended step:
 
 - Stop after Phase 4. Phase 5 should be planned separately if additional writeback reconciliation or enhanced detection is needed.
+
+## Phase 5: oh-story Enhanced Detection / Compatibility Report
+
+Status: implemented.
+
+Completed:
+
+- Added read-only oh-story compatibility detection for StoryProject roots.
+- Detected optional markers including `.story-deployed`, `.codex/hooks.json`, `.claude/agents/`, `.codex/agents/`, `AGENTS.md`, package scripts, shallow oh-story config files, and StoryProject core directories.
+- Added a structured compatibility report with `detected`, `confidence`, `markers`, `capabilities`, `warnings`, `unsupported`, and `recommendations`.
+- Integrated `oh_story_detection` into `--check --story-project ...` as a non-blocking preflight check.
+- Added `--story-project-compat-report` as a read-only report command.
+- Recorded optional `run.story_project.oh_story` in StoryProject generation run records.
+- Kept `AgentExecutor` attach-only: it receives an already-built report and does not scan StoryProject files.
+
+Modified files:
+
+- `core/story_project/oh_story_detection.py`
+- `core/story_project/__init__.py`
+- `core/engine/preflight.py`
+- `core/engine/executor.py`
+- `main.py`
+- `schemas/oh_story_compatibility.schema.json`
+- `schemas/run_record.schema.json`
+- `tests/test_oh_story_detection.py`
+- `tests/test_story_project.py`
+- `tests/test_cli.py`
+- `tests/test_executor.py`
+- `docs/oh-story-compatibility.md`
+- `docs/oh-story-claudecode-storyproject-plan.md`
+- `docs/storyproject-v2-progress.md`
+
+Test results:
+
+- `python -B -m unittest tests.test_oh_story_detection`: passed, 7 tests.
+- Targeted preflight / CLI / executor regressions: passed, 6 tests.
+- `python main.py --check --dry-run --memory data/notion_memory.example.json`: passed, 20 checks.
+- `python -B -m unittest discover -s tests`: passed, 662 tests.
+- `python -B scripts/smoke_v1.py`: passed.
+
+Explicitly not done in Phase 5:
+
+- No oh-story JS execution.
+- No `npm`, `pnpm`, or `node` execution.
+- No oh-story API provider or LLM provider.
+- No `api/oh_story_client.py`.
+- No requirement for `.story-deployed`, `.codex/hooks.json`, or story agents.
+- No StoryProject file writes from detection.
+- No StoryProject writeback policy changes.
+- No Review Repair Loop behavior changes.
+- No Phase 6 work.
+
+Next recommended step:
+
+- Stop after Phase 5. Phase 6 should be planned separately if optional script execution, deeper agent integration, or setup assistance is needed.

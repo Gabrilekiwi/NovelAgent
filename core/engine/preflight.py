@@ -17,6 +17,10 @@ from core.state.memory import load_memory_context
 from core.state.memory_writer import DEFAULT_MEMORY_OUTBOX, resolve_memory_writeback_mode
 from core.state.snapshot import load_snapshot
 from core.story_project.mapper import build_story_project_runtime_context
+from core.story_project.oh_story_detection import (
+    detect_oh_story_compatibility,
+    failed_oh_story_compatibility_report,
+)
 from core.story_project.validator import validate_story_project
 from workflows.dynamic_flow import build_dynamic_flow, build_dynamic_flow_plan
 
@@ -41,6 +45,7 @@ SCHEMA_ASSETS = (
     Path("schemas/loop_session.schema.json"),
     Path("schemas/memory_context.schema.json"),
     Path("schemas/memory_writeback.schema.json"),
+    Path("schemas/oh_story_compatibility.schema.json"),
     Path("schemas/provider_smoke_report.schema.json"),
     Path("schemas/repair_plan.schema.json"),
     Path("schemas/review_gate_result.schema.json"),
@@ -125,6 +130,7 @@ def run_preflight(
     story_project_validation = None
     if story_project is not None:
         story_project_validation = _check_story_project_structure(checks, story_project=story_project, chapter=chapter)
+        _check_oh_story_detection(checks, story_project_validation)
 
     snapshot = _capture_check(checks, "snapshot", lambda: load_snapshot(snapshot_path))
     memory = _capture_memory_check(checks, memory_path=memory_path, memory_source=memory_source)
@@ -558,6 +564,17 @@ def _check_story_project_structure(
         return result
     checks.append({"name": "story_project_structure", "ok": True, "details": details})
     return result
+
+
+def _check_oh_story_detection(checks: list[dict[str, Any]], story_project_validation: Any) -> None:
+    root = None
+    if story_project_validation is not None and story_project_validation.root_resolution is not None:
+        root = story_project_validation.root_resolution.root
+    try:
+        details = detect_oh_story_compatibility(root)
+    except Exception as exc:  # noqa: BLE001 - oh-story detection is always non-blocking.
+        details = failed_oh_story_compatibility_report(root, exc)
+    checks.append({"name": "oh_story_detection", "ok": True, "details": details})
 
 
 def _check_story_project_runtime_context(
