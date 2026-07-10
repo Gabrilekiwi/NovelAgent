@@ -20,6 +20,7 @@ from core.engine.artifacts import (
     save_input_pack_artifact,
     save_loop_session_artifact,
     save_snapshot_pack_artifact,
+    save_story_project_writeback_artifacts,
 )
 from core.engine.run_record import (
     build_run_id,
@@ -43,6 +44,11 @@ from core.state.memory import load_memory_context
 from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
 from core.state.snapshot import build_state_update_audit, load_snapshot, save_snapshot, update_snapshot
+from core.story_project.writer import (
+    StoryProjectWritebackConfig,
+    default_story_project_writeback,
+    run_story_project_writeback,
+)
 from core.validator import validate_chapter
 from core.validator.spatial import validate_bridge_preconditions
 from modules.chapter_generator import PIPELINE_STAGE_NAMES, generate_chapter, run_chapter_pipeline
@@ -86,6 +92,7 @@ class AgentExecutor:
         memory_writer: MemoryWriter | None = None,
         review_config: RuntimeReviewConfig | None = None,
         story_project_context: Any = None,
+        story_project_writeback: StoryProjectWritebackConfig | None = None,
     ) -> None:
         self.snapshot_path = Path(snapshot_path)
         self.memory_path = Path(memory_path) if memory_path else None
@@ -106,6 +113,7 @@ class AgentExecutor:
         self.memory_writer = memory_writer
         self.review_config = validate_runtime_review_config(review_config or RuntimeReviewConfig())
         self.story_project_context = story_project_context
+        self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
         started_at = utc_now()
@@ -414,6 +422,8 @@ class AgentExecutor:
                 validation,
                 _trace_repair_deltas(workflow_trace),
             )
+            self._attach_story_project_audit(result)
+            self._run_story_project_writeback(result)
         self._attach_runtime_review(
             result,
             snapshot=snapshot,
@@ -904,6 +914,8 @@ class AgentExecutor:
             return
         chapter = run.get("chapter") if isinstance(run.get("chapter"), dict) else {}
         pipeline_summary = chapter.get("pipeline") if isinstance(chapter.get("pipeline"), dict) else {}
+        existing = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+        writeback = existing.get("writeback") if isinstance(existing.get("writeback"), dict) else default_story_project_writeback()
         run["story_project"] = {
             "enabled": True,
             "mode": "compatible",
@@ -913,13 +925,35 @@ class AgentExecutor:
             "source_paths": context.get("source_paths"),
             "source_resolution": context.get("source_resolution"),
             "blueprint_coverage": pipeline_summary.get("blueprint_coverage"),
-            "writeback": {
-                "attempted": False,
-                "applied": False,
-                "targets": [],
-                "blocked_reasons": ["phase_2_no_story_project_writeback"],
-            },
+            "writeback": writeback,
         }
+
+    def _run_story_project_writeback(self, result: dict[str, Any]) -> None:
+        if not self.story_project_writeback.enabled:
+            return
+        context = self._story_project_context_dict()
+        run = result.get("run") if isinstance(result.get("run"), dict) else None
+        if not isinstance(run, dict):
+            return
+        plan, writeback_result = run_story_project_writeback(
+            context=context,
+            run=run,
+            chapter_text=str(result.get("chapter") or ""),
+            validation=result.get("validation") if isinstance(result.get("validation"), dict) else None,
+            analysis=result.get("analysis") if isinstance(result.get("analysis"), dict) else None,
+            config=self.story_project_writeback,
+        )
+        writeback_payload = writeback_result.to_dict()
+        artifacts = save_story_project_writeback_artifacts(
+            plan=plan.to_dict(),
+            result=writeback_payload,
+            run=run,
+            output_dir=self.run_dir / "story_project_writebacks",
+        )
+        writeback_payload["artifacts"] = artifacts
+        run_story_project = run.setdefault("story_project", {})
+        if isinstance(run_story_project, dict):
+            run_story_project["writeback"] = writeback_payload
 
     def _attach_snapshot_pack_artifact(self, run: dict[str, Any], snapshot_pack: str) -> None:
         artifact = save_snapshot_pack_artifact(

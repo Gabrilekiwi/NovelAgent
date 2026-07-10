@@ -88,6 +88,86 @@ class CliTest(unittest.TestCase):
         self.assertEqual("auto", args.story_project)
         self.assertEqual("21", args.chapter)
 
+    def test_parse_args_accepts_story_project_writeback_flags(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--story-project", "auto", "--story-project-writeback-dry-run", "--story-project-overwrite"],
+        ):
+            args = cli.parse_args()
+
+        self.assertTrue(args.story_project_writeback_dry_run)
+        self.assertTrue(args.story_project_overwrite)
+        config = cli._story_project_writeback_config_from_args(args)
+        self.assertEqual("dry_run", config.mode)
+        self.assertTrue(config.overwrite)
+
+    def test_story_project_real_writeback_conflicts_with_global_dry_run(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--dry-run", "--story-project", "auto", "--story-project-writeback"]):
+            args = cli.parse_args()
+
+        with self.assertRaisesRegex(ValueError, "--story-project-writeback-dry-run"):
+            cli._story_project_writeback_config_from_args(args)
+
+    def test_story_project_writeback_requires_story_project(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--story-project-writeback"]):
+            args = cli.parse_args()
+
+        with self.assertRaisesRegex(ValueError, "--story-project"):
+            cli._story_project_writeback_config_from_args(args)
+
+    def test_story_project_real_writeback_failure_exits_nonzero(self) -> None:
+        class FakeExecutor:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def run_once(self, *, persist: bool = True):
+                return {
+                    "chapter": "chapter",
+                    "validation": {"ok": True, "problems": []},
+                    "analysis": {},
+                    "run": {
+                        "id": "chapter_1_test",
+                        "status": "committed",
+                        "committed": True,
+                        "chapter_index": 1,
+                        "workflow": [],
+                        "repair_attempts": 0,
+                        "validation": {"problem_codes": []},
+                        "story_project": {
+                            "writeback": {
+                                "attempted": True,
+                                "applied": False,
+                                "partial": False,
+                                "dry_run": False,
+                                "overwrite": False,
+                                "targets": [],
+                                "blocked_reasons": ["target_prose_exists"],
+                                "errors": [],
+                                "failed_targets": [],
+                                "diff_summary": {},
+                                "artifacts": {},
+                            }
+                        },
+                    },
+                    "committed": True,
+                }
+
+        output = io.StringIO()
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--story-project", "auto", "--story-project-writeback"],
+        ), patch.object(cli, "build_generation_story_project_context", return_value={"story_project_root": "book"}), patch.object(
+            cli,
+            "AgentExecutor",
+            FakeExecutor,
+        ), contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+        self.assertEqual(1, exit_context.exception.code)
+
     def test_parse_args_accepts_no_proxy(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--dry-run", "--no-proxy"]):
             args = cli.parse_args()

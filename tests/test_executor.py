@@ -12,6 +12,9 @@ from core.engine.executor import AgentExecutor, LoopExecutionError
 from core.engine.run_record import build_run_record
 from core.engine.workflow import WorkflowError
 from core.schema import SchemaValidationError, validate_schema
+from core.story_project.model import CORE_DIRECTORY_NAMES
+from core.story_project.paths import PROSE_DIR_NAME, canonical_prose_path
+from core.story_project.writer import StoryProjectWritebackConfig
 
 
 class AgentExecutorTest(unittest.TestCase):
@@ -236,6 +239,56 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual([], story_project["blueprint_coverage"]["missing_beat_indexes"])
         self.assertTrue(story_project["blueprint_coverage"]["ending_pressure_covered"])
         self.assertIn("story_project", saved_run["run"]["validation"]["executed_checks"])
+        self.assertFalse((tmp_path / "runs" / "story_project_writebacks").exists())
+
+    def test_story_project_real_writeback_blocked_is_recorded(self) -> None:
+        tmp_path = self._case_dir("story_project_writeback_blocked")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        canonical_prose_path(book, 2, "Audit").write_text("existing", encoding="utf-8")
+        story_project_context = {
+            "story_project_root": str(book),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": {
+                "chapter_index": 2,
+                "outline_path": str(book / "大纲" / "细纲_第002章.md"),
+                "title": "Audit",
+                "core_event": "danger forces the route choice",
+                "required_beats": [
+                    {"index": 1, "text": "danger forces the route choice"},
+                    {"index": 2, "text": "open conflict over the serum"},
+                ],
+                "ending_pressure": "the locked door starts a countdown",
+                "source_path": str(book / "大纲" / "细纲_第002章.md"),
+                "missing_fields": [],
+            },
+            "source_paths": {"outline_path": str(book / "大纲" / "细纲_第002章.md")},
+            "source_resolution": {"entries": []},
+        }
+
+        AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            story_project_context=story_project_context,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        ).run_once(persist=True)
+
+        saved_run = json.loads(next((tmp_path / "runs").glob("chapter_2_*.json")).read_text(encoding="utf-8"))
+        writeback = saved_run["run"]["story_project"]["writeback"]
+        self.assertTrue(writeback["attempted"])
+        self.assertFalse(writeback["applied"])
+        self.assertIn("target_prose_exists", writeback["blocked_reasons"])
+        self.assertTrue((tmp_path / "runs" / "story_project_writebacks").exists())
+        self.assertEqual("existing", canonical_prose_path(book, 2, "Audit").read_text(encoding="utf-8"))
+        self.assertEqual([], list((book / "追踪").iterdir()))
 
 
     def test_pre_validate_bridge_records_real_precheck(self) -> None:

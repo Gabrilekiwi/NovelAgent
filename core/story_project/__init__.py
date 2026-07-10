@@ -23,6 +23,11 @@ from core.story_project.paths import (
     resolve_story_project_root,
 )
 from core.story_project.validator import validate_story_project
+from core.story_project.writer import (
+    StoryProjectWritebackConfig,
+    build_story_project_writeback_plan,
+    run_story_project_writeback,
+)
 
 __all__ = [
     "ChapterResolution",
@@ -34,8 +39,10 @@ __all__ = [
     "StoryProjectRootResolution",
     "StoryProjectRuntimeContext",
     "StoryProjectValidationResult",
+    "StoryProjectWritebackConfig",
     "ValidationProblem",
     "build_story_project_runtime_context",
+    "build_story_project_writeback_plan",
     "canonical_outline_path",
     "canonical_prose_path",
     "infer_next_chapter",
@@ -43,5 +50,6 @@ __all__ = [
     "resolve_outline",
     "resolve_prose",
     "resolve_story_project_root",
+    "run_story_project_writeback",
     "validate_story_project",
 ]

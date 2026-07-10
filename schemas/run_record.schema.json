@@ -92,8 +92,15 @@
           "required": [
             "attempted",
             "applied",
+            "partial",
+            "dry_run",
+            "overwrite",
             "targets",
-            "blocked_reasons"
+            "blocked_reasons",
+            "errors",
+            "failed_targets",
+            "diff_summary",
+            "artifacts"
           ],
           "properties": {
             "attempted": {
@@ -102,10 +109,70 @@
             "applied": {
               "type": "boolean"
             },
+            "partial": {
+              "type": "boolean"
+            },
+            "dry_run": {
+              "type": "boolean"
+            },
+            "overwrite": {
+              "type": "boolean"
+            },
             "targets": {
               "type": "array",
               "items": {
-                "type": "string"
+                "type": "object",
+                "required": [
+                  "kind",
+                  "path",
+                  "status",
+                  "action",
+                  "existed",
+                  "chars_before",
+                  "chars_after",
+                  "changed"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "planned",
+                      "created",
+                      "updated",
+                      "skipped",
+                      "failed"
+                    ]
+                  },
+                  "action": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": ["string", "null"]
+                  },
+                  "existed": {
+                    "type": "boolean"
+                  },
+                  "chars_before": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "chars_after": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "changed": {
+                    "type": "boolean"
+                  },
+                  "error": {
+                    "type": ["string", "null"]
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "blocked_reasons": {
@@ -113,6 +180,24 @@
               "items": {
                 "type": "string"
               }
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "failed_targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "diff_summary": {
+              "type": "object"
+            },
+            "artifacts": {
+              "type": "object"
             }
           },
           "additionalProperties": false

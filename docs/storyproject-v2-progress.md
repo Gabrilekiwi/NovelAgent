@@ -208,6 +208,68 @@ Test results:
 Explicitly not done in Phase 2:
 
 - No Phase 3 oh-story enhanced detection.
+
+## Phase 3: StoryProject writeback
+
+Status: implemented.
+
+Completed:
+
+- Added explicit StoryProject writeback modes:
+  - Default mode remains disabled and records `story_project.writeback.attempted=false`.
+  - `--story-project-writeback` enables real StoryProject file writeback.
+  - `--story-project-writeback-dry-run` builds runtime writeback artifacts without modifying StoryProject files.
+  - `--story-project-overwrite` allows overwriting only one uniquely resolved existing prose file.
+- Added `core/story_project/writer.py` for StoryProject writeback preflight, plan building, real apply, dry-run result generation, target-level status, partial apply reporting, tracking marker dedupe, and diff summaries.
+- Implemented real-write preflight before any StoryProject file mutation.
+- Implemented prose conflict rules: `target_prose_exists` for one existing prose without overwrite, and `multiple_prose_targets` for multiple same-chapter prose files even with overwrite enabled.
+- Implemented tracking append blocks for `追踪/上下文.md`, `追踪/伏笔.md`, `追踪/时间线.md`, and `追踪/角色状态.md`.
+- Added stable tracking markers and skip-on-duplicate behavior for the same `run_id + chapter + target`.
+- Added target-level partial apply reporting with `partial`, `failed_targets`, `errors`, and per-target `created` / `updated` / `skipped` / `failed` status.
+- Added temp-file plus replace writes for prose and tracking files, with managed Windows `PermissionError` fallback to direct write.
+- Wired executor save order as generation / validation, run record build, StoryProject writeback plan/apply, attach writeback result, then validate/save run record.
+- Added CLI configuration errors for `--dry-run + --story-project-writeback` and for StoryProject writeback flags without `--story-project`.
+- Added CLI non-zero exit for explicit real writeback blocked or failed results after run record save.
+- Expanded `schemas/run_record.schema.json` for StoryProject writeback audit fields.
+
+Modified files:
+
+- `core/engine/artifacts.py`
+- `core/engine/executor.py`
+- `core/story_project/__init__.py`
+- `core/story_project/writer.py`
+- `main.py`
+- `schemas/run_record.schema.json`
+- `tests/test_cli.py`
+- `tests/test_executor.py`
+- `tests/test_story_project_writer.py`
+- `docs/storyproject-v2-progress.md`
+
+Test results:
+
+- `python -B -m unittest tests.test_story_project_writer`: passed, 8 tests.
+- `python -B -m unittest tests.test_story_project_writer tests.test_executor.AgentExecutorTest.test_story_project_context_records_blueprint_coverage_without_writeback tests.test_executor.AgentExecutorTest.test_story_project_real_writeback_blocked_is_recorded tests.test_cli.CliTest.test_parse_args_accepts_story_project_writeback_flags tests.test_cli.CliTest.test_story_project_real_writeback_conflicts_with_global_dry_run tests.test_cli.CliTest.test_story_project_writeback_requires_story_project tests.test_cli.CliTest.test_story_project_real_writeback_failure_exits_nonzero`: passed, 14 tests.
+- `python main.py --check --dry-run --memory data/notion_memory.example.json`: passed, 20 checks.
+- `python -B -m unittest discover -s tests`: passed, 640 tests.
+- `python -B scripts/smoke_v1.py`: passed.
+
+Explicitly not done in Phase 3:
+
+- StoryProject writeback is not enabled by default.
+- Real writeback must be explicitly enabled.
+- Dry-run writeback only writes runtime artifacts and does not modify StoryProject `正文/` or `追踪/`.
+- No default prose overwrite.
+- No oh-story JS execution.
+- No oh-story API provider.
+- No `api/oh_story_client.py`.
+- No Review repair loop.
+- No automatic prose repair.
+- No LLM tracking summarization.
+- No mixing StoryProject writeback with Notion or Memory writeback.
+
+Next recommended step:
+
+- Stop after Phase 3. Phase 4 should be planned separately if enhanced detection, review repair, or richer writeback reconciliation is needed.
 - No StoryProject writeback.
 - No writes to `正文/` or `追踪/`.
 - No StoryProject writer module.

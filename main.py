@@ -24,6 +24,7 @@ from core.state.memory import load_memory_context
 from core.state.memory_writer import build_memory_writer
 from core.state.snapshot import load_snapshot
 from core.story_project.runtime import build_generation_story_project_context
+from core.story_project.writer import StoryProjectWritebackConfig
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,6 +58,21 @@ def parse_args() -> argparse.Namespace:
         "--chapter",
         default="auto",
         help="StoryProject chapter number, or auto to infer the next chapter from 正文/.",
+    )
+    parser.add_argument(
+        "--story-project-writeback",
+        action="store_true",
+        help="After a committed StoryProject run, write generated prose and tracking updates back to StoryProject.",
+    )
+    parser.add_argument(
+        "--story-project-writeback-dry-run",
+        action="store_true",
+        help="Build StoryProject writeback plan and artifacts without modifying StoryProject files.",
+    )
+    parser.add_argument(
+        "--story-project-overwrite",
+        action="store_true",
+        help="Allow StoryProject writeback to overwrite a uniquely resolved existing prose file.",
     )
     parser.add_argument(
         "--memory-source",
@@ -377,8 +393,9 @@ def main() -> None:
 
     try:
         review_config = _runtime_review_config_from_args(args)
+        story_project_writeback = _story_project_writeback_config_from_args(args)
     except ValueError as exc:
-        print(f"Review pipeline configuration failed: {exc}", file=sys.stderr)
+        print(f"Configuration failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
     if args.init_runtime:
@@ -461,8 +478,9 @@ def main() -> None:
         ),
         review_config=review_config,
         story_project_context=story_project_context,
+        story_project_writeback=story_project_writeback,
     )
-    persist = not args.dry_run or args.persist_dry_run
+    persist = not args.dry_run or args.persist_dry_run or args.story_project_writeback_dry_run
     if args.steps == 1:
         result = executor.run_once(persist=persist)
     else:
@@ -494,6 +512,9 @@ def main() -> None:
             gate_exit_code = _review_gate_exit_code(loop_result.get("last_result"))
             if gate_exit_code:
                 raise SystemExit(gate_exit_code)
+            writeback_exit_code = _story_project_writeback_exit_code(loop_result.get("last_result"))
+            if writeback_exit_code:
+                raise SystemExit(writeback_exit_code)
             return
         result = loop_result["last_result"]
         result["loop"] = {
@@ -515,6 +536,9 @@ def main() -> None:
     gate_exit_code = _review_gate_exit_code(result)
     if gate_exit_code:
         raise SystemExit(gate_exit_code)
+    writeback_exit_code = _story_project_writeback_exit_code(result)
+    if writeback_exit_code:
+        raise SystemExit(writeback_exit_code)
 
 
 def format_preflight_summary(result: dict) -> str:
@@ -850,6 +874,23 @@ def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewC
     return validate_runtime_review_config(config)
 
 
+def _story_project_writeback_config_from_args(args: argparse.Namespace) -> StoryProjectWritebackConfig:
+    real_writeback = bool(getattr(args, "story_project_writeback", False))
+    dry_run_writeback = bool(getattr(args, "story_project_writeback_dry_run", False))
+    if real_writeback and dry_run_writeback:
+        raise ValueError("--story-project-writeback and --story-project-writeback-dry-run are mutually exclusive")
+    if real_writeback and bool(getattr(args, "dry_run", False)):
+        raise ValueError("--dry-run cannot be combined with --story-project-writeback; use --story-project-writeback-dry-run")
+    if (real_writeback or dry_run_writeback) and getattr(args, "story_project", None) is None:
+        raise ValueError("--story-project-writeback requires --story-project")
+    mode = "none"
+    if real_writeback:
+        mode = "apply"
+    elif dry_run_writeback:
+        mode = "dry_run"
+    return StoryProjectWritebackConfig(mode=mode, overwrite=bool(getattr(args, "story_project_overwrite", False)))
+
+
 def _review_gate_exit_code(result: dict | None) -> int:
     if not isinstance(result, dict):
         return 0
@@ -858,6 +899,17 @@ def _review_gate_exit_code(result: dict | None) -> int:
     if not isinstance(gate, dict):
         return 0
     return 1 if gate.get("exit_code") == 1 else 0
+
+
+def _story_project_writeback_exit_code(result: dict | None) -> int:
+    if not isinstance(result, dict):
+        return 0
+    run = result.get("run") if isinstance(result.get("run"), dict) else {}
+    story_project = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+    writeback = story_project.get("writeback") if isinstance(story_project.get("writeback"), dict) else {}
+    if not writeback.get("attempted") or writeback.get("dry_run"):
+        return 0
+    return 0 if writeback.get("applied") else 1
 
 
 def _run_model_calls(run: dict) -> list[tuple[str, dict]]:

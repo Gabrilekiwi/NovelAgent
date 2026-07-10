@@ -145,6 +145,37 @@ def save_chapter_pipeline_artifacts(
     }
 
 
+def save_story_project_writeback_artifacts(
+    *,
+    plan: dict[str, Any],
+    result: dict[str, Any],
+    run: dict[str, Any],
+    output_dir: str | Path = DEFAULT_RUN_DIR / "story_project_writebacks",
+) -> dict[str, Any]:
+    path = Path(output_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    chapter_index = int(run["chapter_index"])
+    run_id = str(run["id"])
+    diff = result.get("diff_summary") if isinstance(result.get("diff_summary"), dict) else {}
+    return {
+        "plan": _write_artifact(
+            path / f"writeback_plan_{chapter_index:04d}_{run_id}.json",
+            json.dumps(plan, ensure_ascii=False, indent=2),
+            "json",
+        ),
+        "diff": _write_artifact(
+            path / f"writeback_diff_{chapter_index:04d}_{run_id}.json",
+            json.dumps(diff, ensure_ascii=False, indent=2),
+            "json",
+        ),
+        "result": _write_artifact(
+            path / f"writeback_result_{chapter_index:04d}_{run_id}.json",
+            json.dumps(result, ensure_ascii=False, indent=2),
+            "json",
+        ),
+    }
+
+
 def _write_artifact(path: Path, content: str, artifact_format: str) -> dict[str, Any]:
     path.write_text(content, encoding="utf-8")
     return {
