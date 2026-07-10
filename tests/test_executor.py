@@ -10,11 +10,13 @@ from unittest.mock import patch
 from api.contracts import ModelCallError, ModelOutputError
 from core.director import DirectorDecisionError
 from core.engine.executor import AgentExecutor, LoopExecutionError
+from core.engine.persistence import LocalPersistenceTransaction, PersistenceError, PersistenceTarget
 from core.engine.run_record import build_run_record
 from core.engine.workflow import WorkflowError
 from core.review.repair_loop import ReviewRepairConfig
 from core.review.runtime import RuntimeReviewConfig
 from core.schema import SchemaValidationError, validate_schema
+from core.state.memory_writer import FileMemoryWriter
 from core.story_project.model import CORE_DIRECTORY_NAMES
 from core.story_project.paths import PROSE_DIR_NAME, canonical_prose_path
 from core.story_project.writer import StoryProjectWritebackConfig
@@ -410,7 +412,7 @@ class AgentExecutorTest(unittest.TestCase):
     def test_story_project_real_writeback_blocked_is_recorded(self) -> None:
         tmp_path = self._case_dir("story_project_writeback_blocked")
         snapshot_path = tmp_path / "snapshot.json"
-        self._write_snapshot(snapshot_path)
+        before_snapshot = self._write_snapshot(snapshot_path)
         book = tmp_path / "book"
         for directory in CORE_DIRECTORY_NAMES:
             (book / directory).mkdir(parents=True)
@@ -437,7 +439,7 @@ class AgentExecutorTest(unittest.TestCase):
             "source_resolution": {"entries": []},
         }
 
-        AgentExecutor(
+        result = AgentExecutor(
             snapshot_path=snapshot_path,
             memory_path=tmp_path / "missing_memory.json",
             run_dir=tmp_path / "runs",
@@ -451,9 +453,247 @@ class AgentExecutorTest(unittest.TestCase):
         writeback = saved_run["run"]["story_project"]["writeback"]
         self.assertTrue(writeback["attempted"])
         self.assertFalse(writeback["applied"])
+        self.assertTrue(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertEqual("failed", result["run"]["status"])
+        self.assertEqual("preparation_failed", result["run"]["persistence"]["state"])
         self.assertIn("target_prose_exists", writeback["blocked_reasons"])
         self.assertTrue((tmp_path / "runs" / "story_project_writebacks").exists())
         self.assertEqual("existing", canonical_prose_path(book, 2, "Audit").read_text(encoding="utf-8"))
+        self.assertEqual([], list((book / "追踪").iterdir()))
+        self.assertEqual(before_snapshot, snapshot_path.read_text(encoding="utf-8"))
+
+    def test_story_project_writeback_and_snapshot_commit_in_one_transaction(self) -> None:
+        tmp_path = self._case_dir("story_project_transaction_success")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        outline = book / "大纲" / "细纲_第002章.md"
+        outline.write_text("# Audit", encoding="utf-8")
+        story_project_context = {
+            "story_project_root": str(book),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": {
+                "chapter_index": 2,
+                "outline_path": str(outline),
+                "title": "Audit",
+                "core_event": "danger forces the route choice",
+                "required_beats": [
+                    {"index": 1, "text": "danger forces the route choice"},
+                    {"index": 2, "text": "open conflict over the serum"},
+                ],
+                "ending_pressure": "the locked door starts a countdown",
+                "source_path": str(outline),
+                "missing_fields": [],
+            },
+            "source_paths": {"outline_path": str(outline)},
+            "source_resolution": {"entries": []},
+        }
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            story_project_context=story_project_context,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        ).run_once(persist=True)
+
+        self.assertTrue(result["accepted"])
+        self.assertTrue(result["committed"])
+        self.assertEqual("completed", result["run"]["persistence"]["state"])
+        self.assertTrue(result["run"]["story_project"]["writeback"]["applied"])
+        self.assertTrue(canonical_prose_path(book, 2, "Audit").exists())
+        self.assertEqual(4, len(list((book / "追踪").glob("*.md"))))
+        self.assertEqual(3, json.loads(snapshot_path.read_text(encoding="utf-8"))["chapter_index"])
+        journal = Path(result["run"]["persistence"]["journal_path"])
+        self.assertTrue((journal / "commit.marker").exists())
+        self.assertTrue((journal / "candidate_result.json").exists())
+
+    def test_reconcile_republishes_chapter_and_idempotent_file_outbox_after_marker_crash(self) -> None:
+        import main as cli
+
+        tmp_path = self._case_dir("story_project_transaction_reconcile")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        outline = book / "大纲" / "细纲_第002章.md"
+        outline.write_text("# Recover", encoding="utf-8")
+        outbox = tmp_path / "memory-outbox.jsonl"
+        chapter_dir = tmp_path / "chapters"
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=chapter_dir,
+            dry_run=True,
+            analyzer=self._analysis,
+            memory_writer=FileMemoryWriter(outbox),
+            story_project_context={
+                "story_project_root": str(book),
+                "chapter_index": 2,
+                "snapshot_overlay": {"chapter_index": 2},
+                "memory_context_overlay": {"items": [], "source_mappings": []},
+                "chapter_blueprint": {
+                    "chapter_index": 2,
+                    "outline_path": str(outline),
+                    "title": "Recover",
+                    "core_event": "danger forces the route choice",
+                    "required_beats": [
+                        {"index": 1, "text": "danger forces the route choice"},
+                        {"index": 2, "text": "open conflict over the serum"},
+                    ],
+                    "ending_pressure": "the locked door starts a countdown",
+                    "source_path": str(outline),
+                    "missing_fields": [],
+                },
+                "source_paths": {"outline_path": str(outline)},
+                "source_resolution": {"entries": []},
+            },
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        ).run_once(persist=True)
+
+        run_id = result["run"]["id"]
+        run_path = tmp_path / "runs" / f"{run_id}.json"
+        artifact_path = Path(result["run"]["chapter"]["artifact"]["path"])
+        journal = Path(result["run"]["persistence"]["journal_path"])
+        manifest_path = journal / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["state"] = "commit_marked"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        run_path.unlink()
+        artifact_path.unlink()
+        outbox.unlink()
+
+        report = cli._reconcile_and_publish_persistence(tmp_path / "runs", chapter_dir=chapter_dir)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual([run_id], report["published_run_ids"])
+        self.assertTrue(run_path.exists())
+        self.assertTrue(artifact_path.exists())
+        self.assertTrue(outbox.exists())
+        recovered = json.loads(run_path.read_text(encoding="utf-8"))
+        self.assertEqual("verified", recovered["run"]["memory"]["writeback"]["verification"]["status"])
+        self.assertEqual("completed", json.loads(manifest_path.read_text(encoding="utf-8"))["state"])
+
+    def test_direct_executor_blocks_unpublished_transaction_before_provider(self) -> None:
+        tmp_path = self._case_dir("unpublished_transaction_block")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        target = tmp_path / "state.txt"
+        transaction = LocalPersistenceTransaction(
+            run_dir=run_dir,
+            run_id="pending-run",
+            allowed_roots=[tmp_path],
+        )
+        transaction.prepare(
+            [PersistenceTarget("state", target, "committed")],
+            candidate_result={"run": {"id": "pending-run"}},
+        )
+        self.assertEqual("commit_marked", transaction.commit().state)
+        provider_calls: list[str] = []
+
+        with self.assertRaisesRegex(PersistenceError, "persistence_reconciliation_required"):
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                run_dir=run_dir,
+                dry_run=True,
+                generator=lambda prompt: provider_calls.append(prompt) or "chapter",
+            ).run_once(persist=True)
+
+        self.assertEqual([], provider_calls)
+
+    def test_snapshot_cas_preserves_external_edit_made_during_generation(self) -> None:
+        tmp_path = self._case_dir("snapshot_cas_external_edit")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        external = json.dumps(
+            {"chapter_index": 99, "world_state": {}, "characters": {}, "timeline": []},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        def analyzer(chapter: str, validation: dict) -> dict:
+            snapshot_path.write_text(external, encoding="utf-8")
+            return self._analysis(chapter, validation)
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing-memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            analyzer=analyzer,
+        ).run_once(persist=True)
+
+        self.assertTrue(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertEqual("failed", result["run"]["status"])
+        self.assertEqual("preparation_failed", result["run"]["persistence"]["state"])
+        self.assertEqual(external, snapshot_path.read_text(encoding="utf-8"))
+
+    def test_story_project_writeback_preview_changes_no_primary_state(self) -> None:
+        tmp_path = self._case_dir("story_project_transaction_preview")
+        snapshot_path = tmp_path / "snapshot.json"
+        before_snapshot = self._write_snapshot(snapshot_path)
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        outline = book / "大纲" / "细纲_第002章.md"
+        outline.write_text("# Preview", encoding="utf-8")
+        memory_calls: list[list[dict]] = []
+
+        def memory_writer(updates):
+            memory_calls.append(updates)
+            raise AssertionError("preview must not deliver memory updates")
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            memory_writer=memory_writer,
+            story_project_context={
+                "story_project_root": str(book),
+                "chapter_index": 2,
+                "snapshot_overlay": {"chapter_index": 2},
+                "memory_context_overlay": {"items": [], "source_mappings": []},
+                "chapter_blueprint": {
+                    "chapter_index": 2,
+                    "outline_path": str(outline),
+                    "title": "Preview",
+                    "core_event": "danger forces the route choice",
+                    "required_beats": [
+                        {"index": 1, "text": "danger forces the route choice"},
+                        {"index": 2, "text": "open conflict over the serum"},
+                    ],
+                    "ending_pressure": "the locked door starts a countdown",
+                    "source_path": str(outline),
+                    "missing_fields": [],
+                },
+                "source_paths": {"outline_path": str(outline)},
+                "source_resolution": {"entries": []},
+            },
+            story_project_writeback=StoryProjectWritebackConfig(mode="dry_run"),
+        ).run_once(persist=True)
+
+        self.assertTrue(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertEqual("preview", result["run"]["status"])
+        self.assertEqual("preview", result["run"]["persistence"]["state"])
+        self.assertEqual(before_snapshot, snapshot_path.read_text(encoding="utf-8"))
+        self.assertEqual([], memory_calls)
+        self.assertFalse(canonical_prose_path(book, 2, "Preview").exists())
         self.assertEqual([], list((book / "追踪").iterdir()))
 
 

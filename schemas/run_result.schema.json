@@ -58,6 +58,9 @@
     },
     "review_repair": {
       "type": "object"
+    },
+    "persistence": {
+      "type": "object"
     }
   },
   "additionalProperties": false

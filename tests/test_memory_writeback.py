@@ -147,6 +147,22 @@ class MemoryWritebackTest(unittest.TestCase):
         self.assertEqual("no_written_items", second["verification"]["reason"])
         self.assertEqual(1, len(outbox.read_text(encoding="utf-8").splitlines()))
 
+    def test_file_memory_writer_fails_closed_on_duplicate_payload_conflict(self) -> None:
+        tmp_path = self._case_dir("file_writer_duplicate_conflict")
+        outbox = tmp_path / "memory_outbox.jsonl"
+        writer = FileMemoryWriter(outbox)
+        writer([{"id": "run-1:location:shelter", "type": "location", "name": "shelter", "data": {"safe": True}}])
+
+        result = writer(
+            [{"id": "run-1:location:shelter", "type": "location", "name": "shelter", "data": {"safe": False}}]
+        )
+
+        self.assertEqual(0, result["written"])
+        self.assertEqual("duplicate_conflict", result["item_mappings"][0]["status"])
+        self.assertEqual("failed", result["verification"]["status"])
+        self.assertEqual("duplicate_payload_conflict", result["verification"]["failures"][0]["reason"])
+        self.assertEqual(1, len(outbox.read_text(encoding="utf-8").splitlines()))
+
     def test_memory_outbox_implies_file_writeback_mode(self) -> None:
         self.assertEqual("file", resolve_memory_writeback_mode(mode="none", outbox_path="outbox.jsonl"))
 

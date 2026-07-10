@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import re
 import tempfile
@@ -106,6 +107,7 @@ class StoryProjectWritebackResult:
     failed_targets: list[str] = field(default_factory=list)
     diff_summary: dict[str, Any] = field(default_factory=dict)
     artifacts: dict[str, Any] = field(default_factory=dict)
+    transaction: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,7 +122,18 @@ class StoryProjectWritebackResult:
             "failed_targets": list(self.failed_targets),
             "diff_summary": dict(self.diff_summary),
             "artifacts": dict(self.artifacts),
+            "transaction": dict(self.transaction),
         }
+
+
+@dataclass(frozen=True)
+class RenderedStoryProjectWriteTarget:
+    target_index: int
+    kind: str
+    path: Path
+    content: str
+    expected_before_exists: bool
+    expected_before_sha256: str | None
 
 
 def default_story_project_writeback() -> dict[str, Any]:
@@ -136,7 +149,135 @@ def default_story_project_writeback() -> dict[str, Any]:
         "failed_targets": [],
         "diff_summary": _diff_summary([]),
         "artifacts": {},
+        "transaction": {},
     }
+
+
+def prepare_story_project_writeback(
+    *,
+    context: dict[str, Any] | None,
+    run: dict[str, Any],
+    chapter_text: str,
+    validation: dict[str, Any] | None,
+    analysis: dict[str, Any] | None,
+    config: StoryProjectWritebackConfig,
+) -> tuple[
+    StoryProjectWritebackPlan,
+    list[StoryProjectWriteTarget],
+    list[RenderedStoryProjectWriteTarget],
+    StoryProjectWritebackResult,
+]:
+    plan = build_story_project_writeback_plan(
+        context=context,
+        run=run,
+        chapter_text=chapter_text,
+        validation=validation,
+        analysis=analysis,
+        config=config,
+    )
+    targets = [copy.copy(target) for target in plan.targets]
+    if plan.blocked:
+        for target in targets:
+            target.status = "skipped"
+            target.reason = target.reason or "preflight_blocked"
+        return plan, targets, [], _result(plan, targets, applied=False, partial=False)
+
+    rendered: list[RenderedStoryProjectWriteTarget] = []
+    for index, target in enumerate(targets):
+        before_exists = target.path.exists()
+        before_bytes = target.path.read_bytes() if before_exists else b""
+        before = before_bytes.decode("utf-8") if before_exists else ""
+        if target.kind == "prose":
+            after = chapter_text.rstrip() + "\n"
+        else:
+            if _has_existing_tracking_marker(
+                target.path,
+                run_id=str(run.get("id")),
+                chapter=plan.chapter_index,
+                kind=target.kind,
+            ):
+                target.existed = before_exists
+                target.chars_before = len(before)
+                target.chars_after = len(before)
+                target.changed = False
+                target.status = "skipped"
+                target.reason = "tracking_marker_exists"
+                continue
+            content = _tracking_content(target=target, run=run, plan=plan, analysis=analysis or {})
+            separator = "\n\n" if before.strip() else ""
+            after = before.rstrip() + separator + content.strip() + "\n"
+        target.existed = before_exists
+        target.chars_before = len(before)
+        target.chars_after = len(after)
+        target.changed = before != after
+        if plan.dry_run:
+            target.status = "skipped"
+            target.reason = "dry_run"
+        else:
+            target.status = "planned"
+        rendered.append(
+            RenderedStoryProjectWriteTarget(
+                target_index=index,
+                kind=target.kind,
+                path=target.path,
+                content=after,
+                expected_before_exists=before_exists,
+                expected_before_sha256=hashlib.sha256(before_bytes).hexdigest() if before_exists else None,
+            )
+        )
+    return plan, targets, rendered, _result(plan, targets, applied=False, partial=False)
+
+
+def finalize_story_project_writeback(
+    plan: StoryProjectWritebackPlan,
+    targets: list[StoryProjectWriteTarget],
+    persistence: dict[str, Any],
+) -> StoryProjectWritebackResult:
+    finalized = [copy.copy(target) for target in targets]
+    by_index: dict[int, dict[str, Any]] = {}
+    for item in persistence.get("targets") or []:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        index = metadata.get("story_target_index")
+        if isinstance(index, int):
+            by_index[index] = item
+
+    committed = bool(persistence.get("committed"))
+    failed_targets: list[str] = []
+    for index, target in enumerate(finalized):
+        if target.status == "skipped":
+            continue
+        persisted = by_index.get(index)
+        persisted_status = str((persisted or {}).get("status") or "")
+        if committed and persisted_status in {"verified", "completed"}:
+            target.status = "updated" if target.existed else "created"
+            target.reason = None
+            continue
+        if persisted_status == "rolled_back":
+            target.status = "rolled_back"
+            target.reason = "transaction_rolled_back"
+            continue
+        if persisted_status == "rollback_failed":
+            target.status = "rollback_failed"
+            target.reason = "transaction_recovery_required"
+        else:
+            target.status = "failed"
+            target.reason = "transaction_failed"
+        target.error = str((persisted or {}).get("error") or "persistence transaction did not commit")
+        failed_targets.append(str(target.path))
+
+    partial = bool(persistence.get("partial"))
+    result = _result(plan, finalized, applied=committed and not failed_targets, partial=partial)
+    result.failed_targets.extend(failed_targets)
+    result.errors.extend([dict(item) for item in persistence.get("errors") or [] if isinstance(item, dict)])
+    result.diff_summary = _diff_summary(finalized)
+    result.transaction = {
+        key: persistence.get(key)
+        for key in ("run_id", "state", "committed", "partial", "journal_path", "commit_marker")
+        if key in persistence
+    }
+    return result
 
 
 def run_story_project_writeback(
@@ -368,16 +509,6 @@ def _atomic_write_text(path: Path, content: str) -> None:
             tmp.write(content)
             tmp_name = tmp.name
         os.replace(tmp_name, path)
-    except PermissionError as exc:
-        if tmp_name:
-            try:
-                Path(tmp_name).unlink(missing_ok=True)
-            except OSError:
-                pass
-        if getattr(exc, "winerror", None) == 5 or os.name == "nt":
-            path.write_text(content, encoding="utf-8")
-            return
-        raise
     except Exception:
         if tmp_name:
             try:

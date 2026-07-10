@@ -151,6 +151,7 @@
             "enum": [
               "written",
               "skipped_duplicate",
+              "duplicate_conflict",
               "skipped_no_writer"
             ]
           },

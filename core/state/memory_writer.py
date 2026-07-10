@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,7 +22,7 @@ class FileMemoryWriter:
     def __call__(self, updates: list[dict[str, Any]]) -> dict[str, Any]:
         validate_memory_updates(updates)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        existing_ids = _load_existing_ids(self.path)
+        existing_items = _load_existing_items(self.path)
         next_line = _line_count(self.path) + 1
         written = 0
         skipped = 0
@@ -29,9 +30,11 @@ class FileMemoryWriter:
         with self.path.open("a", encoding="utf-8") as f:
             for update in updates:
                 update_id = update.get("id")
-                if update_id and update_id in existing_ids:
+                if update_id and update_id in existing_items:
                     skipped += 1
-                    mappings.append(_writeback_mapping(update, status="skipped_duplicate", target="file", path=str(self.path)))
+                    existing = existing_items[str(update_id)]
+                    status = "skipped_duplicate" if existing == update else "duplicate_conflict"
+                    mappings.append(_writeback_mapping(update, status=status, target="file", path=str(self.path)))
                     continue
                 f.write(json.dumps(update, ensure_ascii=False, sort_keys=True))
                 f.write("\n")
@@ -47,7 +50,9 @@ class FileMemoryWriter:
                 )
                 next_line += 1
                 if update_id:
-                    existing_ids.add(str(update_id))
+                    existing_items[str(update_id)] = update
+            f.flush()
+            os.fsync(f.fileno())
 
         verification = _verify_file_writeback(self.path, mappings)
         return validate_memory_writeback_result({
@@ -214,10 +219,10 @@ def validate_memory_writeback_result(result: dict[str, Any]) -> dict[str, Any]:
     return validate_schema(result, "memory_writeback.schema.json")
 
 
-def _load_existing_ids(path: Path) -> set[str]:
+def _load_existing_items(path: Path) -> dict[str, dict[str, Any] | None]:
     if not path.exists():
-        return set()
-    ids: set[str] = set()
+        return {}
+    items: dict[str, dict[str, Any] | None] = {}
     with path.open("r", encoding="utf-8-sig") as f:
         for line in f:
             stripped = line.strip()
@@ -228,8 +233,12 @@ def _load_existing_ids(path: Path) -> set[str]:
             except json.JSONDecodeError:
                 continue
             if isinstance(payload, dict) and payload.get("id"):
-                ids.add(str(payload["id"]))
-    return ids
+                item_id = str(payload["id"])
+                if item_id in items and items[item_id] != payload:
+                    items[item_id] = None
+                else:
+                    items[item_id] = payload
+    return items
 
 
 def _line_count(path: Path) -> int:
@@ -424,12 +433,13 @@ def _verify_notion_remote_readback(
 
 
 def _verify_file_writeback(path: Path, mappings: list[dict[str, Any]]) -> dict[str, Any]:
+    conflict_mappings = [mapping for mapping in mappings if mapping.get("status") == "duplicate_conflict"]
     written_mappings = [
         mapping
         for mapping in mappings
         if mapping.get("status") == "written" and isinstance(mapping.get("line_number"), int)
     ]
-    if not written_mappings:
+    if not written_mappings and not conflict_mappings:
         return {
             "status": "not_applicable",
             "target": "file",
@@ -441,7 +451,10 @@ def _verify_file_writeback(path: Path, mappings: list[dict[str, Any]]) -> dict[s
         }
 
     lines = _read_non_empty_lines(path)
-    failures: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = [
+        {"memory_id": mapping.get("memory_id"), "reason": "duplicate_payload_conflict"}
+        for mapping in conflict_mappings
+    ]
     for mapping in written_mappings:
         line_number = int(mapping["line_number"])
         payload = _payload_at_line(lines, line_number)
@@ -470,7 +483,7 @@ def _verify_file_writeback(path: Path, mappings: list[dict[str, Any]]) -> dict[s
             )
 
     failed = len(failures)
-    checked = len(written_mappings)
+    checked = len(written_mappings) + len(conflict_mappings)
     return {
         "status": "verified" if failed == 0 else "failed",
         "target": "file",

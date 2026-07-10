@@ -7,10 +7,20 @@ from pathlib import Path
 
 from core.config import clear_proxy_env, proxy_disabled_by_env
 from core.director import ModelDirector
+from core.engine.artifacts import chapter_artifact_metadata, save_chapter_artifact
 from core.engine.executor import AgentExecutor, LoopExecutionError
+from core.engine.persistence import (
+    atomic_create_json,
+    atomic_write_json,
+    complete_persistence_transaction,
+    load_persistence_candidate,
+    persistence_run_lock,
+    reconcile_persistence,
+)
 from core.engine.preflight import run_preflight
 from core.engine.recovery import RecoveryError, recover_latest_chapter_draft
 from core.engine.report import build_run_report
+from core.engine.run_record import validate_run_result
 from core.runtime_paths import (
     DEFAULT_CHAPTER_DIR,
     DEFAULT_RUN_DIR,
@@ -22,7 +32,7 @@ from core.review.index import get_latest_review, list_recent_reviews
 from core.review.repair_loop import ReviewRepairConfig, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
 from core.state.memory import load_memory_context
-from core.state.memory_writer import build_memory_writer
+from core.state.memory_writer import build_memory_writer, write_memory_updates
 from core.state.snapshot import load_snapshot
 from core.story_project.oh_story_detection import (
     detect_oh_story_compatibility,
@@ -285,6 +295,11 @@ def parse_args() -> argparse.Namespace:
         help="Recover the latest failed or rejected pre-polish chapter draft into chapter-dir and exit.",
     )
     parser.add_argument(
+        "--reconcile-persistence",
+        action="store_true",
+        help="Reconcile incomplete local persistence transactions and publish durable candidates without generating.",
+    )
+    parser.add_argument(
         "--output-json",
         action="store_true",
         help="After generation, print the full result JSON instead of the concise summary.",
@@ -439,6 +454,18 @@ def main() -> None:
         print(format_init_runtime_summary(result))
         raise SystemExit(0)
 
+    if args.reconcile_persistence:
+        result = _reconcile_and_publish_persistence(
+            args.run_dir,
+            chapter_dir=args.chapter_dir,
+            state_paths=_persistence_state_paths_from_args(args),
+        )
+        if args.output_json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(format_persistence_reconcile_summary(result))
+        raise SystemExit(0 if result.get("ok") else 1)
+
     if args.report_runs:
         report = build_run_report(run_dir=args.run_dir, limit=args.report_limit)
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -495,6 +522,20 @@ def main() -> None:
         else:
             print(format_preflight_summary(result))
         raise SystemExit(0 if result["ok"] else 1)
+
+    will_commit_state = (not args.dry_run or args.persist_dry_run) and not args.story_project_writeback_dry_run
+    if will_commit_state:
+        persistence_health = _reconcile_and_publish_persistence(
+            args.run_dir,
+            chapter_dir=args.chapter_dir,
+            state_paths=_persistence_state_paths_from_args(args),
+        )
+        if not persistence_health.get("ok"):
+            if args.output_json:
+                print(json.dumps(persistence_health, ensure_ascii=False, indent=2))
+            else:
+                print(format_persistence_reconcile_summary(persistence_health), file=sys.stderr)
+            raise SystemExit(1)
 
     story_project_context = None
     story_project_oh_story_report = None
@@ -596,6 +637,192 @@ def main() -> None:
     writeback_exit_code = _story_project_writeback_exit_code(result)
     if writeback_exit_code:
         raise SystemExit(writeback_exit_code)
+    memory_exit_code = _memory_writeback_exit_code(result)
+    if memory_exit_code:
+        raise SystemExit(memory_exit_code)
+
+
+def _reconcile_and_publish_persistence(
+    run_dir: str | Path,
+    *,
+    chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
+    state_paths: tuple[Path, ...] = (),
+) -> dict:
+    with persistence_run_lock(run_dir, state_paths=state_paths):
+        return _reconcile_and_publish_persistence_locked(run_dir, chapter_dir=chapter_dir)
+
+
+def _reconcile_and_publish_persistence_locked(
+    run_dir: str | Path,
+    *,
+    chapter_dir: str | Path,
+) -> dict:
+    report = reconcile_persistence(run_dir=run_dir)
+    published: list[str] = []
+    skipped: list[str] = []
+    errors: list[dict[str, str]] = []
+    root = Path(run_dir)
+    reconciled_transactions: list[dict] = []
+    for transaction in report.get("transactions") or []:
+        reconciled_transactions.append(transaction)
+        if not isinstance(transaction, dict) or not transaction.get("committed"):
+            continue
+        if transaction.get("state") not in {"commit_marked", "completed"}:
+            continue
+        run_id = str(transaction.get("run_id") or "")
+        journal = transaction.get("journal_path")
+        if not run_id or not journal:
+            continue
+        destination = root / f"{run_id}.json"
+        try:
+            candidate = load_persistence_candidate(journal)
+            if not isinstance(candidate, dict):
+                raise ValueError("committed transaction has no candidate result")
+            validate_run_result(candidate)
+            _validate_persistence_publication_identity(candidate, transaction)
+            if destination.exists():
+                existing = json.loads(destination.read_text(encoding="utf-8"))
+                validate_run_result(existing)
+                _validate_persistence_publication_identity(existing, transaction)
+                _validate_existing_publication(existing, candidate)
+                if transaction.get("state") == "commit_marked":
+                    planned = ((candidate.get("run") or {}).get("chapter") or {}).get("artifact") or {}
+                    if not planned.get("path") or not Path(str(planned["path"])).exists():
+                        _ensure_candidate_chapter_artifact(candidate, fallback_chapter_dir=chapter_dir)
+                skipped.append(run_id)
+            else:
+                _deliver_candidate_postcommit_outbox(candidate)
+                _ensure_candidate_chapter_artifact(candidate, fallback_chapter_dir=chapter_dir)
+                atomic_create_json(destination, candidate)
+                published.append(run_id)
+            if transaction.get("state") == "commit_marked":
+                completed = complete_persistence_transaction(journal).to_dict()
+                reconciled_transactions[-1] = completed
+        except Exception as exc:  # noqa: BLE001 - reconciliation reports ambiguity without overwriting.
+            errors.append({"run_id": run_id, "error": f"{type(exc).__name__}: {exc}"})
+    result = dict(report)
+    result["transactions"] = reconciled_transactions
+    result["published_run_ids"] = published
+    result["existing_run_ids"] = skipped
+    result["publish_errors"] = errors
+    pending = [
+        item.get("run_id")
+        for item in reconciled_transactions
+        if isinstance(item, dict) and item.get("state") == "commit_marked"
+    ]
+    result["pending_publication"] = pending
+    result["ok"] = bool(report.get("ok")) and not errors and not pending
+    return result
+
+
+def _validate_persistence_publication_identity(candidate: dict, transaction: dict) -> None:
+    run = candidate.get("run") if isinstance(candidate.get("run"), dict) else None
+    if not isinstance(run, dict) or run.get("id") != transaction.get("run_id"):
+        raise ValueError("published run id does not match persistence transaction")
+    persistence = run.get("persistence") if isinstance(run.get("persistence"), dict) else None
+    if not isinstance(persistence, dict) or persistence.get("run_id") != transaction.get("run_id"):
+        raise ValueError("published persistence identity does not match transaction")
+    expected_journal = Path(str(transaction.get("journal_path") or "")).resolve()
+    actual_journal = Path(str(persistence.get("journal_path") or "")).resolve()
+    if expected_journal != actual_journal:
+        raise ValueError("published persistence journal does not match transaction")
+    if not persistence.get("committed"):
+        raise ValueError("published persistence candidate is not committed")
+
+
+def _ensure_candidate_chapter_artifact(candidate: dict, *, fallback_chapter_dir: str | Path) -> None:
+    run = candidate.get("run") if isinstance(candidate.get("run"), dict) else None
+    chapter = candidate.get("chapter")
+    if not isinstance(run, dict) or not isinstance(chapter, str):
+        raise ValueError("committed candidate is missing run or chapter content")
+    run_chapter = run.get("chapter") if isinstance(run.get("chapter"), dict) else None
+    if not isinstance(run_chapter, dict):
+        raise ValueError("committed candidate is missing run chapter metadata")
+    planned = run_chapter.get("artifact") if isinstance(run_chapter.get("artifact"), dict) else None
+    output_dir = Path(str(planned.get("path"))).parent if planned and planned.get("path") else Path(fallback_chapter_dir)
+    expected = chapter_artifact_metadata(chapter_text=chapter, run=run, output_dir=output_dir)
+    if planned and Path(str(planned.get("path"))).resolve() != Path(expected["path"]).resolve():
+        raise ValueError("candidate chapter artifact path does not match run identity")
+    run_chapter["artifact"] = save_chapter_artifact(chapter_text=chapter, run=run, output_dir=output_dir)
+
+
+def _validate_existing_publication(existing: dict, candidate: dict) -> None:
+    existing_run = existing["run"]
+    candidate_run = candidate["run"]
+    if existing.get("chapter") != candidate.get("chapter"):
+        raise ValueError("existing run chapter does not match hash-bound candidate")
+    for key in ("id", "chapter_index", "status", "accepted", "committed"):
+        if existing_run.get(key) != candidate_run.get(key):
+            raise ValueError(f"existing run {key} does not match hash-bound candidate")
+    existing_chapter = existing_run.get("chapter") if isinstance(existing_run.get("chapter"), dict) else {}
+    candidate_chapter = candidate_run.get("chapter") if isinstance(candidate_run.get("chapter"), dict) else {}
+    existing_artifact = existing_chapter.get("artifact") if isinstance(existing_chapter.get("artifact"), dict) else {}
+    candidate_artifact = candidate_chapter.get("artifact") if isinstance(candidate_chapter.get("artifact"), dict) else {}
+    if existing_artifact.get("path") != candidate_artifact.get("path"):
+        raise ValueError("existing chapter artifact path does not match hash-bound candidate")
+
+
+def _deliver_candidate_postcommit_outbox(candidate: dict) -> None:
+    run = candidate["run"]
+    persistence = run.get("persistence") if isinstance(run.get("persistence"), dict) else {}
+    publication = persistence.get("publication") if isinstance(persistence.get("publication"), dict) else {}
+    memory = publication.get("memory_outbox") if isinstance(publication.get("memory_outbox"), dict) else {}
+    status = str(memory.get("status") or "not_applicable")
+    if status == "external_pending":
+        raise RuntimeError("pending external memory delivery cannot be reconciled deterministically")
+    if status not in {"pending", "failed"}:
+        return
+    if memory.get("target") != "file" or not memory.get("path"):
+        raise ValueError("pending memory outbox is missing a deterministic file target")
+    updates = memory.get("updates")
+    if not isinstance(updates, list):
+        raise ValueError("pending memory outbox is missing updates")
+    writer = build_memory_writer(mode="file", outbox_path=str(memory["path"]))
+    writeback = write_memory_updates(updates, writer)
+    gate = memory.get("gate")
+    if isinstance(gate, dict):
+        writeback["gate"] = gate
+    verification = writeback.get("verification") if isinstance(writeback.get("verification"), dict) else {}
+    if verification.get("status") in {"failed", "error", "readback_failed"}:
+        raise RuntimeError("pending memory outbox verification failed")
+    candidate["memory_write"] = writeback
+    run.setdefault("memory", {})["writeback"] = writeback
+    updated_memory = dict(memory)
+    updated_memory["status"] = "delivered"
+    updated_publication = dict(publication)
+    updated_publication["memory_outbox"] = updated_memory
+    persistence["publication"] = updated_publication
+    if isinstance(candidate.get("persistence"), dict):
+        candidate["persistence"]["publication"] = updated_publication
+
+
+def _persistence_state_paths_from_args(args: argparse.Namespace) -> tuple[Path, ...]:
+    paths = [Path(str(args.snapshot))]
+    story_project = getattr(args, "story_project", None)
+    if story_project is not None:
+        resolution = resolve_story_project_root(story_project)
+        if resolution.root is not None:
+            paths.append(Path(resolution.root))
+    writer = build_memory_writer(
+        mode=str(getattr(args, "memory_writeback", "none")),
+        outbox_path=getattr(args, "memory_outbox", None),
+        notion_readback=bool(getattr(args, "notion_readback", False)),
+    )
+    if hasattr(writer, "path"):
+        paths.append(Path(getattr(writer, "path")))
+    return tuple(paths)
+
+
+def format_persistence_reconcile_summary(result: dict) -> str:
+    return "\n".join(
+        [
+            f"Persistence reconcile: {'OK' if result.get('ok') else 'FAILED'}",
+            f"Transactions: {result.get('transaction_count', 0)}",
+            f"Published runs: {len(result.get('published_run_ids') or [])}",
+            f"Recovery required: {len(result.get('recovery_required') or [])}",
+            f"Publish errors: {len(result.get('publish_errors') or [])}",
+        ]
+    )
 
 
 def format_preflight_summary(result: dict) -> str:
@@ -1003,8 +1230,12 @@ def _story_project_writeback_config_from_args(args: argparse.Namespace) -> Story
         raise ValueError("--story-project-writeback and --story-project-writeback-dry-run are mutually exclusive")
     if real_writeback and bool(getattr(args, "dry_run", False)):
         raise ValueError("--dry-run cannot be combined with --story-project-writeback; use --story-project-writeback-dry-run")
+    if dry_run_writeback and bool(getattr(args, "persist_dry_run", False)):
+        raise ValueError("--story-project-writeback-dry-run cannot be combined with --persist-dry-run")
     if (real_writeback or dry_run_writeback) and getattr(args, "story_project", None) is None:
         raise ValueError("--story-project-writeback requires --story-project")
+    if real_writeback and str(getattr(args, "memory_writeback", "none")) == "notion":
+        raise ValueError("--story-project-writeback cannot be combined with direct Notion writeback; use file outbox")
     mode = "none"
     if real_writeback:
         mode = "apply"
@@ -1032,6 +1263,16 @@ def _story_project_writeback_exit_code(result: dict | None) -> int:
     if not writeback.get("attempted") or writeback.get("dry_run"):
         return 0
     return 0 if writeback.get("applied") else 1
+
+
+def _memory_writeback_exit_code(result: dict | None) -> int:
+    if not isinstance(result, dict):
+        return 0
+    run = result.get("run") if isinstance(result.get("run"), dict) else {}
+    memory = run.get("memory") if isinstance(run.get("memory"), dict) else {}
+    writeback = memory.get("writeback") if isinstance(memory.get("writeback"), dict) else {}
+    verification = writeback.get("verification") if isinstance(writeback.get("verification"), dict) else {}
+    return 1 if verification.get("status") in {"failed", "error"} else 0
 
 
 def _run_model_calls(run: dict) -> list[tuple[str, dict]]:

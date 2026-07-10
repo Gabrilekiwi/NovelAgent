@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from core.engine.persistence import atomic_write_text
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR
 
 
@@ -31,19 +32,26 @@ def save_chapter_artifact(
     run: dict[str, Any],
     output_dir: str | Path = DEFAULT_CHAPTER_DIR,
 ) -> dict[str, Any]:
+    artifact = chapter_artifact_metadata(chapter_text=chapter_text, run=run, output_dir=output_dir)
+    path = Path(artifact["path"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    content = _format_chapter_markdown(chapter_text, run)
+    atomic_write_text(path, content)
+    return artifact
+
+
+def chapter_artifact_metadata(
+    *,
+    chapter_text: str,
+    run: dict[str, Any],
+    output_dir: str | Path = DEFAULT_CHAPTER_DIR,
+) -> dict[str, Any]:
     chapter_index = int(run["chapter_index"])
     status = str(run["status"])
     run_id = str(run["id"])
     path = Path(output_dir) / f"chapter_{chapter_index:04d}_{status}_{run_id}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    content = _format_chapter_markdown(chapter_text, run)
-    path.write_text(content, encoding="utf-8")
-    return {
-        "path": str(path),
-        "chars": len(chapter_text),
-        "format": "markdown",
-    }
+    return {"path": str(path), "chars": len(chapter_text), "format": "markdown"}
 
 
 def save_input_pack_artifact(

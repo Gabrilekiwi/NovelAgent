@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import inspect
 from pathlib import Path
@@ -16,6 +17,7 @@ from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validat
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.schema import validate_schema
 from core.engine.artifacts import (
+    chapter_artifact_metadata,
     save_chapter_artifact,
     save_chapter_pipeline_artifacts,
     save_input_pack_artifact,
@@ -23,6 +25,15 @@ from core.engine.artifacts import (
     save_review_repair_artifacts,
     save_snapshot_pack_artifact,
     save_story_project_writeback_artifacts,
+)
+from core.engine.persistence import (
+    LocalPersistenceTransaction,
+    PersistenceError,
+    PersistencePreparationError,
+    PersistenceTarget,
+    atomic_write_json,
+    persistence_run_lock,
+    reconcile_persistence,
 )
 from core.engine.run_record import (
     build_run_id,
@@ -45,12 +56,13 @@ from core.state.input_pack import (
 from core.state.memory import load_memory_context
 from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
-from core.state.snapshot import build_state_update_audit, load_snapshot, save_snapshot, update_snapshot
+from core.state.snapshot import build_state_update_audit, load_snapshot, normalize_snapshot, update_snapshot
 from core.story_project.coverage import build_blueprint_coverage
 from core.story_project.writer import (
     StoryProjectWritebackConfig,
     default_story_project_writeback,
-    run_story_project_writeback,
+    finalize_story_project_writeback,
+    prepare_story_project_writeback,
 )
 from core.validator import validate_chapter
 from core.validator.spatial import validate_bridge_preconditions
@@ -123,7 +135,15 @@ class AgentExecutor:
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
+        if not persist:
+            return self._run_once_impl(persist=False)
+        with persistence_run_lock(self.run_dir, state_paths=self._persistence_state_paths()):
+            self._assert_persistence_ready()
+            return self._run_once_impl(persist=True)
+
+    def _run_once_impl(self, *, persist: bool) -> dict[str, Any]:
         started_at = utc_now()
+        snapshot_before = _capture_file_version(self.snapshot_path)
         base_snapshot = load_snapshot(self.snapshot_path)
         memory_context = self._load_memory_context()
         base_snapshot, memory_context = self._apply_story_project_context(base_snapshot, memory_context)
@@ -257,7 +277,7 @@ class AgentExecutor:
                     exc.validation,
                     _trace_repair_deltas(exc.trace),
                 )
-                self._attach_failed_chapter_artifact(failed_result)
+                self._attach_chapter_artifact(failed_result)
                 self._save_run_record(failed_result)
             raise exc.original from exc
 
@@ -357,7 +377,7 @@ class AgentExecutor:
                     None,
                     _trace_repair_deltas(workflow_trace),
                 )
-                self._attach_failed_chapter_artifact(failed_result)
+                self._attach_chapter_artifact(failed_result)
                 self._save_run_record(failed_result)
             raise
         finished_at = utc_now()
@@ -410,54 +430,34 @@ class AgentExecutor:
         self._attach_precomputed_runtime_review(result, review_pipeline, review_gate, review_repair)
 
         if persist:
-            self._attach_snapshot_pack_artifact(result["run"], snapshot_pack)
-            input_pack_artifact = save_input_pack_artifact(
-                input_pack=input_pack,
-                run=result["run"],
-                output_dir=self.run_dir / "input_packs",
-            )
-            result["run"]["input_pack"]["artifact"] = input_pack_artifact
-            if committed:
-                save_snapshot(next_snapshot, self.snapshot_path)
-                memory_updates = build_memory_updates(result["run"], analysis)
-                result["run"]["state_update"] = build_state_update_audit(
-                    snapshot=snapshot,
+            self._attach_story_project_audit(result)
+            if accepted:
+                self._persist_accepted_result(
+                    result,
+                    base_snapshot=base_snapshot,
+                    runtime_snapshot=snapshot,
                     next_snapshot=next_snapshot,
                     analysis=analysis,
-                    memory_updates=memory_updates,
-                    applied=True,
-                )
-                result["state_update"] = result["run"]["state_update"]
-                writeback_gate = _memory_writeback_gate(
-                    committed=committed,
                     validation=validation,
                     workflow_trace=workflow_trace,
-                    memory_updates=memory_updates,
+                    snapshot_before=snapshot_before,
+                    snapshot_pack=snapshot_pack,
+                    input_pack=input_pack,
+                    chapter_pipeline=chapter_pipeline,
+                    review_repair=review_repair,
                 )
-                if writeback_gate["allowed"]:
-                    result["memory_write"] = write_memory_updates(memory_updates, self.memory_writer)
-                    result["memory_write"]["gate"] = writeback_gate
-                else:
-                    result["memory_write"] = _blocked_memory_writeback(writeback_gate)
-                result["run"]["memory"]["writeback"] = result["memory_write"]
-            artifact = save_chapter_artifact(
-                chapter_text=chapter,
-                run=result["run"],
-                output_dir=self.chapter_dir,
-            )
-            result["run"]["chapter"]["artifact"] = artifact
-            self._attach_chapter_pipeline_artifacts(
-                result["run"],
-                chapter_pipeline,
-                validation,
-                _trace_repair_deltas(workflow_trace),
-            )
-            self._attach_review_repair_artifacts(result, review_repair)
-            self._attach_story_project_audit(result)
-            self._run_story_project_writeback(result)
-
-        if persist:
-            self._save_run_record(result)
+            else:
+                self._attach_execution_artifacts(
+                    result,
+                    snapshot_pack=snapshot_pack,
+                    input_pack=input_pack,
+                    chapter_pipeline=chapter_pipeline,
+                    validation=validation,
+                    workflow_trace=workflow_trace,
+                    review_repair=review_repair,
+                )
+                self._attach_chapter_artifact(result)
+                self._save_run_record(result)
 
         return result
 
@@ -1160,8 +1160,28 @@ class AgentExecutor:
         validate_run_result(result)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         path = self.run_dir / f"{result['run']['id']}.json"
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+        atomic_write_json(path, result)
+
+    def _assert_persistence_ready(self) -> None:
+        report = reconcile_persistence(run_dir=self.run_dir)
+        blocking = [
+            item
+            for item in report.get("transactions") or []
+            if isinstance(item, dict) and item.get("state") in {"commit_marked", "recovery_required"}
+        ]
+        if blocking:
+            run_ids = ", ".join(str(item.get("run_id") or "unknown") for item in blocking)
+            raise PersistenceError(f"persistence_reconciliation_required: {run_ids}")
+
+    def _persistence_state_paths(self) -> list[Path]:
+        paths = [self.snapshot_path]
+        context = self._story_project_context_dict()
+        root = context.get("story_project_root") if isinstance(context, dict) else None
+        if root:
+            paths.append(Path(str(root)))
+        if hasattr(self.memory_writer, "path"):
+            paths.append(Path(getattr(self.memory_writer, "path")))
+        return paths
 
     def _attach_story_project_audit(self, result: dict[str, Any]) -> None:
         context = self._story_project_context_dict()
@@ -1186,32 +1206,377 @@ class AgentExecutor:
         if isinstance(self.story_project_oh_story_report, dict):
             run["story_project"]["oh_story"] = self.story_project_oh_story_report
 
-    def _run_story_project_writeback(self, result: dict[str, Any]) -> None:
-        if not self.story_project_writeback.enabled:
-            return
+    def _persist_accepted_result(
+        self,
+        result: dict[str, Any],
+        *,
+        base_snapshot: dict[str, Any],
+        runtime_snapshot: dict[str, Any],
+        next_snapshot: dict[str, Any],
+        analysis: dict[str, Any],
+        validation: dict[str, Any],
+        workflow_trace: list[dict[str, Any]],
+        snapshot_before: dict[str, Any],
+        snapshot_pack: str,
+        input_pack: str,
+        chapter_pipeline: dict[str, Any] | None,
+        review_repair: dict[str, Any] | None,
+    ) -> None:
         context = self._story_project_context_dict()
         run = result.get("run") if isinstance(result.get("run"), dict) else None
         if not isinstance(run, dict):
-            return
-        plan, writeback_result = run_story_project_writeback(
-            context=context,
-            run=run,
+            raise PersistenceError("run record is required for persistence")
+
+        plan = None
+        story_targets = []
+        rendered_targets = []
+        if self.story_project_writeback.enabled:
+            plan, story_targets, rendered_targets, prepared_result = prepare_story_project_writeback(
+                context=context,
+                run=run,
+                chapter_text=str(result.get("chapter") or ""),
+                validation=validation,
+                analysis=analysis,
+                config=self.story_project_writeback,
+            )
+            self._attach_story_project_writeback_payload(result, plan.to_dict(), prepared_result.to_dict())
+            if plan.dry_run:
+                self._mark_result_preview(
+                    result,
+                    runtime_snapshot=runtime_snapshot,
+                    next_snapshot=next_snapshot,
+                    analysis=analysis,
+                )
+                self._attach_execution_artifacts(
+                    result,
+                    snapshot_pack=snapshot_pack,
+                    input_pack=input_pack,
+                    chapter_pipeline=chapter_pipeline,
+                    validation=validation,
+                    workflow_trace=workflow_trace,
+                    review_repair=review_repair,
+                )
+                self._attach_chapter_artifact(result)
+                self._save_run_record(result)
+                return
+            if plan.blocked:
+                self._mark_result_persistence_failed(
+                    result,
+                    base_snapshot=base_snapshot,
+                    runtime_snapshot=runtime_snapshot,
+                    next_snapshot=next_snapshot,
+                    analysis=analysis,
+                    persistence={
+                        "run_id": run["id"],
+                        "state": "preparation_failed",
+                        "committed": False,
+                        "partial": False,
+                        "errors": list(plan.errors),
+                        "targets": [],
+                    },
+                )
+                self._attach_execution_artifacts(
+                    result,
+                    snapshot_pack=snapshot_pack,
+                    input_pack=input_pack,
+                    chapter_pipeline=chapter_pipeline,
+                    validation=validation,
+                    workflow_trace=workflow_trace,
+                    review_repair=review_repair,
+                )
+                self._attach_chapter_artifact(result)
+                self._save_run_record(result)
+                return
+
+        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        persistence_targets: list[PersistenceTarget] = []
+        for rendered in rendered_targets:
+            persistence_targets.append(
+                PersistenceTarget(
+                    rendered.kind,
+                    rendered.path,
+                    rendered.content,
+                    metadata={"story_target_index": rendered.target_index},
+                    expected_before_exists=rendered.expected_before_exists,
+                    expected_before_sha256=rendered.expected_before_sha256,
+                )
+            )
+        persistence_targets.append(
+            PersistenceTarget(
+                "snapshot",
+                self.snapshot_path,
+                json.dumps(normalize_snapshot(next_snapshot), ensure_ascii=False, indent=2) + "\n",
+                metadata={"chapter_index": run.get("chapter_index")},
+                expected_before_exists=bool(snapshot_before["exists"]),
+                expected_before_sha256=snapshot_before.get("sha256"),
+            )
+        )
+        allowed_roots = [self.snapshot_path.parent]
+        if plan is not None and plan.story_project_root is not None:
+            allowed_roots.insert(0, plan.story_project_root)
+
+        result["run"]["chapter"]["artifact"] = chapter_artifact_metadata(
             chapter_text=str(result.get("chapter") or ""),
-            validation=result.get("validation") if isinstance(result.get("validation"), dict) else None,
-            analysis=result.get("analysis") if isinstance(result.get("analysis"), dict) else None,
-            config=self.story_project_writeback,
+            run=result["run"],
+            output_dir=self.chapter_dir,
         )
-        writeback_payload = writeback_result.to_dict()
-        artifacts = save_story_project_writeback_artifacts(
-            plan=plan.to_dict(),
-            result=writeback_payload,
-            run=run,
-            output_dir=self.run_dir / "story_project_writebacks",
+        memory_updates = build_memory_updates(result["run"], analysis)
+        writeback_gate = _memory_writeback_gate(
+            committed=True,
+            validation=validation,
+            workflow_trace=workflow_trace,
+            memory_updates=memory_updates,
         )
-        writeback_payload["artifacts"] = artifacts
-        run_story_project = run.setdefault("story_project", {})
-        if isinstance(run_story_project, dict):
-            run_story_project["writeback"] = writeback_payload
+        publication = _persistence_publication(
+            chapter_artifact=result["run"]["chapter"]["artifact"],
+            memory_updates=memory_updates,
+            writeback_gate=writeback_gate,
+            writer=self.memory_writer,
+        )
+        anticipated = self._anticipated_persistence(run["id"], persistence_targets, publication=publication)
+        self._attach_persistence_payload(result, anticipated)
+        if plan is not None:
+            expected_writeback = finalize_story_project_writeback(plan, story_targets, anticipated).to_dict()
+            self._attach_story_project_writeback_payload(
+                result,
+                plan.to_dict(),
+                expected_writeback,
+                publish_artifacts=False,
+            )
+        transaction = LocalPersistenceTransaction(
+            run_dir=self.run_dir,
+            run_id=str(run["id"]),
+            allowed_roots=allowed_roots,
+        )
+        try:
+            validate_run_result(result)
+            transaction.prepare(persistence_targets, candidate_result=result)
+            persistence_result = transaction.commit().to_dict()
+        except (PersistenceError, PersistencePreparationError, OSError, ValueError) as exc:
+            persistence_result = {
+                "run_id": str(run["id"]),
+                "state": "preparation_failed",
+                "committed": False,
+                "partial": False,
+                "journal_path": str(transaction.journal_dir),
+                "commit_marker": str(transaction.commit_marker_path),
+                "targets": [],
+                "errors": [{"code": "persistence_prepare_failed", "error": f"{type(exc).__name__}: {exc}"}],
+            }
+
+        raw_persistence_result = dict(persistence_result)
+        if persistence_result.get("committed") and persistence_result.get("state") in {"commit_marked", "completed"}:
+            persistence_result = {**persistence_result, "state": "completed", "publication": publication}
+        self._attach_persistence_payload(result, persistence_result)
+        if plan is not None:
+            actual_writeback = finalize_story_project_writeback(plan, story_targets, persistence_result).to_dict()
+            self._attach_story_project_writeback_payload(result, plan.to_dict(), actual_writeback)
+
+        if not persistence_result.get("committed"):
+            self._mark_result_persistence_failed(
+                result,
+                base_snapshot=base_snapshot,
+                runtime_snapshot=runtime_snapshot,
+                next_snapshot=next_snapshot,
+                analysis=analysis,
+                persistence=persistence_result,
+            )
+            self._attach_execution_artifacts(
+                result,
+                snapshot_pack=snapshot_pack,
+                input_pack=input_pack,
+                chapter_pipeline=chapter_pipeline,
+                validation=validation,
+                workflow_trace=workflow_trace,
+                review_repair=review_repair,
+            )
+            self._attach_chapter_artifact(result)
+            self._save_run_record(result)
+            return
+
+        self._attach_execution_artifacts(
+            result,
+            snapshot_pack=snapshot_pack,
+            input_pack=input_pack,
+            chapter_pipeline=chapter_pipeline,
+            validation=validation,
+            workflow_trace=workflow_trace,
+            review_repair=review_repair,
+        )
+        self._attach_chapter_artifact(result)
+        result["run"]["state_update"] = build_state_update_audit(
+            snapshot=runtime_snapshot,
+            next_snapshot=next_snapshot,
+            analysis=analysis,
+            memory_updates=memory_updates,
+            applied=True,
+        )
+        result["state_update"] = result["run"]["state_update"]
+        if writeback_gate["allowed"]:
+            try:
+                result["memory_write"] = write_memory_updates(memory_updates, self.memory_writer)
+            except Exception as exc:  # noqa: BLE001 - canonical commit already succeeded; record delivery failure.
+                target = _memory_writer_target(self.memory_writer)
+                result["memory_write"] = validate_memory_writeback_result(
+                    {
+                        "target": target,
+                        "written": 0,
+                        "item_mappings": [],
+                        "verification": {
+                            "status": "failed",
+                            "target": target,
+                            "failures": [{"error": f"{type(exc).__name__}: {exc}"}],
+                        },
+                    }
+                )
+            result["memory_write"]["gate"] = writeback_gate
+        else:
+            result["memory_write"] = _blocked_memory_writeback(writeback_gate)
+        result["run"]["memory"]["writeback"] = result["memory_write"]
+        verification = result["memory_write"].get("verification") if isinstance(result["memory_write"], dict) else {}
+        delivery_failed = isinstance(verification, dict) and verification.get("status") in {
+            "failed",
+            "error",
+            "readback_failed",
+        }
+        delivery_status = "failed" if delivery_failed else "delivered"
+        _set_memory_publication_status(result, delivery_status)
+        if _memory_writer_target(self.memory_writer) == "file" and delivery_failed:
+            pending = {**raw_persistence_result, "publication": publication}
+            pending["publication"] = _publication_with_memory_status(publication, "failed")
+            self._attach_persistence_payload(result, pending)
+            if plan is not None:
+                pending_writeback = finalize_story_project_writeback(plan, story_targets, pending).to_dict()
+                self._attach_story_project_writeback_payload(result, plan.to_dict(), pending_writeback)
+            return
+        self._save_run_record(result)
+        transaction.complete_publication()
+
+    def _anticipated_persistence(
+        self,
+        run_id: str,
+        targets: list[PersistenceTarget],
+        *,
+        publication: dict[str, Any],
+    ) -> dict[str, Any]:
+        journal = self.run_dir.resolve() / "transactions" / str(run_id)
+        return {
+            "run_id": str(run_id),
+            "state": "completed",
+            "committed": True,
+            "partial": False,
+            "journal_path": str(journal),
+            "commit_marker": str(journal / "commit.marker"),
+            "targets": [
+                {
+                    "kind": target.kind,
+                    "path": str(Path(target.path).resolve()),
+                    "status": "verified",
+                    "metadata": dict(target.metadata),
+                }
+                for target in targets
+            ],
+            "errors": [],
+            "candidate_result_path": str(journal / "candidate_result.json"),
+            "publication": publication,
+        }
+
+    def _attach_persistence_payload(self, result: dict[str, Any], payload: dict[str, Any]) -> None:
+        public = {
+            key: value
+            for key, value in payload.items()
+            if key in {
+                "run_id",
+                "state",
+                "committed",
+                "partial",
+                "journal_path",
+                "commit_marker",
+                "targets",
+                "errors",
+                "candidate_result_path",
+                "publication",
+            }
+        }
+        result["persistence"] = public
+        result["run"]["persistence"] = public
+
+    def _attach_story_project_writeback_payload(
+        self,
+        result: dict[str, Any],
+        plan: dict[str, Any],
+        payload: dict[str, Any],
+        *,
+        publish_artifacts: bool = True,
+    ) -> None:
+        run = result["run"]
+        payload = dict(payload)
+        if publish_artifacts:
+            payload["artifacts"] = save_story_project_writeback_artifacts(
+                plan=plan,
+                result=payload,
+                run=run,
+                output_dir=self.run_dir / "story_project_writebacks",
+            )
+        story_project = run.setdefault("story_project", {})
+        story_project["writeback"] = payload
+
+    def _mark_result_preview(
+        self,
+        result: dict[str, Any],
+        *,
+        runtime_snapshot: dict[str, Any],
+        next_snapshot: dict[str, Any],
+        analysis: dict[str, Any],
+    ) -> None:
+        result["committed"] = False
+        result["run"]["committed"] = False
+        result["run"]["status"] = "preview"
+        result["run"]["snapshot"]["next_chapter_index"] = runtime_snapshot.get("chapter_index")
+        result["run"]["state_update"] = build_state_update_audit(
+            snapshot=runtime_snapshot,
+            next_snapshot=next_snapshot,
+            analysis=analysis,
+            memory_updates=[],
+            applied=False,
+        )
+        result["state_update"] = result["run"]["state_update"]
+        self._attach_persistence_payload(
+            result,
+            {
+                "run_id": result["run"]["id"],
+                "state": "preview",
+                "committed": False,
+                "partial": False,
+                "targets": [],
+                "errors": [],
+            },
+        )
+
+    def _mark_result_persistence_failed(
+        self,
+        result: dict[str, Any],
+        *,
+        base_snapshot: dict[str, Any],
+        runtime_snapshot: dict[str, Any],
+        next_snapshot: dict[str, Any],
+        analysis: dict[str, Any],
+        persistence: dict[str, Any],
+    ) -> None:
+        result["committed"] = False
+        result["run"]["committed"] = False
+        result["run"]["status"] = "failed"
+        result["snapshot"] = base_snapshot
+        result["run"]["snapshot"]["next_chapter_index"] = runtime_snapshot.get("chapter_index")
+        result["run"]["state_update"] = build_state_update_audit(
+            snapshot=runtime_snapshot,
+            next_snapshot=next_snapshot,
+            analysis=analysis,
+            memory_updates=[],
+            applied=False,
+        )
+        result["state_update"] = result["run"]["state_update"]
+        self._attach_persistence_payload(result, persistence)
 
     def _attach_snapshot_pack_artifact(self, run: dict[str, Any], snapshot_pack: str) -> None:
         artifact = save_snapshot_pack_artifact(
@@ -1221,7 +1586,33 @@ class AgentExecutor:
         )
         run["snapshot_builder"]["artifact"] = artifact
 
-    def _attach_failed_chapter_artifact(self, result: dict[str, Any]) -> None:
+    def _attach_execution_artifacts(
+        self,
+        result: dict[str, Any],
+        *,
+        snapshot_pack: str,
+        input_pack: str,
+        chapter_pipeline: dict[str, Any] | None,
+        validation: dict[str, Any] | None,
+        workflow_trace: list[dict[str, Any]],
+        review_repair: dict[str, Any] | None,
+    ) -> None:
+        run = result["run"]
+        self._attach_snapshot_pack_artifact(run, snapshot_pack)
+        run["input_pack"]["artifact"] = save_input_pack_artifact(
+            input_pack=input_pack,
+            run=run,
+            output_dir=self.run_dir / "input_packs",
+        )
+        self._attach_chapter_pipeline_artifacts(
+            run,
+            chapter_pipeline,
+            validation,
+            _trace_repair_deltas(workflow_trace),
+        )
+        self._attach_review_repair_artifacts(result, review_repair)
+
+    def _attach_chapter_artifact(self, result: dict[str, Any]) -> None:
         chapter = result.get("chapter")
         run = result.get("run")
         if not isinstance(chapter, str) or not chapter.strip() or not isinstance(run, dict):
@@ -1440,6 +1831,74 @@ def _result_failure_reasons(result: dict[str, Any]) -> list[str]:
     if verification.get("status") in {"failed", "error"}:
         reasons.append("memory_delivery_failed")
     return list(dict.fromkeys(reasons))
+
+
+def _memory_writer_target(writer: MemoryWriter | None) -> str | None:
+    if writer is None:
+        return None
+    if hasattr(writer, "path"):
+        return "file"
+    if hasattr(writer, "database_id"):
+        return "notion"
+    return None
+
+
+def _persistence_publication(
+    *,
+    chapter_artifact: dict[str, Any],
+    memory_updates: list[dict[str, Any]],
+    writeback_gate: dict[str, Any],
+    writer: MemoryWriter | None,
+) -> dict[str, Any]:
+    target = _memory_writer_target(writer)
+    allowed = bool(writeback_gate.get("allowed"))
+    memory: dict[str, Any] = {
+        "target": target,
+        "status": "not_applicable",
+        "update_count": len(memory_updates),
+        "gate": dict(writeback_gate),
+    }
+    if target == "file" and allowed and memory_updates:
+        memory.update(
+            {
+                "status": "pending",
+                "path": str(Path(getattr(writer, "path")).resolve()),
+                "updates": [dict(item) for item in memory_updates],
+            }
+        )
+    elif target == "notion" and allowed and memory_updates:
+        memory["status"] = "external_pending"
+    elif not allowed:
+        memory["status"] = "blocked"
+    return {"chapter_artifact": dict(chapter_artifact), "memory_outbox": memory}
+
+
+def _publication_with_memory_status(publication: dict[str, Any], status: str) -> dict[str, Any]:
+    updated = dict(publication)
+    memory = dict(updated.get("memory_outbox") or {})
+    memory["status"] = status
+    updated["memory_outbox"] = memory
+    return updated
+
+
+def _set_memory_publication_status(result: dict[str, Any], status: str) -> None:
+    for persistence in (
+        result.get("persistence"),
+        (result.get("run") or {}).get("persistence") if isinstance(result.get("run"), dict) else None,
+    ):
+        if not isinstance(persistence, dict):
+            continue
+        publication = persistence.get("publication")
+        if isinstance(publication, dict):
+            persistence["publication"] = _publication_with_memory_status(publication, status)
+
+
+def _capture_file_version(path: Path) -> dict[str, Any]:
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError:
+        return {"exists": False, "sha256": None}
+    return {"exists": True, "sha256": hashlib.sha256(content).hexdigest()}
 
 
 def _loop_step_timing(

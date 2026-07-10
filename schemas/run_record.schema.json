@@ -152,7 +152,9 @@
                       "created",
                       "updated",
                       "skipped",
-                      "failed"
+                      "failed",
+                      "rolled_back",
+                      "rollback_failed"
                     ]
                   },
                   "action": {
@@ -205,10 +207,50 @@
             },
             "artifacts": {
               "type": "object"
+            },
+            "transaction": {
+              "type": "object"
             }
           },
           "additionalProperties": false
         }
+      },
+      "additionalProperties": false
+    },
+    "persistence": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "state",
+        "committed",
+        "partial",
+        "targets",
+        "errors"
+      ],
+      "properties": {
+        "run_id": {"type": "string"},
+        "state": {
+          "enum": [
+            "preview",
+            "preparation_failed",
+            "preparing",
+            "prepared",
+            "applying",
+            "commit_marked",
+            "completed",
+            "rolling_back",
+            "rolled_back",
+            "recovery_required"
+          ]
+        },
+        "committed": {"type": "boolean"},
+        "partial": {"type": "boolean"},
+        "journal_path": {"type": "string"},
+        "commit_marker": {"type": "string"},
+        "candidate_result_path": {"type": ["string", "null"]},
+        "publication": {"type": "object"},
+        "targets": {"type": "array", "items": {"type": "object"}},
+        "errors": {"type": "array", "items": {"type": "object"}}
       },
       "additionalProperties": false
     },

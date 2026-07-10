@@ -177,12 +177,88 @@ class CliTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "--story-project-writeback-dry-run"):
             cli._story_project_writeback_config_from_args(args)
 
+    def test_story_project_writeback_preview_conflicts_with_persist_dry_run(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                "auto",
+                "--story-project-writeback-dry-run",
+                "--persist-dry-run",
+            ],
+        ):
+            args = cli.parse_args()
+
+        with self.assertRaisesRegex(ValueError, "--persist-dry-run"):
+            cli._story_project_writeback_config_from_args(args)
+
+    def test_story_project_real_writeback_rejects_direct_notion_delivery(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                "auto",
+                "--story-project-writeback",
+                "--memory-writeback",
+                "notion",
+            ],
+        ):
+            args = cli.parse_args()
+
+        with self.assertRaisesRegex(ValueError, "Notion"):
+            cli._story_project_writeback_config_from_args(args)
+
     def test_story_project_writeback_requires_story_project(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--story-project-writeback"]):
             args = cli.parse_args()
 
         with self.assertRaisesRegex(ValueError, "--story-project"):
             cli._story_project_writeback_config_from_args(args)
+
+    def test_reconcile_persistence_is_a_generation_free_command(self) -> None:
+        case_dir = self._case_dir("reconcile_command")
+        report = {
+            "ok": True,
+            "transaction_count": 0,
+            "recovery_required": [],
+            "transactions": [],
+            "published_run_ids": [],
+            "existing_run_ids": [],
+            "publish_errors": [],
+        }
+        output = io.StringIO()
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--reconcile-persistence",
+                "--run-dir",
+                str(case_dir / "runs"),
+                "--chapter-dir",
+                str(case_dir / "chapters"),
+                "--output-json",
+            ],
+        ), patch.object(
+            cli,
+            "_reconcile_and_publish_persistence",
+            return_value=report,
+        ) as reconcile, patch.object(cli, "AgentExecutor") as executor, contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+        self.assertEqual(0, exit_context.exception.code)
+        reconcile.assert_called_once_with(
+            str(case_dir / "runs"),
+            chapter_dir=str(case_dir / "chapters"),
+            state_paths=(Path(str(DEFAULT_SNAPSHOT_PATH)),),
+        )
+        executor.assert_not_called()
+        self.assertEqual(report, json.loads(output.getvalue()))
 
     def test_story_project_real_writeback_failure_exits_nonzero(self) -> None:
         class FakeExecutor:
