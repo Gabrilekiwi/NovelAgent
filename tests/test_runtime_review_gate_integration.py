@@ -64,7 +64,7 @@ class RuntimeReviewGateIntegrationTests(unittest.TestCase):
         self.assertTrue(result["run"]["review_pipeline"]["enabled"])
         self.assertNotIn("review_gate", result["run"])
 
-    def test_gate_blocked_records_gate_result_without_changing_commit_logic(self) -> None:
+    def test_gate_blocked_rejects_before_state_commit(self) -> None:
         case_dir = self._case_dir("blocked")
         snapshot_path = self._write_snapshot(case_dir)
         chapter = (REGRESSION_CASE / "chapter.md").read_text(encoding="utf-8")
@@ -91,9 +91,11 @@ class RuntimeReviewGateIntegrationTests(unittest.TestCase):
         self.assertEqual("fail", result["run"]["review_gate"]["status"])
         self.assertEqual(1, result["run"]["review_gate"]["exit_code"])
         self.assertTrue(result["run"]["review_gate"]["matched"])
-        self.assertTrue(result["run"]["committed"])
-        self.assertTrue(result["committed"])
-        self.assertEqual("committed", result["run"]["status"])
+        self.assertFalse(result["run"]["accepted"])
+        self.assertFalse(result["run"]["committed"])
+        self.assertFalse(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertEqual("rejected", result["run"]["status"])
         validate_schema(result["run"]["review_gate"], "review_gate_result.schema.json")
 
         saved = json.loads(next((case_dir / "runs").glob("chapter_34_*.json")).read_text(encoding="utf-8"))

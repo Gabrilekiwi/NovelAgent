@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from core.review.gate import GATE_THRESHOLD_RANK, evaluate_review_gate
 from core.schema import validate_schema
 from modules.scene_repair import build_repair_plan
 
@@ -22,6 +23,7 @@ class ReviewRepairConfig:
     enabled: bool = False
     max_attempts: int = 1
     dry_run: bool = False
+    gate_threshold: str = "off"
 
 
 def validate_review_repair_config(config: ReviewRepairConfig) -> ReviewRepairConfig:
@@ -29,6 +31,8 @@ def validate_review_repair_config(config: ReviewRepairConfig) -> ReviewRepairCon
         raise ValueError("--review-repair-max-attempts must be between 1 and 3")
     if config.dry_run and not config.enabled:
         raise ValueError("--review-repair-dry-run requires --review-auto-repair")
+    if config.gate_threshold not in GATE_THRESHOLD_RANK:
+        raise ValueError(f"unsupported review gate threshold: {config.gate_threshold}")
     return config
 
 
@@ -48,6 +52,9 @@ def disabled_review_repair() -> dict[str, Any]:
         "errors": [],
         "rejected_reason": None,
         "artifacts": {},
+        "gate_threshold": "off",
+        "before_gate": None,
+        "after_gate": None,
     }
 
 
@@ -63,9 +70,29 @@ def run_review_repair_loop(
 ) -> dict[str, Any]:
     config = validate_review_repair_config(config)
     trigger_status = str(before_review.get("status") or "")
+    before_gate = _review_gate(before_review, config.gate_threshold)
     if not config.enabled:
         return disabled_review_repair()
-    if trigger_status not in REPAIR_TRIGGER_STATUSES:
+    if trigger_status == "error":
+        return _non_attempt_result(
+            chapter_text=chapter_text,
+            validation=validation,
+            before_review=before_review,
+            before_gate=before_gate,
+            config=config,
+            rejected_reason="review_error",
+        )
+    if before_gate.get("status") == "error":
+        return _non_attempt_result(
+            chapter_text=chapter_text,
+            validation=validation,
+            before_review=before_review,
+            before_gate=before_gate,
+            config=config,
+            rejected_reason="review_gate_error",
+        )
+    gate_requires_repair = bool(before_gate.get("enabled")) and int(before_gate.get("exit_code") or 0) != 0
+    if trigger_status not in REPAIR_TRIGGER_STATUSES and not gate_requires_repair:
         result = disabled_review_repair()
         result.update(
             {
@@ -74,6 +101,9 @@ def run_review_repair_loop(
                 "trigger_status": trigger_status or None,
                 "before_review": before_review,
                 "rejected_reason": "review_status_does_not_require_repair",
+                "gate_threshold": config.gate_threshold,
+                "before_gate": before_gate,
+                "after_gate": before_gate,
             }
         )
         return result
@@ -101,6 +131,9 @@ def run_review_repair_loop(
             "errors": [],
             "rejected_reason": "review_repair_dry_run",
             "artifacts": {},
+            "gate_threshold": config.gate_threshold,
+            "before_gate": before_gate,
+            "after_gate": before_gate,
             "final_chapter": chapter_text,
             "final_validation": validation,
             "final_review": before_review,
@@ -109,6 +142,7 @@ def run_review_repair_loop(
     current_chapter = chapter_text
     current_validation = validation
     current_review = before_review
+    current_gate = before_gate
     repair_deltas: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
@@ -123,10 +157,12 @@ def run_review_repair_loop(
         before_chapter = current_chapter
         before_validation = current_validation
         before_attempt_review = current_review
+        before_attempt_gate = current_gate
         try:
             repaired_chapter = repair(current_chapter, current_validation, attempt_plan)
             repaired_validation = validate(repaired_chapter)
             repaired_review = review(repaired_chapter, attempt)
+            repaired_gate = _review_gate(repaired_review, config.gate_threshold)
         except Exception as exc:  # noqa: BLE001 - repair attempts are audited rather than hidden.
             errors.append({"attempt": attempt, "error": f"{type(exc).__name__}: {exc}"})
             repair_deltas.append(
@@ -138,13 +174,15 @@ def run_review_repair_loop(
                     after_validation=current_validation,
                     before_review=before_attempt_review,
                     after_review=current_review,
+                    before_gate=before_attempt_gate,
+                    after_gate=current_gate,
                     accepted=False,
                     error=f"{type(exc).__name__}: {exc}",
                 )
             )
             break
 
-        accepted = _accepted(validation=repaired_validation, review=repaired_review)
+        accepted = _accepted(validation=repaired_validation, review=repaired_review, gate=repaired_gate)
         repair_deltas.append(
             _attempt_delta(
                 attempt=attempt,
@@ -154,6 +192,8 @@ def run_review_repair_loop(
                 after_validation=repaired_validation,
                 before_review=before_attempt_review,
                 after_review=repaired_review,
+                before_gate=before_attempt_gate,
+                after_gate=repaired_gate,
                 accepted=accepted,
                 error=None,
             )
@@ -161,10 +201,13 @@ def run_review_repair_loop(
         current_chapter = repaired_chapter
         current_validation = repaired_validation
         current_review = repaired_review
+        current_gate = repaired_gate
         if accepted:
             break
+        if str(current_review.get("status") or "") == "error" or current_gate.get("status") == "error":
+            break
 
-    accepted = _accepted(validation=current_validation, review=current_review)
+    accepted = _accepted(validation=current_validation, review=current_review, gate=current_gate)
     return {
         "enabled": True,
         "attempted": True,
@@ -178,8 +221,16 @@ def run_review_repair_loop(
         "repair_plan": repair_plan,
         "repair_deltas": repair_deltas,
         "errors": errors,
-        "rejected_reason": None if accepted else _rejected_reason(current_validation, current_review, errors),
+        "rejected_reason": None if accepted else _rejected_reason(
+            current_validation,
+            current_review,
+            current_gate,
+            errors,
+        ),
         "artifacts": {},
+        "gate_threshold": config.gate_threshold,
+        "before_gate": before_gate,
+        "after_gate": current_gate,
         "final_chapter": current_chapter,
         "final_validation": current_validation,
         "final_review": current_review,
@@ -330,13 +381,25 @@ def _repair_action_for_task(task: dict[str, Any]) -> str:
     return mapping.get(repair_type, "manual_review")
 
 
-def _accepted(*, validation: dict[str, Any], review: dict[str, Any]) -> bool:
-    return bool(validation.get("ok")) and str(review.get("status")) in REPAIR_ACCEPT_STATUSES
+def _accepted(*, validation: dict[str, Any], review: dict[str, Any], gate: dict[str, Any]) -> bool:
+    return (
+        bool(validation.get("ok"))
+        and str(review.get("status")) in REPAIR_ACCEPT_STATUSES
+        and int(gate.get("exit_code") or 0) == 0
+        and str(gate.get("status") or "") != "error"
+    )
 
 
-def _rejected_reason(validation: dict[str, Any], review: dict[str, Any], errors: list[dict[str, Any]]) -> str:
+def _rejected_reason(
+    validation: dict[str, Any],
+    review: dict[str, Any],
+    gate: dict[str, Any],
+    errors: list[dict[str, Any]],
+) -> str:
     if errors:
         return "repairer_failed"
+    if str(review.get("status") or "") == "error":
+        return "post_repair_review_error"
     if not validation.get("ok"):
         codes = [str(problem.get("code")) for problem in validation.get("problems", []) if isinstance(problem, dict)]
         if "missing_required_beat" in codes:
@@ -346,6 +409,8 @@ def _rejected_reason(validation: dict[str, Any], review: dict[str, Any], errors:
         return "post_repair_validation_failed"
     if str(review.get("status")) not in REPAIR_ACCEPT_STATUSES:
         return "post_repair_review_blocked"
+    if int(gate.get("exit_code") or 0) != 0 or str(gate.get("status") or "") == "error":
+        return "post_repair_review_gate_failed"
     return "review_repair_rejected"
 
 
@@ -358,6 +423,8 @@ def _attempt_delta(
     after_validation: dict[str, Any],
     before_review: dict[str, Any],
     after_review: dict[str, Any],
+    before_gate: dict[str, Any],
+    after_gate: dict[str, Any],
     accepted: bool,
     error: str | None,
 ) -> dict[str, Any]:
@@ -372,6 +439,10 @@ def _attempt_delta(
         "after_validation_ok": bool(after_validation.get("ok")),
         "before_review_status": before_review.get("status"),
         "after_review_status": after_review.get("status"),
+        "before_gate_status": before_gate.get("status"),
+        "after_gate_status": after_gate.get("status"),
+        "before_gate_exit_code": int(before_gate.get("exit_code") or 0),
+        "after_gate_exit_code": int(after_gate.get("exit_code") or 0),
         "resolved_problem_codes": sorted(set(before_codes) - set(after_codes)),
         "new_problem_codes": sorted(set(after_codes) - set(before_codes)),
         "remaining_problem_codes": sorted(set(before_codes) & set(after_codes)),
@@ -382,6 +453,39 @@ def _attempt_delta(
 
 def _problem_codes(validation: dict[str, Any]) -> list[str]:
     return [str(problem.get("code")) for problem in validation.get("problems", []) if isinstance(problem, dict)]
+
+
+def _review_gate(review: dict[str, Any], threshold: str) -> dict[str, Any]:
+    return evaluate_review_gate(review_pipeline=review, threshold=threshold)
+
+
+def _non_attempt_result(
+    *,
+    chapter_text: str,
+    validation: dict[str, Any],
+    before_review: dict[str, Any],
+    before_gate: dict[str, Any],
+    config: ReviewRepairConfig,
+    rejected_reason: str,
+) -> dict[str, Any]:
+    result = disabled_review_repair()
+    result.update(
+        {
+            "enabled": True,
+            "max_attempts": config.max_attempts,
+            "trigger_status": str(before_review.get("status") or "") or None,
+            "before_review": before_review,
+            "after_review": before_review,
+            "rejected_reason": rejected_reason,
+            "gate_threshold": config.gate_threshold,
+            "before_gate": before_gate,
+            "after_gate": before_gate,
+            "final_chapter": chapter_text,
+            "final_validation": validation,
+            "final_review": before_review,
+        }
+    )
+    return result
 
 
 def _evidence(task: dict[str, Any], index: int) -> list[dict[str, str]]:

@@ -43,6 +43,18 @@ def _validation(ok: bool = True, code: str | None = None) -> dict:
 
 
 class ReviewRepairLoopTests(unittest.TestCase):
+    def test_invalid_gate_threshold_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported review gate threshold"):
+            run_review_repair_loop(
+                chapter_text="chapter",
+                validation=_validation(),
+                before_review={"enabled": True, "status": "pass", "decision": "accept"},
+                config=ReviewRepairConfig(enabled=True, gate_threshold="invalid"),
+                repair=lambda *_args: "chapter",
+                validate=lambda _chapter: _validation(),
+                review=lambda _chapter, _attempt: {"enabled": True, "status": "pass", "decision": "accept"},
+            )
+
     def test_review_pass_does_not_trigger_repair(self) -> None:
         result = run_review_repair_loop(
             chapter_text="chapter",
@@ -104,6 +116,108 @@ class ReviewRepairLoopTests(unittest.TestCase):
         self.assertEqual("original fixed", result["final_chapter"])
         self.assertEqual(1, calls["validate"])
         self.assertEqual(1, calls["review"])
+
+    def test_warning_gate_triggers_repair_and_requires_pass(self) -> None:
+        calls = {"repair": 0, "review": 0}
+
+        def repair(chapter: str, _validation: dict, _plan: dict) -> str:
+            calls["repair"] += 1
+            return f"{chapter} fixed-{calls['repair']}"
+
+        def review(_chapter: str, attempt: int) -> dict:
+            calls["review"] += 1
+            return {
+                "enabled": True,
+                "status": "warning" if attempt == 1 else "pass",
+                "decision": "accept_with_warnings" if attempt == 1 else "accept",
+            }
+
+        result = run_review_repair_loop(
+            chapter_text="original",
+            validation=_validation(),
+            before_review={"enabled": True, "status": "warning", "decision": "accept_with_warnings"},
+            config=ReviewRepairConfig(enabled=True, max_attempts=2, gate_threshold="warning"),
+            repair=repair,
+            validate=lambda _chapter: _validation(),
+            review=review,
+        )
+
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(2, result["attempt_count"])
+        self.assertEqual(2, calls["repair"])
+        self.assertFalse(result["repair_deltas"][0]["accepted"])
+        self.assertEqual(1, result["repair_deltas"][0]["after_gate_exit_code"])
+        self.assertTrue(result["repair_deltas"][1]["accepted"])
+        self.assertEqual("pass", result["after_gate"]["status"])
+
+    def test_warning_gate_exhaustion_is_not_accepted(self) -> None:
+        result = run_review_repair_loop(
+            chapter_text="original",
+            validation=_validation(),
+            before_review={"enabled": True, "status": "warning", "decision": "accept_with_warnings"},
+            config=ReviewRepairConfig(enabled=True, max_attempts=2, gate_threshold="warning"),
+            repair=lambda chapter, _validation, _plan: chapter + " fixed",
+            validate=lambda _chapter: _validation(),
+            review=lambda _chapter, _attempt: {
+                "enabled": True,
+                "status": "warning",
+                "decision": "accept_with_warnings",
+            },
+        )
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(2, result["attempt_count"])
+        self.assertEqual("post_repair_review_gate_failed", result["rejected_reason"])
+        self.assertEqual(1, result["after_gate"]["exit_code"])
+
+    def test_initial_review_error_fails_closed_without_repair(self) -> None:
+        result = run_review_repair_loop(
+            chapter_text="original",
+            validation=_validation(),
+            before_review={"enabled": True, "status": "error", "decision": None, "error": "review crashed"},
+            config=ReviewRepairConfig(enabled=True, max_attempts=3),
+            repair=lambda *_args: self.fail("review errors must not be repaired"),
+            validate=lambda _chapter: self.fail("validation must not run"),
+            review=lambda _chapter, _attempt: self.fail("review must not rerun"),
+        )
+
+        self.assertFalse(result["attempted"])
+        self.assertFalse(result["accepted"])
+        self.assertEqual("review_error", result["rejected_reason"])
+        self.assertEqual("disabled", result["before_gate"]["status"])
+        self.assertEqual(0, result["before_gate"]["exit_code"])
+        self.assertEqual("original", result["final_chapter"])
+
+    def test_post_repair_review_error_stops_further_attempts(self) -> None:
+        calls = {"repair": 0}
+
+        def repair(chapter: str, _validation: dict, _plan: dict) -> str:
+            calls["repair"] += 1
+            return chapter + " fixed"
+
+        result = run_review_repair_loop(
+            chapter_text="original",
+            validation=_validation(),
+            before_review={"enabled": True, "status": "blocked", "decision": "blocked"},
+            config=ReviewRepairConfig(enabled=True, max_attempts=3, gate_threshold="blocked"),
+            repair=repair,
+            validate=lambda _chapter: _validation(),
+            review=lambda _chapter, _attempt: {
+                "enabled": True,
+                "status": "error",
+                "decision": None,
+                "error": "review crashed",
+            },
+        )
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(1, result["attempt_count"])
+        self.assertEqual(1, calls["repair"])
+        self.assertEqual("post_repair_review_error", result["rejected_reason"])
+        self.assertEqual("fail", result["after_gate"]["status"])
+        self.assertEqual("error", result["after_gate"]["review_status"])
+        self.assertEqual(1, result["after_gate"]["exit_code"])
 
     def test_repairer_error_is_audited(self) -> None:
         result = run_review_repair_loop(

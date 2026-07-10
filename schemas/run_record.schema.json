@@ -37,10 +37,14 @@
     },
     "status": {
       "enum": [
+        "preview",
         "committed",
         "rejected",
         "failed"
       ]
+    },
+    "accepted": {
+      "type": "boolean"
     },
     "committed": {
       "type": "boolean"

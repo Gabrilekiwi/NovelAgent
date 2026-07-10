@@ -534,6 +534,7 @@ def main() -> None:
         or args.story_project_writeback_dry_run
         or args.review_repair_dry_run
     )
+    loop_exit_code = 0
     if args.steps == 1:
         result = executor.run_once(persist=persist)
     else:
@@ -562,20 +563,21 @@ def main() -> None:
             raise SystemExit(1) from exc
         if args.output_json:
             print(json.dumps(loop_result, ensure_ascii=False, indent=2))
-            gate_exit_code = _review_gate_exit_code(loop_result.get("last_result"))
-            if gate_exit_code:
-                raise SystemExit(gate_exit_code)
-            writeback_exit_code = _story_project_writeback_exit_code(loop_result.get("last_result"))
-            if writeback_exit_code:
-                raise SystemExit(writeback_exit_code)
+            loop_exit_code = int(loop_result.get("exit_code") or 0)
+            if loop_exit_code:
+                raise SystemExit(loop_exit_code)
             return
         result = loop_result["last_result"]
+        loop_exit_code = int(loop_result.get("exit_code") or 0)
         result["loop"] = {
             "session_id": loop_result["session"]["id"],
             "completed_steps": loop_result["completed_steps"],
             "stopped_reason": loop_result["stopped_reason"],
             "run_ids": [item["run"]["id"] for item in loop_result["runs"]],
             "committed": [item["committed"] for item in loop_result["runs"]],
+            "succeeded": bool(loop_result.get("succeeded")),
+            "exit_code": loop_exit_code,
+            "failure_reasons": list(loop_result.get("failure_reasons") or []),
         }
         if loop_result["session"].get("artifact"):
             result["loop"]["artifact"] = loop_result["session"]["artifact"]
@@ -586,6 +588,8 @@ def main() -> None:
         print(json.dumps(result["run"], ensure_ascii=False, indent=2))
     else:
         print(format_run_summary(result))
+    if loop_exit_code:
+        raise SystemExit(loop_exit_code)
     gate_exit_code = _review_gate_exit_code(result)
     if gate_exit_code:
         raise SystemExit(gate_exit_code)
@@ -987,6 +991,7 @@ def _review_repair_config_from_args(args: argparse.Namespace) -> ReviewRepairCon
             enabled=bool(getattr(args, "review_auto_repair", False)),
             max_attempts=int(getattr(args, "review_repair_max_attempts", 1)),
             dry_run=bool(getattr(args, "review_repair_dry_run", False)),
+            gate_threshold=str(getattr(args, "review_gate", "off")),
         )
     )
 

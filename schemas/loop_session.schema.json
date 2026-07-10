@@ -51,6 +51,18 @@
     "stop_on_rejection": {
       "type": "boolean"
     },
+    "succeeded": {
+      "type": "boolean"
+    },
+    "exit_code": {
+      "enum": [0, 1]
+    },
+    "failure_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "committed_count": {
       "type": "integer",
       "minimum": 0
@@ -101,13 +113,23 @@
           },
           "status": {
             "enum": [
+              "preview",
               "committed",
               "rejected",
               "failed"
             ]
           },
+          "accepted": {
+            "type": "boolean"
+          },
           "committed": {
             "type": "boolean"
+          },
+          "failure_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "chapter_index": {
             "type": "integer",

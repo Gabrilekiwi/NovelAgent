@@ -329,7 +329,8 @@ class AgentExecutorTest(unittest.TestCase):
             ).run_once(persist=True)
 
         self.assertFalse(result["committed"])
-        self.assertEqual("original chapter", result["chapter"])
+        self.assertEqual("original chapter fixed", result["chapter"])
+        self.assertEqual(result["validation"], result["run"]["review_repair"]["final_validation"])
         self.assertFalse(result["run"]["review_repair"]["accepted"])
         self.assertEqual("post_repair_review_blocked", result["run"]["review_repair"]["rejected_reason"])
         self.assertEqual("rejected", result["run"]["status"])
@@ -1401,6 +1402,9 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual("max_steps", loop_result["stopped_reason"])
         self.assertEqual("max_steps", loop_result["session"]["stopped_reason"])
         self.assertEqual(2, loop_result["session"]["committed_count"])
+        self.assertTrue(loop_result["succeeded"])
+        self.assertEqual(0, loop_result["exit_code"])
+        self.assertEqual([], loop_result["failure_reasons"])
         self.assertEqual(0, loop_result["session"]["rejected_count"])
         self.assertEqual(2, len(loop_result["session"]["runs"]))
         self.assertEqual(
@@ -1488,6 +1492,9 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(0, loop_result["session"]["committed_count"])
         self.assertEqual(1, loop_result["session"]["rejected_count"])
         self.assertFalse(loop_result["last_result"]["committed"])
+        self.assertFalse(loop_result["succeeded"])
+        self.assertEqual(1, loop_result["exit_code"])
+        self.assertIn("run_rejected", loop_result["failure_reasons"])
         self.assertEqual("missing_conflict_marker", loop_result["session"]["runs"][0]["problem_evidence"][0]["code"])
         self.assertEqual(
             [{"kind": "missing_any_marker", "value": "conflict, danger, choice, choose, threat, secret"}],
@@ -1535,6 +1542,9 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual([False, True], [run["committed"] for run in loop_result["runs"]])
         self.assertEqual(1, loop_result["session"]["committed_count"])
         self.assertEqual(1, loop_result["session"]["rejected_count"])
+        self.assertFalse(loop_result["succeeded"])
+        self.assertEqual(1, loop_result["exit_code"])
+        self.assertEqual(["run_rejected"], loop_result["failure_reasons"])
         self.assertEqual("recover_from_rejected_run", loop_result["runs"][1]["decision"]["goal"])
         self.assertTrue(loop_result["runs"][1]["run"]["recovery_context"]["available"])
         self.assertEqual(loop_result["runs"][0]["run"]["id"], loop_result["runs"][1]["run"]["recovery_context"]["source_run_id"])

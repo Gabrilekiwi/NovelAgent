@@ -241,6 +241,7 @@ class AgentExecutor:
                     "analysis": _empty_analysis(exc.validation or {"ok": False}),
                     "snapshot": base_snapshot,
                     "repair_attempts": exc.repair_attempts,
+                    "accepted": False,
                     "committed": False,
                 }
                 input_pack_artifact = save_input_pack_artifact(
@@ -260,16 +261,16 @@ class AgentExecutor:
                 self._save_run_record(failed_result)
             raise exc.original from exc
 
-        committed = bool(validation["ok"])
+        accepted = bool(validation["ok"])
         planned_run_id = build_run_id(int(decision["chapter_index"]), started_at)
         review_pipeline = None
         review_gate = None
         review_repair = None
-        chapter, validation, committed, chapter_pipeline, review_pipeline, review_gate, review_repair = (
+        chapter, validation, accepted, chapter_pipeline, review_pipeline, review_gate, review_repair = (
             self._run_runtime_review_before_commit(
                 chapter=chapter,
                 validation=validation,
-                committed=committed,
+                committed=accepted,
                 chapter_pipeline=chapter_pipeline,
                 snapshot=snapshot,
                 decision=decision,
@@ -279,6 +280,7 @@ class AgentExecutor:
                 run_id=planned_run_id,
             )
         )
+        committed = accepted
         try:
             analysis = (
                 validate_schema(self._analyze(chapter, validation, snapshot), "analysis_result.schema.json")
@@ -339,6 +341,7 @@ class AgentExecutor:
                     "analysis": _empty_analysis({"ok": False}),
                     "snapshot": base_snapshot,
                     "repair_attempts": repair_attempts,
+                    "accepted": False,
                     "committed": False,
                 }
                 input_pack_artifact = save_input_pack_artifact(
@@ -387,6 +390,7 @@ class AgentExecutor:
             snapshot_audit=snapshot_audit,
             state_update_audit=state_update_audit,
             chapter_pipeline=chapter_pipeline,
+            accepted=accepted,
         )
 
         result = {
@@ -399,6 +403,7 @@ class AgentExecutor:
             "analysis": analysis,
             "snapshot": next_snapshot,
             "repair_attempts": repair_attempts,
+            "accepted": accepted,
             "committed": committed,
             "state_update": state_update_audit,
         }
@@ -527,7 +532,14 @@ class AgentExecutor:
                         "status": result["run"]["status"],
                     },
                 )
-                if stop_on_rejection and not result["committed"]:
+                step_failure_reasons = _result_failure_reasons(result)
+                if any(
+                    reason in {"run_failed", "story_project_writeback_failed", "memory_delivery_failed"}
+                    for reason in step_failure_reasons
+                ):
+                    stopped_reason = "failed"
+                    break
+                if stop_on_rejection and "run_rejected" in step_failure_reasons:
                     stopped_reason = "rejected"
                     break
 
@@ -556,6 +568,9 @@ class AgentExecutor:
             "completed_steps": len(runs),
             "stopped_reason": stopped_reason,
             "last_result": runs[-1],
+            "succeeded": bool(session.get("succeeded")),
+            "exit_code": int(session.get("exit_code") or 0),
+            "failure_reasons": list(session.get("failure_reasons") or []),
         }
 
     def _build_loop_session(
@@ -955,7 +970,8 @@ class AgentExecutor:
         )
         review_gate = self._review_gate_for_review(original_review)
         if not self.review_repair_config.enabled:
-            return chapter, validation, committed, chapter_pipeline, original_review, review_gate, None
+            gate_passed = not review_gate or review_gate.get("exit_code") != 1
+            return chapter, validation, committed and gate_passed, chapter_pipeline, original_review, review_gate, None
 
         def repair(current_chapter: str, current_validation: dict[str, Any], repair_plan: dict[str, Any]) -> str:
             return self._repair(current_chapter, current_validation, input_pack, repair_plan, recovery_context)
@@ -987,7 +1003,17 @@ class AgentExecutor:
             review=review,
         )
         if not review_repair.get("attempted"):
-            return chapter, validation, committed, chapter_pipeline, original_review, review_gate, review_repair
+            gate_passed = not review_gate or review_gate.get("exit_code") != 1
+            review_failed = review_repair.get("rejected_reason") in {"review_error", "review_gate_error"}
+            return (
+                chapter,
+                validation,
+                committed and gate_passed and not review_failed,
+                chapter_pipeline,
+                original_review,
+                review_gate,
+                review_repair,
+            )
 
         final_review = (
             review_repair.get("final_review")
@@ -1010,11 +1036,14 @@ class AgentExecutor:
             repaired_pipeline = self._chapter_pipeline_after_repair(chapter_pipeline, repaired_chapter)
             return repaired_chapter, repaired_validation, True, repaired_pipeline, final_review, final_gate, review_repair
 
-        rejected_validation = _review_repair_rejected_validation(
-            validation,
-            reason=str(review_repair.get("rejected_reason") or "review_repair_rejected"),
+        final_chapter = str(review_repair.get("final_chapter") or original_chapter)
+        final_validation = (
+            review_repair.get("final_validation")
+            if isinstance(review_repair.get("final_validation"), dict)
+            else validation
         )
-        return original_chapter, rejected_validation, False, chapter_pipeline, final_review, final_gate, review_repair
+        final_pipeline = self._chapter_pipeline_after_repair(chapter_pipeline, final_chapter)
+        return final_chapter, final_validation, False, final_pipeline, final_review, final_gate, review_repair
 
     def _run_runtime_review_for_chapter(
         self,
@@ -1389,6 +1418,30 @@ def _previous_chapter_text(memory_context: dict[str, Any]) -> str | None:
     return None
 
 
+def _result_failure_reasons(result: dict[str, Any]) -> list[str]:
+    run = result.get("run") if isinstance(result.get("run"), dict) else {}
+    reasons: list[str] = []
+    status = str(run.get("status") or "")
+    if status == "rejected":
+        reasons.append("run_rejected")
+    elif status == "failed":
+        reasons.append("run_failed")
+    gate = run.get("review_gate") if isinstance(run.get("review_gate"), dict) else {}
+    if gate.get("status") in {"fail", "error"}:
+        reasons.append("review_gate_failed")
+    story_project = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+    writeback = story_project.get("writeback") if isinstance(story_project.get("writeback"), dict) else {}
+    if writeback.get("attempted") and not writeback.get("dry_run"):
+        if not writeback.get("applied") or writeback.get("partial"):
+            reasons.append("story_project_writeback_failed")
+    memory = run.get("memory") if isinstance(run.get("memory"), dict) else {}
+    memory_writeback = memory.get("writeback") if isinstance(memory.get("writeback"), dict) else {}
+    verification = memory_writeback.get("verification") if isinstance(memory_writeback.get("verification"), dict) else {}
+    if verification.get("status") in {"failed", "error"}:
+        reasons.append("memory_delivery_failed")
+    return list(dict.fromkeys(reasons))
+
+
 def _loop_step_timing(
     step: int,
     started_at,
@@ -1403,7 +1456,7 @@ def _loop_step_timing(
     duration_ms = int(max(0.0, (finished_at - started_at).total_seconds() * 1000))
     timing: dict[str, Any] = {
         "step": int(step),
-        "status": status if status in {"committed", "rejected", "failed"} else "failed",
+        "status": status if status in {"preview", "committed", "rejected", "failed"} else "failed",
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
         "duration_ms": duration_ms,

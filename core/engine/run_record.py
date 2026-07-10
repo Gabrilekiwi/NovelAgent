@@ -48,7 +48,16 @@ def build_loop_session_record(
     step_timings: list[dict[str, Any]] | None = None,
     error: BaseException | None = None,
 ) -> dict[str, Any]:
-    run_summaries = [_loop_run_summary(item["run"]) for item in runs]
+    run_summaries = []
+    failure_reasons: list[str] = []
+    for item in runs:
+        summary = _loop_run_summary(item["run"])
+        reasons = _loop_failure_reasons(item)
+        summary["failure_reasons"] = reasons
+        run_summaries.append(summary)
+        for reason in reasons:
+            if reason not in failure_reasons:
+                failure_reasons.append(reason)
     recovery_links = []
     for item in runs:
         link = _loop_recovery_link(item["run"])
@@ -56,6 +65,9 @@ def build_loop_session_record(
             recovery_links.append(link)
     statuses = [item["status"] for item in run_summaries]
     chapter_indexes = [item["chapter_index"] for item in run_summaries]
+    if error is not None and "run_failed" not in failure_reasons:
+        failure_reasons.append("run_failed")
+    succeeded = not failure_reasons and int(completed_steps) == int(requested_steps)
     record = {
         "id": f"loop_{format_timestamp(started_at)}",
         "started_at": started_at.isoformat(),
@@ -65,6 +77,9 @@ def build_loop_session_record(
         "stopped_reason": stopped_reason,
         "persist": bool(persist),
         "stop_on_rejection": bool(stop_on_rejection),
+        "succeeded": succeeded,
+        "exit_code": 0 if succeeded else 1,
+        "failure_reasons": failure_reasons,
         "committed_count": statuses.count("committed"),
         "rejected_count": statuses.count("rejected"),
         "failed_count": statuses.count("failed"),
@@ -106,14 +121,19 @@ def build_run_record(
     snapshot_audit: dict[str, Any] | None = None,
     state_update_audit: dict[str, Any] | None = None,
     chapter_pipeline: dict[str, Any] | None = None,
+    accepted: bool | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     chapter_index = int(decision["chapter_index"])
     problems = validation.get("problems", [])
+    accepted_value = bool(committed) if accepted is None else bool(accepted)
+    status_value = status or ("committed" if committed else "rejected")
     record = {
         "id": build_run_id(chapter_index, started_at),
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
-        "status": "committed" if committed else "rejected",
+        "status": status_value,
+        "accepted": accepted_value,
         "committed": committed,
         "chapter_index": chapter_index,
         "snapshot": {
@@ -208,6 +228,7 @@ def build_failed_run_record(
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
         "status": "failed",
+        "accepted": False,
         "committed": False,
         "chapter_index": chapter_index,
         "snapshot": {
@@ -282,6 +303,7 @@ def build_director_failed_run_record(
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
         "status": "failed",
+        "accepted": False,
         "committed": False,
         "chapter_index": chapter_index,
         "snapshot": {
@@ -366,6 +388,7 @@ def build_workflow_failed_run_record(
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
         "status": "failed",
+        "accepted": False,
         "committed": False,
         "chapter_index": chapter_index,
         "snapshot": {
@@ -798,6 +821,7 @@ def _loop_run_summary(run: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(run.get("id")),
         "status": str(run.get("status")),
+        "accepted": bool(run.get("accepted", run.get("committed"))),
         "committed": bool(run.get("committed")),
         "chapter_index": int(run.get("chapter_index") or 1),
         "problem_codes": problem_codes if isinstance(problem_codes, list) else [],
@@ -809,6 +833,33 @@ def _loop_run_summary(run: dict[str, Any]) -> dict[str, Any]:
         **_loop_workflow_summary(run),
         "repair_attempts": int(run.get("repair_attempts") or 0),
     }
+
+
+def _loop_failure_reasons(result: dict[str, Any]) -> list[str]:
+    run = result.get("run") if isinstance(result.get("run"), dict) else {}
+    reasons: list[str] = []
+    status = str(run.get("status") or "")
+    if status == "rejected":
+        reasons.append("run_rejected")
+    elif status == "failed":
+        reasons.append("run_failed")
+
+    gate = run.get("review_gate") if isinstance(run.get("review_gate"), dict) else None
+    if gate and gate.get("status") in {"fail", "error"}:
+        reasons.append("review_gate_failed")
+
+    story_project = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+    writeback = story_project.get("writeback") if isinstance(story_project.get("writeback"), dict) else {}
+    if writeback.get("attempted") and not writeback.get("dry_run"):
+        if not writeback.get("applied") or writeback.get("partial"):
+            reasons.append("story_project_writeback_failed")
+
+    memory = run.get("memory") if isinstance(run.get("memory"), dict) else {}
+    memory_writeback = memory.get("writeback") if isinstance(memory.get("writeback"), dict) else {}
+    verification = memory_writeback.get("verification") if isinstance(memory_writeback.get("verification"), dict) else {}
+    if verification.get("status") in {"failed", "error"}:
+        reasons.append("memory_delivery_failed")
+    return list(dict.fromkeys(reasons))
 
 
 def _loop_workflow_summary(run: dict[str, Any]) -> dict[str, Any]:
