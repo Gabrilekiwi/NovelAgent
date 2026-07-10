@@ -515,7 +515,9 @@ class MemoryWritebackTest(unittest.TestCase):
             generator=generator,
         ).run_once(persist=False)
 
-        self.assertTrue(result["committed"])
+        self.assertTrue(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertEqual("preview", result["run"]["status"])
         self.assertEqual("jsonl-outbox", result["run"]["memory"]["source"])
         self.assertIn("chapter_2_summary", captured_input[0])
 

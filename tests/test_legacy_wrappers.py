@@ -85,7 +85,9 @@ class LegacyWrapperTest(unittest.TestCase):
 
         self.assertIn("run", result)
         self.assertIn("validation", result)
-        self.assertTrue(result["committed"])
+        self.assertTrue(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertEqual("preview", result["run"]["status"])
 
     def test_legacy_orchestrator_run_once_returns_chapter_text(self) -> None:
         chapter = legacy_orchestrator.run_once(dry_run=True, persist=False)

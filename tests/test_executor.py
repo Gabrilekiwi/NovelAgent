@@ -18,7 +18,8 @@ from core.review.runtime import RuntimeReviewConfig
 from core.schema import SchemaValidationError, validate_schema
 from core.state.memory_writer import FileMemoryWriter
 from core.story_project.model import CORE_DIRECTORY_NAMES
-from core.story_project.paths import PROSE_DIR_NAME, canonical_prose_path
+from core.story_project.paths import PROSE_DIR_NAME, canonical_outline_path, canonical_prose_path
+from core.story_project.runtime import build_generation_story_project_context_loader
 from core.story_project.writer import StoryProjectWritebackConfig
 
 
@@ -41,6 +42,37 @@ class AgentExecutorTest(unittest.TestCase):
         content = json.dumps(snapshot, ensure_ascii=False, indent=2)
         path.write_text(content, encoding="utf-8")
         return content
+
+    def _story_book(self, parent: Path) -> Path:
+        root = parent / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (root / directory).mkdir(parents=True)
+        return root
+
+    def _set_snapshot_language(self, path: Path, language: str = "en") -> None:
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        snapshot["project_profile"] = {"language": language}
+        path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _story_outline(self, root: Path, chapter: int, title: str) -> Path:
+        path = canonical_outline_path(root, chapter)
+        path.write_text(
+            "\n".join(
+                [
+                    f"# {title}",
+                    "",
+                    "core_event: danger forces a costly route choice",
+                    "",
+                    "## required_beats",
+                    "- danger forces the route choice",
+                    "- open conflict over the serum",
+                    "",
+                    "ending_pressure: the locked door starts a countdown",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return path
 
     def _ok_validation(self, snapshot: dict, chapter: str, decision: dict) -> dict:
         return validate_schema(
@@ -1624,6 +1656,246 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual("recover_from_rejected_run", result["decision"]["goal"])
         self.assertEqual(2, result["decision"]["max_repair_attempts"])
         self.assertEqual(["generate_chapter", "validate", "repair_if_needed"], result["workflow"])
+
+    def test_non_story_project_dry_run_loop_advances_only_loop_local_snapshot(self) -> None:
+        tmp_path = self._case_dir("loop_local_preview")
+        snapshot_path = tmp_path / "snapshot.json"
+        before = self._write_snapshot(snapshot_path)
+        seen_memory: list[dict] = []
+        generated = [
+            "First preview faced danger and conflict over a costly serum choice.",
+            "Second preview faced danger and conflict over another costly serum choice.",
+        ]
+
+        def director(snapshot, memory_context):
+            seen_memory.append(dict(memory_context))
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "loop_local_preview",
+                "actions": ["generate_chapter", "validate"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 0,
+                "notes": [],
+            }
+
+        loop_result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            dry_run=True,
+            director=director,
+            generator=lambda _input_pack: generated.pop(0),
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+        ).run_loop(steps=2, persist=False)
+
+        self.assertEqual([2, 3], [item["run"]["chapter_index"] for item in loop_result["runs"]])
+        self.assertEqual(["preview", "preview"], [item["run"]["status"] for item in loop_result["runs"]])
+        self.assertEqual([False, False], [item["committed"] for item in loop_result["runs"]])
+        self.assertTrue(all(item["accepted"] for item in loop_result["runs"]))
+        self.assertEqual(4, loop_result["last_result"]["snapshot"]["chapter_index"])
+        self.assertEqual(loop_result["runs"][0]["chapter"], seen_memory[1]["last_run"]["chapter_text"])
+        self.assertTrue(loop_result["succeeded"])
+        self.assertEqual(0, loop_result["exit_code"])
+        self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))
+        self.assertFalse((tmp_path / "runs").exists())
+
+    def test_story_project_dynamic_loader_commits_two_chapters_and_reloads_primary_state(self) -> None:
+        tmp_path = self._case_dir("story_project_dynamic_two_steps")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        self._set_snapshot_language(snapshot_path)
+        book = self._story_book(tmp_path)
+        self._story_outline(book, 2, "Second")
+        self._story_outline(book, 3, "Third")
+        contexts: list[dict] = []
+        delegate = build_generation_story_project_context_loader(story_project=book, chapter=2)
+
+        class RecordingLoader:
+            story_project_root = delegate.story_project_root
+
+            def __call__(self, snapshot, memory_context, chapter_hint=None):
+                context = delegate(snapshot, memory_context, chapter_hint)
+                contexts.append(context.to_dict())
+                return context
+
+        loop_result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing-memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            story_project_context_loader=RecordingLoader(),
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        ).run_loop(steps=2, persist=True)
+
+        self.assertEqual([2, 3], [item["run"]["chapter_index"] for item in loop_result["runs"]])
+        self.assertEqual([True, True], [item["committed"] for item in loop_result["runs"]])
+        self.assertTrue(loop_result["succeeded"])
+        self.assertTrue(canonical_prose_path(book, 2, "Second").exists())
+        self.assertTrue(canonical_prose_path(book, 3, "Third").exists())
+        self.assertEqual(4, json.loads(snapshot_path.read_text(encoding="utf-8"))["chapter_index"])
+        self.assertEqual(2, len(contexts))
+        self.assertEqual(
+            canonical_prose_path(book, 2, "Second").read_text(encoding="utf-8").strip(),
+            contexts[1]["previous_prose"]["text"].strip(),
+        )
+        self.assertEqual(4, len(contexts[1]["tracking_files"]))
+        first_run_id = loop_result["runs"][0]["run"]["id"]
+        self.assertTrue(any(first_run_id in item["text"] for item in contexts[1]["tracking_files"].values()))
+        self.assertEqual("3", loop_result["runs"][1]["run"]["story_project"]["chapter_resolution"]["requested"])
+
+    def test_story_project_rejection_retry_keeps_same_chapter(self) -> None:
+        from core.validator import validate_chapter as real_validate_chapter
+
+        tmp_path = self._case_dir("story_project_rejection_retry")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        self._set_snapshot_language(snapshot_path)
+        book = self._story_book(tmp_path)
+        self._story_outline(book, 2, "Second")
+        hints: list[int | None] = []
+        delegate = build_generation_story_project_context_loader(story_project=book, chapter=2)
+
+        class RecordingLoader:
+            story_project_root = delegate.story_project_root
+
+            def __call__(self, snapshot, memory_context, chapter_hint=None):
+                hints.append(chapter_hint)
+                return delegate(snapshot, memory_context, chapter_hint)
+
+        validation_calls = 0
+
+        def validator(snapshot, chapter, decision):
+            nonlocal validation_calls
+            validation_calls += 1
+            if validation_calls == 1:
+                return real_validate_chapter(snapshot, "Nothing changed.", decision)
+            return self._ok_validation(snapshot, chapter, decision)
+
+        def director(snapshot, _memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "retry_same_story_chapter",
+                "actions": ["generate_chapter", "validate"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 0,
+                "notes": [],
+            }
+
+        loop_result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing-memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            director=director,
+            validator=validator,
+            story_project_context_loader=RecordingLoader(),
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        ).run_loop(steps=2, persist=True, stop_on_rejection=False)
+
+        self.assertEqual([2, 2], [item["run"]["chapter_index"] for item in loop_result["runs"]])
+        self.assertEqual([False, True], [item["committed"] for item in loop_result["runs"]])
+        self.assertEqual([None, 2], hints)
+        self.assertEqual(3, json.loads(snapshot_path.read_text(encoding="utf-8"))["chapter_index"])
+        self.assertEqual(1, len(list((book / CORE_DIRECTORY_NAMES[2]).glob("*.md"))))
+        self.assertFalse(loop_result["succeeded"])
+        self.assertEqual(["run_rejected"], loop_result["failure_reasons"])
+
+    def test_story_project_missing_next_outline_stops_before_second_provider_call(self) -> None:
+        from modules.chapter_generator import run_chapter_pipeline as real_run_chapter_pipeline
+
+        tmp_path = self._case_dir("story_project_missing_next_outline")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        self._set_snapshot_language(snapshot_path)
+        book = self._story_book(tmp_path)
+        self._story_outline(book, 2, "Second")
+        loader = build_generation_story_project_context_loader(story_project=book, chapter=2)
+
+        with patch("core.engine.executor.run_chapter_pipeline", wraps=real_run_chapter_pipeline) as provider:
+            with self.assertRaises(LoopExecutionError) as raised:
+                AgentExecutor(
+                    snapshot_path=snapshot_path,
+                    memory_path=tmp_path / "missing-memory.json",
+                    run_dir=tmp_path / "runs",
+                    chapter_dir=tmp_path / "chapters",
+                    dry_run=True,
+                    story_project_context_loader=loader,
+                    story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+                ).run_loop(steps=2, persist=True)
+
+        self.assertEqual(1, provider.call_count)
+        self.assertIn("outline", str(raised.exception.original).lower())
+        self.assertEqual(3, json.loads(snapshot_path.read_text(encoding="utf-8"))["chapter_index"])
+        self.assertTrue(canonical_prose_path(book, 2, "Second").exists())
+
+    def test_story_project_auto_sequence_drift_stops_before_second_provider_call(self) -> None:
+        from modules.chapter_generator import run_chapter_pipeline as real_run_chapter_pipeline
+
+        tmp_path = self._case_dir("story_project_auto_drift")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        self._set_snapshot_language(snapshot_path)
+        book = self._story_book(tmp_path)
+        self._story_outline(book, 2, "Second")
+        self._story_outline(book, 4, "Fourth")
+        canonical_prose_path(book, 1, "First").write_text("chapter one", encoding="utf-8")
+        canonical_prose_path(book, 3, "Third").write_text("chapter three", encoding="utf-8")
+        loader = build_generation_story_project_context_loader(story_project=book, chapter="auto")
+
+        with patch("core.engine.executor.run_chapter_pipeline", wraps=real_run_chapter_pipeline) as provider:
+            with self.assertRaises(LoopExecutionError) as raised:
+                AgentExecutor(
+                    snapshot_path=snapshot_path,
+                    memory_path=tmp_path / "missing-memory.json",
+                    run_dir=tmp_path / "runs",
+                    chapter_dir=tmp_path / "chapters",
+                    dry_run=True,
+                    story_project_context_loader=loader,
+                    story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+                ).run_loop(steps=2, persist=True)
+
+        self.assertEqual(1, provider.call_count)
+        self.assertEqual("story_project_sequence_drift", raised.exception.original.code)
+        self.assertIn("story_project_sequence_drift", raised.exception.session["failure_reasons"])
+        self.assertFalse(canonical_prose_path(book, 4, "Fourth").exists())
+
+    def test_story_project_loader_configuration_and_director_chapter_mismatch_fail_closed(self) -> None:
+        tmp_path = self._case_dir("story_project_loader_guards")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        self._set_snapshot_language(snapshot_path)
+        book = self._story_book(tmp_path)
+        self._story_outline(book, 2, "Second")
+        loader = build_generation_story_project_context_loader(story_project=book, chapter=2)
+
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            AgentExecutor(story_project_context={"chapter_index": 2}, story_project_context_loader=loader)
+        with self.assertRaisesRegex(ValueError, "context_loader"):
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                story_project_context={"chapter_index": 2},
+                story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            ).run_loop(steps=2, persist=True)
+        provider_calls: list[str] = []
+        with self.assertRaisesRegex(ValueError, "story_project_chapter_mismatch"):
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                run_dir=tmp_path / "runs-mismatch",
+                dry_run=True,
+                director=lambda _snapshot, _memory: {
+                    "chapter_index": 3,
+                    "goal": "wrong_chapter",
+                    "actions": ["generate_chapter", "validate"],
+                    "validation_focus": ["logic"],
+                    "max_repair_attempts": 0,
+                    "notes": [],
+                },
+                generator=lambda prompt: provider_calls.append(prompt) or "unreached",
+                story_project_context_loader=loader,
+            ).run_once(persist=False)
+        self.assertEqual([], provider_calls)
 
     def test_run_loop_commits_multiple_steps(self) -> None:
         tmp_path = self._case_dir("loop_commits")

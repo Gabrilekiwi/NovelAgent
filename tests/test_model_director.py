@@ -308,7 +308,9 @@ class ModelDirectorTest(unittest.TestCase):
 
         self.assertEqual("model_directed_step", result["decision"]["goal"])
         self.assertEqual(["generate_chapter", "validate"], result["workflow"])
-        self.assertTrue(result["committed"])
+        self.assertTrue(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertEqual("preview", result["run"]["status"])
 
     def test_executor_persists_model_director_call_diagnostics_on_failure(self) -> None:
         tmp_path = self._case_dir("executor_model_call_failure")

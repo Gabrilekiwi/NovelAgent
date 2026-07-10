@@ -203,6 +203,7 @@ class StoryProjectRuntimeContext:
     source_resolution: SourceResolution
     warnings: tuple[str, ...] = ()
     missing_fields: tuple[str, ...] = ()
+    chapter_resolution: ChapterResolution | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -219,4 +220,5 @@ class StoryProjectRuntimeContext:
             "source_resolution": self.source_resolution.to_dict(),
             "warnings": list(self.warnings),
             "missing_fields": list(self.missing_fields),
+            "chapter_resolution": self.chapter_resolution.to_dict() if self.chapter_resolution else None,
         }

@@ -212,6 +212,50 @@ class CliTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Notion"):
             cli._story_project_writeback_config_from_args(args)
 
+    def test_story_project_multistep_requires_real_writeback(self) -> None:
+        for extra in ([], ["--story-project-writeback-dry-run"]):
+            with self.subTest(extra=extra), patch.object(
+                sys,
+                "argv",
+                ["main.py", "--story-project", "auto", "--steps", "2", *extra],
+            ):
+                args = cli.parse_args()
+                config = cli._story_project_writeback_config_from_args(args)
+                with self.assertRaisesRegex(ValueError, "--story-project-writeback"):
+                    cli._validate_story_project_multistep_args(args, config)
+
+    def test_story_project_multistep_rejects_persist_dry_run(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                "auto",
+                "--steps",
+                "2",
+                "--story-project-writeback",
+                "--persist-dry-run",
+            ],
+        ):
+            args = cli.parse_args()
+        config = cli._story_project_writeback_config_from_args(args)
+
+        with self.assertRaisesRegex(ValueError, "--persist-dry-run"):
+            cli._validate_story_project_multistep_args(args, config)
+
+    def test_story_project_multistep_accepts_real_persisted_writeback(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--story-project", "auto", "--steps", "2", "--story-project-writeback"],
+        ):
+            args = cli.parse_args()
+        config = cli._story_project_writeback_config_from_args(args)
+
+        cli._validate_story_project_multistep_args(args, config)
+        self.assertEqual("apply", config.mode)
+
     def test_story_project_writeback_requires_story_project(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--story-project-writeback"]):
             args = cli.parse_args()
@@ -261,6 +305,8 @@ class CliTest(unittest.TestCase):
         self.assertEqual(report, json.loads(output.getvalue()))
 
     def test_story_project_real_writeback_failure_exits_nonzero(self) -> None:
+        context_loader = type("ContextLoader", (), {"story_project_root": Path("book")})()
+
         class FakeExecutor:
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
@@ -302,7 +348,11 @@ class CliTest(unittest.TestCase):
             sys,
             "argv",
             ["main.py", "--story-project", "auto", "--story-project-writeback"],
-        ), patch.object(cli, "build_generation_story_project_context", return_value={"story_project_root": "book"}), patch.object(
+        ), patch.object(
+            cli,
+            "build_generation_story_project_context_loader",
+            return_value=context_loader,
+        ), patch.object(
             cli,
             "AgentExecutor",
             FakeExecutor,

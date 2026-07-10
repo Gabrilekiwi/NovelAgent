@@ -49,12 +49,12 @@ def persistence_run_lock(
     root = Path(run_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     lock_paths = {root / ".persistence.lock"}
+    shared_lock_root = Path(tempfile.gettempdir()) / "novelagent-state-locks"
     for state_path in state_paths:
         identity = Path(state_path).resolve(strict=False)
         canonical = os.path.normcase(str(identity))
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
-        lock_parent = identity if identity.exists() and identity.is_dir() else identity.parent
-        lock_paths.add(lock_parent / f".novelagent-state-{digest}.lock")
+        lock_paths.add(shared_lock_root / f"state-{digest}.lock")
     ordered = sorted(lock_paths, key=lambda item: os.path.normcase(str(item)))
     with ExitStack() as stack:
         for path in ordered:

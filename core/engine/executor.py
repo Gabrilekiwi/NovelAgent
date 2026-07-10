@@ -82,6 +82,13 @@ ChapterValidator = Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any
 Director = Callable[[dict[str, Any], dict[str, Any] | None], dict[str, Any]]
 MemoryLoader = Callable[[], dict[str, Any]]
 LoopObserver = Callable[[dict[str, Any]], None]
+StoryProjectContextLoader = Callable[[dict[str, Any], dict[str, Any], int | None], Any]
+
+
+class StoryProjectContextError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(f"{code}: {message}")
 
 
 class AgentExecutor:
@@ -108,6 +115,7 @@ class AgentExecutor:
         review_config: RuntimeReviewConfig | None = None,
         review_repair_config: ReviewRepairConfig | None = None,
         story_project_context: Any = None,
+        story_project_context_loader: StoryProjectContextLoader | None = None,
         story_project_oh_story_report: dict[str, Any] | None = None,
         story_project_writeback: StoryProjectWritebackConfig | None = None,
     ) -> None:
@@ -130,25 +138,69 @@ class AgentExecutor:
         self.memory_writer = memory_writer
         self.review_config = validate_runtime_review_config(review_config or RuntimeReviewConfig())
         self.review_repair_config = validate_review_repair_config(review_repair_config or ReviewRepairConfig())
+        if story_project_context is not None and story_project_context_loader is not None:
+            raise ValueError("story_project_context and story_project_context_loader are mutually exclusive")
         self.story_project_context = story_project_context
+        self.story_project_context_loader = story_project_context_loader
+        self._active_story_project_context: Any = None
         self.story_project_oh_story_report = story_project_oh_story_report
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
-        if not persist:
-            return self._run_once_impl(persist=False)
-        with persistence_run_lock(self.run_dir, state_paths=self._persistence_state_paths()):
-            self._assert_persistence_ready()
-            return self._run_once_impl(persist=True)
+        return self._invoke_once(persist=persist)
 
-    def _run_once_impl(self, *, persist: bool) -> dict[str, Any]:
+    def _invoke_once(
+        self,
+        *,
+        persist: bool,
+        snapshot_override: dict[str, Any] | None = None,
+        previous_result: dict[str, Any] | None = None,
+        chapter_hint: int | None = None,
+    ) -> dict[str, Any]:
+        self._active_story_project_context = None
+        try:
+            if not persist:
+                return self._run_once_impl(
+                    persist=False,
+                    snapshot_override=snapshot_override,
+                    previous_result=previous_result,
+                    chapter_hint=chapter_hint,
+                )
+            with persistence_run_lock(self.run_dir, state_paths=self._persistence_state_paths()):
+                self._assert_persistence_ready()
+                return self._run_once_impl(
+                    persist=True,
+                    snapshot_override=snapshot_override,
+                    previous_result=previous_result,
+                    chapter_hint=chapter_hint,
+                )
+        finally:
+            self._active_story_project_context = None
+
+    def _run_once_impl(
+        self,
+        *,
+        persist: bool,
+        snapshot_override: dict[str, Any] | None,
+        previous_result: dict[str, Any] | None,
+        chapter_hint: int | None,
+    ) -> dict[str, Any]:
         started_at = utc_now()
         snapshot_before = _capture_file_version(self.snapshot_path)
-        base_snapshot = load_snapshot(self.snapshot_path)
+        base_snapshot = (
+            normalize_snapshot(snapshot_override)
+            if snapshot_override is not None
+            else load_snapshot(self.snapshot_path)
+        )
         memory_context = self._load_memory_context()
-        base_snapshot, memory_context = self._apply_story_project_context(base_snapshot, memory_context)
         if self.use_run_history:
-            self._attach_last_run(memory_context)
+            self._attach_last_run(memory_context, previous_result=previous_result)
+        self._active_story_project_context = self._load_story_project_context(
+            base_snapshot,
+            memory_context,
+            chapter_hint=chapter_hint,
+        )
+        base_snapshot, memory_context = self._apply_story_project_context(base_snapshot, memory_context)
         snapshot_pack = build_snapshot_input_pack(base_snapshot, memory_context)
         state_result = build_snapshot_state_with_audit(base_snapshot, memory_context)
         snapshot = state_result["snapshot"]
@@ -157,6 +209,12 @@ class AgentExecutor:
         decision_started_at = utc_now()
         try:
             decision = validate_decision(self.director(snapshot, memory_context))
+            context_chapter = (self._story_project_context_dict() or {}).get("chapter_index")
+            if context_chapter is not None and int(decision["chapter_index"]) != int(context_chapter):
+                raise StoryProjectContextError(
+                    "story_project_chapter_mismatch",
+                    f"Director chose chapter {decision['chapter_index']} for StoryProject chapter {context_chapter}",
+                )
         except Exception as exc:  # noqa: BLE001 - persist Director failure diagnostics.
             director_trace = _director_trace(self.director, decision_started_at, utc_now(), status="failed", error=exc)
             if persist:
@@ -300,14 +358,18 @@ class AgentExecutor:
                 run_id=planned_run_id,
             )
         )
-        committed = accepted
+        committed = bool(accepted and persist)
         try:
             analysis = (
                 validate_schema(self._analyze(chapter, validation, snapshot), "analysis_result.schema.json")
-                if committed
+                if accepted
                 else _empty_analysis(validation)
             )
-            next_snapshot = update_snapshot(snapshot, analysis, validation, source_run_id=planned_run_id) if committed else base_snapshot
+            next_snapshot = (
+                update_snapshot(snapshot, analysis, validation, source_run_id=planned_run_id)
+                if accepted
+                else base_snapshot
+            )
             memory_updates = (
                 build_memory_updates({"id": planned_run_id, "chapter_index": decision["chapter_index"]}, analysis)
                 if committed
@@ -411,6 +473,7 @@ class AgentExecutor:
             state_update_audit=state_update_audit,
             chapter_pipeline=chapter_pipeline,
             accepted=accepted,
+            status="preview" if accepted and not persist else None,
         )
 
         result = {
@@ -428,9 +491,9 @@ class AgentExecutor:
             "state_update": state_update_audit,
         }
         self._attach_precomputed_runtime_review(result, review_pipeline, review_gate, review_repair)
+        self._attach_story_project_audit(result)
 
         if persist:
-            self._attach_story_project_audit(result)
             if accepted:
                 self._persist_accepted_result(
                     result,
@@ -471,10 +534,19 @@ class AgentExecutor:
     ) -> dict[str, Any]:
         if steps < 1:
             raise ValueError("steps must be at least 1")
+        story_project_enabled = self.story_project_context is not None or self.story_project_context_loader is not None
+        if story_project_enabled and steps > 1:
+            if self.story_project_context_loader is None:
+                raise ValueError("StoryProject multi-step execution requires story_project_context_loader")
+            if not persist or self.story_project_writeback.mode != "apply":
+                raise ValueError("StoryProject multi-step execution requires persisted apply writeback")
 
         started_at = utc_now()
         runs: list[dict[str, Any]] = []
         step_timings: list[dict[str, Any]] = []
+        loop_snapshot: dict[str, Any] | None = None
+        previous_result: dict[str, Any] | None = None
+        chapter_hint: int | None = None
         stopped_reason = "max_steps"
         _notify_loop(observer, {"event": "loop_start", "requested_steps": steps})
         for step_number in range(1, steps + 1):
@@ -482,7 +554,12 @@ class AgentExecutor:
             step_started_at = utc_now()
             _notify_loop(observer, {"event": "step_start", "step": step_number, "requested_steps": steps})
             try:
-                result = self.run_once(persist=persist)
+                result = self._invoke_once(
+                    persist=persist,
+                    snapshot_override=loop_snapshot,
+                    previous_result=previous_result,
+                    chapter_hint=chapter_hint,
+                )
             except Exception as exc:
                 if persist:
                     failed_result = _load_newest_persisted_result(self.run_dir, known_run_ids)
@@ -518,6 +595,12 @@ class AgentExecutor:
                 raise LoopExecutionError(original=exc, session=session, runs=runs) from exc
             else:
                 runs.append(result)
+                if not persist and result.get("accepted") and isinstance(result.get("snapshot"), dict):
+                    loop_snapshot = normalize_snapshot(result["snapshot"])
+                if story_project_enabled:
+                    resolved_chapter = int(result["run"]["chapter_index"])
+                    chapter_hint = resolved_chapter + 1 if result.get("committed") else resolved_chapter
+                previous_result = result
                 step_timings.append(_loop_step_timing(step_number, step_started_at, result))
                 _notify_loop(
                     observer,
@@ -888,7 +971,9 @@ class AgentExecutor:
         return merged_snapshot, merged_memory
 
     def _story_project_context_dict(self) -> dict[str, Any] | None:
-        context = self.story_project_context
+        context = self._active_story_project_context
+        if context is None:
+            context = self.story_project_context
         if context is None:
             return None
         if hasattr(context, "to_dict"):
@@ -896,6 +981,35 @@ class AgentExecutor:
         if isinstance(context, dict):
             return context
         return None
+
+    def _load_story_project_context(
+        self,
+        snapshot: dict[str, Any],
+        memory_context: dict[str, Any],
+        *,
+        chapter_hint: int | None,
+    ) -> Any:
+        if self.story_project_context_loader is None:
+            return self.story_project_context
+        context = self.story_project_context_loader(snapshot, memory_context, chapter_hint)
+        payload = context.to_dict() if hasattr(context, "to_dict") else context
+        if not isinstance(payload, dict):
+            raise StoryProjectContextError(
+                "story_project_context_invalid",
+                "context loader must return a mapping or an object with to_dict()",
+            )
+        chapter_index = payload.get("chapter_index")
+        if isinstance(chapter_index, bool) or not isinstance(chapter_index, int) or chapter_index < 1:
+            raise StoryProjectContextError(
+                "story_project_context_invalid",
+                "context loader returned an invalid chapter_index",
+            )
+        if chapter_hint is not None and chapter_index != chapter_hint:
+            raise StoryProjectContextError(
+                "story_project_sequence_drift",
+                f"expected chapter {chapter_hint}, but context resolved chapter {chapter_index}",
+            )
+        return context
 
     def _story_project_chapter_blueprint(self) -> dict[str, Any] | None:
         context = self._story_project_context_dict()
@@ -930,8 +1044,13 @@ class AgentExecutor:
             return _model_trace("scene_repair", provider="openai", model=config.openai_model, invocation="model")
         return None
 
-    def _attach_last_run(self, memory_context: dict[str, Any]) -> None:
-        last_run = load_latest_run_summary(self.run_dir)
+    def _attach_last_run(
+        self,
+        memory_context: dict[str, Any],
+        *,
+        previous_result: dict[str, Any] | None = None,
+    ) -> None:
+        last_run = _loop_local_run_summary(previous_result) if previous_result is not None else load_latest_run_summary(self.run_dir)
         if last_run:
             memory_context["last_run"] = last_run
 
@@ -1177,6 +1296,8 @@ class AgentExecutor:
         paths = [self.snapshot_path]
         context = self._story_project_context_dict()
         root = context.get("story_project_root") if isinstance(context, dict) else None
+        if not root and self.story_project_context_loader is not None:
+            root = getattr(self.story_project_context_loader, "story_project_root", None)
         if root:
             paths.append(Path(str(root)))
         if hasattr(self.memory_writer, "path"):
@@ -1197,6 +1318,7 @@ class AgentExecutor:
             "mode": "compatible",
             "root": context.get("story_project_root"),
             "chapter_index": context.get("chapter_index"),
+            "chapter_resolution": context.get("chapter_resolution"),
             "chapter_blueprint": context.get("chapter_blueprint"),
             "source_paths": context.get("source_paths"),
             "source_resolution": context.get("source_resolution"),
@@ -1807,6 +1929,32 @@ def _previous_chapter_text(memory_context: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value
     return None
+
+
+def _loop_local_run_summary(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    run = result.get("run") if isinstance(result.get("run"), dict) else {}
+    validation = run.get("validation") if isinstance(run.get("validation"), dict) else {}
+    decision = run.get("decision") if isinstance(run.get("decision"), dict) else {}
+    return {
+        "id": run.get("id"),
+        "status": run.get("status"),
+        "accepted": run.get("accepted"),
+        "committed": run.get("committed"),
+        "chapter_index": run.get("chapter_index"),
+        "chapter_text": result.get("chapter"),
+        "goal": decision.get("goal"),
+        "workflow": run.get("workflow", []),
+        "problem_codes": validation.get("problem_codes", []),
+        "problem_count": validation.get("problem_count", 0),
+        "blocking_problem_count": validation.get("blocking_problem_count", 0),
+        "warning_count": validation.get("warning_count", 0),
+        "requested_focus": validation.get("requested_focus", []),
+        "executed_checks": validation.get("executed_checks", []),
+        "skipped_checks": validation.get("skipped_checks", []),
+        "repair_attempts": run.get("repair_attempts", 0),
+    }
 
 
 def _result_failure_reasons(result: dict[str, Any]) -> list[str]:

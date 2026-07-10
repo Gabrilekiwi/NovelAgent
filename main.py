@@ -31,15 +31,13 @@ from core.review.dashboard import build_review_dashboard_from_index
 from core.review.index import get_latest_review, list_recent_reviews
 from core.review.repair_loop import ReviewRepairConfig, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
-from core.state.memory import load_memory_context
 from core.state.memory_writer import build_memory_writer, write_memory_updates
-from core.state.snapshot import load_snapshot
 from core.story_project.oh_story_detection import (
     detect_oh_story_compatibility,
     failed_oh_story_compatibility_report,
 )
 from core.story_project.paths import resolve_story_project_root
-from core.story_project.runtime import build_generation_story_project_context
+from core.story_project.runtime import build_generation_story_project_context_loader
 from core.story_project.writer import StoryProjectWritebackConfig
 
 
@@ -444,6 +442,7 @@ def main() -> None:
         review_config = _runtime_review_config_from_args(args)
         review_repair_config = _review_repair_config_from_args(args)
         story_project_writeback = _story_project_writeback_config_from_args(args)
+        _validate_story_project_multistep_args(args, story_project_writeback)
         _validate_story_project_compat_report_args(args)
     except ValueError as exc:
         print(f"Configuration failed: {exc}", file=sys.stderr)
@@ -537,16 +536,15 @@ def main() -> None:
                 print(format_persistence_reconcile_summary(persistence_health), file=sys.stderr)
             raise SystemExit(1)
 
-    story_project_context = None
+    story_project_context_loader = None
     story_project_oh_story_report = None
     if args.story_project is not None:
-        story_project_context = build_generation_story_project_context(
+        story_project_context_loader = build_generation_story_project_context_loader(
             story_project=args.story_project,
             chapter=args.chapter,
-            snapshot=load_snapshot(args.snapshot),
-            memory_context=load_memory_context(args.memory, source=args.memory_source),
+            overwrite=args.story_project_overwrite,
         )
-        story_project_oh_story_report = _detect_story_project_context_compatibility(story_project_context)
+        story_project_oh_story_report = _detect_story_project_context_compatibility(story_project_context_loader)
 
     executor = AgentExecutor(
         snapshot_path=args.snapshot,
@@ -565,7 +563,7 @@ def main() -> None:
         ),
         review_config=review_config,
         review_repair_config=review_repair_config,
-        story_project_context=story_project_context,
+        story_project_context_loader=story_project_context_loader,
         story_project_oh_story_report=story_project_oh_story_report,
         story_project_writeback=story_project_writeback,
     )
@@ -1242,6 +1240,18 @@ def _story_project_writeback_config_from_args(args: argparse.Namespace) -> Story
     elif dry_run_writeback:
         mode = "dry_run"
     return StoryProjectWritebackConfig(mode=mode, overwrite=bool(getattr(args, "story_project_overwrite", False)))
+
+
+def _validate_story_project_multistep_args(
+    args: argparse.Namespace,
+    writeback: StoryProjectWritebackConfig,
+) -> None:
+    if getattr(args, "story_project", None) is None or int(getattr(args, "steps", 1)) <= 1:
+        return
+    if writeback.mode != "apply":
+        raise ValueError("StoryProject --steps > 1 requires --story-project-writeback")
+    if bool(getattr(args, "dry_run", False)) or bool(getattr(args, "persist_dry_run", False)):
+        raise ValueError("StoryProject multi-step writeback cannot use global dry-run or --persist-dry-run")
 
 
 def _review_gate_exit_code(result: dict | None) -> int:

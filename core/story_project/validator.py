@@ -22,6 +22,7 @@ def validate_story_project(
     story_project: str | Path,
     chapter: str | int | None = "auto",
     workspace_root: str | Path | None = None,
+    allow_existing_prose: bool = False,
 ) -> StoryProjectValidationResult:
     root_resolution = resolve_story_project_root(story_project, workspace_root=workspace_root)
     problems: list[ValidationProblem] = []
@@ -114,7 +115,7 @@ def validate_story_project(
                         path=story_project_root / "正文",
                     )
                 )
-            elif prose_resolution.found:
+            elif prose_resolution.found and not allow_existing_prose:
                 problems.append(
                     ValidationProblem(
                         code="target_prose_exists",

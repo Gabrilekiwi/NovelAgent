@@ -374,6 +374,7 @@
           },
           "status": {
             "enum": [
+              "preview",
               "committed",
               "rejected",
               "failed"
@@ -444,6 +445,7 @@
           },
           "run_status": {
             "enum": [
+              "preview",
               "committed",
               "rejected",
               "failed"
@@ -524,6 +526,9 @@
           "type": "string"
         },
         "message": {
+          "type": "string"
+        },
+        "code": {
           "type": "string"
         }
       },

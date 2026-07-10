@@ -67,6 +67,9 @@ def build_loop_session_record(
     chapter_indexes = [item["chapter_index"] for item in run_summaries]
     if error is not None and "run_failed" not in failure_reasons:
         failure_reasons.append("run_failed")
+    error_code = getattr(error, "code", None) if error is not None else None
+    if isinstance(error_code, str) and error_code and error_code not in failure_reasons:
+        failure_reasons.append(error_code)
     succeeded = not failure_reasons and int(completed_steps) == int(requested_steps)
     record = {
         "id": f"loop_{format_timestamp(started_at)}",
@@ -95,6 +98,8 @@ def build_loop_session_record(
             "type": type(error).__name__,
             "message": str(error),
         }
+        if isinstance(error_code, str) and error_code:
+            record["error"]["code"] = error_code
     return validate_schema(record, "loop_session.schema.json")
 
 

@@ -79,6 +79,9 @@
           "type": ["integer", "null"],
           "minimum": 1
         },
+        "chapter_resolution": {
+          "type": ["object", "null"]
+        },
         "chapter_blueprint": {
           "type": ["object", "null"]
         },
