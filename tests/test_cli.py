@@ -102,6 +102,41 @@ class CliTest(unittest.TestCase):
         self.assertEqual("dry_run", config.mode)
         self.assertTrue(config.overwrite)
 
+    def test_review_auto_repair_requires_review_pipeline(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--review-auto-repair"]):
+            args = cli.parse_args()
+
+        with self.assertRaisesRegex(ValueError, "--enable-review-pipeline"):
+            cli._review_repair_config_from_args(args)
+
+    def test_review_repair_dry_run_requires_auto_repair(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--enable-review-pipeline", "--review-repair-dry-run"]):
+            args = cli.parse_args()
+
+        with self.assertRaisesRegex(ValueError, "--review-auto-repair"):
+            cli._review_repair_config_from_args(args)
+
+    def test_review_repair_max_attempts_accepts_one_to_three(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--enable-review-pipeline", "--review-auto-repair", "--review-repair-max-attempts", "3"],
+        ):
+            args = cli.parse_args()
+
+        config = cli._review_repair_config_from_args(args)
+        self.assertTrue(config.enabled)
+        self.assertEqual(3, config.max_attempts)
+
+    def test_review_repair_max_attempts_rejects_out_of_range(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--enable-review-pipeline", "--review-auto-repair", "--review-repair-max-attempts", "4"],
+        ):
+            with self.assertRaises(SystemExit):
+                cli.parse_args()
+
     def test_story_project_real_writeback_conflicts_with_global_dry_run(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--dry-run", "--story-project", "auto", "--story-project-writeback"]):
             args = cli.parse_args()

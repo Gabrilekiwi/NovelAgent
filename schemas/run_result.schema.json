@@ -52,6 +52,9 @@
     },
     "review_index": {
       "type": "object"
+    },
+    "review_repair": {
+      "type": "object"
     }
   },
   "additionalProperties": false

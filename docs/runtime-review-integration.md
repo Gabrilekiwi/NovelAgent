@@ -19,6 +19,39 @@ Add `--review-gate blocked`, `--review-gate needs_revision`, or `--review-gate w
 
 Each enabled runtime review also updates `<review-output-dir>/review_index.json`, which can be queried with `--review-latest` or `--review-list`.
 
+## Review Auto Repair
+
+Review-driven repair is also off by default. It only runs when both switches are present:
+
+```bash
+python main.py \
+  --enable-review-pipeline \
+  --review-auto-repair
+```
+
+`--review-auto-repair` is a configuration error without `--enable-review-pipeline`.
+
+Use `--review-repair-max-attempts N` to cap attempts. The accepted range is `1..3`, and the default is `1`.
+
+Use `--review-repair-dry-run` with `--review-auto-repair` to build the repair plan and runtime artifacts without changing the runtime chapter text. Dry-run repair does not allow StoryProject writeback to proceed.
+
+Auto repair only triggers when the original runtime review status is `needs_revision` or `blocked`. `pass` and `warning` reviews remain diagnostic and do not trigger repair.
+
+A repaired chapter is accepted only after deterministic validation passes and the post-repair review returns `pass` or `warning`. If a review gate is configured, the post-repair gate must also pass. Rejected, failed, or dry-run repairs produce a rejected run and do not write StoryProject files.
+
+Review artifacts are isolated:
+
+```text
+<review-output-dir>/<run_id>/original/
+<review-output-dir>/<run_id>/repair_attempt_01/
+```
+
+Review repair artifacts are stored under the runtime run directory:
+
+```text
+<run-dir>/review_repairs/<run_id>/
+```
+
 Build a static dashboard from the index after reviews have been written:
 
 ```bash
@@ -90,3 +123,5 @@ python main.py --dry-run --enable-review-pipeline --review-no-default-rules --re
 ```
 
 This integration does not call an LLM, does not execute automatic repair, does not write repaired chapters, does not write back to Memory V2, and does not integrate oh-story, Obsidian, or vector stores.
+
+With `--review-auto-repair`, the integration still does not execute oh-story scripts, does not call an oh-story API provider, does not summarize tracking with an LLM, and does not write StoryProject files directly. StoryProject writeback, if explicitly enabled, receives only the final accepted runtime chapter.

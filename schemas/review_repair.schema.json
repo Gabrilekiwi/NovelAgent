@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewRepairResult",
+  "type": "object",
+  "required": [
+    "enabled",
+    "attempted",
+    "accepted",
+    "dry_run",
+    "attempt_count",
+    "max_attempts",
+    "trigger_status",
+    "before_review",
+    "after_review",
+    "repair_plan",
+    "repair_deltas",
+    "errors",
+    "rejected_reason",
+    "artifacts"
+  ],
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "attempted": {
+      "type": "boolean"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "attempt_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_attempts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3
+    },
+    "trigger_status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "before_review": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "after_review": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "repair_plan": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "repair_deltas": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "rejected_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "artifacts": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

@@ -19,6 +19,7 @@ from core.runtime_paths import (
 )
 from core.review.dashboard import build_review_dashboard_from_index
 from core.review.index import get_latest_review, list_recent_reviews
+from core.review.repair_loop import ReviewRepairConfig, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
 from core.state.memory import load_memory_context
 from core.state.memory_writer import build_memory_writer
@@ -173,6 +174,22 @@ def parse_args() -> argparse.Namespace:
         help="Optional review status threshold that can make the CLI exit non-zero.",
     )
     parser.add_argument(
+        "--review-auto-repair",
+        action="store_true",
+        help="Enable explicit review-driven repair when runtime review requests revision.",
+    )
+    parser.add_argument(
+        "--review-repair-max-attempts",
+        type=_review_repair_attempts,
+        default=1,
+        help="Maximum review repair attempts, from 1 to 3.",
+    )
+    parser.add_argument(
+        "--review-repair-dry-run",
+        action="store_true",
+        help="Build review repair plan artifacts without changing runtime chapter text.",
+    )
+    parser.add_argument(
         "--review-latest",
         action="store_true",
         help="Print the latest runtime review entry from review_index.json and exit.",
@@ -301,6 +318,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _review_repair_attempts(value: str) -> int:
+    parsed = _positive_int(value)
+    if parsed > 3:
+        raise argparse.ArgumentTypeError("must be between 1 and 3")
+    return parsed
+
+
 def apply_notion_shortcuts(args: argparse.Namespace) -> argparse.Namespace:
     if getattr(args, "notion_memory", False) or getattr(args, "notion_sync", False):
         args.memory_source = "notion"
@@ -393,6 +417,7 @@ def main() -> None:
 
     try:
         review_config = _runtime_review_config_from_args(args)
+        review_repair_config = _review_repair_config_from_args(args)
         story_project_writeback = _story_project_writeback_config_from_args(args)
     except ValueError as exc:
         print(f"Configuration failed: {exc}", file=sys.stderr)
@@ -477,10 +502,16 @@ def main() -> None:
             notion_readback=args.notion_readback,
         ),
         review_config=review_config,
+        review_repair_config=review_repair_config,
         story_project_context=story_project_context,
         story_project_writeback=story_project_writeback,
     )
-    persist = not args.dry_run or args.persist_dry_run or args.story_project_writeback_dry_run
+    persist = (
+        not args.dry_run
+        or args.persist_dry_run
+        or args.story_project_writeback_dry_run
+        or args.review_repair_dry_run
+    )
     if args.steps == 1:
         result = executor.run_once(persist=persist)
     else:
@@ -872,6 +903,20 @@ def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewC
         gate_threshold=str(args.review_gate),
     )
     return validate_runtime_review_config(config)
+
+
+def _review_repair_config_from_args(args: argparse.Namespace) -> ReviewRepairConfig:
+    if bool(getattr(args, "review_auto_repair", False)) and not bool(getattr(args, "enable_review_pipeline", False)):
+        raise ValueError("--review-auto-repair requires --enable-review-pipeline")
+    if bool(getattr(args, "review_repair_dry_run", False)) and not bool(getattr(args, "review_auto_repair", False)):
+        raise ValueError("--review-repair-dry-run requires --review-auto-repair")
+    return validate_review_repair_config(
+        ReviewRepairConfig(
+            enabled=bool(getattr(args, "review_auto_repair", False)),
+            max_attempts=int(getattr(args, "review_repair_max_attempts", 1)),
+            dry_run=bool(getattr(args, "review_repair_dry_run", False)),
+        )
+    )
 
 
 def _story_project_writeback_config_from_args(args: argparse.Namespace) -> StoryProjectWritebackConfig:

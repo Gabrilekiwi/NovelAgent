@@ -28,26 +28,38 @@ from core.review.runtime import (
     summarize_review_pipeline,
     validate_runtime_review_config,
 )
+from core.review.repair_loop import (
+    ReviewRepairConfig,
+    build_review_repair_plan,
+    disabled_review_repair,
+    run_review_repair_loop,
+    validate_review_repair_config,
+)
 
 __all__ = [
     "ReviewPipelineError",
     "ReviewRegressionError",
     "RuntimeReviewConfig",
+    "ReviewRepairConfig",
     "build_review_dashboard",
     "build_review_dashboard_from_index",
     "build_human_review_report",
     "build_review_index_entry",
+    "build_review_repair_plan",
     "disabled_review_summary",
+    "disabled_review_repair",
     "evaluate_review_gate",
     "evaluate_regression_expectations",
     "get_latest_review",
     "list_recent_reviews",
     "load_review_index",
     "run_review_pipeline",
+    "run_review_repair_loop",
     "run_review_regression_case",
     "run_review_regression_suite",
     "run_runtime_review",
     "summarize_review_pipeline",
     "update_review_index",
     "validate_runtime_review_config",
+    "validate_review_repair_config",
 ]

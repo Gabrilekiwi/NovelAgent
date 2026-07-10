@@ -176,6 +176,69 @@ def save_story_project_writeback_artifacts(
     }
 
 
+def save_review_repair_artifacts(
+    *,
+    review_repair: dict[str, Any],
+    run: dict[str, Any],
+    output_dir: str | Path = DEFAULT_RUN_DIR / "review_repairs",
+) -> dict[str, Any]:
+    path = Path(output_dir) / str(run["id"])
+    path.mkdir(parents=True, exist_ok=True)
+    artifacts: dict[str, Any] = {}
+    repair_plan = review_repair.get("repair_plan")
+    if isinstance(repair_plan, dict):
+        artifacts["repair_plan"] = _write_artifact(
+            path / "review_repair_plan_attempt_01.json",
+            json.dumps(repair_plan, ensure_ascii=False, indent=2),
+            "json",
+        )
+    deltas = review_repair.get("repair_deltas") if isinstance(review_repair.get("repair_deltas"), list) else []
+    for delta in deltas:
+        if not isinstance(delta, dict):
+            continue
+        attempt = int(delta.get("attempt") or len(artifacts) + 1)
+        artifacts[f"delta_attempt_{attempt:02d}"] = _write_artifact(
+            path / f"review_repair_delta_attempt_{attempt:02d}.json",
+            json.dumps(delta, ensure_ascii=False, indent=2),
+            "json",
+        )
+    final_chapter = review_repair.get("final_chapter")
+    if isinstance(final_chapter, str) and final_chapter.strip():
+        artifacts["final_chapter"] = _write_artifact(
+            path / "repaired_chapter_final.md",
+            final_chapter.strip() + "\n",
+            "markdown",
+        )
+    final_validation = review_repair.get("final_validation")
+    if isinstance(final_validation, dict):
+        artifacts["final_validation"] = _write_artifact(
+            path / "post_repair_validation_final.json",
+            json.dumps(final_validation, ensure_ascii=False, indent=2),
+            "json",
+        )
+    final_review = review_repair.get("final_review")
+    if isinstance(final_review, dict):
+        artifacts["final_review"] = _write_artifact(
+            path / "post_repair_review_final.json",
+            json.dumps(final_review, ensure_ascii=False, indent=2),
+            "json",
+        )
+    artifacts["result"] = _write_artifact(
+        path / "review_repair_result.json",
+        json.dumps(_review_repair_artifact_payload(review_repair), ensure_ascii=False, indent=2),
+        "json",
+    )
+    return artifacts
+
+
+def _review_repair_artifact_payload(review_repair: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in review_repair.items()
+        if key not in {"final_chapter"}
+    }
+
+
 def _write_artifact(path: Path, content: str, artifact_format: str) -> dict[str, Any]:
     path.write_text(content, encoding="utf-8")
     return {

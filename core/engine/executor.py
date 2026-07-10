@@ -11,6 +11,7 @@ from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
 from core.review.gate import evaluate_review_gate
 from core.review.index import build_review_index_entry, review_index_path, update_review_index
+from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.schema import validate_schema
@@ -19,6 +20,7 @@ from core.engine.artifacts import (
     save_chapter_pipeline_artifacts,
     save_input_pack_artifact,
     save_loop_session_artifact,
+    save_review_repair_artifacts,
     save_snapshot_pack_artifact,
     save_story_project_writeback_artifacts,
 )
@@ -44,6 +46,7 @@ from core.state.memory import load_memory_context
 from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
 from core.state.snapshot import build_state_update_audit, load_snapshot, save_snapshot, update_snapshot
+from core.story_project.coverage import build_blueprint_coverage
 from core.story_project.writer import (
     StoryProjectWritebackConfig,
     default_story_project_writeback,
@@ -91,6 +94,7 @@ class AgentExecutor:
         analyzer: ChapterAnalyzer | None = None,
         memory_writer: MemoryWriter | None = None,
         review_config: RuntimeReviewConfig | None = None,
+        review_repair_config: ReviewRepairConfig | None = None,
         story_project_context: Any = None,
         story_project_writeback: StoryProjectWritebackConfig | None = None,
     ) -> None:
@@ -112,6 +116,7 @@ class AgentExecutor:
         self.analyzer = analyzer or analyze_chapter
         self.memory_writer = memory_writer
         self.review_config = validate_runtime_review_config(review_config or RuntimeReviewConfig())
+        self.review_repair_config = validate_review_repair_config(review_repair_config or ReviewRepairConfig())
         self.story_project_context = story_project_context
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
 
@@ -255,6 +260,23 @@ class AgentExecutor:
 
         committed = bool(validation["ok"])
         planned_run_id = build_run_id(int(decision["chapter_index"]), started_at)
+        review_pipeline = None
+        review_gate = None
+        review_repair = None
+        chapter, validation, committed, chapter_pipeline, review_pipeline, review_gate, review_repair = (
+            self._run_runtime_review_before_commit(
+                chapter=chapter,
+                validation=validation,
+                committed=committed,
+                chapter_pipeline=chapter_pipeline,
+                snapshot=snapshot,
+                decision=decision,
+                input_pack=input_pack,
+                recovery_context=recovery_context,
+                previous_chapter_text=_previous_chapter_text(memory_context),
+                run_id=planned_run_id,
+            )
+        )
         try:
             analysis = (
                 validate_schema(self._analyze(chapter, validation, snapshot), "analysis_result.schema.json")
@@ -378,6 +400,7 @@ class AgentExecutor:
             "committed": committed,
             "state_update": state_update_audit,
         }
+        self._attach_precomputed_runtime_review(result, review_pipeline, review_gate, review_repair)
 
         if persist:
             self._attach_snapshot_pack_artifact(result["run"], snapshot_pack)
@@ -422,13 +445,9 @@ class AgentExecutor:
                 validation,
                 _trace_repair_deltas(workflow_trace),
             )
+            self._attach_review_repair_artifacts(result, review_repair)
             self._attach_story_project_audit(result)
             self._run_story_project_writeback(result)
-        self._attach_runtime_review(
-            result,
-            snapshot=snapshot,
-            previous_chapter_text=_previous_chapter_text(memory_context),
-        )
 
         if persist:
             self._save_run_record(result)
@@ -899,6 +918,212 @@ class AgentExecutor:
         if last_run:
             memory_context["last_run"] = last_run
 
+    def _run_runtime_review_before_commit(
+        self,
+        *,
+        chapter: str,
+        validation: dict[str, Any],
+        committed: bool,
+        chapter_pipeline: dict[str, Any] | None,
+        snapshot: dict[str, Any],
+        decision: dict[str, Any],
+        input_pack: str,
+        recovery_context: dict[str, Any],
+        previous_chapter_text: str | None,
+        run_id: str,
+    ) -> tuple[
+        str,
+        dict[str, Any],
+        bool,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+    ]:
+        if not self.review_config.enabled or not committed:
+            return chapter, validation, committed, chapter_pipeline, None, None, None
+
+        original_chapter = chapter
+        original_review = self._run_runtime_review_for_chapter(
+            chapter_text=chapter,
+            snapshot=snapshot,
+            previous_chapter_text=previous_chapter_text,
+            run_id=run_id,
+            artifact_suffix="original" if self.review_repair_config.enabled else None,
+        )
+        review_gate = self._review_gate_for_review(original_review)
+        if not self.review_repair_config.enabled:
+            return chapter, validation, committed, chapter_pipeline, original_review, review_gate, None
+
+        def repair(current_chapter: str, current_validation: dict[str, Any], repair_plan: dict[str, Any]) -> str:
+            return self._repair(current_chapter, current_validation, input_pack, repair_plan, recovery_context)
+
+        def validate(repaired_chapter: str) -> dict[str, Any]:
+            return self._validate_repaired_chapter(
+                chapter=repaired_chapter,
+                snapshot=snapshot,
+                decision=decision,
+                chapter_pipeline=chapter_pipeline,
+            )
+
+        def review(repaired_chapter: str, attempt: int) -> dict[str, Any]:
+            return self._run_runtime_review_for_chapter(
+                chapter_text=repaired_chapter,
+                snapshot=snapshot,
+                previous_chapter_text=previous_chapter_text,
+                run_id=run_id,
+                artifact_suffix=f"repair_attempt_{attempt:02d}",
+            )
+
+        review_repair = run_review_repair_loop(
+            chapter_text=chapter,
+            validation=validation,
+            before_review=original_review,
+            config=self.review_repair_config,
+            repair=repair,
+            validate=validate,
+            review=review,
+        )
+        if not review_repair.get("attempted"):
+            return chapter, validation, committed, chapter_pipeline, original_review, review_gate, review_repair
+
+        final_review = (
+            review_repair.get("final_review")
+            if isinstance(review_repair.get("final_review"), dict)
+            else original_review
+        )
+        final_gate = self._review_gate_for_review(final_review)
+        if review_repair.get("accepted") and final_gate and final_gate.get("exit_code") == 1:
+            review_repair = dict(review_repair)
+            review_repair["accepted"] = False
+            review_repair["rejected_reason"] = "post_repair_review_gate_failed"
+
+        if review_repair.get("accepted"):
+            repaired_chapter = str(review_repair.get("final_chapter") or chapter)
+            repaired_validation = (
+                review_repair.get("final_validation")
+                if isinstance(review_repair.get("final_validation"), dict)
+                else validation
+            )
+            repaired_pipeline = self._chapter_pipeline_after_repair(chapter_pipeline, repaired_chapter)
+            return repaired_chapter, repaired_validation, True, repaired_pipeline, final_review, final_gate, review_repair
+
+        rejected_validation = _review_repair_rejected_validation(
+            validation,
+            reason=str(review_repair.get("rejected_reason") or "review_repair_rejected"),
+        )
+        return original_chapter, rejected_validation, False, chapter_pipeline, final_review, final_gate, review_repair
+
+    def _run_runtime_review_for_chapter(
+        self,
+        *,
+        chapter_text: str,
+        snapshot: dict[str, Any],
+        previous_chapter_text: str | None,
+        run_id: str,
+        artifact_suffix: str | None,
+    ) -> dict[str, Any]:
+        return run_runtime_review(
+            chapter_text=chapter_text,
+            snapshot=snapshot,
+            previous_chapter_text=previous_chapter_text,
+            run_id=run_id,
+            config=self.review_config,
+            artifact_suffix=artifact_suffix,
+        )
+
+    def _review_gate_for_review(self, review: dict[str, Any] | None) -> dict[str, Any] | None:
+        if self.review_config.gate_threshold == "off" or not isinstance(review, dict):
+            return None
+        return evaluate_review_gate(review_pipeline=review, threshold=self.review_config.gate_threshold)
+
+    def _validate_repaired_chapter(
+        self,
+        *,
+        chapter: str,
+        snapshot: dict[str, Any],
+        decision: dict[str, Any],
+        chapter_pipeline: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if self.validator is not validate_chapter:
+            return self.validator(snapshot, chapter, decision)
+        blueprint = self._story_project_chapter_blueprint()
+        coverage = None
+        if isinstance(blueprint, dict):
+            coverage = build_blueprint_coverage(blueprint, _synthetic_repaired_scene_drafts(blueprint), chapter)
+            if isinstance(chapter_pipeline, dict):
+                chapter_pipeline["blueprint_coverage"] = coverage
+        return validate_chapter(
+            snapshot,
+            chapter,
+            decision,
+            enable_llm=self.enable_llm_validator,
+            chapter_blueprint=blueprint,
+            blueprint_coverage=coverage,
+        )
+
+    def _chapter_pipeline_after_repair(
+        self,
+        chapter_pipeline: dict[str, Any] | None,
+        chapter: str,
+    ) -> dict[str, Any] | None:
+        if not isinstance(chapter_pipeline, dict):
+            return None
+        updated = dict(chapter_pipeline)
+        updated["merged_chapter"] = chapter
+        blueprint = self._story_project_chapter_blueprint()
+        if isinstance(blueprint, dict):
+            updated["blueprint_coverage"] = build_blueprint_coverage(
+                blueprint,
+                _synthetic_repaired_scene_drafts(blueprint),
+                chapter,
+            )
+        return updated
+
+    def _attach_precomputed_runtime_review(
+        self,
+        result: dict[str, Any],
+        review: dict[str, Any] | None,
+        gate: dict[str, Any] | None,
+        review_repair: dict[str, Any] | None,
+    ) -> None:
+        run = result.get("run")
+        if not isinstance(run, dict):
+            return
+        if isinstance(review, dict):
+            run["review_pipeline"] = review
+            result["review_pipeline"] = review
+        if isinstance(gate, dict):
+            run["review_gate"] = gate
+            result["review_gate"] = gate
+        if isinstance(review_repair, dict):
+            public_payload = _review_repair_run_payload(review_repair)
+            run["review_repair"] = public_payload
+            result["review_repair"] = public_payload
+        if isinstance(review, dict):
+            self._attach_review_index(result)
+
+    def _attach_review_repair_artifacts(
+        self,
+        result: dict[str, Any],
+        review_repair: dict[str, Any] | None,
+    ) -> None:
+        if not isinstance(review_repair, dict) or not review_repair.get("attempted"):
+            return
+        run = result.get("run")
+        if not isinstance(run, dict):
+            return
+        artifacts = save_review_repair_artifacts(
+            review_repair=review_repair,
+            run=run,
+            output_dir=self.run_dir / "review_repairs",
+        )
+        review_repair = dict(review_repair)
+        review_repair["artifacts"] = artifacts
+        public_payload = _review_repair_run_payload(review_repair)
+        run["review_repair"] = public_payload
+        result["review_repair"] = public_payload
+
     def _save_run_record(self, result: dict[str, Any]) -> None:
         self._attach_story_project_audit(result)
         validate_run_result(result)
@@ -1080,6 +1305,66 @@ def run_loop(
         steps=steps,
         persist=persist,
         stop_on_rejection=stop_on_rejection,
+    )
+
+
+def _synthetic_repaired_scene_drafts(chapter_blueprint: dict[str, Any]) -> list[dict[str, Any]]:
+    beat_indexes = []
+    for position, beat in enumerate(chapter_blueprint.get("required_beats") or [], start=1):
+        if isinstance(beat, dict):
+            raw_index = beat.get("index")
+            index = raw_index if isinstance(raw_index, int) and not isinstance(raw_index, bool) else position
+        else:
+            index = position
+        beat_indexes.append(int(index))
+    return [
+        {
+            "index": 1,
+            "goal": "Post-review repaired chapter coverage check.",
+            "covered_beat_indexes": beat_indexes,
+        }
+    ]
+
+
+def _review_repair_run_payload(review_repair: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in review_repair.items()
+        if key not in {"final_chapter"}
+    }
+
+
+def _review_repair_rejected_validation(validation: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    existing_checks = validation.get("executed_checks")
+    executed_checks = list(existing_checks) if isinstance(existing_checks, list) and existing_checks else ["logic"]
+    problem = {
+        "code": reason,
+        "message": f"Review repair did not produce an accepted chapter: {reason}.",
+        "validator": "review_repair",
+        "severity": "high",
+        "blocking": True,
+        "category": "blocking",
+        "repair_hint": "Inspect review repair artifacts and revise the chapter manually or rerun with adjusted input.",
+        "repair_action": "manual_review",
+        "repair_parameters": {},
+        "evidence": [{"kind": "review_repair", "value": reason}],
+    }
+    return validate_schema(
+        {
+            "ok": False,
+            "requested_focus": list(validation.get("requested_focus") or ["logic"]),
+            "executed_checks": executed_checks,
+            "skipped_checks": list(validation.get("skipped_checks") or []),
+            "checks": [{"name": "review_repair", "ok": False, "problems": [problem]}],
+            "problems": [problem],
+            "blocking_problem_count": 1,
+            "warning_count": 0,
+            "severity_counts": [{"severity": "high", "count": 1}],
+            "deterministic_repair_count": 0,
+            "manual_review_count": 1,
+            "repair_action_counts": [{"action": "manual_review", "count": 1}],
+        },
+        "validation_result.schema.json",
     )
 
 

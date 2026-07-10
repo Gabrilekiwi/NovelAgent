@@ -5,12 +5,15 @@ import unittest
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from api.contracts import ModelCallError, ModelOutputError
 from core.director import DirectorDecisionError
 from core.engine.executor import AgentExecutor, LoopExecutionError
 from core.engine.run_record import build_run_record
 from core.engine.workflow import WorkflowError
+from core.review.repair_loop import ReviewRepairConfig
+from core.review.runtime import RuntimeReviewConfig
 from core.schema import SchemaValidationError, validate_schema
 from core.story_project.model import CORE_DIRECTORY_NAMES
 from core.story_project.paths import PROSE_DIR_NAME, canonical_prose_path
@@ -36,6 +39,53 @@ class AgentExecutorTest(unittest.TestCase):
         content = json.dumps(snapshot, ensure_ascii=False, indent=2)
         path.write_text(content, encoding="utf-8")
         return content
+
+    def _ok_validation(self, snapshot: dict, chapter: str, decision: dict) -> dict:
+        return validate_schema(
+            {
+                "ok": True,
+                "requested_focus": ["logic"],
+                "executed_checks": ["logic"],
+                "skipped_checks": [],
+                "checks": [{"name": "logic", "ok": True, "problems": []}],
+                "problems": [],
+                "blocking_problem_count": 0,
+                "warning_count": 0,
+                "severity_counts": [],
+                "deterministic_repair_count": 0,
+                "manual_review_count": 0,
+                "repair_action_counts": [],
+            },
+            "validation_result.schema.json",
+        )
+
+    def _analysis(self, chapter: str, validation: dict) -> dict:
+        return validate_schema(
+            {
+                "events": [{"text": chapter[:40]}],
+                "character_changes": [],
+                "world_changes": [],
+                "new_locations": [],
+                "story_state": {
+                    "last_chapter_ending": chapter[-80:],
+                    "last_scene_location": "",
+                    "last_scene_characters": [],
+                    "open_threads": [],
+                    "required_opening_bridge": "",
+                },
+                "spatial_state": {
+                    "spaces": {},
+                    "connections": [],
+                    "character_positions": {},
+                    "blocked_paths": [],
+                    "last_transition": {},
+                },
+                "conflicts": [],
+                "validation_ok": bool(validation.get("ok")),
+                "summary": chapter[:80],
+            },
+            "analysis_result.schema.json",
+        )
 
     def test_dry_run_without_persist_leaves_snapshot_unchanged(self) -> None:
         tmp_path = self._case_dir("dry_run_no_persist")
@@ -194,6 +244,96 @@ class AgentExecutorTest(unittest.TestCase):
         for scene_artifact in pipeline_artifacts["scene_drafts"]:
             self.assertTrue(Path(scene_artifact["path"]).exists())
             self.assertIn("Merged Span", Path(scene_artifact["path"]).read_text(encoding="utf-8"))
+
+    def test_review_auto_repair_accepts_repaired_chapter_before_commit(self) -> None:
+        tmp_path = self._case_dir("review_repair_accept")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        reviews = [
+            {
+                "enabled": True,
+                "status": "blocked",
+                "decision": "blocked",
+                "quality_score": 40,
+                "rule_score": 20,
+                "repair_task_count": 1,
+                "blocking_task_count": 1,
+                "artifacts_dir": str(tmp_path / "reviews" / "original"),
+                "summary_path": None,
+            },
+            {
+                "enabled": True,
+                "status": "pass",
+                "decision": "accept",
+                "quality_score": 90,
+                "rule_score": 90,
+                "repair_task_count": 0,
+                "blocking_task_count": 0,
+                "artifacts_dir": str(tmp_path / "reviews" / "repair_attempt_01"),
+                "summary_path": None,
+            },
+        ]
+
+        with patch("core.engine.executor.run_runtime_review", side_effect=reviews):
+            result = AgentExecutor(
+                snapshot_path=snapshot_path,
+                memory_path=tmp_path / "missing_memory.json",
+                run_dir=tmp_path / "runs",
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                generator=lambda _input_pack: "original chapter",
+                polisher=lambda chapter: chapter,
+                validator=self._ok_validation,
+                repairer=lambda chapter, _validation, _input_pack, _plan, _recovery: chapter + " fixed",
+                analyzer=self._analysis,
+                review_config=RuntimeReviewConfig(enabled=True, output_dir=tmp_path / "reviews"),
+                review_repair_config=ReviewRepairConfig(enabled=True),
+            ).run_once(persist=True)
+
+        self.assertTrue(result["committed"])
+        self.assertEqual("original chapter fixed", result["chapter"])
+        self.assertTrue(result["run"]["review_repair"]["accepted"])
+        self.assertEqual("pass", result["run"]["review_pipeline"]["status"])
+        self.assertTrue((tmp_path / "runs" / "review_repairs" / result["run"]["id"] / "repaired_chapter_final.md").exists())
+
+    def test_review_auto_repair_rejects_when_post_repair_review_still_blocked(self) -> None:
+        tmp_path = self._case_dir("review_repair_reject")
+        snapshot_path = tmp_path / "snapshot.json"
+        before_snapshot = self._write_snapshot(snapshot_path)
+        blocked_review = {
+            "enabled": True,
+            "status": "blocked",
+            "decision": "blocked",
+            "quality_score": 20,
+            "rule_score": 20,
+            "repair_task_count": 1,
+            "blocking_task_count": 1,
+            "artifacts_dir": str(tmp_path / "reviews"),
+            "summary_path": None,
+        }
+
+        with patch("core.engine.executor.run_runtime_review", side_effect=[blocked_review, blocked_review]):
+            result = AgentExecutor(
+                snapshot_path=snapshot_path,
+                memory_path=tmp_path / "missing_memory.json",
+                run_dir=tmp_path / "runs",
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                generator=lambda _input_pack: "original chapter",
+                polisher=lambda chapter: chapter,
+                validator=self._ok_validation,
+                repairer=lambda chapter, _validation, _input_pack, _plan, _recovery: chapter + " fixed",
+                analyzer=self._analysis,
+                review_config=RuntimeReviewConfig(enabled=True, output_dir=tmp_path / "reviews"),
+                review_repair_config=ReviewRepairConfig(enabled=True),
+            ).run_once(persist=True)
+
+        self.assertFalse(result["committed"])
+        self.assertEqual("original chapter", result["chapter"])
+        self.assertFalse(result["run"]["review_repair"]["accepted"])
+        self.assertEqual("post_repair_review_blocked", result["run"]["review_repair"]["rejected_reason"])
+        self.assertEqual("rejected", result["run"]["status"])
+        self.assertEqual(before_snapshot, snapshot_path.read_text(encoding="utf-8"))
 
     def test_story_project_context_records_blueprint_coverage_without_writeback(self) -> None:
         tmp_path = self._case_dir("story_project_audit")

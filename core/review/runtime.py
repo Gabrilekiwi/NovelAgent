@@ -29,12 +29,15 @@ def run_runtime_review(
     previous_chapter_text: str | None,
     run_id: str,
     config: RuntimeReviewConfig,
+    artifact_suffix: str | None = None,
 ) -> dict[str, Any]:
     if not config.enabled:
         return disabled_review_summary()
 
     root_dir = config.output_dir or Path(".tmp/runtime/reviews")
     artifacts_dir = root_dir / _safe_run_dir_name(run_id)
+    if artifact_suffix:
+        artifacts_dir = artifacts_dir / _safe_run_dir_name(artifact_suffix)
     try:
         summary = run_review_pipeline(
             chapter_text=chapter_text,

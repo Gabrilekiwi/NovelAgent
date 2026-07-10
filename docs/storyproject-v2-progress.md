@@ -299,3 +299,72 @@ Explicitly not done in Phase 3:
 Next recommended step:
 
 - Stop after Phase 3. Phase 4 should be planned separately if enhanced detection, review repair, or richer writeback reconciliation is needed.
+
+## Phase 4: Review Repair Loop
+
+Status: implemented.
+
+Completed:
+
+- Added explicit review-driven repair controls:
+  - `--review-auto-repair` enables automatic repair only when `--enable-review-pipeline` is also set.
+  - `--review-repair-max-attempts N` caps repair attempts to `1..3`, defaulting to `1`.
+  - `--review-repair-dry-run` builds repair plan/runtime artifacts without changing runtime chapter text.
+- Added `core/review/repair_loop.py` for review repair config, plan building, attempt tracking, acceptance/rejection semantics, and structured result payloads.
+- Reused existing `modules.scene_repair` through a review-derived repair plan instead of adding a new repair engine.
+- Moved runtime review and optional repair before snapshot, memory, and StoryProject writeback side effects.
+- Re-runs deterministic validation after repair.
+- Re-runs Review Pipeline in isolated artifact directories:
+  - `<review-output-dir>/<run_id>/original/`
+  - `<review-output-dir>/<run_id>/repair_attempt_01/`
+- Rechecks StoryProject blueprint coverage after accepted repair when StoryProject context is present.
+- Accepts repaired chapters only when validation passes, review status is `pass` or `warning`, and the configured review gate passes.
+- Rejects failed, blocked, or dry-run repairs before StoryProject writeback.
+- Added runtime repair artifacts under `<run-dir>/review_repairs/<run_id>/`.
+- Added optional `run.review_repair` / result `review_repair` schema support.
+- Kept diagnostic review behavior unchanged when `--review-auto-repair` is not set.
+
+Modified files:
+
+- `core/engine/artifacts.py`
+- `core/engine/executor.py`
+- `core/review/__init__.py`
+- `core/review/repair_loop.py`
+- `core/review/runtime.py`
+- `main.py`
+- `schemas/review_repair.schema.json`
+- `schemas/run_record.schema.json`
+- `schemas/run_result.schema.json`
+- `tests/test_cli.py`
+- `tests/test_executor.py`
+- `tests/test_review_repair_loop.py`
+- `docs/runtime-review-integration.md`
+- `docs/storyproject-v2-progress.md`
+
+Test results:
+
+- `python -B -m unittest tests.test_review_repair_loop`: passed, 4 tests.
+- `python -B -m unittest tests.test_runtime_review_integration`: passed, 8 tests.
+- `python -B -m unittest tests.test_runtime_review_gate_integration`: passed, 6 tests.
+- `python -B -m unittest tests.test_review_index`: passed, 9 tests.
+- `python main.py --check --dry-run --memory data/notion_memory.example.json`: passed, 20 checks.
+- `python -B -m unittest discover -s tests`: passed, 653 tests.
+- `python -B scripts/smoke_v1.py`: passed.
+
+Explicitly not done in Phase 4:
+
+- Review repair remains disabled by default.
+- StoryProject writeback remains disabled by default and must still be explicitly enabled.
+- Review repair dry-run only writes runtime artifacts and does not change runtime chapter text.
+- No direct StoryProject file writes from review repair.
+- No oh-story JS execution.
+- No oh-story API provider.
+- No `api/oh_story_client.py`.
+- No oh-story enhanced detection.
+- No LLM tracking summarization.
+- No dashboard redesign.
+- No Phase 5 work.
+
+Next recommended step:
+
+- Stop after Phase 4. Phase 5 should be planned separately if additional writeback reconciliation or enhanced detection is needed.
