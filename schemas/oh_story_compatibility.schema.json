@@ -35,6 +35,12 @@
         "null"
       ]
     },
+    "workspace_root": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "markers": {
       "type": "array",
       "items": {
@@ -121,6 +127,18 @@
           "type": "boolean"
         },
         "review_repair_loop": {
+          "type": "boolean"
+        },
+        "story_setup": {
+          "type": "boolean"
+        },
+        "codex_hooks": {
+          "type": "boolean"
+        },
+        "story_agents": {
+          "type": "boolean"
+        },
+        "quality_scripts": {
           "type": "boolean"
         },
         "oh_story_js_execution": {

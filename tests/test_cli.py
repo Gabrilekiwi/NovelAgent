@@ -115,7 +115,7 @@ class CliTest(unittest.TestCase):
         story_project_root = case_dir / "book"
         for directory in ("设定", "大纲", "正文", "追踪"):
             (story_project_root / directory).mkdir(parents=True)
-        (story_project_root / ".story-deployed").write_text("ok", encoding="utf-8")
+        (case_dir / ".story-deployed").write_text("ok", encoding="utf-8")
 
         class FailingExecutor:
             def __init__(self, **kwargs):
@@ -126,7 +126,11 @@ class CliTest(unittest.TestCase):
             sys,
             "argv",
             ["main.py", "--story-project", str(story_project_root), "--story-project-compat-report", "--output-json"],
-        ), patch.object(cli, "AgentExecutor", FailingExecutor), contextlib.redirect_stdout(output):
+        ), patch.object(cli.Path, "cwd", return_value=case_dir), patch.object(
+            cli,
+            "AgentExecutor",
+            FailingExecutor,
+        ), contextlib.redirect_stdout(output):
             with self.assertRaises(SystemExit) as exit_context:
                 cli.main()
 

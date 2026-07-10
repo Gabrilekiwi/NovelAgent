@@ -571,9 +571,9 @@ def _check_oh_story_detection(checks: list[dict[str, Any]], story_project_valida
     if story_project_validation is not None and story_project_validation.root_resolution is not None:
         root = story_project_validation.root_resolution.root
     try:
-        details = detect_oh_story_compatibility(root)
+        details = detect_oh_story_compatibility(root, workspace_root=Path.cwd())
     except Exception as exc:  # noqa: BLE001 - oh-story detection is always non-blocking.
-        details = failed_oh_story_compatibility_report(root, exc)
+        details = failed_oh_story_compatibility_report(root, exc, workspace_root=Path.cwd())
     checks.append({"name": "oh_story_detection", "ok": True, "details": details})
 
 

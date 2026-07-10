@@ -1182,9 +1182,9 @@ def _build_story_project_compat_report(args: argparse.Namespace) -> dict:
     resolution = resolve_story_project_root(args.story_project)
     root = resolution.root if resolution.root is not None else None
     try:
-        report = detect_oh_story_compatibility(root)
+        report = detect_oh_story_compatibility(root, workspace_root=Path.cwd())
     except Exception as exc:  # noqa: BLE001 - report mode is read-only and diagnostic.
-        report = failed_oh_story_compatibility_report(root, exc)
+        report = failed_oh_story_compatibility_report(root, exc, workspace_root=Path.cwd())
     if resolution.error:
         report = _report_with_warning(report, resolution.error)
     return report
@@ -1193,9 +1193,9 @@ def _build_story_project_compat_report(args: argparse.Namespace) -> dict:
 def _detect_story_project_context_compatibility(story_project_context) -> dict | None:
     root = getattr(story_project_context, "story_project_root", None)
     try:
-        return detect_oh_story_compatibility(root)
+        return detect_oh_story_compatibility(root, workspace_root=Path.cwd())
     except Exception as exc:  # noqa: BLE001 - oh-story detection never blocks generation.
-        return failed_oh_story_compatibility_report(root, exc)
+        return failed_oh_story_compatibility_report(root, exc, workspace_root=Path.cwd())
 
 
 def _report_with_warning(report: dict, warning: str) -> dict:

@@ -12,7 +12,7 @@ python main.py \
   --memory data/notion_memory.example.json
 ```
 
-The gate reads `review_pipeline.status`, records a `review_gate` object in the run record, prints normal output first, then exits with code `1` when the configured threshold is met.
+The gate reads `review_pipeline.status` and records a `review_gate` object. When the gate is enabled, `fail` or `error` rejects the run before any canonical Snapshot, Memory, or StoryProject transaction, and the CLI exits with code `1`; the rejected RunRecord remains available as audit evidence.
 
 ## Thresholds
 
@@ -43,7 +43,7 @@ When enabled, the run record includes:
 }
 ```
 
-Gate failure does not change `committed`, `rejected`, snapshot writes, memory writeback, validator behavior, repair behavior, or chapter prose. It does not call an LLM, does not write back to Memory V2, and does not integrate oh-story or external APIs.
+Gate failure sets `accepted=false`, `committed=false`, and `status="rejected"`; Snapshot, Memory, StoryProject prose, and tracking files remain unchanged. With automatic review repair enabled, every attempt reruns Validation, Review, and Gate, including strict `warning` gates. Review `error` fails closed and is not repaired. The gate itself does not call an LLM, execute oh-story, or contact an external API.
 
 Runtime review also updates `review_index.json`; gate status is stored there so `python main.py --review-list --review-gate-status fail` can find recent gate failures.
 

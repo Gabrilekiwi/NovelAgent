@@ -104,7 +104,23 @@ Multi-step dry-run without persistence:
 python main.py --dry-run --steps 2 --memory data/notion_memory.example.json
 ```
 
-`--steps` must be at least 1. CLI parsing rejects invalid values before execution, and preflight reports the same constraint under `loop_parameters`.
+Accepted dry-run steps are `preview` results: the loop advances an in-memory Snapshot and passes the previous result into the next step, but leaves the on-disk Snapshot, Memory, chapters, and run records unchanged. `--steps` must be at least 1. CLI parsing rejects invalid values before execution, and preflight reports the same constraint under `loop_parameters`.
+
+StoryProject multi-step production:
+
+```bash
+python main.py --story-project auto --chapter 2 --steps 2 --story-project-writeback
+```
+
+StoryProject `--steps > 1` requires real `--story-project-writeback`; it rejects global dry-run, writeback preview, and writeback-disabled combinations. The first explicit `--chapter N` is the starting chapter. Each later step rebuilds StoryProject Context from current files and advances to `N+1` only after a complete transaction. With `--chapter auto`, a rescan that does not equal the expected next chapter stops with `story_project_sequence_drift`. `--continue-on-rejection` consumes an attempt but retries the same chapter; context failure, writeback failure, or a missing next outline always stops before another provider call.
+
+Every persistent accepted run uses a local journal under `<run-dir>/transactions/<run-id>/`. StoryProject prose/tracking targets and Snapshot are committed with before/after hashes and a durable marker before the final chapter artifact and RunRecord are published. Startup reconciles unfinished journals automatically; the explicit recovery-only command is:
+
+```bash
+python main.py --reconcile-persistence --run-dir .tmp/runtime/runs
+```
+
+The command performs only deterministic rollback or marker-backed publication. It never force-overwrites an externally changed target.
 
 Persist dry-run state and run records:
 

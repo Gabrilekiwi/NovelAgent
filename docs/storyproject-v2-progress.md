@@ -376,7 +376,8 @@ Status: implemented.
 Completed:
 
 - Added read-only oh-story compatibility detection for StoryProject roots.
-- Detected optional markers including `.story-deployed`, `.codex/hooks.json`, `.claude/agents/`, `.codex/agents/`, `AGENTS.md`, package scripts, shallow oh-story config files, and StoryProject core directories.
+- Separates the StoryProject root from the workspace root and recognizes only verified assets: `.story-deployed`, valid `story-setup`, hooks routed to a valid `story_codex_hook.py`, explicit AGENTS story routing, the complete seven canonical agents, and the three exact quality scripts or valid package references.
+- Generic hooks, arbitrary agent directories, ordinary `AGENTS.md`, invalid JSON/TOML, and scripts such as `history` do not raise confidence.
 - Added a structured compatibility report with `detected`, `confidence`, `markers`, `capabilities`, `warnings`, `unsupported`, and `recommendations`.
 - Integrated `oh_story_detection` into `--check --story-project ...` as a non-blocking preflight check.
 - Added `--story-project-compat-report` as a read-only report command.
@@ -423,3 +424,14 @@ Explicitly not done in Phase 5:
 Next recommended step:
 
 - Stop after Phase 5. Phase 6 should be planned separately if optional script execution, deeper agent integration, or setup assistance is needed.
+
+## Current correctness hardening
+
+Status: implemented.
+
+- `accepted` now means Validation, Review, and Gate passed; `committed` means the persistence publication completed. Non-persistent accepted runs use `status="preview"`.
+- StoryProject and Snapshot writes use recoverable journals, before/after hashes, rollback, commit markers, deterministic reconciliation, and cross-process state locks. File Memory writeback is a post-commit idempotent outbox; direct Notion writeback remains outside the local transaction boundary.
+- StoryProject multi-step execution rebuilds Context every step, advances only after a complete commit, retries the same chapter after rejection when requested, and stops on context/writeback failure or sequence drift.
+- Non-StoryProject `persist=False` loops advance a loop-local Snapshot without changing disk.
+- Loop sessions aggregate all step failures into `succeeded`, `exit_code`, and `failure_reasons` rather than trusting only the final step.
+- oh-story detection remains read-only and never executes hooks, scripts, Node, npm, agents, or an oh-story provider.

@@ -70,6 +70,16 @@ Run multiple local dry-run steps:
 python main.py --dry-run --steps 2 --memory data/notion_memory.example.json
 ```
 
+These steps advance a loop-local Snapshot only. Each accepted result has `status="preview"`, while the on-disk Snapshot, Memory, and run directory remain unchanged.
+
+Run multiple StoryProject chapters with real transactional writeback:
+
+```bash
+python main.py --story-project auto --chapter 2 --steps 2 --story-project-writeback
+```
+
+StoryProject multi-step mode requires real writeback. Context, previous prose, settings, and tracking files are reloaded for every step, and the chapter cursor advances only after a complete commit.
+
 Multi-step runs print progress lines to stderr by default, including step start/end, commit status, run id, and duration. Add `--no-progress` to suppress those lines, or use `--output-json` for a clean machine-readable loop result.
 
 Run tests:
