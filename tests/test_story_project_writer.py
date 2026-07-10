@@ -201,6 +201,64 @@ class StoryProjectWriterTest(unittest.TestCase):
         self.assertIn("missing_required_beat", payload["blocked_reasons"])
         self.assertEqual([], list((root / PROSE_DIR_NAME).iterdir()))
 
+    def test_missing_ending_pressure_blocks_writeback(self) -> None:
+        root = self._story_project_root("missing_ending_pressure")
+        run = self._run()
+        run["chapter"]["pipeline"]["blueprint_coverage"]["ending_pressure_covered"] = False
+
+        _plan, result = run_story_project_writeback(
+            context=self._context(root),
+            run=run,
+            chapter_text="# Chapter\n\ntext",
+            validation={"ok": True},
+            analysis={},
+            config=StoryProjectWritebackConfig(mode="apply"),
+        )
+
+        payload = result.to_dict()
+        self.assertFalse(payload["applied"])
+        self.assertIn("missing_ending_pressure", payload["blocked_reasons"])
+        self.assertEqual([], list((root / PROSE_DIR_NAME).iterdir()))
+        self.assertEqual([], list((root / TRACKING_DIR_NAME).iterdir()))
+
+    def test_validation_not_ok_blocks_writeback(self) -> None:
+        root = self._story_project_root("validation_not_ok")
+
+        _plan, result = run_story_project_writeback(
+            context=self._context(root),
+            run=self._run(),
+            chapter_text="# Chapter\n\ntext",
+            validation={"ok": False, "problems": [{"code": "logic_error"}]},
+            analysis={},
+            config=StoryProjectWritebackConfig(mode="apply"),
+        )
+
+        payload = result.to_dict()
+        self.assertFalse(payload["applied"])
+        self.assertIn("validation_not_ok", payload["blocked_reasons"])
+        self.assertEqual([], list((root / PROSE_DIR_NAME).iterdir()))
+        self.assertEqual([], list((root / TRACKING_DIR_NAME).iterdir()))
+
+    def test_run_not_committed_blocks_writeback(self) -> None:
+        root = self._story_project_root("run_not_committed")
+        run = self._run()
+        run["committed"] = False
+
+        _plan, result = run_story_project_writeback(
+            context=self._context(root),
+            run=run,
+            chapter_text="# Chapter\n\ntext",
+            validation={"ok": True},
+            analysis={},
+            config=StoryProjectWritebackConfig(mode="apply"),
+        )
+
+        payload = result.to_dict()
+        self.assertFalse(payload["applied"])
+        self.assertIn("run_not_committed", payload["blocked_reasons"])
+        self.assertEqual([], list((root / PROSE_DIR_NAME).iterdir()))
+        self.assertEqual([], list((root / TRACKING_DIR_NAME).iterdir()))
+
 
 if __name__ == "__main__":
     unittest.main()
