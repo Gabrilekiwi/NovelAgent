@@ -25,6 +25,7 @@ from core.runtime_paths import (
     DEFAULT_CHAPTER_DIR,
     DEFAULT_RUN_DIR,
     DEFAULT_SNAPSHOT_PATH,
+    RuntimePaths,
     init_runtime_state,
 )
 from core.review.dashboard import build_review_dashboard_from_index
@@ -37,6 +38,16 @@ from core.story_project.oh_story_detection import (
     failed_oh_story_compatibility_report,
 )
 from core.story_project.paths import resolve_story_project_root
+from core.story_project.identity import (
+    ensure_project_identity_for_runtime,
+    load_project_identity,
+    project_identity_for_operation,
+)
+from core.story_project.migration import (
+    StoryProjectRuntimeMigrationError,
+    inspect_story_project_runtime_migration,
+    migrate_story_project_runtime,
+)
 from core.story_project.runtime import build_generation_story_project_context_loader
 from core.story_project.writer import StoryProjectWritebackConfig
 
@@ -94,6 +105,18 @@ def parse_args() -> argparse.Namespace:
         help="Print a read-only oh-story compatibility report for the StoryProject root and exit.",
     )
     parser.add_argument(
+        "--inspect-story-project-runtime-from",
+        default=None,
+        metavar="PATH",
+        help="Inspect an old runtime for safe StoryProject migration without writing files.",
+    )
+    parser.add_argument(
+        "--migrate-story-project-runtime-from",
+        default=None,
+        metavar="PATH",
+        help="Copy a proven matching old runtime into <StoryProject>/.novelagent/runtime and write a manifest.",
+    )
+    parser.add_argument(
         "--memory-source",
         choices=["auto", "file", "notion"],
         default="auto",
@@ -113,6 +136,11 @@ def parse_args() -> argparse.Namespace:
         "--run-dir",
         default=str(DEFAULT_RUN_DIR),
         help="Directory for persisted run JSON records.",
+    )
+    parser.add_argument(
+        "--persistence-dir",
+        default=None,
+        help="Directory for local persistence journals. Defaults to <run-dir>/transactions or StoryProject runtime/persistence.",
     )
     parser.add_argument(
         "--init-runtime",
@@ -328,7 +356,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable multi-step progress lines printed to stderr.",
     )
-    return parser.parse_args()
+    argv = list(sys.argv[1:])
+    args = parser.parse_args(argv)
+    args._runtime_path_explicit = {
+        "snapshot": _option_was_provided(argv, "--snapshot"),
+        "run_dir": _option_was_provided(argv, "--run-dir"),
+        "persistence_dir": _option_was_provided(argv, "--persistence-dir"),
+        "chapter_dir": _option_was_provided(argv, "--chapter-dir"),
+        "review_output_dir": _option_was_provided(argv, "--review-output-dir"),
+        "memory_outbox": _option_was_provided(argv, "--memory-outbox"),
+        "memory_v2_out": _option_was_provided(argv, "--memory-v2-out"),
+    }
+    return args
+
+
+def _option_was_provided(argv: list[str], option: str) -> bool:
+    return any(token == option or token.startswith(f"{option}=") for token in argv)
 
 
 def _positive_int(value: str) -> int:
@@ -397,11 +440,64 @@ def format_loop_progress_event(event: dict) -> str:
     return ""
 
 
+def _apply_story_project_runtime_defaults(args: argparse.Namespace) -> RuntimePaths | None:
+    if getattr(args, "story_project", None) is None:
+        args._resolved_story_project_root = None
+        args._story_project_runtime_paths = None
+        return None
+
+    resolution = resolve_story_project_root(args.story_project)
+    if not resolution.ok or resolution.root is None:
+        raise ValueError(resolution.error or "StoryProject root could not be resolved.")
+    root = resolution.root.resolve()
+    paths = RuntimePaths.for_story_project(root)
+    explicit = getattr(args, "_runtime_path_explicit", {})
+    if not explicit.get("snapshot"):
+        args.snapshot = str(paths.snapshot_path)
+    if not explicit.get("run_dir"):
+        args.run_dir = str(paths.run_dir)
+    if not explicit.get("chapter_dir"):
+        args.chapter_dir = str(paths.chapter_dir)
+    if not explicit.get("review_output_dir"):
+        args.review_output_dir = str(paths.review_dir)
+    if not explicit.get("persistence_dir"):
+        args.persistence_dir = str(paths.persistence_dir)
+    if not explicit.get("memory_v2_out"):
+        args.memory_v2_out = str(paths.memory_dir / "v2")
+    if args.memory_writeback == "file" and not explicit.get("memory_outbox"):
+        args.memory_outbox = str(paths.memory_dir / "memory_outbox.jsonl")
+    args._resolved_story_project_root = root
+    args._story_project_runtime_paths = paths
+    return paths
+
+
+def _load_story_project_identity_for_read_command(args: argparse.Namespace):
+    if getattr(args, "story_project", None) is None:
+        return None
+    identity = load_project_identity(args._resolved_story_project_root)
+    if identity is None:
+        raise ValueError(
+            "StoryProject read command requires an existing .novelagent/project.json; "
+            "run --init-runtime or a persistent StoryProject operation first"
+        )
+    return identity
+
+
+def _validate_story_project_read_command_identity(args: argparse.Namespace) -> None:
+    if bool(getattr(args, "report_runs", False)) or bool(getattr(args, "recover_latest", False)):
+        _load_story_project_identity_for_read_command(args)
+
+
 def main() -> None:
     args = parse_args()
     apply_notion_shortcuts(args)
     if args.no_proxy or proxy_disabled_by_env():
         clear_proxy_env()
+    try:
+        story_runtime_paths = _apply_story_project_runtime_defaults(args)
+    except ValueError as exc:
+        print(f"Configuration failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
     if args.review_latest:
         latest = get_latest_review(review_output_dir=args.review_output_dir)
@@ -444,21 +540,46 @@ def main() -> None:
         story_project_writeback = _story_project_writeback_config_from_args(args)
         _validate_story_project_multistep_args(args, story_project_writeback)
         _validate_story_project_compat_report_args(args)
+        _validate_story_project_runtime_migration_args(args)
+        _validate_story_project_read_command_identity(args)
     except ValueError as exc:
         print(f"Configuration failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
     if args.init_runtime:
-        result = init_runtime_state(overwrite=args.force_init_runtime)
+        if story_runtime_paths is not None:
+            ensure_project_identity_for_runtime(
+                args._resolved_story_project_root,
+                persistence_dir=args.persistence_dir,
+            )
+            result = init_runtime_state(
+                snapshot_target=args.snapshot,
+                memory_target=story_runtime_paths.memory_dir / "notion_memory.json",
+                overwrite=args.force_init_runtime,
+            )
+        else:
+            result = init_runtime_state(overwrite=args.force_init_runtime)
         print(format_init_runtime_summary(result))
         raise SystemExit(0)
 
     if args.reconcile_persistence:
-        result = _reconcile_and_publish_persistence(
-            args.run_dir,
-            chapter_dir=args.chapter_dir,
-            state_paths=_persistence_state_paths_from_args(args),
+        reconcile_identity = (
+            ensure_project_identity_for_runtime(
+                args._resolved_story_project_root,
+                persistence_dir=args.persistence_dir,
+            )
+            if args.story_project is not None
+            else None
         )
+        reconcile_kwargs = {
+            "chapter_dir": args.chapter_dir,
+            "state_paths": _persistence_state_paths_from_args(args),
+        }
+        if args.persistence_dir is not None:
+            reconcile_kwargs["persistence_dir"] = args.persistence_dir
+        if reconcile_identity is not None:
+            reconcile_kwargs["expected_book_id"] = reconcile_identity.book_id
+        result = _reconcile_and_publish_persistence(args.run_dir, **reconcile_kwargs)
         if args.output_json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
@@ -466,13 +587,23 @@ def main() -> None:
         raise SystemExit(0 if result.get("ok") else 1)
 
     if args.report_runs:
-        report = build_run_report(run_dir=args.run_dir, limit=args.report_limit)
+        report_identity = _load_story_project_identity_for_read_command(args)
+        report = build_run_report(
+            run_dir=args.run_dir,
+            limit=args.report_limit,
+            expected_book_id=report_identity.book_id if report_identity is not None else None,
+        )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         raise SystemExit(0)
 
     if args.recover_latest:
+        recovery_identity = _load_story_project_identity_for_read_command(args)
         try:
-            result = recover_latest_chapter_draft(run_dir=args.run_dir, chapter_dir=args.chapter_dir)
+            result = recover_latest_chapter_draft(
+                run_dir=args.run_dir,
+                chapter_dir=args.chapter_dir,
+                expected_book_id=recovery_identity.book_id if recovery_identity is not None else None,
+            )
         except RecoveryError as exc:
             payload = {"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}
             if args.output_json:
@@ -492,6 +623,32 @@ def main() -> None:
             print(json.dumps(report, ensure_ascii=False, indent=2))
         else:
             print(format_story_project_compat_report(report))
+        raise SystemExit(0)
+
+    if args.inspect_story_project_runtime_from:
+        inspection = inspect_story_project_runtime_migration(
+            source_runtime=args.inspect_story_project_runtime_from,
+            story_project_root=args._resolved_story_project_root,
+        )
+        if args.output_json:
+            print(json.dumps(inspection, ensure_ascii=False, indent=2))
+        else:
+            print(format_story_project_runtime_migration_summary(inspection))
+        raise SystemExit(0 if inspection["ok"] else 1)
+
+    if args.migrate_story_project_runtime_from:
+        try:
+            migration = migrate_story_project_runtime(
+                source_runtime=args.migrate_story_project_runtime_from,
+                story_project_root=args._resolved_story_project_root,
+            )
+        except StoryProjectRuntimeMigrationError as exc:
+            print(f"StoryProject runtime migration failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        if args.output_json:
+            print(json.dumps(migration, ensure_ascii=False, indent=2))
+        else:
+            print(format_story_project_runtime_migration_summary(migration["inspection"], migrated=migration))
         raise SystemExit(0)
 
     if args.check:
@@ -523,12 +680,25 @@ def main() -> None:
         raise SystemExit(0 if result["ok"] else 1)
 
     will_commit_state = (not args.dry_run or args.persist_dry_run) and not args.story_project_writeback_dry_run
-    if will_commit_state:
-        persistence_health = _reconcile_and_publish_persistence(
-            args.run_dir,
-            chapter_dir=args.chapter_dir,
-            state_paths=_persistence_state_paths_from_args(args),
+    project_identity = (
+        project_identity_for_operation(
+            args._resolved_story_project_root,
+            persist=True,
+            persistence_dir=args.persistence_dir,
         )
+        if will_commit_state and args.story_project is not None
+        else None
+    )
+    if will_commit_state:
+        reconcile_kwargs = {
+            "chapter_dir": args.chapter_dir,
+            "state_paths": _persistence_state_paths_from_args(args),
+        }
+        if args.persistence_dir is not None:
+            reconcile_kwargs["persistence_dir"] = args.persistence_dir
+        if project_identity is not None:
+            reconcile_kwargs["expected_book_id"] = project_identity.book_id
+        persistence_health = _reconcile_and_publish_persistence(args.run_dir, **reconcile_kwargs)
         if not persistence_health.get("ok"):
             if args.output_json:
                 print(json.dumps(persistence_health, ensure_ascii=False, indent=2))
@@ -539,10 +709,14 @@ def main() -> None:
     story_project_context_loader = None
     story_project_oh_story_report = None
     if args.story_project is not None:
+        project_identity = project_identity or project_identity_for_operation(
+            args._resolved_story_project_root, persist=False
+        )
         story_project_context_loader = build_generation_story_project_context_loader(
-            story_project=args.story_project,
+            story_project=args._resolved_story_project_root,
             chapter=args.chapter,
             overwrite=args.story_project_overwrite,
+            project_identity=project_identity,
         )
         story_project_oh_story_report = _detect_story_project_context_compatibility(story_project_context_loader)
 
@@ -552,6 +726,7 @@ def main() -> None:
         memory_source=args.memory_source,
         run_dir=args.run_dir,
         chapter_dir=args.chapter_dir,
+        persistence_dir=args.persistence_dir,
         dry_run=args.dry_run,
         scene_limit=args.scene_limit,
         director=ModelDirector(model=args.director_model) if args.director_model else None,
@@ -645,17 +820,30 @@ def _reconcile_and_publish_persistence(
     *,
     chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
     state_paths: tuple[Path, ...] = (),
+    expected_book_id: str | None = None,
+    persistence_dir: str | Path | None = None,
 ) -> dict:
     with persistence_run_lock(run_dir, state_paths=state_paths):
-        return _reconcile_and_publish_persistence_locked(run_dir, chapter_dir=chapter_dir)
+        return _reconcile_and_publish_persistence_locked(
+            run_dir,
+            chapter_dir=chapter_dir,
+            expected_book_id=expected_book_id,
+            persistence_dir=persistence_dir,
+        )
 
 
 def _reconcile_and_publish_persistence_locked(
     run_dir: str | Path,
     *,
     chapter_dir: str | Path,
+    expected_book_id: str | None = None,
+    persistence_dir: str | Path | None = None,
 ) -> dict:
-    report = reconcile_persistence(run_dir=run_dir)
+    report = reconcile_persistence(
+        run_dir=run_dir,
+        expected_book_id=expected_book_id,
+        transactions_dir=persistence_dir,
+    )
     published: list[str] = []
     skipped: list[str] = []
     errors: list[dict[str, str]] = []
@@ -1137,6 +1325,25 @@ def format_story_project_compat_report(report: dict) -> str:
     return "\n".join(lines)
 
 
+def format_story_project_runtime_migration_summary(
+    inspection: dict,
+    *,
+    migrated: dict | None = None,
+) -> str:
+    lines = [
+        "StoryProject runtime migration:",
+        f"- source: {inspection.get('source_runtime')}",
+        f"- target: {inspection.get('target_runtime')}",
+        f"- copy_allowed: {inspection.get('copy_allowed')}",
+        f"- records: {len(inspection.get('records') or [])}",
+        f"- problems: {len(inspection.get('problems') or [])}",
+    ]
+    if migrated is not None:
+        lines.append(f"- migrated: {migrated.get('ok')}")
+        lines.append(f"- manifest: {migrated.get('manifest_path')}")
+    return "\n".join(lines)
+
+
 def format_review_list_summary(entries: list[dict]) -> str:
     if not entries:
         return "No review entries found."
@@ -1176,6 +1383,21 @@ def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewC
 def _validate_story_project_compat_report_args(args: argparse.Namespace) -> None:
     if bool(getattr(args, "story_project_compat_report", False)) and getattr(args, "story_project", None) is None:
         raise ValueError("--story-project-compat-report requires --story-project")
+
+
+def _validate_story_project_runtime_migration_args(args: argparse.Namespace) -> None:
+    inspect_source = getattr(args, "inspect_story_project_runtime_from", None)
+    migrate_source = getattr(args, "migrate_story_project_runtime_from", None)
+    if inspect_source and migrate_source:
+        raise ValueError(
+            "--inspect-story-project-runtime-from and --migrate-story-project-runtime-from are mutually exclusive"
+        )
+    if (inspect_source or migrate_source) and getattr(args, "story_project", None) is None:
+        raise ValueError("StoryProject runtime migration requires --story-project")
+    if (inspect_source or migrate_source) and bool(getattr(args, "init_runtime", False)):
+        raise ValueError("StoryProject runtime migration cannot be combined with --init-runtime")
+    if (inspect_source or migrate_source) and bool(getattr(args, "story_project_compat_report", False)):
+        raise ValueError("StoryProject runtime migration cannot be combined with --story-project-compat-report")
 
 
 def _build_story_project_compat_report(args: argparse.Namespace) -> dict:

@@ -18,6 +18,7 @@ from core.review.runtime import RuntimeReviewConfig
 from core.schema import SchemaValidationError, validate_schema
 from core.state.memory_writer import FileMemoryWriter
 from core.story_project.model import CORE_DIRECTORY_NAMES
+from core.story_project.identity import ensure_project_identity
 from core.story_project.paths import PROSE_DIR_NAME, canonical_outline_path, canonical_prose_path
 from core.story_project.runtime import build_generation_story_project_context_loader
 from core.story_project.writer import StoryProjectWritebackConfig
@@ -374,6 +375,7 @@ class AgentExecutorTest(unittest.TestCase):
         tmp_path = self._case_dir("story_project_audit")
         snapshot_path = tmp_path / "snapshot.json"
         self._write_snapshot(snapshot_path)
+        (tmp_path / "book").mkdir()
         story_project_context = {
             "story_project_root": str(tmp_path / "book"),
             "chapter_index": 2,
@@ -434,12 +436,79 @@ class AgentExecutorTest(unittest.TestCase):
         saved_run = json.loads(run_files[0].read_text(encoding="utf-8"))
         self.assertIs(saved_run, validate_schema(saved_run, "run_result.schema.json"))
         story_project = saved_run["run"]["story_project"]
+        self.assertIsNotNone(story_project["book_id"])
+        self.assertEqual(story_project["book_id"], story_project["project_identity"]["book_id"])
+        self.assertFalse(story_project["project_identity"]["ephemeral"])
+        committed_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        self.assertEqual(story_project["book_id"], committed_snapshot["book_id"])
         self.assertEqual(oh_story_report, story_project["oh_story"])
         self.assertFalse(story_project["writeback"]["attempted"])
         self.assertEqual([], story_project["blueprint_coverage"]["missing_beat_indexes"])
         self.assertTrue(story_project["blueprint_coverage"]["ending_pressure_covered"])
         self.assertIn("story_project", saved_run["run"]["validation"]["executed_checks"])
         self.assertFalse((tmp_path / "runs" / "story_project_writebacks").exists())
+
+    def test_story_project_snapshot_identity_mismatch_fails_before_provider(self) -> None:
+        tmp_path = self._case_dir("story_project_identity_mismatch")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot = json.loads(self._write_snapshot(snapshot_path))
+        snapshot["book_id"] = "different-book"
+        snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        calls: list[str] = []
+        context = {
+            "story_project_root": str(book),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": None,
+            "source_paths": {},
+            "source_resolution": {},
+        }
+
+        with self.assertRaisesRegex(ValueError, "story_project_state_identity_mismatch"):
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                memory_path=tmp_path / "missing-memory.json",
+                run_dir=tmp_path / "runs",
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                story_project_context=context,
+                generator=lambda _input: calls.append("called") or "正文",
+            ).run_once(persist=True)
+
+        self.assertEqual([], calls)
+
+    def test_stable_story_project_identity_rejects_unbound_explicit_snapshot(self) -> None:
+        tmp_path = self._case_dir("story_project_identity_missing")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        identity = ensure_project_identity(book)
+        context = {
+            "story_project_root": str(book),
+            "project_identity": identity.to_dict(),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": None,
+            "source_paths": {},
+            "source_resolution": {},
+        }
+
+        with self.assertRaisesRegex(ValueError, "story_project_state_identity_mismatch"):
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                memory_path=tmp_path / "missing-memory.json",
+                run_dir=tmp_path / "runs",
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                story_project_context=context,
+            ).run_once(persist=True)
 
     def test_story_project_real_writeback_blocked_is_recorded(self) -> None:
         tmp_path = self._case_dir("story_project_writeback_blocked")
@@ -1731,6 +1800,14 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual([2, 3], [item["run"]["chapter_index"] for item in loop_result["runs"]])
         self.assertEqual([True, True], [item["committed"] for item in loop_result["runs"]])
         self.assertTrue(loop_result["succeeded"])
+        self.assertEqual(
+            loop_result["runs"][1]["run"]["story_project"]["book_id"],
+            loop_result["session"]["book_id"],
+        )
+        for item in loop_result["runs"]:
+            manifest_path = tmp_path / "runs" / "transactions" / item["run"]["id"] / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(loop_result["session"]["book_id"], manifest["book_id"])
         self.assertTrue(canonical_prose_path(book, 2, "Second").exists())
         self.assertTrue(canonical_prose_path(book, 3, "Third").exists())
         self.assertEqual(4, json.loads(snapshot_path.read_text(encoding="utf-8"))["chapter_index"])

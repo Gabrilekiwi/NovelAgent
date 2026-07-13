@@ -14,6 +14,7 @@ from unittest.mock import patch
 import main as cli
 from core.engine.run_record import build_run_record
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
+from core.story_project.identity import load_project_identity, project_identity_path
 
 
 class CliTest(unittest.TestCase):
@@ -75,6 +76,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(str(DEFAULT_SNAPSHOT_PATH), args.snapshot)
         self.assertEqual(str(DEFAULT_RUN_DIR), args.run_dir)
         self.assertEqual(str(DEFAULT_CHAPTER_DIR), args.chapter_dir)
+        self.assertIsNone(args.persistence_dir)
         self.assertFalse(args.no_proxy)
         self.assertFalse(args.check_memory_v2)
         self.assertEqual("data/memory_v2/default", args.memory_v2_out)
@@ -88,6 +90,125 @@ class CliTest(unittest.TestCase):
 
         self.assertEqual("auto", args.story_project)
         self.assertEqual("21", args.chapter)
+
+    def test_story_project_uses_project_internal_runtime_defaults_without_creating_files(self) -> None:
+        case_dir = self._case_dir("story_runtime_defaults")
+        root = case_dir / "book"
+        for directory in ("设定", "大纲", "正文", "追踪"):
+            (root / directory).mkdir(parents=True)
+
+        with patch.object(sys, "argv", ["main.py", "--story-project", str(root), "--memory-writeback", "file"]):
+            args = cli.parse_args()
+        cli.apply_notion_shortcuts(args)
+        paths = cli._apply_story_project_runtime_defaults(args)
+
+        self.assertIsNotNone(paths)
+        self.assertEqual(str(root / ".novelagent" / "runtime" / "snapshot.json"), args.snapshot)
+        self.assertEqual(str(root / ".novelagent" / "runtime" / "runs"), args.run_dir)
+        self.assertEqual(str(root / ".novelagent" / "runtime" / "persistence"), args.persistence_dir)
+        self.assertEqual(str(root / ".novelagent" / "runtime" / "chapters"), args.chapter_dir)
+        self.assertEqual(str(root / ".novelagent" / "runtime" / "reviews"), args.review_output_dir)
+        self.assertEqual(str(root / ".novelagent" / "runtime" / "memory" / "memory_outbox.jsonl"), args.memory_outbox)
+        self.assertFalse(project_identity_path(root).exists())
+        self.assertFalse((root / ".novelagent" / "runtime").exists())
+
+    def test_story_project_explicit_runtime_paths_remain_authoritative(self) -> None:
+        case_dir = self._case_dir("story_runtime_explicit")
+        root = case_dir / "book"
+        for directory in ("设定", "大纲", "正文", "追踪"):
+            (root / directory).mkdir(parents=True)
+        explicit_snapshot = case_dir / "explicit" / "snapshot.json"
+        explicit_runs = case_dir / "explicit" / "runs"
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                str(root),
+                "--snapshot",
+                str(explicit_snapshot),
+                "--run-dir",
+                str(explicit_runs),
+            ],
+        ):
+            args = cli.parse_args()
+        cli._apply_story_project_runtime_defaults(args)
+
+        self.assertEqual(str(explicit_snapshot), args.snapshot)
+        self.assertEqual(str(explicit_runs), args.run_dir)
+        self.assertEqual(str(root / ".novelagent" / "runtime" / "chapters"), args.chapter_dir)
+
+    def test_story_project_init_runtime_creates_stable_identity_and_internal_state(self) -> None:
+        case_dir = self._case_dir("story_runtime_init")
+        root = case_dir / "book"
+        for directory in ("设定", "大纲", "正文", "追踪"):
+            (root / directory).mkdir(parents=True)
+
+        with patch.object(sys, "argv", ["main.py", "--story-project", str(root), "--init-runtime"]), patch(
+            "sys.stdout", new_callable=io.StringIO
+        ), self.assertRaises(SystemExit) as raised:
+            cli.main()
+
+        self.assertEqual(0, raised.exception.code)
+        identity = load_project_identity(root)
+        self.assertIsNotNone(identity)
+        self.assertFalse(identity.ephemeral)
+        self.assertTrue((root / ".novelagent" / "runtime" / "snapshot.json").is_file())
+        self.assertTrue((root / ".novelagent" / "runtime" / "memory" / "notion_memory.json").is_file())
+
+    def test_story_project_runtime_migration_commands_are_generation_free(self) -> None:
+        case_dir = self._case_dir("story_runtime_migration")
+        root = case_dir / "book"
+        for directory in ("设定", "大纲", "正文", "追踪"):
+            (root / directory).mkdir(parents=True)
+        source = case_dir / "old-runtime"
+        (source / "runs").mkdir(parents=True)
+        (source / "chapters").mkdir()
+        (source / "runs" / "chapter_1_legacy.json").write_text(
+            json.dumps({"run": {"story_project": {"root": str(root.resolve())}}}),
+            encoding="utf-8",
+        )
+
+        output = io.StringIO()
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                str(root),
+                "--inspect-story-project-runtime-from",
+                str(source),
+                "--output-json",
+            ],
+        ), patch("sys.stdout", output), self.assertRaises(SystemExit) as inspected:
+            cli.main()
+
+        self.assertEqual(0, inspected.exception.code)
+        self.assertTrue(json.loads(output.getvalue())["copy_allowed"])
+        self.assertFalse(project_identity_path(root).exists())
+
+        output = io.StringIO()
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                str(root),
+                "--migrate-story-project-runtime-from",
+                str(source),
+                "--output-json",
+            ],
+        ), patch("sys.stdout", output), self.assertRaises(SystemExit) as migrated:
+            cli.main()
+
+        self.assertEqual(0, migrated.exception.code)
+        self.assertTrue(json.loads(output.getvalue())["ok"])
+        self.assertTrue(project_identity_path(root).is_file())
+        self.assertTrue((root / ".novelagent" / "runtime" / "runs" / "chapter_1_legacy.json").is_file())
 
     def test_parse_args_accepts_story_project_writeback_flags(self) -> None:
         with patch.object(

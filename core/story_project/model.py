@@ -201,6 +201,7 @@ class StoryProjectRuntimeContext:
     chapter_blueprint: ChapterBlueprint
     source_paths: SourcePathSet
     source_resolution: SourceResolution
+    project_identity: dict[str, Any] | None = None
     warnings: tuple[str, ...] = ()
     missing_fields: tuple[str, ...] = ()
     chapter_resolution: ChapterResolution | None = None
@@ -218,6 +219,7 @@ class StoryProjectRuntimeContext:
             "chapter_blueprint": self.chapter_blueprint.to_dict(),
             "source_paths": self.source_paths.to_dict(),
             "source_resolution": self.source_resolution.to_dict(),
+            "project_identity": dict(self.project_identity) if self.project_identity else None,
             "warnings": list(self.warnings),
             "missing_fields": list(self.missing_fields),
             "chapter_resolution": self.chapter_resolution.to_dict() if self.chapter_resolution else None,

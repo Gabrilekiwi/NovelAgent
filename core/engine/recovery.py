@@ -16,8 +16,9 @@ def recover_latest_chapter_draft(
     *,
     run_dir: str | Path = DEFAULT_RUN_DIR,
     chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
+    expected_book_id: str | None = None,
 ) -> dict[str, Any]:
-    result = _latest_recoverable_run(Path(run_dir))
+    result = _latest_recoverable_run(Path(run_dir), expected_book_id=expected_book_id)
     run = result["run"]
     draft_text = _recoverable_draft_text(run)
     if not draft_text.strip():
@@ -34,7 +35,7 @@ def recover_latest_chapter_draft(
     }
 
 
-def _latest_recoverable_run(run_dir: Path) -> dict[str, Any]:
+def _latest_recoverable_run(run_dir: Path, *, expected_book_id: str | None = None) -> dict[str, Any]:
     if not run_dir.exists():
         raise RecoveryError(f"run_dir does not exist: {run_dir}")
     candidates = sorted(run_dir.glob("chapter_*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
@@ -46,6 +47,10 @@ def _latest_recoverable_run(run_dir: Path) -> dict[str, Any]:
         run = result.get("run")
         if not isinstance(run, dict):
             continue
+        if expected_book_id is not None:
+            story = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+            if story.get("book_id") != expected_book_id:
+                continue
         if run.get("status") == "committed":
             continue
         if _recoverable_draft_text(run).strip():

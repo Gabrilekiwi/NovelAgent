@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PathRef",
+  "type": "object",
+  "required": ["root_id", "relative_path"],
+  "properties": {
+    "root_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "original_path_hint": {
+      "type": ["string", "null"]
+    }
+  },
+  "additionalProperties": false
+}

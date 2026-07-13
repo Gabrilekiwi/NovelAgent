@@ -12,6 +12,7 @@ from core.runtime_paths import (
     DEFAULT_RUN_DIR,
     DEFAULT_RUNTIME_DIR,
     DEFAULT_SNAPSHOT_PATH,
+    RuntimePaths,
     init_runtime_state,
 )
 
@@ -24,6 +25,7 @@ class RuntimePathsTest(unittest.TestCase):
         self.assertEqual(Path(".tmp/runtime/runs"), DEFAULT_RUN_DIR)
         self.assertEqual(Path(".tmp/runtime/chapters"), DEFAULT_CHAPTER_DIR)
         self.assertEqual(Path(".tmp/runtime/memory_outbox.jsonl"), DEFAULT_MEMORY_OUTBOX)
+        self.assertEqual(DEFAULT_RUNTIME_DIR, RuntimePaths.legacy_default().runtime_dir)
 
     def test_init_runtime_state_copies_examples_without_overwriting(self) -> None:
         case_dir = Path.cwd() / ".tmp" / "test_runtime_paths" / uuid.uuid4().hex

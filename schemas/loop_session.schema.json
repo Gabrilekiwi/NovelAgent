@@ -21,6 +21,10 @@
     "runs"
   ],
   "properties": {
+    "book_id": {
+      "type": "string",
+      "minLength": 1
+    },
     "id": {
       "type": "string"
     },

@@ -7,7 +7,7 @@ from typing import Any
 
 from core.config import get_config
 from core.director import decide_next_step
-from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
+from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH, RuntimePaths
 from core.engine.report import build_run_report
 from core.engine.run_record import load_latest_run_summary
 from core.memory_v2.compile import compile_memory_v2
@@ -17,6 +17,7 @@ from core.state.memory import load_memory_context
 from core.state.memory_writer import DEFAULT_MEMORY_OUTBOX, resolve_memory_writeback_mode
 from core.state.snapshot import load_snapshot
 from core.story_project.mapper import build_story_project_runtime_context
+from core.story_project.identity import load_project_identity
 from core.story_project.oh_story_detection import (
     detect_oh_story_compatibility,
     failed_oh_story_compatibility_report,
@@ -46,6 +47,8 @@ SCHEMA_ASSETS = (
     Path("schemas/memory_context.schema.json"),
     Path("schemas/memory_writeback.schema.json"),
     Path("schemas/oh_story_compatibility.schema.json"),
+    Path("schemas/path_ref.schema.json"),
+    Path("schemas/project_identity.schema.json"),
     Path("schemas/provider_smoke_report.schema.json"),
     Path("schemas/repair_plan.schema.json"),
     Path("schemas/review_gate_result.schema.json"),
@@ -55,6 +58,9 @@ SCHEMA_ASSETS = (
     Path("schemas/run_result.schema.json"),
     Path("schemas/snapshot_builder_audit.schema.json"),
     Path("schemas/snapshot.schema.json"),
+    Path("schemas/story_project_runtime_migration.schema.json"),
+    Path("schemas/story_project_semantic_fixture_manifest.schema.json"),
+    Path("schemas/story_project_semantic_state.schema.json"),
     Path("schemas/state_update_audit.schema.json"),
     Path("schemas/trace_event.schema.json"),
     Path("schemas/validation_result.schema.json"),
@@ -128,11 +134,27 @@ def run_preflight(
     )
     _check_loop_parameters(checks, steps=steps)
     story_project_validation = None
+    story_project_identity = None
     if story_project is not None:
         story_project_validation = _check_story_project_structure(checks, story_project=story_project, chapter=chapter)
         _check_oh_story_detection(checks, story_project_validation)
+        story_project_identity = _check_story_project_identity(
+            checks,
+            story_project_validation=story_project_validation,
+            persist=effective_persist,
+            snapshot_path=snapshot_path,
+            run_dir=run_dir,
+            chapter_dir=chapter_dir,
+        )
 
     snapshot = _capture_check(checks, "snapshot", lambda: load_snapshot(snapshot_path))
+    if story_project is not None and snapshot is not None:
+        _check_story_project_snapshot_identity(
+            checks,
+            identity=story_project_identity,
+            snapshot=snapshot,
+            snapshot_path=snapshot_path,
+        )
     memory = _capture_memory_check(checks, memory_path=memory_path, memory_source=memory_source)
     if (
         story_project is not None
@@ -575,6 +597,89 @@ def _check_oh_story_detection(checks: list[dict[str, Any]], story_project_valida
     except Exception as exc:  # noqa: BLE001 - oh-story detection is always non-blocking.
         details = failed_oh_story_compatibility_report(root, exc, workspace_root=Path.cwd())
     checks.append({"name": "oh_story_detection", "ok": True, "details": details})
+
+
+def _check_story_project_identity(
+    checks: list[dict[str, Any]],
+    *,
+    story_project_validation: Any,
+    persist: bool,
+    snapshot_path: str | Path,
+    run_dir: str | Path,
+    chapter_dir: str | Path,
+) -> Any:
+    root = None
+    if story_project_validation is not None and story_project_validation.root_resolution is not None:
+        root = story_project_validation.root_resolution.root
+    if root is None:
+        checks.append(
+            {
+                "name": "story_project_identity",
+                "ok": False,
+                "error": "StoryProject identity requires a resolved root.",
+            }
+        )
+        return None
+    try:
+        identity = load_project_identity(root)
+    except Exception as exc:  # noqa: BLE001 - malformed identity must fail preflight.
+        checks.append({"name": "story_project_identity", "ok": False, "error": str(exc)})
+        return None
+    runtime_paths = RuntimePaths.for_story_project(root)
+    details = {
+        "status": "stable" if identity is not None else ("will_create_on_persist" if persist else "ephemeral_preview"),
+        "identity": identity.to_dict() if identity is not None else None,
+        "project_identity_path": str(root / ".novelagent" / "project.json"),
+        "default_runtime_paths": runtime_paths.to_dict(),
+        "configured_paths": {
+            "snapshot_path": str(snapshot_path),
+            "run_dir": str(run_dir),
+            "chapter_dir": str(chapter_dir),
+        },
+        "created_files": False,
+    }
+    checks.append({"name": "story_project_identity", "ok": True, "details": details})
+    return identity
+
+
+def _check_story_project_snapshot_identity(
+    checks: list[dict[str, Any]],
+    *,
+    identity: Any,
+    snapshot: dict[str, Any],
+    snapshot_path: str | Path,
+) -> None:
+    snapshot_book_id = snapshot.get("book_id")
+    if identity is None:
+        ok = snapshot_book_id is None
+        checks.append(
+            {
+                "name": "story_project_snapshot_identity",
+                "ok": ok,
+                "details": {
+                    "snapshot_path": str(snapshot_path),
+                    "snapshot_book_id": snapshot_book_id,
+                    "project_book_id": None,
+                    "status": "legacy_unbound" if ok else "identity_missing_for_bound_snapshot",
+                },
+                "error": None if ok else "Snapshot has book_id but StoryProject project.json is missing or invalid.",
+            }
+        )
+        return
+    ok = snapshot_book_id in {None, identity.book_id}
+    checks.append(
+        {
+            "name": "story_project_snapshot_identity",
+            "ok": ok,
+            "details": {
+                "snapshot_path": str(snapshot_path),
+                "snapshot_book_id": snapshot_book_id,
+                "project_book_id": identity.book_id,
+                "status": "matching" if snapshot_book_id == identity.book_id else "legacy_unbound",
+            },
+            "error": None if ok else "story_project_state_identity_mismatch",
+        }
+    )
 
 
 def _check_story_project_runtime_context(

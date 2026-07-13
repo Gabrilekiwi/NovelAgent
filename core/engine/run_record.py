@@ -46,6 +46,7 @@ def build_loop_session_record(
     stop_on_rejection: bool,
     runs: list[dict[str, Any]],
     step_timings: list[dict[str, Any]] | None = None,
+    book_id: str | None = None,
     error: BaseException | None = None,
 ) -> dict[str, Any]:
     run_summaries = []
@@ -93,6 +94,8 @@ def build_loop_session_record(
         "runs": run_summaries,
         "step_timings": step_timings or [],
     }
+    if book_id is not None:
+        record["book_id"] = book_id
     if error is not None:
         record["error"] = {
             "type": type(error).__name__,

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoryProjectRuntimeMigrationManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "migration_id",
+    "created_at",
+    "book_id",
+    "story_project_root",
+    "source_runtime",
+    "target_runtime",
+    "source_deleted",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "migration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "book_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "story_project_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_runtime": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_runtime": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_deleted": {
+      "type": "boolean",
+      "enum": [false]
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["relative_path", "size", "sha256"],
+        "properties": {
+          "relative_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -75,6 +75,36 @@
         "root": {
           "type": ["string", "null"]
         },
+        "book_id": {
+          "type": ["string", "null"]
+        },
+        "project_identity": {
+          "type": ["object", "null"],
+          "properties": {
+            "schema_version": {
+              "type": "string"
+            },
+            "book_id": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "root_hint": {
+              "type": "string"
+            },
+            "story_state_mode": {
+              "enum": ["compatible", "shadow", "strict"]
+            },
+            "activation": {
+              "type": ["object", "null"]
+            },
+            "ephemeral": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
         "chapter_index": {
           "type": ["integer", "null"],
           "minimum": 1

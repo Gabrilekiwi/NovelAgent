@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from core.story_project.mapper import build_story_project_runtime_context
+from core.story_project.identity import ProjectIdentity, create_ephemeral_project_identity
 from core.story_project.model import StoryProjectRuntimeContext
 from core.story_project.paths import resolve_story_project_root
 from core.story_project.validator import validate_story_project
@@ -28,6 +29,7 @@ class GenerationStoryProjectContextLoader:
 
     story_project_root: Path
     requested_chapter: str
+    project_identity: ProjectIdentity
     overwrite: bool = False
 
     def __call__(
@@ -44,6 +46,7 @@ class GenerationStoryProjectContextLoader:
             snapshot=snapshot,
             memory_context=memory_context,
             overwrite=self.overwrite,
+            project_identity=self.project_identity,
         )
         if hint is not None and context.chapter_index != hint:
             raise StoryProjectSequenceDriftError(
@@ -60,6 +63,7 @@ def build_generation_story_project_context(
     snapshot: dict[str, Any] | None = None,
     memory_context: dict[str, Any] | None = None,
     overwrite: bool = False,
+    project_identity: ProjectIdentity | None = None,
 ) -> StoryProjectRuntimeContext:
     validation = validate_story_project(
         story_project=story_project,
@@ -74,6 +78,7 @@ def build_generation_story_project_context(
     chapter_index = chapter_resolution.resolved_chapter if chapter_resolution else None
     if root is None or chapter_index is None:
         raise ValueError("StoryProject generation requires a resolved root and chapter.")
+    identity = project_identity or create_ephemeral_project_identity(root)
     return replace(
         build_story_project_runtime_context(
             root,
@@ -82,6 +87,7 @@ def build_generation_story_project_context(
             memory_context=memory_context,
         ),
         chapter_resolution=chapter_resolution,
+        project_identity=identity.to_dict(),
     )
 
 
@@ -91,14 +97,17 @@ def build_generation_story_project_context_loader(
     chapter: str | int | None = "auto",
     overwrite: bool = False,
     workspace_root: str | Path | None = None,
+    project_identity: ProjectIdentity | None = None,
 ) -> GenerationStoryProjectContextLoader:
     resolution = resolve_story_project_root(story_project, workspace_root=workspace_root)
     if not resolution.ok or resolution.root is None:
         raise ValueError(resolution.error or "StoryProject root could not be resolved.")
     requested_chapter = _normalized_requested_chapter(chapter)
+    identity = project_identity or create_ephemeral_project_identity(resolution.root)
     return GenerationStoryProjectContextLoader(
         story_project_root=resolution.root.resolve(),
         requested_chapter=requested_chapter,
+        project_identity=identity,
         overwrite=bool(overwrite),
     )
 

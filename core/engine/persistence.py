@@ -166,11 +166,18 @@ class LocalPersistenceTransaction:
         run_dir: str | Path,
         run_id: str,
         allowed_roots: Iterable[str | Path],
+        book_id: str | None = None,
+        transactions_dir: str | Path | None = None,
         fault_injector: _FaultInjector | None = None,
     ) -> None:
         self.run_dir = Path(run_dir).resolve()
         self.run_id = _validate_run_id(run_id)
-        self.transactions_dir = self.run_dir / "transactions"
+        self.book_id = str(book_id) if book_id is not None else None
+        self.transactions_dir = (
+            Path(transactions_dir).resolve()
+            if transactions_dir is not None
+            else self.run_dir / "transactions"
+        )
         self.journal_dir = self.transactions_dir / self.run_id
         self.manifest_path = self.journal_dir / "manifest.json"
         self.candidate_path = self.journal_dir / "candidate_result.json"
@@ -206,6 +213,7 @@ class LocalPersistenceTransaction:
         self._manifest = {
             "schema_version": TRANSACTION_SCHEMA_VERSION,
             "run_id": self.run_id,
+            "book_id": self.book_id,
             "state": "preparing",
             "created_at": now,
             "updated_at": now,
@@ -455,12 +463,18 @@ def reconcile_persistence(
     *,
     run_dir: str | Path,
     run_id: str | None = None,
+    expected_book_id: str | None = None,
+    transactions_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    transactions_dir = Path(run_dir).resolve() / "transactions"
+    transaction_root = (
+        Path(transactions_dir).resolve()
+        if transactions_dir is not None
+        else Path(run_dir).resolve() / "transactions"
+    )
     if run_id is not None:
-        journal_dirs = [transactions_dir / _validate_run_id(run_id)]
-    elif transactions_dir.exists():
-        journal_dirs = sorted(path for path in transactions_dir.iterdir() if path.is_dir())
+        journal_dirs = [transaction_root / _validate_run_id(run_id)]
+    elif transaction_root.exists():
+        journal_dirs = sorted(path for path in transaction_root.iterdir() if path.is_dir())
     else:
         journal_dirs = []
 
@@ -468,6 +482,39 @@ def reconcile_persistence(
     for journal_dir in journal_dirs:
         if not journal_dir.exists():
             continue
+        if expected_book_id is not None:
+            try:
+                manifest = _load_manifest(journal_dir)
+            except Exception:
+                manifest = None
+            if isinstance(manifest, dict) and manifest.get("book_id") != expected_book_id:
+                actual = manifest.get("book_id")
+                results.append(
+                    PersistenceResult(
+                        run_id=str(manifest.get("run_id") or journal_dir.name),
+                        state="recovery_required",
+                        committed=False,
+                        partial=False,
+                        journal_path=str(journal_dir),
+                        commit_marker=str(journal_dir / str(manifest.get("commit_marker") or "commit.marker")),
+                        targets=tuple(dict(item) for item in manifest.get("targets", []) if isinstance(item, dict)),
+                        errors=(
+                            {
+                                "code": "story_project_state_identity_mismatch",
+                                "error": (
+                                    f"journal book_id {actual!r} does not match expected "
+                                    f"{expected_book_id!r}"
+                                ),
+                            },
+                        ),
+                        candidate_result_path=(
+                            str(journal_dir / str(manifest["candidate_result_path"]))
+                            if manifest.get("candidate_result_path")
+                            else None
+                        ),
+                    ).to_dict()
+                )
+                continue
         results.append(reconcile_persistence_transaction(journal_dir).to_dict())
     required = [result for result in results if result["state"] == "recovery_required"]
     return {

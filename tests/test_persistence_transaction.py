@@ -339,6 +339,29 @@ class PersistenceTransactionTest(unittest.TestCase):
         self.assertFalse(safe_target.exists())
         self.assertEqual("external", drift_target.read_text(encoding="utf-8"))
 
+    def test_reconcile_rejects_journal_from_another_book_before_mutation(self) -> None:
+        root = self._case_dir("book_identity")
+        target = root / "story" / "chapter.md"
+        transaction = LocalPersistenceTransaction(
+            run_dir=root / "runtime" / "runs",
+            run_id="book-a-run",
+            allowed_roots=[root / "story", root / "runtime"],
+            book_id="book-a",
+        )
+        transaction.prepare([PersistenceTarget("prose", target, "candidate")])
+
+        report = reconcile_persistence(
+            run_dir=root / "runtime" / "runs",
+            expected_book_id="book-b",
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(["book-a-run"], report["recovery_required"])
+        self.assertFalse(target.exists())
+        manifest = json.loads(transaction.manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual("book-a", manifest["book_id"])
+        self.assertEqual("prepared", manifest["state"])
+
 
 if __name__ == "__main__":
     unittest.main()

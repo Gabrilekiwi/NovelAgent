@@ -14,7 +14,7 @@ from core.review.gate import evaluate_review_gate
 from core.review.index import build_review_index_entry, review_index_path, update_review_index
 from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
-from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
+from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH, RuntimePaths
 from core.schema import validate_schema
 from core.engine.artifacts import (
     chapter_artifact_metadata,
@@ -58,6 +58,12 @@ from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
 from core.state.snapshot import build_state_update_audit, load_snapshot, normalize_snapshot, update_snapshot
 from core.story_project.coverage import build_blueprint_coverage
+from core.story_project.identity import (
+    assert_project_identity,
+    create_ephemeral_project_identity,
+    ensure_project_identity_for_runtime,
+    validate_project_identity,
+)
 from core.story_project.writer import (
     StoryProjectWritebackConfig,
     default_story_project_writeback,
@@ -100,6 +106,7 @@ class AgentExecutor:
         memory_source: str = "auto",
         run_dir: str | Path = DEFAULT_RUN_DIR,
         chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
+        persistence_dir: str | Path | None = None,
         dry_run: bool = False,
         enable_llm_validator: bool = False,
         scene_limit: int | None = None,
@@ -124,6 +131,7 @@ class AgentExecutor:
         self.memory_source = memory_source
         self.run_dir = Path(run_dir)
         self.chapter_dir = Path(chapter_dir)
+        self.persistence_dir = Path(persistence_dir) if persistence_dir is not None else self.run_dir / "transactions"
         self.dry_run = dry_run
         self.enable_llm_validator = enable_llm_validator
         self.scene_limit = scene_limit
@@ -143,6 +151,9 @@ class AgentExecutor:
         self.story_project_context = story_project_context
         self.story_project_context_loader = story_project_context_loader
         self._active_story_project_context: Any = None
+        self._last_project_identity: dict[str, Any] | None = None
+        self._expected_book_id: str | None = None
+        self._allow_legacy_snapshot_adoption = False
         self.story_project_oh_story_report = story_project_oh_story_report
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
 
@@ -166,8 +177,9 @@ class AgentExecutor:
                     previous_result=previous_result,
                     chapter_hint=chapter_hint,
                 )
+            self._prepare_project_identity_for_persistence()
             with persistence_run_lock(self.run_dir, state_paths=self._persistence_state_paths()):
-                self._assert_persistence_ready()
+                self._assert_persistence_ready(expected_book_id=self._expected_book_id)
                 return self._run_once_impl(
                     persist=True,
                     snapshot_override=snapshot_override,
@@ -199,6 +211,10 @@ class AgentExecutor:
             base_snapshot,
             memory_context,
             chapter_hint=chapter_hint,
+        )
+        self._active_story_project_context = self._normalize_story_project_identity(
+            self._active_story_project_context,
+            persist=persist,
         )
         base_snapshot, memory_context = self._apply_story_project_context(base_snapshot, memory_context)
         snapshot_pack = build_snapshot_input_pack(base_snapshot, memory_context)
@@ -678,6 +694,7 @@ class AgentExecutor:
             stop_on_rejection=stop_on_rejection,
             runs=runs,
             step_timings=step_timings,
+            book_id=(self._last_project_identity or {}).get("book_id"),
             error=error,
         )
         if persist:
@@ -947,7 +964,27 @@ class AgentExecutor:
         context = self._story_project_context_dict()
         if not context:
             return snapshot, memory_context
+        identity_payload = context.get("project_identity")
+        identity = validate_project_identity(identity_payload) if isinstance(identity_payload, dict) else None
+        if identity is not None:
+            root = context.get("story_project_root")
+            internal_snapshot = (
+                RuntimePaths.for_story_project(root).snapshot_path.resolve()
+                if root is not None
+                else None
+            )
+            assert_project_identity(
+                identity,
+                str(snapshot.get("book_id")) if snapshot.get("book_id") is not None else None,
+                source=str(self.snapshot_path),
+                allow_missing_legacy=(
+                    self._allow_legacy_snapshot_adoption
+                    or (internal_snapshot is not None and self.snapshot_path.resolve() == internal_snapshot)
+                ),
+            )
         merged_snapshot = _deep_merge_dict(snapshot, context.get("snapshot_overlay"))
+        if identity is not None:
+            merged_snapshot["book_id"] = identity.book_id
         merged_memory = dict(memory_context)
         overlay = context.get("memory_context_overlay")
         if isinstance(overlay, dict):
@@ -967,8 +1004,38 @@ class AgentExecutor:
             merged_memory["story_project"] = {
                 "enabled": True,
                 "chapter_index": context.get("chapter_index"),
+                "book_id": identity.book_id if identity is not None else None,
             }
         return merged_snapshot, merged_memory
+
+    def _normalize_story_project_identity(self, context: Any, *, persist: bool) -> Any:
+        if context is None:
+            return None
+        if hasattr(context, "to_dict"):
+            payload = context.to_dict()
+        elif isinstance(context, dict):
+            payload = dict(context)
+        else:
+            return context
+        root = payload.get("story_project_root")
+        if not root:
+            return payload
+        current_payload = payload.get("project_identity")
+        current = validate_project_identity(current_payload) if isinstance(current_payload, dict) else None
+        if not persist:
+            self._allow_legacy_snapshot_adoption = current is None or current.ephemeral
+        if persist:
+            stable = ensure_project_identity_for_runtime(
+                root,
+                persistence_dir=self.persistence_dir,
+            )
+            if current is not None and not current.ephemeral:
+                assert_project_identity(stable, current.book_id, source="StoryProject runtime context")
+            payload["project_identity"] = stable.to_dict()
+        elif current is None:
+            payload["project_identity"] = create_ephemeral_project_identity(root).to_dict()
+        self._last_project_identity = dict(payload["project_identity"])
+        return payload
 
     def _story_project_context_dict(self) -> dict[str, Any] | None:
         context = self._active_story_project_context
@@ -1281,8 +1348,12 @@ class AgentExecutor:
         path = self.run_dir / f"{result['run']['id']}.json"
         atomic_write_json(path, result)
 
-    def _assert_persistence_ready(self) -> None:
-        report = reconcile_persistence(run_dir=self.run_dir)
+    def _assert_persistence_ready(self, *, expected_book_id: str | None = None) -> None:
+        report = reconcile_persistence(
+            run_dir=self.run_dir,
+            expected_book_id=expected_book_id,
+            transactions_dir=self.persistence_dir,
+        )
         blocking = [
             item
             for item in report.get("transactions") or []
@@ -1291,6 +1362,35 @@ class AgentExecutor:
         if blocking:
             run_ids = ", ".join(str(item.get("run_id") or "unknown") for item in blocking)
             raise PersistenceError(f"persistence_reconciliation_required: {run_ids}")
+
+    def _prepare_project_identity_for_persistence(self) -> None:
+        root = None
+        identity_payload = None
+        if isinstance(self.story_project_context, dict):
+            root = self.story_project_context.get("story_project_root")
+            identity_payload = self.story_project_context.get("project_identity")
+        elif self.story_project_context is not None and hasattr(self.story_project_context, "to_dict"):
+            payload = self.story_project_context.to_dict()
+            root = payload.get("story_project_root")
+            identity_payload = payload.get("project_identity")
+        if root is None and self.story_project_context_loader is not None:
+            root = getattr(self.story_project_context_loader, "story_project_root", None)
+            loader_identity = getattr(self.story_project_context_loader, "project_identity", None)
+            if loader_identity is not None and hasattr(loader_identity, "to_dict"):
+                identity_payload = loader_identity.to_dict()
+        if root is None:
+            self._expected_book_id = None
+            return
+        stable = ensure_project_identity_for_runtime(
+            root,
+            persistence_dir=self.persistence_dir,
+        )
+        current = validate_project_identity(identity_payload) if isinstance(identity_payload, dict) else None
+        self._allow_legacy_snapshot_adoption = current is None or current.ephemeral
+        if current is not None and not current.ephemeral:
+            assert_project_identity(stable, current.book_id, source="StoryProject executor configuration")
+        self._expected_book_id = stable.book_id
+        self._last_project_identity = stable.to_dict()
 
     def _persistence_state_paths(self) -> list[Path]:
         paths = [self.snapshot_path]
@@ -1317,6 +1417,8 @@ class AgentExecutor:
             "enabled": True,
             "mode": "compatible",
             "root": context.get("story_project_root"),
+            "book_id": (context.get("project_identity") or {}).get("book_id"),
+            "project_identity": context.get("project_identity"),
             "chapter_index": context.get("chapter_index"),
             "chapter_resolution": context.get("chapter_resolution"),
             "chapter_blueprint": context.get("chapter_blueprint"),
@@ -1469,6 +1571,8 @@ class AgentExecutor:
             run_dir=self.run_dir,
             run_id=str(run["id"]),
             allowed_roots=allowed_roots,
+            book_id=(self._last_project_identity or {}).get("book_id"),
+            transactions_dir=self.persistence_dir,
         )
         try:
             validate_run_result(result)
@@ -1581,7 +1685,7 @@ class AgentExecutor:
         *,
         publication: dict[str, Any],
     ) -> dict[str, Any]:
-        journal = self.run_dir.resolve() / "transactions" / str(run_id)
+        journal = self.persistence_dir.resolve() / str(run_id)
         return {
             "run_id": str(run_id),
             "state": "completed",

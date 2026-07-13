@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProjectIdentity",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "book_id",
+    "created_at",
+    "root_hint",
+    "story_state_mode",
+    "activation",
+    "ephemeral"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "book_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "root_hint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "story_state_mode": {
+      "type": "string",
+      "enum": ["compatible", "shadow", "strict"]
+    },
+    "activation": {
+      "type": ["object", "null"],
+      "properties": {
+        "parser_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semantic_schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "layout_profile_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "activated_at": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "ephemeral": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

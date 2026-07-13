@@ -9,7 +9,12 @@ from core.engine.run_record import validate_run_result
 from core.runtime_paths import DEFAULT_RUN_DIR
 
 
-def build_run_report(run_dir: str | Path = DEFAULT_RUN_DIR, *, limit: int | None = 5) -> dict[str, Any]:
+def build_run_report(
+    run_dir: str | Path = DEFAULT_RUN_DIR,
+    *,
+    limit: int | None = 5,
+    expected_book_id: str | None = None,
+) -> dict[str, Any]:
     path = Path(run_dir)
     runs: list[dict[str, Any]] = []
     sessions: list[dict[str, Any]] = []
@@ -37,6 +42,7 @@ def build_run_report(run_dir: str | Path = DEFAULT_RUN_DIR, *, limit: int | None
     for candidate in candidates:
         try:
             run_result = _load_run_result(candidate)
+            _assert_run_book_id(run_result, expected_book_id, candidate)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             skipped.append({"path": str(candidate), "error": str(exc)})
             continue
@@ -46,6 +52,7 @@ def build_run_report(run_dir: str | Path = DEFAULT_RUN_DIR, *, limit: int | None
     for candidate in session_candidates:
         try:
             session = _load_loop_session(candidate)
+            _assert_loop_book_id(session, expected_book_id, candidate)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             skipped_sessions.append({"path": str(candidate), "error": str(exc)})
             continue
@@ -57,6 +64,7 @@ def build_run_report(run_dir: str | Path = DEFAULT_RUN_DIR, *, limit: int | None
     limited_sessions = sessions if limit is None else sessions[: max(0, limit)]
     return {
         "run_dir": str(path),
+        "expected_book_id": expected_book_id,
         "total": len(candidates),
         "loaded": len(runs),
         "loop_session_total": len(session_candidates),
@@ -97,6 +105,28 @@ def _load_loop_session(path: Path) -> dict[str, Any]:
     if not isinstance(session, dict):
         raise ValueError("missing loop session object")
     return validate_schema(session, "loop_session.schema.json")
+
+
+def _assert_run_book_id(run_result: dict[str, Any], expected_book_id: str | None, path: Path) -> None:
+    if expected_book_id is None:
+        return
+    run = run_result.get("run") if isinstance(run_result.get("run"), dict) else {}
+    story = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+    actual = story.get("book_id")
+    if actual != expected_book_id:
+        raise ValueError(
+            f"story_project_state_identity_mismatch: {path}: book_id={actual!r}, expected={expected_book_id!r}"
+        )
+
+
+def _assert_loop_book_id(session: dict[str, Any], expected_book_id: str | None, path: Path) -> None:
+    if expected_book_id is None:
+        return
+    actual = session.get("book_id")
+    if actual != expected_book_id:
+        raise ValueError(
+            f"story_project_state_identity_mismatch: {path}: book_id={actual!r}, expected={expected_book_id!r}"
+        )
 
 
 def _run_sort_key(run: dict[str, Any]) -> tuple[str, str, str]:

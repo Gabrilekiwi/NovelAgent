@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.engine.report import build_run_report
 from core.engine.workflow import build_workflow_plan
+from core.story_project.writer import default_story_project_writeback
 
 
 class RunReportTest(unittest.TestCase):
@@ -616,6 +617,37 @@ class RunReportTest(unittest.TestCase):
         self.assertEqual(0, report["loop_session_loaded"])
         self.assertEqual(1, len(report["skipped"]))
         self.assertIn("not a directory", report["skipped"][0]["error"])
+
+    def test_report_filters_story_project_records_by_expected_book_id(self) -> None:
+        tmp_path = self._case_dir("book_identity")
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        self._write_run(
+            run_dir / "chapter_1_book_a.json",
+            {
+                "id": "chapter_1_book_a",
+                "story_project": {
+                    "enabled": True,
+                    "mode": "compatible",
+                    "root": str(tmp_path / "book"),
+                    "book_id": "book-a",
+                    "project_identity": None,
+                    "chapter_index": 1,
+                    "chapter_blueprint": None,
+                    "source_paths": None,
+                    "source_resolution": None,
+                    "writeback": default_story_project_writeback(),
+                },
+            },
+        )
+
+        matching = build_run_report(run_dir, expected_book_id="book-a")
+        mismatched = build_run_report(run_dir, expected_book_id="book-b")
+
+        self.assertEqual(1, matching["loaded"])
+        self.assertEqual(0, mismatched["loaded"])
+        self.assertEqual(1, len(mismatched["skipped"]))
+        self.assertIn("story_project_state_identity_mismatch", mismatched["skipped"][0]["error"])
 
     def _write_run(self, path: Path, run: dict) -> None:
         run = self._complete_run(run)
