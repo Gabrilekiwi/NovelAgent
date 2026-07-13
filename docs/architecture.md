@@ -35,6 +35,15 @@ External publication uses durable delivery jobs, leases, attempt receipts, and r
 
 ## Layers
 
+The stable execution facade now delegates cross-cutting work to four coordinators:
+
+- `StoryProjectContextService` loads/reloads chapter context, normalizes project identity, applies strict authority, and enforces strict writeback requirements.
+- `QualityCoordinator` derives the effective policy and fuses Validation, Review, and review-gate decisions.
+- `PersistenceCoordinator` performs reconciliation readiness checks and builds the public transaction projection.
+- `DeliveryCoordinator` routes delivery inspection, confirmed-absent resolution, and reconciliation.
+
+`AgentExecutor` remains the compatibility entrypoint and `core.engine` lazily re-exports these services. CLI argument metadata, configuration, commands, and output helpers live under `core.cli`; `main.py` preserves the established callable names as imports/re-exports.
+
 ### Memory
 
 Memory is normalized before the loop runs. Supported sources:

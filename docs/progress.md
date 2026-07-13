@@ -4,11 +4,11 @@ Last updated: 2026-07-13
 
 ## Reliable semantic production status
 
-Commits 1–13 of `docs/reliable-semantic-production-plan.md` are implemented. The current StoryProject default remains shadow. Strict authority now requires a qualified target-book calibration report and explicit activation; the committed synthetic fixtures do not qualify a real target book. Strict execution is fail-closed on pinned profile drift and requires transactional apply writeback for persistent runs.
+Commits 1–14 of `docs/reliable-semantic-production-plan.md` are implemented. The current StoryProject default remains shadow. Strict authority now requires a qualified target-book calibration report and explicit activation; the committed synthetic fixtures do not qualify a real target book. Strict execution is fail-closed on pinned profile drift and requires transactional apply writeback for persistent runs.
 
 The offline two-chapter strict integration gate proves that chapter N+1 reads chapter N prose, managed semantic projection, and the incremented replayable Memory V2.1 revision. The billable real OpenAI two-chapter gate is present as an explicit opt-in and remains unexecuted unless a redacted real sample, its qualified calibration report, and provider credentials are supplied.
 
-Commit 14, the final behavior-preserving module split, is the remaining implementation step.
+Commit 14 is complete. The final behavior-preserving split introduced `StoryProjectContextService`, `QualityCoordinator`, `PersistenceCoordinator`, and `DeliveryCoordinator`, plus `core.cli` argument/config/command/output modules. `AgentExecutor`, `core.engine`, and `main.py` retain compatibility entrypoints and re-exports.
 
 ## v1.5 Status
 
@@ -77,15 +77,17 @@ Phase 6, v1.5 operational usability, is complete. Problems found during real mul
 The latest verified local gates passed:
 
 ```bash
+python -m pytest -p no:cacheprovider
 python -B -m unittest discover -s tests
-python -B scripts/smoke_v1.py
+python scripts/smoke_v1.py --skip-tests
 ```
 
-Observed v1.5 result:
+Observed final result:
 
 ```text
-Ran 389 tests ... OK
-Runtime preflight for riftwalker: OK, 24 checks passed
+891 passed, 2 skipped
+Ran 893 tests ... OK (skipped=2)
+Smoke v1: OK; preflight 20 passed, 0 failed
 ```
 
 ## Operational Notes

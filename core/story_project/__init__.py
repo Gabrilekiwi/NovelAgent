@@ -91,7 +91,6 @@ from core.story_project.validator import validate_story_project
 from core.story_project.writer import (
     StoryProjectWritebackConfig,
     build_story_project_writeback_plan,
-    run_story_project_writeback,
 )
 
 __all__ = [
@@ -152,7 +151,6 @@ __all__ = [
     "resolve_outline",
     "resolve_prose",
     "resolve_story_project_root",
-    "run_story_project_writeback",
     "three_way_merge_managed",
     "assert_project_identity",
     "validate_story_project",

@@ -5,12 +5,30 @@ import json
 import sys
 from pathlib import Path
 
-from core.config import clear_proxy_env, get_config, proxy_disabled_by_env
-from core.delivery import (
-    DeliveryError,
-    DeliveryQueue,
-    FileDeliveryAdapter,
-    NotionDeliveryAdapter,
+from core.config import clear_proxy_env, proxy_disabled_by_env
+from core.delivery import DeliveryError
+from core.cli.arguments import (
+    apply_notion_shortcuts,
+    parse_arguments,
+    positive_int as _positive_int,
+    review_repair_attempts as _review_repair_attempts,
+)
+from core.cli.commands import (
+    delivery_adapters_from_args as _delivery_adapters_from_args,
+    delivery_command_requested as _delivery_command_requested,
+    run_delivery_command as _run_delivery_command,
+)
+from core.cli.config import (
+    apply_story_project_runtime_defaults as _apply_story_project_runtime_defaults,
+    review_repair_config_from_args as _review_repair_config_from_args,
+    runtime_review_config_from_args as _runtime_review_config_from_args,
+    story_project_writeback_config_from_args as _story_project_writeback_config_from_args,
+    validate_story_project_multistep_args as _validate_story_project_multistep_args,
+)
+from core.cli.output import (
+    format_delivery_command_summary,
+    format_loop_progress_event,
+    format_persistence_reconcile_summary,
 )
 from core.director import ModelDirector
 from core.engine.artifacts import chapter_artifact_metadata, save_chapter_artifact
@@ -36,8 +54,6 @@ from core.runtime_paths import (
 )
 from core.review.dashboard import build_review_dashboard_from_index
 from core.review.index import get_latest_review, list_recent_reviews
-from core.review.repair_loop import ReviewRepairConfig, validate_review_repair_config
-from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
 from core.state.memory_writer import build_memory_writer, write_memory_updates
 from core.state.snapshot import load_snapshot
 from core.story_project.oh_story_detection import (
@@ -62,7 +78,6 @@ from core.story_project.semantic_parser import (
     parse_story_project_semantic_state,
 )
 from core.story_project.validator import validate_story_project
-from core.story_project.writer import StoryProjectWritebackConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -451,48 +466,7 @@ def build_parser() -> argparse.ArgumentParser:
 def parse_args() -> argparse.Namespace:
     parser = build_parser()
     argv = list(sys.argv[1:])
-    args = parser.parse_args(argv)
-    args._runtime_path_explicit = {
-        "snapshot": _option_was_provided(argv, "--snapshot"),
-        "run_dir": _option_was_provided(argv, "--run-dir"),
-        "persistence_dir": _option_was_provided(argv, "--persistence-dir"),
-        "delivery_dir": _option_was_provided(argv, "--delivery-dir"),
-        "chapter_dir": _option_was_provided(argv, "--chapter-dir"),
-        "review_output_dir": _option_was_provided(argv, "--review-output-dir"),
-        "memory_outbox": _option_was_provided(argv, "--memory-outbox"),
-        "memory_v2_out": _option_was_provided(argv, "--memory-v2-out"),
-    }
-    return args
-
-
-def _option_was_provided(argv: list[str], option: str) -> bool:
-    return any(token == option or token.startswith(f"{option}=") for token in argv)
-
-
-def _positive_int(value: str) -> int:
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be an integer") from exc
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
-    return parsed
-
-
-def _review_repair_attempts(value: str) -> int:
-    parsed = _positive_int(value)
-    if parsed > 3:
-        raise argparse.ArgumentTypeError("must be between 1 and 3")
-    return parsed
-
-
-def apply_notion_shortcuts(args: argparse.Namespace) -> argparse.Namespace:
-    if getattr(args, "notion_memory", False) or getattr(args, "notion_sync", False):
-        args.memory_source = "notion"
-    if getattr(args, "notion_sync", False):
-        args.memory_writeback = "notion"
-        args.notion_readback = True
-    return args
+    return parse_arguments(parser, argv)
 
 
 def _loop_progress_observer(args: argparse.Namespace):
@@ -505,67 +479,6 @@ def _loop_progress_observer(args: argparse.Namespace):
             print(line, file=sys.stderr, flush=True)
 
     return observe
-
-
-def format_loop_progress_event(event: dict) -> str:
-    name = event.get("event")
-    if name == "loop_start":
-        return f"Loop progress: starting {event.get('requested_steps')} steps"
-    if name == "step_start":
-        return f"Loop progress: step {event.get('step')}/{event.get('requested_steps')} started"
-    if name == "step_end":
-        status = event.get("status")
-        run_id = event.get("run_id")
-        duration = event.get("duration_ms")
-        committed = str(bool(event.get("committed"))).lower()
-        return (
-            f"Loop progress: step {event.get('step')}/{event.get('requested_steps')} "
-            f"{status} committed={committed} duration_ms={duration} run={run_id}"
-        )
-    if name == "step_failed":
-        return (
-            f"Loop progress: step {event.get('step')}/{event.get('requested_steps')} failed "
-            f"duration_ms={event.get('duration_ms')} error={event.get('error_type')}: {event.get('message')}"
-        )
-    if name == "loop_end":
-        return (
-            f"Loop progress: finished {event.get('completed_steps')}/{event.get('requested_steps')} "
-            f"reason={event.get('stopped_reason')}"
-        )
-    return ""
-
-
-def _apply_story_project_runtime_defaults(args: argparse.Namespace) -> RuntimePaths | None:
-    if getattr(args, "story_project", None) is None:
-        args._resolved_story_project_root = None
-        args._story_project_runtime_paths = None
-        return None
-
-    resolution = resolve_story_project_root(args.story_project)
-    if not resolution.ok or resolution.root is None:
-        raise ValueError(resolution.error or "StoryProject root could not be resolved.")
-    root = resolution.root.resolve()
-    paths = RuntimePaths.for_story_project(root)
-    explicit = getattr(args, "_runtime_path_explicit", {})
-    if not explicit.get("snapshot"):
-        args.snapshot = str(paths.snapshot_path)
-    if not explicit.get("run_dir"):
-        args.run_dir = str(paths.run_dir)
-    if not explicit.get("chapter_dir"):
-        args.chapter_dir = str(paths.chapter_dir)
-    if not explicit.get("review_output_dir"):
-        args.review_output_dir = str(paths.review_dir)
-    if not explicit.get("persistence_dir"):
-        args.persistence_dir = str(paths.persistence_dir)
-    if not explicit.get("delivery_dir"):
-        args.delivery_dir = str(paths.delivery_dir)
-    if not explicit.get("memory_v2_out"):
-        args.memory_v2_out = str(paths.memory_dir / "v2")
-    if args.memory_writeback == "file" and not explicit.get("memory_outbox"):
-        args.memory_outbox = str(paths.memory_dir / "memory_outbox.jsonl")
-    args._resolved_story_project_root = root
-    args._story_project_runtime_paths = paths
-    return paths
 
 
 def _load_story_project_identity_for_read_command(args: argparse.Namespace):
@@ -1140,128 +1053,6 @@ def _persistence_state_paths_from_args(args: argparse.Namespace) -> tuple[Path, 
     return tuple(paths)
 
 
-def _delivery_command_requested(args: argparse.Namespace) -> bool:
-    requested = [
-        bool(getattr(args, "reconcile_deliveries", False)),
-        bool(getattr(args, "inspect_delivery", None)),
-        bool(getattr(args, "resolve_delivery", None)),
-    ]
-    if sum(requested) > 1:
-        raise ValueError("choose only one delivery command")
-    if getattr(args, "confirmed_absent", False) and not getattr(args, "resolve_delivery", None):
-        raise ValueError("--confirmed-absent requires --resolve-delivery JOB_ID")
-    if getattr(args, "resolve_delivery", None) and not getattr(args, "confirmed_absent", False):
-        raise ValueError("--resolve-delivery requires --confirmed-absent")
-    if getattr(args, "run_id", None) and not getattr(args, "reconcile_deliveries", False):
-        raise ValueError("--run-id is only valid with --reconcile-deliveries")
-    return any(requested)
-
-
-def _run_delivery_command(
-    args: argparse.Namespace,
-    *,
-    story_runtime_paths: RuntimePaths | None,
-) -> dict:
-    queue = DeliveryQueue(args.delivery_dir)
-    if args.inspect_delivery:
-        return {
-            "ok": True,
-            "command": "inspect_delivery",
-            "inspection": queue.inspect(args.inspect_delivery),
-        }
-
-    adapters = _delivery_adapters_from_args(
-        args,
-        story_runtime_paths=story_runtime_paths,
-    )
-    if args.resolve_delivery:
-        job = queue.load(args.resolve_delivery)
-        if job["target_type"] != "notion":
-            raise DeliveryError("--confirmed-absent resolution is only valid for Notion delivery")
-        adapter = adapters.get("notion")
-        if adapter is None:
-            raise DeliveryError("Notion delivery credentials are not configured")
-        resolved = queue.resolve_confirmed_absent(
-            args.resolve_delivery,
-            worker_id=args.delivery_worker_id,
-            adapter=adapter,
-        )
-        return {
-            "ok": True,
-            "command": "resolve_delivery",
-            "job": resolved,
-        }
-
-    report = queue.reconcile(
-        adapters=adapters,
-        worker_id=args.delivery_worker_id,
-        run_id=args.run_id,
-    )
-    return {
-        "ok": bool(report["required_succeeded"]),
-        "command": "reconcile_deliveries",
-        **report,
-    }
-
-
-def _delivery_adapters_from_args(
-    args: argparse.Namespace,
-    *,
-    story_runtime_paths: RuntimePaths | None,
-) -> dict:
-    paths = story_runtime_paths or RuntimePaths.legacy_default()
-    story_root = getattr(args, "_resolved_story_project_root", None) or Path.cwd()
-    root_map = paths.root_map(story_root)
-    root_map["delivery_store"] = Path(args.delivery_dir).resolve()
-    adapters: dict = {"file": FileDeliveryAdapter(root_map=root_map)}
-
-    config = get_config()
-    if config.notion_api_key and config.notion_database_id:
-        database_schema = None
-        if args.notion_delivery_schema:
-            database_schema = json.loads(Path(args.notion_delivery_schema).read_text(encoding="utf-8"))
-            if not isinstance(database_schema, dict):
-                raise ValueError("--notion-delivery-schema must contain a JSON object")
-        adapters["notion"] = NotionDeliveryAdapter(
-            database_id=config.notion_database_id,
-            api_key=config.notion_api_key,
-            database_schema=database_schema,
-        )
-    return adapters
-
-
-def format_delivery_command_summary(result: dict) -> str:
-    command = result.get("command") or "delivery"
-    if command == "reconcile_deliveries":
-        return "\n".join(
-            [
-                f"Delivery reconcile: {'OK' if result.get('ok') else 'BLOCKED'}",
-                f"Attempted: {result.get('attempted', 0)}",
-                f"Required deliveries succeeded: {bool(result.get('required_succeeded'))}",
-            ]
-        )
-    job = result.get("job") or result.get("inspection", {}).get("job") or {}
-    return "\n".join(
-        [
-            f"Delivery command: {command}",
-            f"Job: {job.get('job_id', '-')}",
-            f"State: {job.get('state', '-')}",
-        ]
-    )
-
-
-def format_persistence_reconcile_summary(result: dict) -> str:
-    return "\n".join(
-        [
-            f"Persistence reconcile: {'OK' if result.get('ok') else 'FAILED'}",
-            f"Transactions: {result.get('transaction_count', 0)}",
-            f"Published runs: {len(result.get('published_run_ids') or [])}",
-            f"Recovery required: {len(result.get('recovery_required') or [])}",
-            f"Publish errors: {len(result.get('publish_errors') or [])}",
-        ]
-    )
-
-
 def format_preflight_summary(result: dict) -> str:
     checks = result.get("checks", [])
     failed = [check for check in checks if not check.get("ok")]
@@ -1618,19 +1409,6 @@ def format_review_dashboard_summary(metadata: dict) -> str:
     )
 
 
-def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewConfig:
-    config = RuntimeReviewConfig(
-        enabled=bool(args.enable_review_pipeline),
-        output_dir=Path(args.review_output_dir) if args.review_output_dir else None,
-        rules_path=Path(args.review_rules) if args.review_rules else None,
-        use_default_rules=not bool(args.review_no_default_rules),
-        build_repair_prompt=not bool(args.review_no_repair_prompt),
-        build_human_report=not bool(args.review_no_human_report),
-        gate_threshold=str(args.review_gate),
-    )
-    return validate_runtime_review_config(config)
-
-
 def _validate_story_project_compat_report_args(args: argparse.Namespace) -> None:
     if bool(getattr(args, "story_project_compat_report", False)) and getattr(args, "story_project", None) is None:
         raise ValueError("--story-project-compat-report requires --story-project")
@@ -1733,54 +1511,6 @@ def _report_with_warning(report: dict, warning: str) -> dict:
     warnings.append(str(warning))
     updated["warnings"] = list(dict.fromkeys(warnings))
     return updated
-
-
-def _review_repair_config_from_args(args: argparse.Namespace) -> ReviewRepairConfig:
-    if bool(getattr(args, "review_auto_repair", False)) and not bool(getattr(args, "enable_review_pipeline", False)):
-        raise ValueError("--review-auto-repair requires --enable-review-pipeline")
-    if bool(getattr(args, "review_repair_dry_run", False)) and not bool(getattr(args, "review_auto_repair", False)):
-        raise ValueError("--review-repair-dry-run requires --review-auto-repair")
-    return validate_review_repair_config(
-        ReviewRepairConfig(
-            enabled=bool(getattr(args, "review_auto_repair", False)),
-            max_attempts=int(getattr(args, "review_repair_max_attempts", 1)),
-            dry_run=bool(getattr(args, "review_repair_dry_run", False)),
-            gate_threshold=str(getattr(args, "review_gate", "off")),
-        )
-    )
-
-
-def _story_project_writeback_config_from_args(args: argparse.Namespace) -> StoryProjectWritebackConfig:
-    real_writeback = bool(getattr(args, "story_project_writeback", False))
-    dry_run_writeback = bool(getattr(args, "story_project_writeback_dry_run", False))
-    if real_writeback and dry_run_writeback:
-        raise ValueError("--story-project-writeback and --story-project-writeback-dry-run are mutually exclusive")
-    if real_writeback and bool(getattr(args, "dry_run", False)):
-        raise ValueError("--dry-run cannot be combined with --story-project-writeback; use --story-project-writeback-dry-run")
-    if dry_run_writeback and bool(getattr(args, "persist_dry_run", False)):
-        raise ValueError("--story-project-writeback-dry-run cannot be combined with --persist-dry-run")
-    if (real_writeback or dry_run_writeback) and getattr(args, "story_project", None) is None:
-        raise ValueError("--story-project-writeback requires --story-project")
-    if real_writeback and str(getattr(args, "memory_writeback", "none")) == "notion":
-        raise ValueError("--story-project-writeback cannot be combined with direct Notion writeback; use file outbox")
-    mode = "none"
-    if real_writeback:
-        mode = "apply"
-    elif dry_run_writeback:
-        mode = "dry_run"
-    return StoryProjectWritebackConfig(mode=mode, overwrite=bool(getattr(args, "story_project_overwrite", False)))
-
-
-def _validate_story_project_multistep_args(
-    args: argparse.Namespace,
-    writeback: StoryProjectWritebackConfig,
-) -> None:
-    if getattr(args, "story_project", None) is None or int(getattr(args, "steps", 1)) <= 1:
-        return
-    if writeback.mode != "apply":
-        raise ValueError("StoryProject --steps > 1 requires --story-project-writeback")
-    if bool(getattr(args, "dry_run", False)) or bool(getattr(args, "persist_dry_run", False)):
-        raise ValueError("StoryProject multi-step writeback cannot use global dry-run or --persist-dry-run")
 
 
 def _review_gate_exit_code(result: dict | None) -> int:

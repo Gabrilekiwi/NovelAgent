@@ -89,6 +89,10 @@ V1_STRUCTURE_PATHS = (
     Path("core/director/prompt.md"),
     Path("core/director/schema.json"),
     Path("core/engine/executor.py"),
+    Path("core/engine/delivery_coordinator.py"),
+    Path("core/engine/persistence_coordinator.py"),
+    Path("core/engine/quality_coordinator.py"),
+    Path("core/engine/story_project_context.py"),
     Path("core/engine/workflow.py"),
     Path("core/runtime_paths.py"),
     Path("core/state/builder.py"),
@@ -112,6 +116,10 @@ V1_STRUCTURE_PATHS = (
     Path("api/claude_client.py"),
     Path("api/notion_client.py"),
     Path("main.py"),
+    Path("core/cli/arguments.py"),
+    Path("core/cli/commands.py"),
+    Path("core/cli/config.py"),
+    Path("core/cli/output.py"),
 )
 
 

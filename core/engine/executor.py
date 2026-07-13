@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import inspect
@@ -15,11 +14,8 @@ from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
 from core.quality_decision import (
     QualityPolicy,
-    SEVERITY_RANK,
-    build_quality_decision,
     resolve_quality_policy,
 )
-from core.review.gate import evaluate_review_gate
 from core.review.index import build_review_index_entry, review_index_path, update_review_index
 from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
@@ -43,7 +39,13 @@ from core.engine.persistence import (
     PersistenceTarget,
     atomic_write_json,
     persistence_run_lock,
-    reconcile_persistence,
+)
+from core.engine.persistence_coordinator import PersistenceCoordinator
+from core.engine.quality_coordinator import QualityCoordinator
+from core.engine.story_project_context import (
+    StoryProjectContextError,
+    StoryProjectContextLoader,
+    StoryProjectContextService,
 )
 from core.engine.run_record import (
     build_run_id,
@@ -68,19 +70,13 @@ from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
 from core.state.snapshot import build_state_update_audit, load_snapshot, normalize_snapshot, update_snapshot
 from core.story_project.coverage import build_blueprint_coverage
-from core.story_project.identity import (
-    assert_project_identity,
-    create_ephemeral_project_identity,
-    ensure_project_identity_for_runtime,
-    validate_project_identity,
-)
 from core.story_project.writer import (
     StoryProjectWritebackConfig,
     default_story_project_writeback,
     finalize_story_project_writeback,
     prepare_story_project_writeback,
 )
-from core.story_project.read_set import capture_story_project_read_set, declared_read_set_writes
+from core.story_project.read_set import declared_read_set_writes
 from core.validator import validate_chapter
 from core.validator.spatial import validate_bridge_preconditions
 from modules.chapter_generator import PIPELINE_STAGE_NAMES, generate_chapter, run_chapter_pipeline
@@ -99,15 +95,6 @@ ChapterValidator = Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any
 Director = Callable[[dict[str, Any], dict[str, Any] | None], dict[str, Any]]
 MemoryLoader = Callable[[], dict[str, Any]]
 LoopObserver = Callable[[dict[str, Any]], None]
-StoryProjectContextLoader = Callable[[dict[str, Any], dict[str, Any], int | None], Any]
-
-
-class StoryProjectContextError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        self.code = code
-        super().__init__(f"{code}: {message}")
-
-
 class AgentExecutor:
     def __init__(
         self,
@@ -169,6 +156,12 @@ class AgentExecutor:
         self.story_project_oh_story_report = story_project_oh_story_report
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
         self.quality_policy = resolve_quality_policy(quality_policy) if quality_policy is not None else None
+        self.story_project_context_service = StoryProjectContextService()
+        self.quality_coordinator = QualityCoordinator()
+        self.persistence_coordinator = PersistenceCoordinator(
+            run_dir=self.run_dir,
+            persistence_dir=self.persistence_dir,
+        )
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
         return self._invoke_once(persist=persist)
@@ -183,6 +176,11 @@ class AgentExecutor:
     ) -> dict[str, Any]:
         self._active_story_project_context = None
         try:
+            self.story_project_context_service.require_apply_persistence(
+                enabled=self.story_project_context is not None or self.story_project_context_loader is not None,
+                persist=persist,
+                writeback_mode=self.story_project_writeback.mode,
+            )
             if not persist:
                 return self._run_once_impl(
                     persist=False,
@@ -385,7 +383,7 @@ class AgentExecutor:
                 self._save_run_record(failed_result)
             raise exc.original from exc
 
-        quality_decision = build_quality_decision(
+        quality_decision = self.quality_coordinator.decide(
             policy=quality_policy.with_overrides(include_review=False),
             validation=validation,
             chapter_index=int(decision["chapter_index"]),
@@ -1016,138 +1014,37 @@ class AgentExecutor:
         snapshot: dict[str, Any],
         memory_context: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        context = self._story_project_context_dict()
-        if not context:
-            return snapshot, memory_context
-        identity_payload = context.get("project_identity")
-        identity = validate_project_identity(identity_payload) if isinstance(identity_payload, dict) else None
-        if identity is not None:
-            root = context.get("story_project_root")
-            internal_snapshot = (
-                RuntimePaths.for_story_project(root).snapshot_path.resolve()
-                if root is not None
-                else None
-            )
-            assert_project_identity(
-                identity,
-                str(snapshot.get("book_id")) if snapshot.get("book_id") is not None else None,
-                source=str(self.snapshot_path),
-                allow_missing_legacy=(
-                    self._allow_legacy_snapshot_adoption
-                    or (internal_snapshot is not None and self.snapshot_path.resolve() == internal_snapshot)
-                ),
-            )
-        merged_snapshot = _deep_merge_dict(snapshot, context.get("snapshot_overlay"))
-        if identity is not None:
-            merged_snapshot["book_id"] = identity.book_id
-        merged_memory = dict(memory_context)
-        overlay = context.get("memory_context_overlay")
-        if isinstance(overlay, dict):
-            base_items = list(merged_memory.get("items") or [])
-            overlay_items = list(overlay.get("items") or [])
-            base_mappings = list(merged_memory.get("source_mappings") or [])
-            adjusted_mappings: list[dict[str, Any]] = []
-            for mapping in overlay.get("source_mappings") or []:
-                if not isinstance(mapping, dict):
-                    continue
-                adjusted = dict(mapping)
-                if isinstance(adjusted.get("index"), int):
-                    adjusted["index"] = int(adjusted["index"]) + len(base_items)
-                adjusted_mappings.append(adjusted)
-            merged_memory["items"] = [*base_items, *overlay_items]
-            merged_memory["source_mappings"] = [*base_mappings, *adjusted_mappings]
-            merged_memory["story_project"] = {
-                "enabled": True,
-                "chapter_index": context.get("chapter_index"),
-                "book_id": identity.book_id if identity is not None else None,
-            }
-        return merged_snapshot, merged_memory
+        return self.story_project_context_service.apply_context(
+            self._story_project_context_dict(),
+            snapshot,
+            memory_context,
+            snapshot_path=self.snapshot_path,
+            allow_legacy_snapshot_adoption=self._allow_legacy_snapshot_adoption,
+        )
 
     def _apply_story_project_authority(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        context = self._story_project_context_dict()
-        if not isinstance(context, dict) or context.get("story_state_mode") != "strict":
-            return snapshot
-        merged = dict(snapshot)
-        memory_v2 = context.get("memory_v2")
-        projection = memory_v2.get("projection") if isinstance(memory_v2, dict) else None
-        if isinstance(projection, dict):
-            from core.memory_v2 import canonical_memory_to_snapshot
-
-            memory_snapshot = canonical_memory_to_snapshot(projection)
-            merged = _deep_merge_dict(memory_snapshot, merged)
-        semantic = context.get("semantic_state")
-        if not isinstance(semantic, dict):
-            raise StoryProjectContextError(
-                "strict_semantic_state_missing",
-                "strict StoryProject context is missing authoritative semantic state",
-            )
-        for field in (
-            "story_state",
-            "world_state",
-            "spatial_state",
-            "characters",
-            "timeline",
-            "constraints",
-            "foreshadowing",
-        ):
-            merged[field] = copy.deepcopy(semantic.get(field))
-        merged["semantic_authority"] = {
-            "source": "story_project",
-            "parser_version": semantic.get("parser_version"),
-            "layout_profile_version": semantic.get("layout_profile_version"),
-            "source_digest": semantic.get("source_digest"),
-            "provenance": copy.deepcopy(semantic.get("provenance") or []),
-        }
-        return normalize_snapshot(merged)
+        return self.story_project_context_service.apply_authority(
+            self._story_project_context_dict(),
+            snapshot,
+        )
 
     def _normalize_story_project_identity(self, context: Any, *, persist: bool) -> Any:
-        if context is None:
-            return None
-        if hasattr(context, "to_dict"):
-            payload = context.to_dict()
-        elif isinstance(context, dict):
-            payload = dict(context)
-        else:
-            return context
-        root = payload.get("story_project_root")
-        if not root:
-            return payload
-        current_payload = payload.get("project_identity")
-        current = validate_project_identity(current_payload) if isinstance(current_payload, dict) else None
-        if not persist:
-            self._allow_legacy_snapshot_adoption = current is None or current.ephemeral
-        if persist:
-            stable = ensure_project_identity_for_runtime(
-                root,
-                persistence_dir=self.persistence_dir,
-            )
-            if current is not None and not current.ephemeral:
-                assert_project_identity(stable, current.book_id, source="StoryProject runtime context")
-            payload["project_identity"] = stable.to_dict()
-            existing_read_set = payload.get("read_set") if isinstance(payload.get("read_set"), dict) else {}
-            payload["read_set"] = capture_story_project_read_set(
-                root,
-                int(payload["chapter_index"]),
-                project_identity=stable,
-                parser_version=str(existing_read_set.get("parser_version") or "shadow-1.0"),
-                parse_status=str(existing_read_set.get("parse_status") or "ok"),
-            )
-        elif current is None:
-            payload["project_identity"] = create_ephemeral_project_identity(root).to_dict()
-        self._last_project_identity = dict(payload["project_identity"])
-        return payload
+        normalized = self.story_project_context_service.normalize_identity(
+            context,
+            persist=persist,
+            persistence_dir=self.persistence_dir,
+            allow_legacy_snapshot_adoption=self._allow_legacy_snapshot_adoption,
+        )
+        self._allow_legacy_snapshot_adoption = normalized.allow_legacy_snapshot_adoption
+        if normalized.last_project_identity is not None:
+            self._last_project_identity = normalized.last_project_identity
+        return normalized.context
 
     def _story_project_context_dict(self) -> dict[str, Any] | None:
-        context = self._active_story_project_context
-        if context is None:
-            context = self.story_project_context
-        if context is None:
-            return None
-        if hasattr(context, "to_dict"):
-            return context.to_dict()
-        if isinstance(context, dict):
-            return context
-        return None
+        return self.story_project_context_service.context_dict(
+            self._active_story_project_context,
+            self.story_project_context,
+        )
 
     def _load_story_project_context(
         self,
@@ -1156,47 +1053,23 @@ class AgentExecutor:
         *,
         chapter_hint: int | None,
     ) -> Any:
-        if self.story_project_context_loader is None:
-            return self.story_project_context
-        context = self.story_project_context_loader(snapshot, memory_context, chapter_hint)
-        payload = context.to_dict() if hasattr(context, "to_dict") else context
-        if not isinstance(payload, dict):
-            raise StoryProjectContextError(
-                "story_project_context_invalid",
-                "context loader must return a mapping or an object with to_dict()",
-            )
-        chapter_index = payload.get("chapter_index")
-        if isinstance(chapter_index, bool) or not isinstance(chapter_index, int) or chapter_index < 1:
-            raise StoryProjectContextError(
-                "story_project_context_invalid",
-                "context loader returned an invalid chapter_index",
-            )
-        if chapter_hint is not None and chapter_index != chapter_hint:
-            raise StoryProjectContextError(
-                "story_project_sequence_drift",
-                f"expected chapter {chapter_hint}, but context resolved chapter {chapter_index}",
-            )
-        return context
+        return self.story_project_context_service.load(
+            configured_context=self.story_project_context,
+            loader=self.story_project_context_loader,
+            snapshot=snapshot,
+            memory_context=memory_context,
+            chapter_hint=chapter_hint,
+        )
 
     def _story_project_chapter_blueprint(self) -> dict[str, Any] | None:
-        context = self._story_project_context_dict()
-        if not context:
-            return None
-        blueprint = context.get("chapter_blueprint")
-        return blueprint if isinstance(blueprint, dict) else None
+        return self.story_project_context_service.chapter_blueprint(self._story_project_context_dict())
 
     def _require_strict_story_project_writeback(self, *, persist: bool) -> None:
-        context = self._story_project_context_dict()
-        if (
-            persist
-            and isinstance(context, dict)
-            and context.get("story_state_mode") == "strict"
-            and self.story_project_writeback.mode != "apply"
-        ):
-            raise StoryProjectContextError(
-                "strict_story_state_requires_apply_writeback",
-                "persistent strict StoryProject execution requires --story-project-writeback",
-            )
+        self.story_project_context_service.require_strict_writeback(
+            self._story_project_context_dict(),
+            persist=persist,
+            writeback_mode=self.story_project_writeback.mode,
+        )
 
     def _model_trace_metadata(self, action: str, state: dict[str, Any]) -> dict[str, Any] | None:
         config = get_config()
@@ -1442,51 +1315,24 @@ class AgentExecutor:
         review: dict[str, Any] | None,
         quality_decision: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if self.review_config.gate_threshold == "off" or not isinstance(review, dict):
-            return None
-        return evaluate_review_gate(
-            review_pipeline=review,
+        return self.quality_coordinator.review_gate(
+            review_config=self.review_config,
+            review=review,
             quality_decision=quality_decision,
-            threshold=self.review_config.gate_threshold,
         )
 
     def _effective_quality_policy(self, *, persist: bool) -> QualityPolicy:
-        if self.quality_policy is not None:
-            policy = self.quality_policy
-        elif persist and self.story_project_writeback.mode == "apply" and self._story_project_context_dict():
-            policy = resolve_quality_policy("standard")
-        else:
-            policy = resolve_quality_policy("minimal")
-        include_review = bool(
-            policy.include_review
-            or self.review_config.enabled
-            or self.review_repair_config.enabled
+        return self.quality_coordinator.effective_policy(
+            configured_policy=self.quality_policy,
+            persist=persist,
+            story_project_apply=self.story_project_writeback.mode == "apply",
+            has_story_project_context=bool(self._story_project_context_dict()),
+            review_config=self.review_config,
+            review_repair_config=self.review_repair_config,
         )
-        threshold = policy.threshold
-        if self.review_config.enabled and self.review_config.gate_threshold != "off":
-            gate_threshold = (
-                "blocking"
-                if self.review_config.gate_threshold == "blocked"
-                else self.review_config.gate_threshold
-            )
-            threshold = min(
-                (threshold, gate_threshold),
-                key=lambda item: SEVERITY_RANK[item],
-            )
-        return policy.with_overrides(threshold=threshold, include_review=include_review)
 
     def _runtime_review_config_for_policy(self, policy: QualityPolicy) -> RuntimeReviewConfig:
-        if self.review_config.enabled or not policy.include_review:
-            return self.review_config
-        return RuntimeReviewConfig(
-            enabled=True,
-            output_dir=self.review_config.output_dir,
-            rules_path=self.review_config.rules_path,
-            use_default_rules=self.review_config.use_default_rules,
-            build_repair_prompt=self.review_config.build_repair_prompt,
-            build_human_report=self.review_config.build_human_report,
-            gate_threshold="off",
-        )
+        return self.quality_coordinator.runtime_review_config(policy, self.review_config)
 
     def _quality_decision_with_review(
         self,
@@ -1496,12 +1342,10 @@ class AgentExecutor:
         review: dict[str, Any],
         chapter_index: int,
     ) -> dict[str, Any]:
-        upstream = review.get("quality_decision") if isinstance(review, dict) else None
-        return build_quality_decision(
+        return self.quality_coordinator.decide(
             policy=policy,
             validation=validation,
-            upstream_decisions=[upstream] if isinstance(upstream, dict) else [],
-            review_pipeline=review,
+            review=review,
             chapter_index=chapter_index,
         )
 
@@ -1600,48 +1444,17 @@ class AgentExecutor:
         atomic_write_json(path, result)
 
     def _assert_persistence_ready(self, *, expected_book_id: str | None = None) -> None:
-        report = reconcile_persistence(
-            run_dir=self.run_dir,
-            expected_book_id=expected_book_id,
-            transactions_dir=self.persistence_dir,
-        )
-        blocking = [
-            item
-            for item in report.get("transactions") or []
-            if isinstance(item, dict) and item.get("state") in {"commit_marked", "recovery_required"}
-        ]
-        if blocking:
-            run_ids = ", ".join(str(item.get("run_id") or "unknown") for item in blocking)
-            raise PersistenceError(f"persistence_reconciliation_required: {run_ids}")
+        self.persistence_coordinator.assert_ready(expected_book_id=expected_book_id)
 
     def _prepare_project_identity_for_persistence(self) -> None:
-        root = None
-        identity_payload = None
-        if isinstance(self.story_project_context, dict):
-            root = self.story_project_context.get("story_project_root")
-            identity_payload = self.story_project_context.get("project_identity")
-        elif self.story_project_context is not None and hasattr(self.story_project_context, "to_dict"):
-            payload = self.story_project_context.to_dict()
-            root = payload.get("story_project_root")
-            identity_payload = payload.get("project_identity")
-        if root is None and self.story_project_context_loader is not None:
-            root = getattr(self.story_project_context_loader, "story_project_root", None)
-            loader_identity = getattr(self.story_project_context_loader, "project_identity", None)
-            if loader_identity is not None and hasattr(loader_identity, "to_dict"):
-                identity_payload = loader_identity.to_dict()
-        if root is None:
-            self._expected_book_id = None
-            return
-        stable = ensure_project_identity_for_runtime(
-            root,
+        prepared = self.story_project_context_service.prepare_identity_for_persistence(
+            configured_context=self.story_project_context,
+            loader=self.story_project_context_loader,
             persistence_dir=self.persistence_dir,
         )
-        current = validate_project_identity(identity_payload) if isinstance(identity_payload, dict) else None
-        self._allow_legacy_snapshot_adoption = current is None or current.ephemeral
-        if current is not None and not current.ephemeral:
-            assert_project_identity(stable, current.book_id, source="StoryProject executor configuration")
-        self._expected_book_id = stable.book_id
-        self._last_project_identity = stable.to_dict()
+        self._expected_book_id = prepared.expected_book_id
+        self._last_project_identity = prepared.last_project_identity
+        self._allow_legacy_snapshot_adoption = prepared.allow_legacy_snapshot_adoption
 
     def _persistence_state_paths(self) -> list[Path]:
         paths = [self.snapshot_path]
@@ -2017,47 +1830,10 @@ class AgentExecutor:
         *,
         publication: dict[str, Any],
     ) -> dict[str, Any]:
-        journal = self.persistence_dir.resolve() / str(run_id)
-        return {
-            "run_id": str(run_id),
-            "state": "completed",
-            "committed": True,
-            "partial": False,
-            "journal_path": str(journal),
-            "commit_marker": str(journal / "commit.marker"),
-            "targets": [
-                {
-                    "kind": target.kind,
-                    "path": str(Path(target.path).resolve()),
-                    "status": "verified",
-                    "metadata": dict(target.metadata),
-                }
-                for target in targets
-            ],
-            "errors": [],
-            "candidate_result_path": str(journal / "candidate_result.json"),
-            "publication": publication,
-        }
+        return self.persistence_coordinator.anticipated(run_id, targets, publication=publication)
 
     def _attach_persistence_payload(self, result: dict[str, Any], payload: dict[str, Any]) -> None:
-        public = {
-            key: value
-            for key, value in payload.items()
-            if key in {
-                "run_id",
-                "state",
-                "committed",
-                "partial",
-                "journal_path",
-                "commit_marker",
-                "targets",
-                "errors",
-                "candidate_result_path",
-                "publication",
-            }
-        }
-        result["persistence"] = public
-        result["run"]["persistence"] = public
+        self.persistence_coordinator.attach(result, payload)
 
     def _attach_story_project_writeback_payload(
         self,
@@ -2566,18 +2342,6 @@ def _empty_analysis(validation: dict[str, Any]) -> dict[str, Any]:
         "validation_ok": bool(validation.get("ok")),
         "summary": "",
     }, "analysis_result.schema.json")
-
-
-def _deep_merge_dict(base: dict[str, Any], overlay: Any) -> dict[str, Any]:
-    if not isinstance(overlay, dict):
-        return dict(base)
-    merged = dict(base)
-    for key, value in overlay.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge_dict(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
 
 
 def _require_chapter(state: dict[str, Any]) -> str:

@@ -2,7 +2,7 @@
 
 ## Phase 6: Reliable semantic production
 
-Status: Commit 13 implemented; final structural split pending.
+Status: all 14 reliable semantic production commits implemented.
 
 Completed:
 
@@ -23,7 +23,7 @@ Not claimed:
 
 Remaining:
 
-- Behavior-preserving final module extraction and compatibility re-exports from Commit 14.
+- A real target book still needs its own redacted calibration evidence and opt-in real-provider E2E artifact before strict release can be claimed for that book.
 
 Date: 2026-07-09
 

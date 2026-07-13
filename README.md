@@ -139,6 +139,7 @@ python main.py --report-runs
 
 - `core/director`: decision layer with schema-checked decisions and run audit records.
 - `core/engine`: execution loop, schema-checked workflow plans and trace events, model-call stage diagnostics, run records, artifacts, preflight, and run reports.
+- `core/cli`: argument parsing metadata, runtime/config resolution, command routers, and output formatters re-exported by `main.py`.
 - `core/state`: snapshot, input pack plus metadata, memory, Notion export normalization, and schema-checked state builder audit.
 - `core/story_project`: project identity, semantic parser/authority, activation, managed projection merge, read sets, and StoryProject writeback.
 - `core/memory_v2`: immutable event batches, replay/checkpoint verification, canonical projection, and Snapshot adaptation.

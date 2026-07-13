@@ -4,8 +4,12 @@ from typing import Any
 
 __all__ = [
     "AgentExecutor",
+    "DeliveryCoordinator",
+    "PersistenceCoordinator",
     "PersistenceV2Target",
     "PersistenceV2Transaction",
+    "QualityCoordinator",
+    "StoryProjectContextService",
     "build_loop_session_record",
     "build_run_report",
     "run_loop",
@@ -25,6 +29,23 @@ def __getattr__(name: str) -> Any:
             "AgentExecutor": AgentExecutor,
             "run_loop": run_loop,
             "run_once": run_once,
+        }[name]
+    if name in {
+        "DeliveryCoordinator",
+        "PersistenceCoordinator",
+        "QualityCoordinator",
+        "StoryProjectContextService",
+    }:
+        from core.engine.delivery_coordinator import DeliveryCoordinator
+        from core.engine.persistence_coordinator import PersistenceCoordinator
+        from core.engine.quality_coordinator import QualityCoordinator
+        from core.engine.story_project_context import StoryProjectContextService
+
+        return {
+            "DeliveryCoordinator": DeliveryCoordinator,
+            "PersistenceCoordinator": PersistenceCoordinator,
+            "QualityCoordinator": QualityCoordinator,
+            "StoryProjectContextService": StoryProjectContextService,
         }[name]
     if name == "run_preflight":
         from core.engine.preflight import run_preflight
