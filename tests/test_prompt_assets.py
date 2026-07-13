@@ -176,6 +176,30 @@ class PromptAssetTest(unittest.TestCase):
         self.assertEqual(["continuity", "spatial"], metadata["recovery_context"]["skipped_checks"])
         self.assertEqual(1, metadata["recovery_context"]["repair_attempts"])
 
+    def test_story_project_input_pack_exposes_read_set_digest_only(self) -> None:
+        input_pack = build_input_pack(
+            {
+                "chapter_index": 2,
+                "world_state": {},
+                "story_state": {},
+                "spatial_state": {},
+                "characters": {},
+                "timeline": [],
+            },
+            story_project_context={
+                "chapter_index": 2,
+                "chapter_blueprint": {"required_beats": ["advance"]},
+                "read_set": {
+                    "context_digest": "read-set-digest",
+                    "membership": [{"relative_path": "tracking/secret.md"}],
+                },
+            },
+        )
+
+        self.assertIn('"read_set_context_digest": "read-set-digest"', input_pack)
+        self.assertNotIn('"membership"', input_pack)
+        self.assertNotIn("tracking/secret.md", input_pack)
+
     def test_prompt_assets_are_ascii_text(self) -> None:
         for path in sorted(Path("prompts").glob("*.md")):
             content = path.read_text(encoding="utf-8-sig")

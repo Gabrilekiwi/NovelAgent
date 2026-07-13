@@ -8,6 +8,7 @@ from core.story_project.mapper import build_story_project_runtime_context
 from core.story_project.identity import ProjectIdentity, create_ephemeral_project_identity
 from core.story_project.model import StoryProjectRuntimeContext
 from core.story_project.paths import resolve_story_project_root
+from core.story_project.read_set import capture_story_project_read_set
 from core.story_project.validator import validate_story_project
 
 
@@ -79,15 +80,23 @@ def build_generation_story_project_context(
     if root is None or chapter_index is None:
         raise ValueError("StoryProject generation requires a resolved root and chapter.")
     identity = project_identity or create_ephemeral_project_identity(root)
+    context = build_story_project_runtime_context(
+        root,
+        chapter_index,
+        snapshot=snapshot,
+        memory_context=memory_context,
+    )
+    read_set = capture_story_project_read_set(
+        root,
+        chapter_index,
+        project_identity=identity,
+        parse_status="warning" if context.warnings else "ok",
+    )
     return replace(
-        build_story_project_runtime_context(
-            root,
-            chapter_index,
-            snapshot=snapshot,
-            memory_context=memory_context,
-        ),
+        context,
         chapter_resolution=chapter_resolution,
         project_identity=identity.to_dict(),
+        read_set=read_set,
     )
 
 

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoryProjectReadSet",
+  "type": "object",
+  "required": ["schema_version", "book_id", "chapter_index", "root_identity", "identity_revision", "parser_version", "parse_status", "entries", "candidate_fingerprints", "membership", "membership_fingerprint", "context_digest"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "root_identity": {"type": "object"},
+    "identity_revision": {"type": "string", "minLength": 64},
+    "parser_version": {"type": "string", "minLength": 1},
+    "parse_status": {"type": "string", "enum": ["ok", "warning", "blocked"]},
+    "entries": {"type": "array", "items": {"type": "object"}},
+    "candidate_fingerprints": {"type": "object"},
+    "membership": {"type": "array", "items": {"type": "object"}},
+    "membership_fingerprint": {"type": "string", "minLength": 64},
+    "context_digest": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

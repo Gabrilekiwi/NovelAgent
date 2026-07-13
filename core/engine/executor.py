@@ -71,6 +71,7 @@ from core.story_project.writer import (
     finalize_story_project_writeback,
     prepare_story_project_writeback,
 )
+from core.story_project.read_set import capture_story_project_read_set, declared_read_set_writes
 from core.validator import validate_chapter
 from core.validator.spatial import validate_bridge_preconditions
 from modules.chapter_generator import PIPELINE_STAGE_NAMES, generate_chapter, run_chapter_pipeline
@@ -1039,6 +1040,14 @@ class AgentExecutor:
             if current is not None and not current.ephemeral:
                 assert_project_identity(stable, current.book_id, source="StoryProject runtime context")
             payload["project_identity"] = stable.to_dict()
+            existing_read_set = payload.get("read_set") if isinstance(payload.get("read_set"), dict) else {}
+            payload["read_set"] = capture_story_project_read_set(
+                root,
+                int(payload["chapter_index"]),
+                project_identity=stable,
+                parser_version=str(existing_read_set.get("parser_version") or "shadow-1.0"),
+                parse_status=str(existing_read_set.get("parse_status") or "ok"),
+            )
         elif current is None:
             payload["project_identity"] = create_ephemeral_project_identity(root).to_dict()
         self._last_project_identity = dict(payload["project_identity"])
@@ -1574,12 +1583,31 @@ class AgentExecutor:
                 expected_writeback,
                 publish_artifacts=False,
             )
+        story_context = self._story_project_context_dict() or {}
+        read_set = story_context.get("read_set") if isinstance(story_context.get("read_set"), dict) else None
+        read_set_writes = (
+            declared_read_set_writes(
+                read_set,
+                (
+                    (
+                        target.path,
+                        hashlib.sha256(target.content_bytes()).hexdigest(),
+                        len(target.content_bytes()),
+                    )
+                    for target in persistence_targets
+                ),
+            )
+            if read_set is not None
+            else []
+        )
         transaction = LocalPersistenceTransaction(
             run_dir=self.run_dir,
             run_id=str(run["id"]),
             allowed_roots=allowed_roots,
             book_id=(self._last_project_identity or {}).get("book_id"),
             transactions_dir=self.persistence_dir,
+            story_project_read_set=read_set,
+            read_set_declared_writes=read_set_writes,
         )
         try:
             validate_run_result(result)

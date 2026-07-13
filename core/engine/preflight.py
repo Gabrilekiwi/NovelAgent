@@ -65,6 +65,7 @@ SCHEMA_ASSETS = (
     Path("schemas/snapshot.schema.json"),
     Path("schemas/story_project_runtime_migration.schema.json"),
     Path("schemas/story_project_managed_projection.schema.json"),
+    Path("schemas/story_project_read_set.schema.json"),
     Path("schemas/story_project_semantic_fixture_manifest.schema.json"),
     Path("schemas/story_project_shadow_report.schema.json"),
     Path("schemas/story_project_semantic_state.schema.json"),

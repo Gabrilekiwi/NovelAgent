@@ -169,6 +169,8 @@ class LocalPersistenceTransaction:
         book_id: str | None = None,
         transactions_dir: str | Path | None = None,
         fault_injector: _FaultInjector | None = None,
+        story_project_read_set: Mapping[str, Any] | None = None,
+        read_set_declared_writes: Iterable[Mapping[str, Any]] = (),
     ) -> None:
         self.run_dir = Path(run_dir).resolve()
         self.run_id = _validate_run_id(run_id)
@@ -186,6 +188,10 @@ class LocalPersistenceTransaction:
         if not self.allowed_roots:
             raise PersistencePreparationError("at least one allowed persistence root is required")
         self._fault_injector = fault_injector
+        self.story_project_read_set = (
+            dict(story_project_read_set) if story_project_read_set is not None else None
+        )
+        self.read_set_declared_writes = [dict(item) for item in read_set_declared_writes]
         self._manifest: dict[str, Any] | None = None
 
     def prepare(
@@ -196,6 +202,8 @@ class LocalPersistenceTransaction:
     ) -> dict[str, Any]:
         if self.journal_dir.exists():
             raise PersistencePreparationError(f"transaction journal already exists: {self.journal_dir}")
+
+        self._verify_story_project_read_set(phase="prepare")
 
         prepared_targets = self._preflight_targets(tuple(targets))
         if not prepared_targets:
@@ -221,6 +229,8 @@ class LocalPersistenceTransaction:
             "candidate_result_path": "candidate_result.json" if candidate_payload is not None else None,
             "candidate_sha256": _sha256(candidate_bytes) if candidate_bytes is not None else None,
             "commit_marker": "commit.marker",
+            "story_project_read_set": self.story_project_read_set,
+            "read_set_declared_writes": self.read_set_declared_writes,
             "targets": prepared_targets,
             "errors": [],
         }
@@ -254,6 +264,7 @@ class LocalPersistenceTransaction:
         if manifest.get("state") != "prepared":
             raise PersistenceError(f"transaction is not prepared: state={manifest.get('state')!r}")
 
+        self._verify_story_project_read_set(phase="pre_apply", manifest=manifest)
         manifest["state"] = "applying"
         manifest["updated_at"] = _utc_now()
         self._write_manifest()
@@ -262,6 +273,7 @@ class LocalPersistenceTransaction:
             for target in manifest["targets"]:
                 index = int(target["index"])
                 path = Path(target["path"])
+                self._verify_story_project_read_set(phase="during_apply", manifest=manifest)
                 self._assert_current_hash(target, phase="apply")
                 if target["before_sha256"] == target["after_sha256"]:
                     target["status"] = "verified"
@@ -270,6 +282,8 @@ class LocalPersistenceTransaction:
                 target["status"] = "applying"
                 self._write_manifest()
                 self._inject("before_target_replace", index, path)
+                self._verify_story_project_read_set(phase="during_apply", manifest=manifest)
+                self._assert_current_hash(target, phase="replace")
                 staged = self.journal_dir / target["staged_path"]
                 _atomic_replace_from_bytes(path, staged.read_bytes())
                 self._inject("after_target_replace", index, path)
@@ -282,6 +296,8 @@ class LocalPersistenceTransaction:
                 self._write_manifest()
 
             self._inject("before_commit_marker", None, self.commit_marker_path)
+            self._verify_story_project_read_set(phase="pre_marker", manifest=manifest)
+            self._assert_all_after_hashes(manifest)
             _atomic_create_from_bytes(
                 self.commit_marker_path,
                 _json_bytes(
@@ -407,6 +423,42 @@ class LocalPersistenceTransaction:
             raise PersistenceError(
                 f"CAS mismatch during {phase}: {path}; expected={expected} actual={actual}"
             )
+
+    def _assert_all_after_hashes(self, manifest: dict[str, Any]) -> None:
+        for target in manifest["targets"]:
+            path = _validated_target_path(target["path"], self.allowed_roots)
+            actual = _path_sha256(path)
+            if actual != target["after_sha256"]:
+                raise PersistenceError(
+                    f"after-hash drift before commit marker: {path}; "
+                    f"expected={target['after_sha256']} actual={actual}"
+                )
+
+    def _verify_story_project_read_set(
+        self,
+        *,
+        phase: str,
+        manifest: dict[str, Any] | None = None,
+    ) -> None:
+        read_set = (
+            manifest.get("story_project_read_set")
+            if isinstance(manifest, dict)
+            else self.story_project_read_set
+        )
+        if not isinstance(read_set, dict):
+            return
+        declared = (
+            manifest.get("read_set_declared_writes", [])
+            if isinstance(manifest, dict)
+            else self.read_set_declared_writes
+        )
+        from core.story_project.read_set import verify_story_project_read_set
+
+        verify_story_project_read_set(
+            read_set,
+            declared_writes=declared,
+            phase=phase,
+        )
 
     def _rollback(self, *, error: Exception | None = None) -> PersistenceResult:
         manifest = self._load_or_current_manifest()

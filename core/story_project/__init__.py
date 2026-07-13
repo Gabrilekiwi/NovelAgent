@@ -57,6 +57,14 @@ from core.story_project.paths import (
     resolve_prose,
     resolve_story_project_root,
 )
+from core.story_project.read_set import (
+    STORY_PROJECT_READ_SET_SCHEMA_VERSION,
+    DeclaredReadSetWrite,
+    StoryProjectSourceDriftError,
+    capture_story_project_read_set,
+    declared_read_set_writes,
+    verify_story_project_read_set,
+)
 from core.story_project.semantic_contracts import (
     STORY_PROJECT_SEMANTIC_FIXTURE_SCHEMA_VERSION,
     STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION,
@@ -80,6 +88,7 @@ from core.story_project.writer import (
 __all__ = [
     "ChapterResolution",
     "ChapterBlueprint",
+    "DeclaredReadSetWrite",
     "MANAGED_BLOCK_END",
     "MANAGED_BLOCK_SCHEMA_VERSION",
     "MANAGED_BLOCK_START",
@@ -97,10 +106,12 @@ __all__ = [
     "StoryProjectRuntimeContext",
     "StoryProjectRuntimeMigrationError",
     "STORY_PROJECT_SEMANTIC_FIXTURE_SCHEMA_VERSION",
+    "STORY_PROJECT_READ_SET_SCHEMA_VERSION",
     "STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION",
     "SEMANTIC_PARSER_VERSION",
     "SHADOW_REPORT_SCHEMA_VERSION",
     "StoryProjectSemanticParseError",
+    "StoryProjectSourceDriftError",
     "StoryProjectValidationResult",
     "StoryProjectWritebackConfig",
     "ValidationProblem",
@@ -110,9 +121,11 @@ __all__ = [
     "build_story_project_shadow_report",
     "canonical_outline_path",
     "canonical_prose_path",
+    "capture_story_project_read_set",
     "create_ephemeral_project_identity",
     "compute_base_source_digest",
     "detect_oh_story_compatibility",
+    "declared_read_set_writes",
     "failed_oh_story_compatibility_report",
     "ensure_project_identity",
     "ensure_project_identity_for_runtime",
@@ -135,5 +148,6 @@ __all__ = [
     "validate_story_project",
     "validate_story_project_semantic_fixture_manifest",
     "validate_story_project_semantic_state",
+    "verify_story_project_read_set",
     "write_managed_block",
 ]

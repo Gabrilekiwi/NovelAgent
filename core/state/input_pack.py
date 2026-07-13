@@ -119,6 +119,9 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         return ""
     payload = {
         "chapter_blueprint": story_project_context.get("chapter_blueprint"),
+        "read_set_context_digest": (
+            story_project_context.get("read_set") or {}
+        ).get("context_digest"),
         "outline_source": _compact_story_source(story_project_context.get("outline"), excerpt_chars=800),
         "previous_chapter_context": story_project_context.get("previous_chapter_context"),
         "semantic_state": story_project_context.get("semantic_state"),
