@@ -7,11 +7,23 @@ import unittest
 from unittest.mock import patch
 
 from api.contracts import ModelCallError
+from api.retry import CLAUDE_POLISH, MODEL_READ_GENERATION, RetryPolicy
 from api.claude_client import _extract_message_text, _polish_max_tokens, polish_chapter
 from api.openai_client import _extract_message_content, chat_completion
 
 
 class ApiClientTest(unittest.TestCase):
+    @staticmethod
+    def _retry_policy(profile: str, *, max_attempts: int = 3) -> RetryPolicy:
+        return RetryPolicy(
+            profile=profile,
+            max_attempts=max_attempts,
+            base_delay_seconds=0,
+            max_delay_seconds=0,
+            jitter_ratio=0,
+            deadline_seconds=10,
+        )
+
     def setUp(self) -> None:
         self._claude_alias_env = {
             "ANTHROPIC_AUTH_TOKEN": os.environ.get("ANTHROPIC_AUTH_TOKEN"),
@@ -121,7 +133,8 @@ class ApiClientTest(unittest.TestCase):
         os.environ["OPENAI_STREAM"] = "false"
         try:
             with patch.dict(sys.modules, {"openai": fake_module}):
-                self.assertEqual("ok", chat_completion([{"role": "user", "content": "hello"}]))
+                with self.assertWarns(FutureWarning):
+                    self.assertEqual("ok", chat_completion([{"role": "user", "content": "hello"}]))
         finally:
             for name, value in originals.items():
                 if value is None:
@@ -129,7 +142,7 @@ class ApiClientTest(unittest.TestCase):
                 else:
                     os.environ[name] = value
 
-        self.assertEqual({"api_key": "test-key", "timeout": 9, "max_retries": 3}, captured["client_kwargs"])
+        self.assertEqual({"api_key": "test-key", "timeout": 9, "max_retries": 0}, captured["client_kwargs"])
         self.assertEqual(
             {
                 "model": "test-model",
@@ -197,7 +210,10 @@ class ApiClientTest(unittest.TestCase):
         try:
             with patch.dict(sys.modules, {"openai": fake_module}):
                 with self.assertRaises(ModelCallError) as context:
-                    chat_completion([{"role": "user", "content": "hello"}])
+                    chat_completion(
+                        [{"role": "user", "content": "hello"}],
+                        retry_policy=self._retry_policy(MODEL_READ_GENERATION),
+                    )
         finally:
             for name, value in originals.items():
                 if value is None:
@@ -208,8 +224,102 @@ class ApiClientTest(unittest.TestCase):
         diagnostic = context.exception.to_dict()
         self.assertEqual("timeout", diagnostic["failure_category"])
         self.assertTrue(diagnostic["retryable"])
-        self.assertEqual(1, diagnostic["attempts"])
+        self.assertEqual(3, diagnostic["attempts"])
+        self.assertEqual("max_attempts", diagnostic["retry_stop_reason"])
+        self.assertEqual(3, len(diagnostic["attempt_history"]))
         self.assertIsInstance(diagnostic["elapsed_ms"], int)
+
+    def test_openai_partial_stream_is_not_replayed(self) -> None:
+        calls = 0
+
+        class FakeCompletions:
+            def create(self, **kwargs: object) -> object:
+                nonlocal calls
+                calls += 1
+
+                def chunks():
+                    yield SimpleNamespace(
+                        choices=[SimpleNamespace(delta=SimpleNamespace(content="partial"))]
+                    )
+                    raise TimeoutError("stream timed out")
+
+                return chunks()
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        originals = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "OPENAI_MODEL": os.environ.get("OPENAI_MODEL"),
+            "OPENAI_STREAM": os.environ.get("OPENAI_STREAM"),
+        }
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["OPENAI_MODEL"] = "test-model"
+        os.environ["OPENAI_STREAM"] = "true"
+        try:
+            with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
+                with self.assertRaises(ModelCallError) as context:
+                    chat_completion(
+                        [{"role": "user", "content": "hello"}],
+                        retry_policy=self._retry_policy(MODEL_READ_GENERATION),
+                    )
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual(1, calls)
+        self.assertTrue(context.exception.partial_content_received)
+        self.assertEqual("partial_content_received", context.exception.retry_stop_reason)
+
+    def test_openai_empty_failed_stream_can_retry(self) -> None:
+        calls = 0
+
+        class FakeCompletions:
+            def create(self, **kwargs: object) -> object:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    def failed_chunks():
+                        if False:
+                            yield None
+                        raise TimeoutError("stream timed out before content")
+
+                    return failed_chunks()
+                return [
+                    SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="complete"))])
+                ]
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        originals = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "OPENAI_MODEL": os.environ.get("OPENAI_MODEL"),
+            "OPENAI_STREAM": os.environ.get("OPENAI_STREAM"),
+        }
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["OPENAI_MODEL"] = "test-model"
+        os.environ["OPENAI_STREAM"] = "true"
+        try:
+            with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
+                output = chat_completion(
+                    [{"role": "user", "content": "hello"}],
+                    retry_policy=self._retry_policy(MODEL_READ_GENERATION),
+                )
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual("complete", output)
+        self.assertEqual(2, calls)
 
     def test_claude_client_requires_api_key(self) -> None:
         original_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -282,6 +392,7 @@ class ApiClientTest(unittest.TestCase):
                 "base_url": "https://claude.example.test",
                 "timeout": 8,
                 "default_headers": {"User-Agent": "claude-cli/1.0 test"},
+                "max_retries": 0,
             },
             captured["client_kwargs"],
         )
@@ -390,7 +501,11 @@ class ApiClientTest(unittest.TestCase):
         try:
             with patch.dict(sys.modules, {"anthropic": fake_module}):
                 with self.assertRaises(ModelCallError) as context:
-                    polish_chapter("chapter text", dry_run=False)
+                    polish_chapter(
+                        "chapter text",
+                        dry_run=False,
+                        retry_policy=self._retry_policy(CLAUDE_POLISH),
+                    )
         finally:
             for name, value in originals.items():
                 if value is None:
@@ -401,8 +516,65 @@ class ApiClientTest(unittest.TestCase):
         diagnostic = context.exception.to_dict()
         self.assertEqual("timeout", diagnostic["failure_category"])
         self.assertTrue(diagnostic["retryable"])
-        self.assertEqual(1, diagnostic["attempts"])
+        self.assertEqual(3, diagnostic["attempts"])
+        self.assertEqual("max_attempts", diagnostic["retry_stop_reason"])
+        self.assertEqual(3, len(diagnostic["attempt_history"]))
         self.assertIsInstance(diagnostic["elapsed_ms"], int)
+
+    def test_claude_partial_stream_is_not_replayed(self) -> None:
+        calls = 0
+
+        class FakeStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            @property
+            def text_stream(self):
+                def parts():
+                    yield "partial"
+                    raise TimeoutError("stream timed out")
+
+                return parts()
+
+        class FakeMessages:
+            def stream(self, **kwargs: object) -> object:
+                nonlocal calls
+                calls += 1
+                return FakeStream()
+
+        class FakeAnthropic:
+            def __init__(self, **kwargs: object) -> None:
+                self.messages = FakeMessages()
+
+        originals = {
+            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
+            "CLAUDE_MODEL": os.environ.get("CLAUDE_MODEL"),
+            "CLAUDE_STREAM": os.environ.get("CLAUDE_STREAM"),
+        }
+        os.environ["ANTHROPIC_API_KEY"] = "test-anthropic"
+        os.environ["CLAUDE_MODEL"] = "claude-test"
+        os.environ["CLAUDE_STREAM"] = "true"
+        try:
+            with patch.dict(sys.modules, {"anthropic": SimpleNamespace(Anthropic=FakeAnthropic)}):
+                with self.assertRaises(ModelCallError) as context:
+                    polish_chapter(
+                        "chapter text",
+                        dry_run=False,
+                        retry_policy=self._retry_policy(CLAUDE_POLISH),
+                    )
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual(1, calls)
+        self.assertTrue(context.exception.partial_content_received)
+        self.assertEqual("partial_content_received", context.exception.retry_stop_reason)
 
     def test_claude_response_extraction_wraps_missing_content_blocks(self) -> None:
         with self.assertRaises(ModelCallError) as context:

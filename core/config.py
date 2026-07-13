@@ -48,6 +48,11 @@ class RuntimeConfig:
     notion_api_key: str | None
     notion_database_id: str | None
     notion_timeout_seconds: int
+    provider_max_attempts: int = 3
+    provider_retry_base_delay_seconds: float = 1.0
+    provider_retry_max_delay_seconds: float = 8.0
+    provider_retry_jitter_ratio: float = 0.2
+    provider_retry_deadline_seconds: float = 180.0
 
     @property
     def has_notion_api(self) -> bool:
@@ -75,6 +80,11 @@ def get_config() -> RuntimeConfig:
         notion_api_key=_env("NOTION_API_KEY"),
         notion_database_id=_env("NOTION_DATABASE_ID") or _env("NOVELAGENT_NOTION_DATABASE_ID"),
         notion_timeout_seconds=_int_env("NOTION_TIMEOUT_SECONDS", 30),
+        provider_max_attempts=min(10, max(1, _int_env("PROVIDER_MAX_ATTEMPTS", 3))),
+        provider_retry_base_delay_seconds=max(0.0, _float_env("PROVIDER_RETRY_BASE_DELAY_SECONDS", 1.0)),
+        provider_retry_max_delay_seconds=max(0.0, _float_env("PROVIDER_RETRY_MAX_DELAY_SECONDS", 8.0)),
+        provider_retry_jitter_ratio=min(1.0, max(0.0, _float_env("PROVIDER_RETRY_JITTER_RATIO", 0.2))),
+        provider_retry_deadline_seconds=max(1.0, _float_env("PROVIDER_RETRY_DEADLINE_SECONDS", 180.0)),
     )
 
 
@@ -111,6 +121,16 @@ def _int_env(name: str, default: int) -> int:
         return default
     try:
         return int(value)
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    value = _env(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
     except ValueError:
         return default
 

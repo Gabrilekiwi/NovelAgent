@@ -6,6 +6,7 @@ from urllib import error
 from unittest.mock import patch
 
 from api.notion_client import NotionClientError, _urllib_transport, create_database_page, query_database_pages
+from api.retry import NOTION_READ_QUERY, RetryPolicy
 from core.state.memory import load_notion_memory_context
 
 
@@ -30,6 +31,49 @@ class NotionClientTest(unittest.TestCase):
 
         self.assertEqual(["page-1", "page-2"], [page["id"] for page in pages])
         self.assertEqual("cursor-2", calls[1]["start_cursor"])
+
+    def test_query_retries_but_create_never_retries(self) -> None:
+        query_calls = 0
+        policy = RetryPolicy(
+            profile=NOTION_READ_QUERY,
+            max_attempts=2,
+            base_delay_seconds=0,
+            max_delay_seconds=0,
+            jitter_ratio=0,
+            deadline_seconds=10,
+        )
+
+        def query_transport(url, headers, body):
+            nonlocal query_calls
+            query_calls += 1
+            if query_calls == 1:
+                raise TimeoutError("query timeout")
+            return {"results": [{"id": "page-1"}], "has_more": False}
+
+        pages = query_database_pages(
+            database_id="db",
+            api_key="secret",
+            transport=query_transport,
+            retry_policy=policy,
+        )
+        self.assertEqual([{"id": "page-1"}], pages)
+        self.assertEqual(2, query_calls)
+
+        create_calls = 0
+
+        def create_transport(url, headers, body):
+            nonlocal create_calls
+            create_calls += 1
+            raise TimeoutError("create timeout")
+
+        with self.assertRaises(TimeoutError):
+            create_database_page(
+                database_id="db",
+                api_key="secret",
+                properties={"Name": {"title": []}},
+                transport=create_transport,
+            )
+        self.assertEqual(1, create_calls)
 
     def test_query_database_pages_requires_config(self) -> None:
         with self.assertRaises(NotionClientError):

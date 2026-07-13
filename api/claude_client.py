@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-import time
-from typing import Any
+from typing import Any, Callable
 
-from api.contracts import ModelCallError, classify_model_failure, is_retryable_failure
+from api.contracts import ModelCallError
+from api.retry import (
+    CLAUDE_POLISH,
+    PartialResponseError,
+    RetryOperationError,
+    RetryPolicy,
+    retry_policy_for_profile,
+)
 from core.config import get_config
 
 
@@ -18,7 +24,13 @@ def _load_prompt() -> str:
     return prompt_path.read_text(encoding="utf-8")
 
 
-def polish_chapter(chapter_text: str, *, dry_run: bool = False) -> str:
+def polish_chapter(
+    chapter_text: str,
+    *,
+    dry_run: bool = False,
+    retry_policy: RetryPolicy | None = None,
+    retry_budget_remaining: Callable[[], float | None] | None = None,
+) -> str:
     if dry_run:
         return chapter_text
 
@@ -51,13 +63,21 @@ def polish_chapter(chapter_text: str, *, dry_run: bool = False) -> str:
             cause=exc,
         ) from exc
 
+    policy = retry_policy or retry_policy_for_profile(CLAUDE_POLISH, config=config)
+    if policy.profile != CLAUDE_POLISH:
+        raise ValueError("Claude polish requires claude_polish retry profile")
+
     client_kwargs: dict[str, Any] = {"api_key": api_key}
     if config.claude_base_url:
         client_kwargs["base_url"] = config.claude_base_url
     if config.claude_timeout_seconds > 0:
-        client_kwargs["timeout"] = config.claude_timeout_seconds
+        client_kwargs["timeout"] = min(
+            float(config.claude_timeout_seconds),
+            policy.deadline_seconds,
+        )
     if config.claude_user_agent:
         client_kwargs["default_headers"] = {"User-Agent": config.claude_user_agent}
+    client_kwargs["max_retries"] = 0
 
     request_kwargs = {
         "model": model,
@@ -71,28 +91,37 @@ def polish_chapter(chapter_text: str, *, dry_run: bool = False) -> str:
         ],
     }
 
-    client = Anthropic(**client_kwargs)
-    started = time.monotonic()
-    try:
+    client_holder: dict[str, Any] = {}
+
+    def invoke() -> str:
+        client = client_holder.get("client")
+        if client is None:
+            client = Anthropic(**client_kwargs)
+            client_holder["client"] = client
         if config.claude_stream:
             return _stream_message_text(client, request_kwargs, model=model)
         response = client.messages.create(**request_kwargs)
-    except Exception as exc:  # noqa: BLE001 - preserve provider failure context.
-        failure_category = classify_model_failure(type(exc).__name__, str(exc))
-        elapsed_ms = int(max(0.0, (time.monotonic() - started) * 1000))
+        return _extract_message_text(response, model=model)
+
+    try:
+        execution = policy.execute(invoke, budget_remaining_seconds=retry_budget_remaining)
+    except RetryOperationError as exc:
+        report = exc.report
         raise ModelCallError(
-            f"Claude polish failed: {exc}",
+            f"Claude polish failed ({exc.failure_category}; {type(exc.cause).__name__}).",
             provider="anthropic",
             stage="claude_polish",
             model=model,
-            cause=exc,
-            failure_category=failure_category,
-            retryable=is_retryable_failure(failure_category),
-            attempts=1,
-            elapsed_ms=elapsed_ms,
+            cause=exc.cause,
+            failure_category=exc.failure_category,
+            retryable=exc.retryable,
+            attempts=int(report["attempts"]),
+            elapsed_ms=int(report["elapsed_ms"]),
+            attempt_history=list(report["history"]),
+            retry_stop_reason=str(report["stop_reason"]),
+            partial_content_received=exc.partial_content_received,
         ) from exc
-
-    return _extract_message_text(response, model=model)
+    return execution.value
 
 
 def _polish_max_tokens(chapter_text: str, configured_max_tokens: int) -> int:
@@ -110,26 +139,33 @@ def _stream_message_text(client: Any, request_kwargs: dict[str, Any], *, model: 
         response = client.messages.create(**request_kwargs)
         return _extract_message_text(response, model=model)
 
-    with stream_factory(**request_kwargs) as stream:
-        text_stream = getattr(stream, "text_stream", None)
-        if text_stream is not None:
-            text = "".join(str(part) for part in text_stream if part)
-            if text.strip():
-                return text
+    parts: list[str] = []
+    try:
+        with stream_factory(**request_kwargs) as stream:
+            text_stream = getattr(stream, "text_stream", None)
+            if text_stream is not None:
+                for part in text_stream:
+                    if part:
+                        parts.append(str(part))
+                if "".join(parts).strip():
+                    return "".join(parts)
 
-        parts: list[str] = []
-        for event in stream:
-            text = getattr(event, "text", None)
-            if text:
-                parts.append(str(text))
-        if parts:
-            return "".join(parts)
+            for event in stream:
+                text = getattr(event, "text", None)
+                if text:
+                    parts.append(str(text))
+            if parts:
+                return "".join(parts)
+    except Exception as exc:
+        raise PartialResponseError(exc, partial_content_received=bool(parts)) from exc
 
     raise ModelCallError(
         "Claude streamed response did not include text content.",
         provider="anthropic",
         stage="claude_polish",
         model=model,
+        failure_category="output_contract",
+        retryable=False,
     )
 
 
@@ -141,6 +177,8 @@ def _extract_message_text(response: Any, *, model: str | None) -> str:
             provider="anthropic",
             stage="claude_polish",
             model=model,
+            failure_category="output_contract",
+            retryable=False,
         )
 
     parts: list[str] = []
@@ -155,5 +193,7 @@ def _extract_message_text(response: Any, *, model: str | None) -> str:
             provider="anthropic",
             stage="claude_polish",
             model=model,
+            failure_category="output_contract",
+            retryable=False,
         )
     return "\n".join(parts)

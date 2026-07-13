@@ -32,6 +32,10 @@
     "error_message": {
       "type": "string"
     },
+    "provider_attempts": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
     "model_call": {
       "type": "object",
       "required": ["provider", "stage", "model", "cause_type", "message"],
@@ -64,6 +68,23 @@
         "elapsed_ms": {
           "type": "integer",
           "minimum": 0
+        },
+        "attempt_history": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "retry_stop_reason": {
+          "type": "string",
+          "enum": [
+            "non_retryable",
+            "max_attempts",
+            "deadline_exhausted",
+            "run_budget_exhausted",
+            "partial_content_received"
+          ]
+        },
+        "partial_content_received": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

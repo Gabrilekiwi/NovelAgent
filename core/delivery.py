@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from api.notion_client import create_database_page, query_database_pages
+from api.retry import retry_telemetry_snapshot
 from core.engine.persistence import _atomic_create_from_bytes, _atomic_replace_from_bytes, persistence_run_lock
 from core.memory_v2.canonical import canonical_json_hash
 from core.path_refs import resolve_path_ref, validate_path_ref
@@ -267,6 +268,7 @@ class DeliveryQueue:
             attempt_id=claim["attempt_id"],
             query_only=bool(claim["query_only"]),
         )
+        retry_telemetry_offset = len(retry_telemetry_snapshot())
         try:
             raw_outcome = adapter.deliver(copy.deepcopy(job), context)
             outcome = _validate_delivery_outcome(raw_outcome)
@@ -278,6 +280,7 @@ class DeliveryQueue:
                 message=f"{type(exc).__name__}: {exc}",
             )
         finished_at = _iso(self.clock())
+        provider_attempts = retry_telemetry_snapshot()[retry_telemetry_offset:]
         receipt = {
             "schema_version": DELIVERY_SCHEMA_VERSION,
             "attempt_id": claim["attempt_id"],
@@ -297,6 +300,7 @@ class DeliveryQueue:
             "diagnostics": {
                 "lease_seconds": self.lease_seconds,
                 "attempt_number": job["attempt_count"],
+                "provider_attempts": provider_attempts,
             },
         }
         receipt["attempt_receipt_hash"] = canonical_json_hash(

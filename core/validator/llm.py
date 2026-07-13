@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from api.openai_client import chat_completion
+from api.retry import retry_telemetry_snapshot
 from core.config import get_config
 from core.quality_decision import QUALITY_POLICY_VERSION
 from core.schema import validate_schema
@@ -28,7 +29,9 @@ def validate_llm(
 ) -> dict[str, Any]:
     selected_model = model or get_config().openai_model
     messages = _llm_messages(snapshot, chapter_text, decision)
+    telemetry_offset = len(retry_telemetry_snapshot())
     payload = _call_llm_validator(messages, model=selected_model)
+    retry_reports = retry_telemetry_snapshot()[telemetry_offset:]
     check = llm_payload_to_check(payload)
     check["metadata"] = {
         "provider": "openai",
@@ -37,7 +40,16 @@ def validate_llm(
             json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
         "policy_version": QUALITY_POLICY_VERSION,
-        "attempt_history": [{"attempt": 1, "status": "succeeded"}],
+        "attempt_history": [
+            {
+                "profile": report["profile"],
+                "stop_reason": report["stop_reason"],
+                **attempt,
+            }
+            for report in retry_reports
+            for attempt in report["history"]
+        ]
+        or [{"attempt": 1, "status": "succeeded"}],
     }
     return check
 

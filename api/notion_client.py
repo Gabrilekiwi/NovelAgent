@@ -8,6 +8,7 @@ from typing import Any, Callable
 from urllib import error, parse, request
 
 from core.config import get_config
+from api.retry import NOTION_READ_QUERY, RetryOperationError, RetryPolicy, retry_policy_for_profile
 
 
 NOTION_VERSION = "2022-06-28"
@@ -17,7 +18,18 @@ Transport = Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]]
 
 
 class NotionClientError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        attempts: int | None = None,
+        retry_stop_reason: str | None = None,
+        attempt_history: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.retry_stop_reason = retry_stop_reason
+        self.attempt_history = [dict(item) for item in (attempt_history or [])]
 
 
 def query_database_pages(
@@ -26,6 +38,8 @@ def query_database_pages(
     api_key: str | None = None,
     page_size: int = 100,
     transport: Transport | None = None,
+    retry_policy: RetryPolicy | None = None,
+    retry_budget_remaining: Callable[[], float | None] | None = None,
 ) -> list[dict[str, Any]]:
     config = get_config()
     database_id = database_id or config.notion_database_id
@@ -43,27 +57,45 @@ def query_database_pages(
     }
     caller = transport or _urllib_transport
 
-    pages: list[dict[str, Any]] = []
-    start_cursor: str | None = None
-    while True:
-        body: dict[str, Any] = {"page_size": page_size}
-        if start_cursor:
-            body["start_cursor"] = start_cursor
+    policy = retry_policy or retry_policy_for_profile(NOTION_READ_QUERY, config=config)
+    if policy.profile != NOTION_READ_QUERY:
+        raise ValueError("Notion query requires notion_read_query retry profile")
 
-        payload = caller(url, headers, body)
-        results = payload.get("results", [])
-        if not isinstance(results, list):
-            raise NotionClientError("Notion database query response missing results list.")
-        pages.extend(page for page in results if isinstance(page, dict))
+    def query_all_pages() -> list[dict[str, Any]]:
+        pages: list[dict[str, Any]] = []
+        start_cursor: str | None = None
+        while True:
+            body: dict[str, Any] = {"page_size": page_size}
+            if start_cursor:
+                body["start_cursor"] = start_cursor
 
-        if not payload.get("has_more"):
-            break
-        next_cursor = payload.get("next_cursor")
-        if not isinstance(next_cursor, str) or not next_cursor:
-            raise NotionClientError("Notion response has_more without next_cursor.")
-        start_cursor = next_cursor
+            payload = caller(url, headers, body)
+            results = payload.get("results", [])
+            if not isinstance(results, list):
+                raise NotionClientError("Notion database query response missing results list.")
+            pages.extend(page for page in results if isinstance(page, dict))
 
-    return pages
+            if not payload.get("has_more"):
+                break
+            next_cursor = payload.get("next_cursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                raise NotionClientError("Notion response has_more without next_cursor.")
+            start_cursor = next_cursor
+        return pages
+
+    try:
+        return policy.execute(
+            query_all_pages,
+            budget_remaining_seconds=retry_budget_remaining,
+        ).value
+    except RetryOperationError as exc:
+        raise NotionClientError(
+            f"Notion query failed ({exc.failure_category}; attempts={exc.report['attempts']}; "
+            f"stop={exc.report['stop_reason']})",
+            attempts=int(exc.report["attempts"]),
+            retry_stop_reason=str(exc.report["stop_reason"]),
+            attempt_history=list(exc.report["history"]),
+        ) from exc
 
 
 def create_database_page(

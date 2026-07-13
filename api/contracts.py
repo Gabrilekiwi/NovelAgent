@@ -17,6 +17,9 @@ class ModelCallError(RuntimeError):
         retryable: bool | None = None,
         attempts: int | None = None,
         elapsed_ms: int | None = None,
+        attempt_history: list[dict[str, object]] | None = None,
+        retry_stop_reason: str | None = None,
+        partial_content_received: bool = False,
     ) -> None:
         super().__init__(message)
         self.provider = provider
@@ -27,6 +30,9 @@ class ModelCallError(RuntimeError):
         self.retryable = is_retryable_failure(self.failure_category) if retryable is None else bool(retryable)
         self.attempts = attempts
         self.elapsed_ms = elapsed_ms
+        self.attempt_history = [dict(item) for item in (attempt_history or [])]
+        self.retry_stop_reason = retry_stop_reason
+        self.partial_content_received = bool(partial_content_received)
 
     def to_dict(self) -> dict[str, object]:
         data: dict[str, object] = {
@@ -43,14 +49,34 @@ class ModelCallError(RuntimeError):
             data["attempts"] = self.attempts
         if self.elapsed_ms is not None:
             data["elapsed_ms"] = self.elapsed_ms
+        if self.attempt_history:
+            data["attempt_history"] = [dict(item) for item in self.attempt_history]
+        if self.retry_stop_reason:
+            data["retry_stop_reason"] = self.retry_stop_reason
+        if self.partial_content_received:
+            data["partial_content_received"] = True
         return data
 
 
 def classify_model_failure(cause_type: str | None, message: str) -> str:
     combined = f"{cause_type or ''} {message}".lower()
+    if "authentication" in combined or "permission" in combined or "api key" in combined or " 401" in combined or " 403" in combined:
+        return "authentication"
+    if "schema" in combined:
+        return "schema"
+    if "output contract" in combined or "outputerror" in combined:
+        return "output_contract"
     if "timeout" in combined or "timed out" in combined:
         return "timeout"
-    if "connection" in combined or "connect" in combined:
+    if (
+        "connection" in combined
+        or "connect" in combined
+        or "urlerror" in combined
+        or "gaierror" in combined
+        or "connectionreset" in combined
+        or "brokenpipe" in combined
+        or "network is unreachable" in combined
+    ):
         return "connection"
     if "rate limit" in combined or "ratelimit" in combined or " 429" in combined:
         return "rate_limit"
@@ -64,7 +90,7 @@ def classify_model_failure(cause_type: str | None, message: str) -> str:
         or " 504" in combined
     ):
         return "transient_provider_error"
-    if "authentication" in combined or "permission" in combined or "api key" in combined:
+    if "bad request" in combined or "invalid configuration" in combined or " 400" in combined:
         return "configuration"
     return "provider_error"
 

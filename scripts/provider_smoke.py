@@ -19,6 +19,7 @@ from api.claude_client import polish_chapter
 from api.contracts import CHAPTER_CONTRACT, ModelCallError, validate_text_output
 from api.openai_client import chat_completion
 from api.notion_client import query_database_pages
+from api.retry import consume_retry_telemetry, reset_retry_telemetry
 from core.config import get_config
 from core.director import ModelDirector, decide_next_step
 from core.runtime_paths import init_runtime_state
@@ -191,6 +192,10 @@ def main() -> None:
     os.environ["OPENAI_TIMEOUT_SECONDS"] = str(limits["request_timeout"])
     os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = str(limits["max_output_tokens"])
     os.environ["OPENAI_MAX_RETRIES"] = str(limits["openai_max_retries"])
+    os.environ["PROVIDER_MAX_ATTEMPTS"] = str(limits["retries"] + 1)
+    os.environ["PROVIDER_RETRY_BASE_DELAY_SECONDS"] = str(limits["retry_delay_seconds"])
+    os.environ["PROVIDER_RETRY_MAX_DELAY_SECONDS"] = str(limits["retry_delay_seconds"])
+    os.environ["PROVIDER_RETRY_JITTER_RATIO"] = "0"
     os.environ["CLAUDE_TIMEOUT_SECONDS"] = str(limits["request_timeout"])
     os.environ["NOTION_TIMEOUT_SECONDS"] = str(limits["request_timeout"])
     if args.no_proxy:
@@ -474,12 +479,24 @@ def _retry_provider_check(fn, *, retries: int = 0, retry_delay_seconds: float = 
     retry_delay = max(0.0, float(retry_delay_seconds))
     result: dict[str, Any] | None = None
     for attempt in range(1, attempts + 1):
+        reset_retry_telemetry()
         try:
             result = fn()
-            result["attempts"] = attempt
+            reports = consume_retry_telemetry()
+            result["attempts"] = max(
+                [int(report.get("attempts") or 1) for report in reports] or [attempt]
+            )
             return result
         except Exception as exc:  # noqa: BLE001 - provider smoke records the final failed attempt.
+            reports = consume_retry_telemetry()
             result = _provider_failure_result(exc)
+            unified_attempts = getattr(exc, "attempts", None)
+            if isinstance(unified_attempts, int) and unified_attempts > 0:
+                result["attempts"] = unified_attempts
+                return result
+            if reports:
+                result["attempts"] = max(int(report.get("attempts") or 1) for report in reports)
+                return result
             result["attempts"] = attempt
             if attempt < attempts and retry_delay > 0:
                 time.sleep(retry_delay)

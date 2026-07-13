@@ -116,6 +116,35 @@ class ConfigTest(unittest.TestCase):
         self.assertFalse(config.claude_stream)
         self.assertEqual(13, config.notion_timeout_seconds)
 
+    def test_unified_provider_retry_config_parses_and_clamps(self) -> None:
+        names = (
+            "PROVIDER_MAX_ATTEMPTS",
+            "PROVIDER_RETRY_BASE_DELAY_SECONDS",
+            "PROVIDER_RETRY_MAX_DELAY_SECONDS",
+            "PROVIDER_RETRY_JITTER_RATIO",
+            "PROVIDER_RETRY_DEADLINE_SECONDS",
+        )
+        originals = {name: os.environ.get(name) for name in names}
+        os.environ["PROVIDER_MAX_ATTEMPTS"] = "4"
+        os.environ["PROVIDER_RETRY_BASE_DELAY_SECONDS"] = "0.5"
+        os.environ["PROVIDER_RETRY_MAX_DELAY_SECONDS"] = "5"
+        os.environ["PROVIDER_RETRY_JITTER_RATIO"] = "2"
+        os.environ["PROVIDER_RETRY_DEADLINE_SECONDS"] = "30"
+        try:
+            config = get_config()
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual(4, config.provider_max_attempts)
+        self.assertEqual(0.5, config.provider_retry_base_delay_seconds)
+        self.assertEqual(5.0, config.provider_retry_max_delay_seconds)
+        self.assertEqual(1.0, config.provider_retry_jitter_ratio)
+        self.assertEqual(30.0, config.provider_retry_deadline_seconds)
+
     def test_claude_max_tokens_default_supports_long_polish(self) -> None:
         original_max_tokens = os.environ.get("CLAUDE_MAX_TOKENS")
         os.environ["CLAUDE_MAX_TOKENS"] = ""

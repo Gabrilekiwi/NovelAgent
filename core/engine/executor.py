@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from api.contracts import ModelCallError, ModelOutputError
+from api.retry import consume_retry_telemetry, reset_retry_telemetry
 from core.chapter_contexts import ChapterContextError, resolve_committed_previous_chapter_artifact
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
@@ -214,7 +215,9 @@ class AgentExecutor:
             if snapshot_override is not None
             else load_snapshot(self.snapshot_path)
         )
+        reset_retry_telemetry()
         memory_context = self._load_memory_context()
+        memory_provider_attempts = consume_retry_telemetry()
         if self.use_run_history:
             self._attach_last_run(memory_context, previous_result=previous_result)
         self._active_story_project_context = self._load_story_project_context(
@@ -233,6 +236,7 @@ class AgentExecutor:
         snapshot_audit = state_result["audit"]
         memory_context["snapshot_builder_audit"] = snapshot_audit
         decision_started_at = utc_now()
+        reset_retry_telemetry()
         try:
             decision = validate_decision(self.director(snapshot, memory_context))
             context_chapter = (self._story_project_context_dict() or {}).get("chapter_index")
@@ -242,7 +246,14 @@ class AgentExecutor:
                     f"Director chose chapter {decision['chapter_index']} for StoryProject chapter {context_chapter}",
                 )
         except Exception as exc:  # noqa: BLE001 - persist Director failure diagnostics.
-            director_trace = _director_trace(self.director, decision_started_at, utc_now(), status="failed", error=exc)
+            director_trace = _director_trace(
+                self.director,
+                decision_started_at,
+                utc_now(),
+                status="failed",
+                error=exc,
+                provider_attempts=[*memory_provider_attempts, *consume_retry_telemetry()],
+            )
             if persist:
                 failed_run = build_director_failed_run_record(
                     started_at=started_at,
@@ -258,7 +269,12 @@ class AgentExecutor:
                 self._attach_snapshot_pack_artifact(failed_run, snapshot_pack)
                 self._save_run_record({"run": failed_run})
             raise
-        director_trace = _director_trace(self.director, decision_started_at, utc_now())
+        director_trace = _director_trace(
+            self.director,
+            decision_started_at,
+            utc_now(),
+            provider_attempts=[*memory_provider_attempts, *consume_retry_telemetry()],
+        )
         try:
             workflow_plan = build_dynamic_flow_plan(decision)
             workflow = list(workflow_plan["actions"])
@@ -817,9 +833,11 @@ class AgentExecutor:
                 raise ValueError(f"Unknown workflow action: {action}")
             planned_step = planned_steps.get(action)
             started_at = utc_now()
+            reset_retry_telemetry()
             try:
                 handler()
             except Exception as exc:  # noqa: BLE001 - preserve failed action diagnostics.
+                provider_attempts = consume_retry_telemetry()
                 trace.append(
                     _trace_event(
                         action,
@@ -828,6 +846,7 @@ class AgentExecutor:
                         state,
                         planned_step=planned_step,
                         model_trace=self._model_trace_metadata(action, state),
+                        provider_attempts=provider_attempts,
                         status="failed",
                         error=exc,
                     )
@@ -844,6 +863,7 @@ class AgentExecutor:
                     repair_attempts=int(state.get("repair_attempts") or 0),
                 ) from exc
             else:
+                provider_attempts = consume_retry_telemetry()
                 trace.append(
                     _trace_event(
                         action,
@@ -852,6 +872,7 @@ class AgentExecutor:
                         state,
                         planned_step=planned_step,
                         model_trace=self._model_trace_metadata(action, state),
+                        provider_attempts=provider_attempts,
                     )
                 )
 
@@ -1219,16 +1240,22 @@ class AgentExecutor:
                 original_quality_decision,
             )
 
+        review_provider_attempts: list[dict[str, Any]] = []
+
         def repair(current_chapter: str, current_validation: dict[str, Any], repair_plan: dict[str, Any]) -> str:
-            return self._repair(
-                current_chapter,
-                current_validation,
-                input_pack,
-                repair_plan,
-                recovery_context,
-                project_language(snapshot),
-                _repair_context_for_snapshot(snapshot),
-            )
+            reset_retry_telemetry()
+            try:
+                return self._repair(
+                    current_chapter,
+                    current_validation,
+                    input_pack,
+                    repair_plan,
+                    recovery_context,
+                    project_language(snapshot),
+                    _repair_context_for_snapshot(snapshot),
+                )
+            finally:
+                review_provider_attempts.extend(consume_retry_telemetry())
 
         def validate(repaired_chapter: str) -> dict[str, Any]:
             return self._validate_repaired_chapter(
@@ -1270,6 +1297,8 @@ class AgentExecutor:
             quality_policy=quality_policy,
             decide=decide_quality,
         )
+        if review_provider_attempts:
+            review_repair["provider_attempts"] = review_provider_attempts
         if not review_repair.get("attempted"):
             return (
                 chapter,
@@ -2478,6 +2507,7 @@ def _trace_event(
     *,
     planned_step: dict[str, Any] | None = None,
     model_trace: dict[str, Any] | None = None,
+    provider_attempts: list[dict[str, Any]] | None = None,
     implicit: bool = False,
     status: str = "completed",
     error: BaseException | None = None,
@@ -2500,6 +2530,8 @@ def _trace_event(
         event["plan_failure_policy"] = planned_step.get("failure_policy")
     if isinstance(model_trace, dict):
         event.update(model_trace)
+    if provider_attempts:
+        event["provider_attempts"] = [dict(report) for report in provider_attempts]
     if isinstance(validation, dict):
         problems = validation.get("problems", [])
         event["validation_ok"] = bool(validation.get("ok"))
@@ -2794,6 +2826,7 @@ def _director_trace(
     *,
     status: str = "completed",
     error: BaseException | None = None,
+    provider_attempts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     duration_ms = int(max(0.0, (finished_at - started_at).total_seconds() * 1000))
     trace = {
@@ -2810,6 +2843,8 @@ def _director_trace(
         trace["error_message"] = str(error)
         if hasattr(error, "to_dict"):
             trace["model_call"] = error.to_dict()
+    if provider_attempts:
+        trace["provider_attempts"] = [dict(report) for report in provider_attempts]
     return validate_schema(trace, "director_audit.schema.json")
 
 

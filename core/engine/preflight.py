@@ -60,6 +60,7 @@ SCHEMA_ASSETS = (
     Path("schemas/prompt_context_bundle.schema.json"),
     Path("schemas/previous_chapter_context.schema.json"),
     Path("schemas/provider_smoke_report.schema.json"),
+    Path("schemas/provider_retry_report.schema.json"),
     Path("schemas/repair_plan.schema.json"),
     Path("schemas/recovery_context.schema.json"),
     Path("schemas/review_gate_result.schema.json"),
@@ -894,6 +895,16 @@ def _execution_mode_details(
         "run_dir": str(run_dir),
         "chapter_dir": str(chapter_dir),
         "llm_validator_enabled": bool(enable_llm_validator),
+        "provider_retry": {
+            "max_attempts": int(config.provider_max_attempts),
+            "base_delay_seconds": float(config.provider_retry_base_delay_seconds),
+            "max_delay_seconds": float(config.provider_retry_max_delay_seconds),
+            "jitter_ratio": float(config.provider_retry_jitter_ratio),
+            "deadline_seconds": float(config.provider_retry_deadline_seconds),
+            "openai_sdk_max_retries": 0,
+            "anthropic_sdk_max_retries": 0,
+            "notion_create_generic_retry": False,
+        },
     }
 
 
