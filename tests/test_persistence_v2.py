@@ -162,7 +162,9 @@ class PersistenceV2Test(unittest.TestCase):
         self.assertEqual(receipt["marker"]["sha256"], marker["marker_hash"])
         self.assertEqual(receipt["final_run"]["sha256"], marker["final_run_hash"])
         self.assertNotIn("receipt_hash", json.loads(final_path.read_text(encoding="utf-8"))["publication_receipt"])
-        self.assertTrue(verify_publication_receipt(receipt_path, root_map=case["root_map"])["valid"])
+        verification = verify_publication_receipt(receipt_path, root_map=case["root_map"])
+        self.assertTrue(verification["valid"])
+        self.assertEqual(receipt["delivery_jobs"], verification["delivery_jobs"])
         self.assertTrue(
             committed_from_publication_receipt(final_path, receipt_path, root_map=case["root_map"])
         )

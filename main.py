@@ -5,7 +5,13 @@ import json
 import sys
 from pathlib import Path
 
-from core.config import clear_proxy_env, proxy_disabled_by_env
+from core.config import clear_proxy_env, get_config, proxy_disabled_by_env
+from core.delivery import (
+    DeliveryError,
+    DeliveryQueue,
+    FileDeliveryAdapter,
+    NotionDeliveryAdapter,
+)
 from core.director import ModelDirector
 from core.engine.artifacts import chapter_artifact_metadata, save_chapter_artifact
 from core.engine.executor import AgentExecutor, LoopExecutionError
@@ -152,6 +158,11 @@ def parse_args() -> argparse.Namespace:
         "--persistence-dir",
         default=None,
         help="Directory for local persistence journals. Defaults to <run-dir>/transactions or StoryProject runtime/persistence.",
+    )
+    parser.add_argument(
+        "--delivery-dir",
+        default=str(RuntimePaths.legacy_default().delivery_dir),
+        help="Directory for durable delivery jobs and attempt receipts.",
     )
     parser.add_argument(
         "--init-runtime",
@@ -343,6 +354,50 @@ def parse_args() -> argparse.Namespace:
         help="Reconcile incomplete local persistence transactions and publish durable candidates without generating.",
     )
     parser.add_argument(
+        "--reconcile-deliveries",
+        action="store_true",
+        help="Attempt pending durable deliveries once and exit without generation.",
+    )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Limit --reconcile-deliveries to one run id.",
+    )
+    parser.add_argument(
+        "--inspect-delivery",
+        default=None,
+        metavar="JOB_ID",
+        help="Print one durable delivery job and its attempt receipts, then exit.",
+    )
+    parser.add_argument(
+        "--resolve-delivery",
+        default=None,
+        metavar="JOB_ID",
+        help="Resolve one uncertain durable delivery after explicit operator confirmation.",
+    )
+    parser.add_argument(
+        "--confirmed-absent",
+        action="store_true",
+        help="With --resolve-delivery, confirm the quarantine window elapsed and request a query-only absence check.",
+    )
+    parser.add_argument(
+        "--delivery-policy",
+        choices=["required", "best-effort"],
+        default="required",
+        help="Policy for a configured external writer; required is the default.",
+    )
+    parser.add_argument(
+        "--delivery-worker-id",
+        default="cli",
+        help="Stable worker id recorded in durable delivery leases.",
+    )
+    parser.add_argument(
+        "--notion-delivery-schema",
+        default=None,
+        metavar="PATH",
+        help="Notion database schema JSON captured during required-delivery preflight.",
+    )
+    parser.add_argument(
         "--output-json",
         action="store_true",
         help="After generation, print the full result JSON instead of the concise summary.",
@@ -379,6 +434,7 @@ def parse_args() -> argparse.Namespace:
         "snapshot": _option_was_provided(argv, "--snapshot"),
         "run_dir": _option_was_provided(argv, "--run-dir"),
         "persistence_dir": _option_was_provided(argv, "--persistence-dir"),
+        "delivery_dir": _option_was_provided(argv, "--delivery-dir"),
         "chapter_dir": _option_was_provided(argv, "--chapter-dir"),
         "review_output_dir": _option_was_provided(argv, "--review-output-dir"),
         "memory_outbox": _option_was_provided(argv, "--memory-outbox"),
@@ -479,6 +535,8 @@ def _apply_story_project_runtime_defaults(args: argparse.Namespace) -> RuntimePa
         args.review_output_dir = str(paths.review_dir)
     if not explicit.get("persistence_dir"):
         args.persistence_dir = str(paths.persistence_dir)
+    if not explicit.get("delivery_dir"):
+        args.delivery_dir = str(paths.delivery_dir)
     if not explicit.get("memory_v2_out"):
         args.memory_v2_out = str(paths.memory_dir / "v2")
     if args.memory_writeback == "file" and not explicit.get("memory_outbox"):
@@ -512,9 +570,26 @@ def main() -> None:
         clear_proxy_env()
     try:
         story_runtime_paths = _apply_story_project_runtime_defaults(args)
+        delivery_command_requested = _delivery_command_requested(args)
     except ValueError as exc:
         print(f"Configuration failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+
+    if delivery_command_requested:
+        try:
+            result = _run_delivery_command(args, story_runtime_paths=story_runtime_paths)
+        except (DeliveryError, OSError, ValueError, json.JSONDecodeError) as exc:
+            payload = {"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}
+            if args.output_json or args.inspect_delivery:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(f"Delivery command failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        if args.output_json or args.inspect_delivery:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(format_delivery_command_summary(result))
+        raise SystemExit(0 if result.get("ok") else 1)
 
     if args.review_latest:
         latest = get_latest_review(review_output_dir=args.review_output_dir)
@@ -1025,6 +1100,116 @@ def _persistence_state_paths_from_args(args: argparse.Namespace) -> tuple[Path, 
     if hasattr(writer, "path"):
         paths.append(Path(getattr(writer, "path")))
     return tuple(paths)
+
+
+def _delivery_command_requested(args: argparse.Namespace) -> bool:
+    requested = [
+        bool(getattr(args, "reconcile_deliveries", False)),
+        bool(getattr(args, "inspect_delivery", None)),
+        bool(getattr(args, "resolve_delivery", None)),
+    ]
+    if sum(requested) > 1:
+        raise ValueError("choose only one delivery command")
+    if getattr(args, "confirmed_absent", False) and not getattr(args, "resolve_delivery", None):
+        raise ValueError("--confirmed-absent requires --resolve-delivery JOB_ID")
+    if getattr(args, "resolve_delivery", None) and not getattr(args, "confirmed_absent", False):
+        raise ValueError("--resolve-delivery requires --confirmed-absent")
+    if getattr(args, "run_id", None) and not getattr(args, "reconcile_deliveries", False):
+        raise ValueError("--run-id is only valid with --reconcile-deliveries")
+    return any(requested)
+
+
+def _run_delivery_command(
+    args: argparse.Namespace,
+    *,
+    story_runtime_paths: RuntimePaths | None,
+) -> dict:
+    queue = DeliveryQueue(args.delivery_dir)
+    if args.inspect_delivery:
+        return {
+            "ok": True,
+            "command": "inspect_delivery",
+            "inspection": queue.inspect(args.inspect_delivery),
+        }
+
+    adapters = _delivery_adapters_from_args(
+        args,
+        story_runtime_paths=story_runtime_paths,
+    )
+    if args.resolve_delivery:
+        job = queue.load(args.resolve_delivery)
+        if job["target_type"] != "notion":
+            raise DeliveryError("--confirmed-absent resolution is only valid for Notion delivery")
+        adapter = adapters.get("notion")
+        if adapter is None:
+            raise DeliveryError("Notion delivery credentials are not configured")
+        resolved = queue.resolve_confirmed_absent(
+            args.resolve_delivery,
+            worker_id=args.delivery_worker_id,
+            adapter=adapter,
+        )
+        return {
+            "ok": True,
+            "command": "resolve_delivery",
+            "job": resolved,
+        }
+
+    report = queue.reconcile(
+        adapters=adapters,
+        worker_id=args.delivery_worker_id,
+        run_id=args.run_id,
+    )
+    return {
+        "ok": bool(report["required_succeeded"]),
+        "command": "reconcile_deliveries",
+        **report,
+    }
+
+
+def _delivery_adapters_from_args(
+    args: argparse.Namespace,
+    *,
+    story_runtime_paths: RuntimePaths | None,
+) -> dict:
+    paths = story_runtime_paths or RuntimePaths.legacy_default()
+    story_root = getattr(args, "_resolved_story_project_root", None) or Path.cwd()
+    root_map = paths.root_map(story_root)
+    root_map["delivery_store"] = Path(args.delivery_dir).resolve()
+    adapters: dict = {"file": FileDeliveryAdapter(root_map=root_map)}
+
+    config = get_config()
+    if config.notion_api_key and config.notion_database_id:
+        database_schema = None
+        if args.notion_delivery_schema:
+            database_schema = json.loads(Path(args.notion_delivery_schema).read_text(encoding="utf-8"))
+            if not isinstance(database_schema, dict):
+                raise ValueError("--notion-delivery-schema must contain a JSON object")
+        adapters["notion"] = NotionDeliveryAdapter(
+            database_id=config.notion_database_id,
+            api_key=config.notion_api_key,
+            database_schema=database_schema,
+        )
+    return adapters
+
+
+def format_delivery_command_summary(result: dict) -> str:
+    command = result.get("command") or "delivery"
+    if command == "reconcile_deliveries":
+        return "\n".join(
+            [
+                f"Delivery reconcile: {'OK' if result.get('ok') else 'BLOCKED'}",
+                f"Attempted: {result.get('attempted', 0)}",
+                f"Required deliveries succeeded: {bool(result.get('required_succeeded'))}",
+            ]
+        )
+    job = result.get("job") or result.get("inspection", {}).get("job") or {}
+    return "\n".join(
+        [
+            f"Delivery command: {command}",
+            f"Job: {job.get('job_id', '-')}",
+            f"State: {job.get('state', '-')}",
+        ]
+    )
 
 
 def format_persistence_reconcile_summary(result: dict) -> str:

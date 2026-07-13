@@ -83,6 +83,8 @@ class CliTest(unittest.TestCase):
         self.assertIsNone(args.story_project)
         self.assertEqual("auto", args.chapter)
         self.assertFalse(args.story_project_compat_report)
+        self.assertEqual(str(Path(".tmp/runtime/deliveries")), args.delivery_dir)
+        self.assertEqual("required", args.delivery_policy)
 
     def test_parse_args_accepts_story_project_and_chapter(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--story-project", "auto", "--chapter", "21"]):
@@ -108,6 +110,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(str(root / ".novelagent" / "runtime" / "persistence"), args.persistence_dir)
         self.assertEqual(str(root / ".novelagent" / "runtime" / "chapters"), args.chapter_dir)
         self.assertEqual(str(root / ".novelagent" / "runtime" / "reviews"), args.review_output_dir)
+        self.assertEqual(str(root / ".novelagent" / "runtime" / "deliveries"), args.delivery_dir)
         self.assertEqual(str(root / ".novelagent" / "runtime" / "memory" / "memory_outbox.jsonl"), args.memory_outbox)
         self.assertFalse(project_identity_path(root).exists())
         self.assertFalse((root / ".novelagent" / "runtime").exists())
@@ -435,6 +438,68 @@ class CliTest(unittest.TestCase):
         )
         executor.assert_not_called()
         self.assertEqual(report, json.loads(output.getvalue()))
+
+    def test_parse_args_accepts_delivery_operations(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--reconcile-deliveries",
+                "--run-id",
+                "run-1",
+                "--delivery-policy",
+                "best-effort",
+                "--delivery-worker-id",
+                "worker-1",
+            ],
+        ):
+            args = cli.parse_args()
+
+        self.assertTrue(args.reconcile_deliveries)
+        self.assertEqual("run-1", args.run_id)
+        self.assertEqual("best-effort", args.delivery_policy)
+        self.assertEqual("worker-1", args.delivery_worker_id)
+
+    def test_reconcile_deliveries_is_a_generation_free_command(self) -> None:
+        case_dir = self._case_dir("delivery_reconcile_command")
+        report = {
+            "ok": False,
+            "command": "reconcile_deliveries",
+            "attempted": 1,
+            "required_succeeded": False,
+            "jobs": [],
+        }
+        output = io.StringIO()
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--reconcile-deliveries",
+                "--delivery-dir",
+                str(case_dir / "deliveries"),
+                "--output-json",
+            ],
+        ), patch.object(
+            cli,
+            "_run_delivery_command",
+            return_value=report,
+        ) as reconcile, patch.object(cli, "AgentExecutor") as executor, contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+        self.assertEqual(1, exit_context.exception.code)
+        reconcile.assert_called_once()
+        executor.assert_not_called()
+        self.assertEqual(report, json.loads(output.getvalue()))
+
+    def test_delivery_resolution_requires_explicit_confirmed_absent(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--resolve-delivery", "job-1"]):
+            args = cli.parse_args()
+
+        with self.assertRaisesRegex(ValueError, "--confirmed-absent"):
+            cli._delivery_command_requested(args)
 
     def test_story_project_real_writeback_failure_exits_nonzero(self) -> None:
         context_loader = type("ContextLoader", (), {"story_project_root": Path("book")})()

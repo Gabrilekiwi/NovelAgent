@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeliveryOutcome",
+  "type": "object",
+  "required": ["state", "code", "message", "remote_refs", "observation"],
+  "properties": {
+    "state": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "retryable_failed",
+        "permanent_failed",
+        "uncertain",
+        "conflict",
+        "cancelled"
+      ]
+    },
+    "code": {"type": "string", "minLength": 1},
+    "message": {"type": "string", "minLength": 1},
+    "remote_refs": {"type": "object", "additionalProperties": true},
+    "observation": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": false
+}

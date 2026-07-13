@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReadinessDecision",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ok",
+    "reasons",
+    "book_id",
+    "run_id",
+    "next_chapter",
+    "next_step_context_digest",
+    "checked_at",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "ok": {"type": "boolean"},
+    "reasons": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "book_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "next_chapter": {"type": "integer", "minimum": 1},
+    "next_step_context_digest": {"type": "string", "minLength": 64},
+    "checked_at": {"type": "string", "minLength": 1},
+    "evidence": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": false
+}

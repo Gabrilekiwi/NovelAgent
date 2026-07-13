@@ -603,6 +603,7 @@ def verify_publication_receipt(
             "run_id": validated["run_id"],
             "receipt_id": validated["receipt_id"],
             "receipt_hash": validated["receipt_hash"],
+            "delivery_jobs": copy.deepcopy(validated["delivery_jobs"]),
             "errors": [],
         }
     except Exception as exc:
@@ -1120,6 +1121,19 @@ def _validate_delivery_jobs(jobs: Iterable[Mapping[str, Any]]) -> list[dict[str,
         _require_sha256("delivery_job.payload_hash", job.get("payload_hash"))
         if not isinstance(job.get("policy"), dict):
             raise PersistenceV2PreparationError(f"DeliveryJob {job_id} policy must be an object")
+        policy = job["policy"]
+        if type(policy.get("required")) is not bool:
+            raise PersistenceV2PreparationError(
+                f"DeliveryJob {job_id} policy.required must be a boolean"
+            )
+        if policy.get("target") not in {"none", "file", "notion"}:
+            raise PersistenceV2PreparationError(
+                f"DeliveryJob {job_id} policy.target is unsupported"
+            )
+        if policy["target"] == "none" and policy["required"]:
+            raise PersistenceV2PreparationError(
+                f"DeliveryJob {job_id} cannot require a none target"
+            )
         result.append({"id": job_id, "payload_hash": job["payload_hash"], "policy": job["policy"]})
     return sorted(result, key=lambda item: item["id"])
 
