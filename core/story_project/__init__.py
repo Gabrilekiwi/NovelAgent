@@ -48,6 +48,13 @@ from core.story_project.semantic_contracts import (
     validate_story_project_semantic_fixture_manifest,
     validate_story_project_semantic_state,
 )
+from core.story_project.semantic_parser import (
+    SEMANTIC_PARSER_VERSION,
+    SHADOW_REPORT_SCHEMA_VERSION,
+    StoryProjectSemanticParseError,
+    build_story_project_shadow_report,
+    parse_story_project_semantic_state,
+)
 from core.story_project.validator import validate_story_project
 from core.story_project.writer import (
     StoryProjectWritebackConfig,
@@ -70,11 +77,15 @@ __all__ = [
     "StoryProjectRuntimeMigrationError",
     "STORY_PROJECT_SEMANTIC_FIXTURE_SCHEMA_VERSION",
     "STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION",
+    "SEMANTIC_PARSER_VERSION",
+    "SHADOW_REPORT_SCHEMA_VERSION",
+    "StoryProjectSemanticParseError",
     "StoryProjectValidationResult",
     "StoryProjectWritebackConfig",
     "ValidationProblem",
     "build_story_project_runtime_context",
     "build_story_project_writeback_plan",
+    "build_story_project_shadow_report",
     "canonical_outline_path",
     "canonical_prose_path",
     "create_ephemeral_project_identity",
@@ -87,6 +98,7 @@ __all__ = [
     "load_project_identity",
     "migrate_story_project_runtime",
     "project_identity_for_operation",
+    "parse_story_project_semantic_state",
     "read_active_book_path",
     "resolve_outline",
     "resolve_prose",

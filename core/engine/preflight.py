@@ -60,6 +60,7 @@ SCHEMA_ASSETS = (
     Path("schemas/snapshot.schema.json"),
     Path("schemas/story_project_runtime_migration.schema.json"),
     Path("schemas/story_project_semantic_fixture_manifest.schema.json"),
+    Path("schemas/story_project_shadow_report.schema.json"),
     Path("schemas/story_project_semantic_state.schema.json"),
     Path("schemas/state_update_audit.schema.json"),
     Path("schemas/trace_event.schema.json"),

@@ -33,6 +33,7 @@ from core.review.index import get_latest_review, list_recent_reviews
 from core.review.repair_loop import ReviewRepairConfig, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, validate_runtime_review_config
 from core.state.memory_writer import build_memory_writer, write_memory_updates
+from core.state.snapshot import load_snapshot
 from core.story_project.oh_story_detection import (
     detect_oh_story_compatibility,
     failed_oh_story_compatibility_report,
@@ -49,6 +50,11 @@ from core.story_project.migration import (
     migrate_story_project_runtime,
 )
 from core.story_project.runtime import build_generation_story_project_context_loader
+from core.story_project.semantic_parser import (
+    build_story_project_shadow_report,
+    parse_story_project_semantic_state,
+)
+from core.story_project.validator import validate_story_project
 from core.story_project.writer import StoryProjectWritebackConfig
 
 
@@ -103,6 +109,11 @@ def parse_args() -> argparse.Namespace:
         "--story-project-compat-report",
         action="store_true",
         help="Print a read-only oh-story compatibility report for the StoryProject root and exit.",
+    )
+    parser.add_argument(
+        "--story-state-shadow-report",
+        action="store_true",
+        help="Parse StoryProject semantic state, print a read-only shadow diff, and exit without generation.",
     )
     parser.add_argument(
         "--inspect-story-project-runtime-from",
@@ -540,6 +551,7 @@ def main() -> None:
         story_project_writeback = _story_project_writeback_config_from_args(args)
         _validate_story_project_multistep_args(args, story_project_writeback)
         _validate_story_project_compat_report_args(args)
+        _validate_story_project_shadow_report_args(args)
         _validate_story_project_runtime_migration_args(args)
         _validate_story_project_read_command_identity(args)
     except ValueError as exc:
@@ -623,6 +635,15 @@ def main() -> None:
             print(json.dumps(report, ensure_ascii=False, indent=2))
         else:
             print(format_story_project_compat_report(report))
+        raise SystemExit(0)
+
+    if args.story_state_shadow_report:
+        try:
+            report = _build_story_state_shadow_report(args)
+        except ValueError as exc:
+            print(f"StoryProject semantic shadow report failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         raise SystemExit(0)
 
     if args.inspect_story_project_runtime_from:
@@ -1383,6 +1404,44 @@ def _runtime_review_config_from_args(args: argparse.Namespace) -> RuntimeReviewC
 def _validate_story_project_compat_report_args(args: argparse.Namespace) -> None:
     if bool(getattr(args, "story_project_compat_report", False)) and getattr(args, "story_project", None) is None:
         raise ValueError("--story-project-compat-report requires --story-project")
+
+
+def _validate_story_project_shadow_report_args(args: argparse.Namespace) -> None:
+    enabled = bool(getattr(args, "story_state_shadow_report", False))
+    if enabled and getattr(args, "story_project", None) is None:
+        raise ValueError("--story-state-shadow-report requires --story-project")
+    if enabled and bool(getattr(args, "story_project_compat_report", False)):
+        raise ValueError("--story-state-shadow-report cannot be combined with --story-project-compat-report")
+    if enabled and (
+        getattr(args, "inspect_story_project_runtime_from", None)
+        or getattr(args, "migrate_story_project_runtime_from", None)
+    ):
+        raise ValueError("--story-state-shadow-report cannot be combined with StoryProject runtime migration")
+
+
+def _build_story_state_shadow_report(args: argparse.Namespace) -> dict:
+    root = Path(args._resolved_story_project_root)
+    validation = validate_story_project(
+        story_project=root,
+        chapter=args.chapter,
+        workspace_root=Path.cwd(),
+        allow_existing_prose=True,
+    )
+    if validation.problems:
+        details = "; ".join(f"{problem.code}: {problem.message}" for problem in validation.problems)
+        raise ValueError(details)
+    chapter_resolution = validation.chapter_resolution
+    if chapter_resolution is None or chapter_resolution.resolved_chapter is None:
+        raise ValueError("StoryProject chapter could not be resolved")
+    identity = project_identity_for_operation(root, persist=False)
+    state = parse_story_project_semantic_state(
+        root,
+        chapter_resolution.resolved_chapter,
+        project_identity=identity,
+    )
+    snapshot_path = Path(args.snapshot)
+    snapshot = load_snapshot(snapshot_path) if snapshot_path.is_file() else None
+    return build_story_project_shadow_report(state, snapshot=snapshot)
 
 
 def _validate_story_project_runtime_migration_args(args: argparse.Namespace) -> None:
