@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "seed": "novelagent-semantic-soak-v1",
+  "chapter_count": 100,
+  "characters": ["林澈", "周岚", "顾言"],
+  "locations": ["旧城站", "检修井", "北侧控制室", "地面避难点"],
+  "fact_schedule": {
+    "character_status_every": 2,
+    "location_transition_every": 3,
+    "timeline_event_every": 1,
+    "foreshadowing_open_every": 5,
+    "foreshadowing_resolve_after": 20
+  },
+  "long_file": {
+    "tracking_prefix_chars": 100000,
+    "latest_fact_at_tail": true
+  },
+  "expected": {
+    "introduced_timeline_events": 100,
+    "introduced_foreshadowing": 20,
+    "resolved_foreshadowing": 16,
+    "open_foreshadowing": 4,
+    "blocking_conflicts": 0
+  }
+}

@@ -1,0 +1,139 @@
+{
+  "schema_version": "1.0",
+  "book_id": "fixture-synthetic-standard",
+  "chapter_index": 2,
+  "story_state": {
+    "current_location": "旧城站封闭闸门外",
+    "recent_decision": "先去北侧控制室恢复供电",
+    "previous_ending": "闸门后的声音叫出了林澈的名字",
+    "opening_bridge": "承接雨夜站台的三短一长敲击声",
+    "pending_threads": [
+      "顾言为何拥有封闭区权限",
+      "闸门后的求救者如何知道林澈的名字"
+    ]
+  },
+  "world_state": {
+    "locations": {
+      "旧城站": {
+        "北侧控制室": "可独立恢复封闭区局部供电",
+        "封闭闸门": "正常情况下只能从控制室解锁"
+      }
+    }
+  },
+  "spatial_state": {
+    "character_positions": {
+      "林澈": "旧城站封闭闸门外",
+      "周岚": "旧城站封闭闸门外"
+    }
+  },
+  "characters": {
+    "char-lin-che": {
+      "name": "林澈",
+      "identity": "前地铁检修员",
+      "status": "左臂旧伤裂开，但可行动",
+      "location": "旧城站封闭闸门外"
+    },
+    "char-zhou-lan": {
+      "name": "周岚",
+      "identity": "应急通信工程师",
+      "status": "正常",
+      "location": "旧城站封闭闸门外"
+    }
+  },
+  "timeline": [
+    {
+      "id": "ev-001-signal",
+      "chapter": 1,
+      "location": "旧城站站台",
+      "text": "林澈和周岚听见三短一长敲击声"
+    },
+    {
+      "id": "ev-001-gate",
+      "chapter": 1,
+      "location": "封闭闸门外",
+      "text": "闸门后的声音叫出林澈的名字"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "constraint-gate-control",
+      "content": "封闭闸门正常情况下只能从控制室解锁",
+      "status": "active"
+    }
+  ],
+  "foreshadowing": [
+    {
+      "id": "fs-gate-signal",
+      "content": "三短一长的敲击暗号",
+      "status": "open",
+      "introduced_chapter": 1,
+      "target_chapter": 5,
+      "resolved_chapter": null
+    },
+    {
+      "id": "fs-gu-credential",
+      "content": "顾言持有封闭区权限",
+      "status": "developing",
+      "introduced_chapter": 1,
+      "target_chapter": 3,
+      "resolved_chapter": null
+    }
+  ],
+  "provenance": [
+    {
+      "field_path": "story_state.current_location",
+      "source_path": "追踪/上下文.md",
+      "source_kind": "tracking_manual",
+      "authority_class": "authoritative",
+      "parser_version": "shadow-fixture-1",
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "start_char": 10,
+      "end_char": 32
+    },
+    {
+      "field_path": "characters.char-lin-che.status",
+      "source_path": "追踪/角色状态.md",
+      "source_kind": "tracking_manual",
+      "authority_class": "authoritative",
+      "parser_version": "shadow-fixture-1",
+      "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "start_char": 42,
+      "end_char": 58
+    },
+    {
+      "field_path": "foreshadowing.fs-gate-signal",
+      "source_path": "追踪/伏笔.md",
+      "source_kind": "tracking_manual",
+      "authority_class": "authoritative",
+      "parser_version": "shadow-fixture-1",
+      "source_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "start_char": 52,
+      "end_char": 96
+    },
+    {
+      "field_path": "constraints.constraint-gate-control",
+      "source_path": "设定/地点/旧城站.md",
+      "source_kind": "setting",
+      "authority_class": "authoritative",
+      "parser_version": "shadow-fixture-1",
+      "source_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "start_char": 45,
+      "end_char": 78
+    }
+  ],
+  "conflicts": [],
+  "parse_warnings": [],
+  "unsupported_excerpts": [
+    {
+      "source_path": "设定/地点/旧城站.md",
+      "start_char": 79,
+      "end_char": 111,
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "excerpt": "站内还有许多未经核实的旧传闻",
+      "authoritative": false
+    }
+  ],
+  "parser_version": "shadow-fixture-1",
+  "layout_profile_version": "canonical-zh-1",
+  "source_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}

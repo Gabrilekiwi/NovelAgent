@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoryProjectSemanticState",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "book_id",
+    "chapter_index",
+    "story_state",
+    "world_state",
+    "spatial_state",
+    "characters",
+    "timeline",
+    "constraints",
+    "foreshadowing",
+    "provenance",
+    "conflicts",
+    "parse_warnings",
+    "unsupported_excerpts",
+    "parser_version",
+    "layout_profile_version",
+    "source_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "book_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "story_state": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "world_state": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "spatial_state": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "characters": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "foreshadowing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "status",
+          "introduced_chapter",
+          "target_chapter",
+          "resolved_chapter"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["open", "developing", "resolved", "cancelled", "unknown"]
+          },
+          "introduced_chapter": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "target_chapter": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "resolved_chapter": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "field_path",
+          "source_path",
+          "source_kind",
+          "authority_class",
+          "parser_version",
+          "source_sha256",
+          "start_char",
+          "end_char"
+        ],
+        "properties": {
+          "field_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "user_input",
+              "outline",
+              "tracking_manual",
+              "managed_projection",
+              "previous_prose",
+              "setting",
+              "memory_projection",
+              "snapshot_cache",
+              "model_inference"
+            ]
+          },
+          "authority_class": {
+            "type": "string",
+            "enum": ["authoritative", "supporting", "cache", "inference", "unsupported"]
+          },
+          "parser_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_sha256": {
+            "type": "string",
+            "minLength": 64
+          },
+          "start_char": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_char": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "field_path", "code", "blocking", "sources", "message"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "field_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "parse_warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "source_path", "message"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "unsupported_excerpts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_path", "start_char", "end_char", "sha256", "excerpt", "authoritative"],
+        "properties": {
+          "source_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start_char": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_char": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "authoritative": {
+            "type": "boolean",
+            "enum": [false]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "parser_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "layout_profile_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_digest": {
+      "type": "string",
+      "minLength": 64
+    }
+  },
+  "additionalProperties": false
+}

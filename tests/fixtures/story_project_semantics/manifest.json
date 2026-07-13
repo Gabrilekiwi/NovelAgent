@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "qualification": {
+    "target_sample_present": false,
+    "strict_eligible": false,
+    "reasons": [
+      "target_book_redacted_fixture_missing",
+      "shadow_only_until_real_sample_is_calibrated"
+    ]
+  },
+  "cases": [
+    {
+      "id": "synthetic_standard",
+      "source_class": "synthetic_redacted",
+      "project_path": "cases/synthetic_standard/book",
+      "chapter_index": 2,
+      "expected_path": "cases/synthetic_standard/expected.json",
+      "strict_qualification_eligible": false,
+      "features": [
+        "canonical_headings",
+        "tracking_tables",
+        "previous_prose",
+        "nested_settings"
+      ]
+    },
+    {
+      "id": "legacy_append_variant",
+      "source_class": "legacy_variant",
+      "project_path": "cases/legacy_append_variant/book",
+      "chapter_index": 12,
+      "expected_path": "cases/legacy_append_variant/expected.json",
+      "strict_qualification_eligible": false,
+      "features": [
+        "historical_headings",
+        "non_padded_chapter_numbers",
+        "legacy_append_block",
+        "list_based_foreshadowing"
+      ]
+    },
+    {
+      "id": "malformed_variant",
+      "source_class": "malformed_variant",
+      "project_path": "cases/malformed_variant/book",
+      "chapter_index": 4,
+      "expected_path": "cases/malformed_variant/expected.json",
+      "strict_qualification_eligible": false,
+      "features": [
+        "duplicate_managed_marker",
+        "missing_required_field",
+        "unsupported_setting_text",
+        "same_authority_conflict"
+      ]
+    }
+  ],
+  "soak": {
+    "spec_path": "soak_spec.json",
+    "chapter_count": 100,
+    "metrics": [
+      "authoritative_precision",
+      "supported_recall",
+      "blocking_conflicts",
+      "foreshadowing_loss",
+      "context_chars",
+      "estimated_tokens",
+      "transaction_bytes_per_chapter"
+    ]
+  }
+}

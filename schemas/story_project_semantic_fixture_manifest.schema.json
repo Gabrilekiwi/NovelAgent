@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoryProjectSemanticFixtureManifest",
+  "type": "object",
+  "required": ["schema_version", "qualification", "cases", "soak"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "qualification": {
+      "type": "object",
+      "required": ["target_sample_present", "strict_eligible", "reasons"],
+      "properties": {
+        "target_sample_present": {
+          "type": "boolean"
+        },
+        "strict_eligible": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_class",
+          "project_path",
+          "chapter_index",
+          "expected_path",
+          "strict_qualification_eligible",
+          "features"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_class": {
+            "type": "string",
+            "enum": ["target_book_redacted", "synthetic_redacted", "legacy_variant", "malformed_variant"]
+          },
+          "project_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "chapter_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "strict_qualification_eligible": {
+            "type": "boolean"
+          },
+          "features": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "soak": {
+      "type": "object",
+      "required": ["spec_path", "chapter_count", "metrics"],
+      "properties": {
+        "spec_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chapter_count": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "authoritative_precision",
+              "supported_recall",
+              "blocking_conflicts",
+              "foreshadowing_loss",
+              "context_chars",
+              "estimated_tokens",
+              "transaction_bytes_per_chapter"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

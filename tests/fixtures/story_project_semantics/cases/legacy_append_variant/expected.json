@@ -1,0 +1,111 @@
+{
+  "schema_version": "1.0",
+  "book_id": "fixture-legacy-append-variant",
+  "chapter_index": 12,
+  "story_state": {
+    "current_location": "旧换气井入口",
+    "previous_ending": "顾言要求关闭备用电源"
+  },
+  "world_state": {
+    "access_system": {
+      "blue_seal": "只用于北侧控制室维护卡",
+      "disabled_card": "可读取最后刷卡区域但不能打开闸门"
+    }
+  },
+  "spatial_state": {
+    "character_positions": {
+      "顾言": "旧换气井入口",
+      "林澈": "旧换气井入口"
+    }
+  },
+  "characters": {
+    "char-gu-yan": {
+      "name": "顾言",
+      "identity": "旧城站安保承包商",
+      "status": "刚从换气井返回，拒绝说明去向",
+      "location": "旧换气井入口"
+    },
+    "char-lin-che": {
+      "name": "林澈",
+      "status": "左臂已简单包扎",
+      "location": "旧换气井入口"
+    }
+  },
+  "timeline": [
+    {
+      "id": "ev-011-gu-return",
+      "chapter": 11,
+      "location": "旧换气井",
+      "text": "顾言从井下回应，但拒绝解释失踪时间"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "constraint-disabled-card",
+      "content": "失效卡不能打开闸门",
+      "status": "active"
+    }
+  ],
+  "foreshadowing": [
+    {
+      "id": "fs-gu-credential",
+      "content": "顾言的门禁权限为何失效",
+      "status": "developing",
+      "introduced_chapter": 1,
+      "target_chapter": 13,
+      "resolved_chapter": null
+    },
+    {
+      "id": "fs-gate-signal",
+      "content": "三短一长敲击声来源",
+      "status": "open",
+      "introduced_chapter": 1,
+      "target_chapter": null,
+      "resolved_chapter": null
+    }
+  ],
+  "provenance": [
+    {
+      "field_path": "story_state.current_location",
+      "source_path": "追踪/上下文.md",
+      "source_kind": "tracking_manual",
+      "authority_class": "authoritative",
+      "parser_version": "shadow-fixture-1",
+      "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "start_char": 18,
+      "end_char": 32
+    },
+    {
+      "field_path": "characters.char-gu-yan.status",
+      "source_path": "追踪/角色状态.md",
+      "source_kind": "tracking_manual",
+      "authority_class": "authoritative",
+      "parser_version": "shadow-fixture-1",
+      "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "start_char": 22,
+      "end_char": 46
+    },
+    {
+      "field_path": "foreshadowing.fs-gu-credential",
+      "source_path": "追踪/伏笔.md",
+      "source_kind": "tracking_manual",
+      "authority_class": "authoritative",
+      "parser_version": "shadow-fixture-1",
+      "source_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "start_char": 8,
+      "end_char": 68
+    }
+  ],
+  "conflicts": [],
+  "parse_warnings": [
+    {
+      "code": "legacy_append_block_evidence_only",
+      "source_path": "追踪/上下文.md",
+      "message": "旧 append block 只作为低优先级历史证据保留"
+    }
+  ],
+  "unsupported_excerpts": [],
+  "parser_version": "shadow-fixture-1",
+  "layout_profile_version": "legacy-zh-1",
+  "source_digest": "4444444444444444444444444444444444444444444444444444444444444444"
+}

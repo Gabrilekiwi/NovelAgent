@@ -26,6 +26,12 @@ from core.story_project.paths import (
     resolve_prose,
     resolve_story_project_root,
 )
+from core.story_project.semantic_contracts import (
+    STORY_PROJECT_SEMANTIC_FIXTURE_SCHEMA_VERSION,
+    STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION,
+    validate_story_project_semantic_fixture_manifest,
+    validate_story_project_semantic_state,
+)
 from core.story_project.validator import validate_story_project
 from core.story_project.writer import (
     StoryProjectWritebackConfig,
@@ -42,6 +48,8 @@ __all__ = [
     "SourceResolutionEntry",
     "StoryProjectRootResolution",
     "StoryProjectRuntimeContext",
+    "STORY_PROJECT_SEMANTIC_FIXTURE_SCHEMA_VERSION",
+    "STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION",
     "StoryProjectValidationResult",
     "StoryProjectWritebackConfig",
     "ValidationProblem",
@@ -58,4 +66,6 @@ __all__ = [
     "resolve_story_project_root",
     "run_story_project_writeback",
     "validate_story_project",
+    "validate_story_project_semantic_fixture_manifest",
+    "validate_story_project_semantic_state",
 ]

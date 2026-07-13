@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "book_id": "fixture-malformed-variant",
+  "chapter_index": 4,
+  "story_state": {},
+  "world_state": {},
+  "spatial_state": {},
+  "characters": {
+    "char-lin-che": {
+      "name": "林澈",
+      "status": "可行动"
+    },
+    "char-zhou-lan": {
+      "name": "周岚",
+      "location": "旧城站台"
+    }
+  },
+  "timeline": [],
+  "constraints": [],
+  "foreshadowing": [],
+  "provenance": [
+    {
+      "field_path": "characters.char-lin-che.status",
+      "source_path": "追踪/角色状态.md",
+      "source_kind": "tracking_manual",
+      "authority_class": "authoritative",
+      "parser_version": "shadow-fixture-1",
+      "source_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "start_char": 14,
+      "end_char": 21
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "conflict-current-location",
+      "field_path": "story_state.current_location",
+      "code": "same_authority_conflict",
+      "blocking": true,
+      "sources": ["追踪/上下文.md:3", "追踪/上下文.md:4"],
+      "message": "同一人工来源中出现两个不同的当前位置"
+    },
+    {
+      "id": "conflict-managed-block-count",
+      "field_path": "managed_projection",
+      "code": "duplicate_managed_block",
+      "blocking": true,
+      "sources": ["追踪/上下文.md"],
+      "message": "同一 tracking 文件包含多个 managed block"
+    }
+  ],
+  "parse_warnings": [
+    {
+      "code": "foreshadowing_missing_stable_id",
+      "source_path": "追踪/伏笔.md",
+      "message": "伏笔行缺少稳定 ID，不得升级为权威伏笔"
+    },
+    {
+      "code": "timeline_chapter_unknown",
+      "source_path": "追踪/时间线.md",
+      "message": "时间线条目缺少可确定章节"
+    }
+  ],
+  "unsupported_excerpts": [
+    {
+      "source_path": "设定/地下传闻.md",
+      "start_char": 8,
+      "end_char": 58,
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "excerpt": "有人说北侧控制室会在午夜移动，也有人坚持那只是醉汉看错了方向。",
+      "authoritative": false
+    }
+  ],
+  "parser_version": "shadow-fixture-1",
+  "layout_profile_version": "malformed-zh-1",
+  "source_digest": "7777777777777777777777777777777777777777777777777777777777777777"
+}
