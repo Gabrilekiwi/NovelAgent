@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from api.contracts import ModelCallError, ModelOutputError
+from core.chapter_contexts import ChapterContextError, resolve_committed_previous_chapter_artifact
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
@@ -370,7 +371,13 @@ class AgentExecutor:
                 decision=decision,
                 input_pack=input_pack,
                 recovery_context=recovery_context,
-                previous_chapter_text=_previous_chapter_text(memory_context),
+                previous_chapter_text=_previous_chapter_text(
+                    memory_context,
+                    story_project_context=story_project_context,
+                    chapter_index=int(decision["chapter_index"]),
+                    run_dir=self.run_dir,
+                    chapter_artifact_root=self.chapter_dir,
+                ),
                 run_id=planned_run_id,
             )
         )
@@ -2024,14 +2031,53 @@ def _notify_loop(observer: LoopObserver | None, event: dict[str, Any]) -> None:
     observer(event)
 
 
-def _previous_chapter_text(memory_context: dict[str, Any]) -> str | None:
+def _previous_chapter_text(
+    memory_context: dict[str, Any],
+    *,
+    story_project_context: dict[str, Any] | None = None,
+    chapter_index: int | None = None,
+    run_dir: str | Path | None = None,
+    chapter_artifact_root: str | Path | None = None,
+) -> str | None:
+    previous = (
+        story_project_context.get("previous_chapter_context")
+        if isinstance(story_project_context, dict)
+        else None
+    )
+    review_tail = previous.get("review_tail") if isinstance(previous, dict) else None
+    text = review_tail.get("text") if isinstance(review_tail, dict) else None
+    if isinstance(text, str) and text.strip():
+        return text
     last_run = memory_context.get("last_run")
     if not isinstance(last_run, dict):
+        last_run = {}
+    if chapter_index is None or chapter_index <= 1:
         return None
-    for key in ("chapter_text", "chapter", "draft_text"):
-        value = last_run.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
+    last_run_verified = (
+        last_run.get("committed") is True
+        and last_run.get("status") == "committed"
+        and last_run.get("chapter_index") == chapter_index - 1
+        and last_run.get("artifact_hash_verified") is True
+    )
+    if last_run_verified:
+        for key in ("chapter_text", "chapter", "draft_text"):
+            value = last_run.get(key)
+            if isinstance(value, str) and value.strip():
+                expected_hash = last_run.get("chapter_text_sha256")
+                actual_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
+                if expected_hash == actual_hash:
+                    return value
+                break
+    if run_dir is not None and chapter_artifact_root is not None:
+        try:
+            fallback = resolve_committed_previous_chapter_artifact(
+                chapter_index=chapter_index,
+                run_dir=run_dir,
+                chapter_artifact_root=chapter_artifact_root,
+            )
+        except ChapterContextError:
+            return None
+        return fallback.review_tail["text"] if fallback is not None else None
     return None
 
 

@@ -121,6 +121,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         "chapter_blueprint": story_project_context.get("chapter_blueprint"),
         "outline": story_project_context.get("outline"),
         "previous_prose": story_project_context.get("previous_prose"),
+        "previous_chapter_context": story_project_context.get("previous_chapter_context"),
         "tracking_files": story_project_context.get("tracking_files"),
         "setting_files": story_project_context.get("setting_files"),
         "source_paths": story_project_context.get("source_paths"),

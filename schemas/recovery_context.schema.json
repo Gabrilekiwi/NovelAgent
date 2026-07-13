@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RecoveryContext",
+  "type": "object",
+  "required": ["schema_version", "chapter_index", "source_run_id", "source_status", "sha256", "original_chars", "excerpt", "artifact_path_ref", "artifact_hash_verified"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "source_run_id": {"type": "string", "minLength": 1},
+    "source_status": {"type": "string", "enum": ["rejected", "failed"]},
+    "sha256": {"type": "string", "minLength": 64},
+    "original_chars": {"type": "integer", "minimum": 0},
+    "excerpt": {"type": "object"},
+    "artifact_path_ref": {"type": ["object", "null"]},
+    "artifact_hash_verified": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

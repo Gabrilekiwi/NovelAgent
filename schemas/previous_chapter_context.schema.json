@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PreviousChapterContext",
+  "type": "object",
+  "required": ["schema_version", "chapter_index", "source_kind", "path_ref", "sha256", "original_chars", "generation_excerpt", "review_tail", "committed_verified"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "source_kind": {"type": "string", "enum": ["story_project_prose", "committed_artifact"]},
+    "path_ref": {"type": "object"},
+    "sha256": {"type": "string", "minLength": 64},
+    "original_chars": {"type": "integer", "minimum": 0},
+    "generation_excerpt": {"type": "object"},
+    "review_tail": {"type": "object"},
+    "committed_verified": {"type": "boolean", "enum": [true]}
+  },
+  "additionalProperties": false
+}

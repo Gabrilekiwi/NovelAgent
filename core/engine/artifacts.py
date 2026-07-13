@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ def save_chapter_artifact(
 
     content = _format_chapter_markdown(chapter_text, run)
     atomic_write_text(path, content)
+    artifact["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     return artifact
 
 
@@ -51,7 +53,13 @@ def chapter_artifact_metadata(
     status = str(run["status"])
     run_id = str(run["id"])
     path = Path(output_dir) / f"chapter_{chapter_index:04d}_{status}_{run_id}.md"
-    return {"path": str(path), "chars": len(chapter_text), "format": "markdown"}
+    content = _format_chapter_markdown(chapter_text, run)
+    return {
+        "path": str(path),
+        "chars": len(chapter_text),
+        "format": "markdown",
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
 
 
 def save_input_pack_artifact(
@@ -253,6 +261,7 @@ def _write_artifact(path: Path, content: str, artifact_format: str) -> dict[str,
         "path": str(path),
         "chars": len(content),
         "format": artifact_format,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }
 
 

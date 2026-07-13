@@ -137,7 +137,7 @@ class StoryProjectMapperTest(unittest.TestCase):
         context = build_story_project_runtime_context(root, 2)
 
         self.assertIsNone(context.previous_prose)
-        self.assertIn("previous_prose_missing", " ".join(context.warnings))
+        self.assertIn("previous_chapter_missing", " ".join(context.warnings))
 
     def test_chapter_blueprint_extracts_title_from_markdown_heading(self) -> None:
         case_dir = self._case_dir("title")
@@ -181,7 +181,10 @@ class StoryProjectMapperTest(unittest.TestCase):
         self.assertEqual(str(outline), str(context.source_paths.outline_path))
         self.assertEqual(str(previous), str(context.source_paths.previous_prose_path))
         self.assertEqual("story_project", context.memory_context_overlay["source"])
-        self.assertGreaterEqual(len(context.memory_context_overlay["items"]), 3)
+        self.assertGreaterEqual(len(context.memory_context_overlay["items"]), 2)
+        self.assertFalse(
+            any(item["name"] == "previous_prose" for item in context.memory_context_overlay["items"])
+        )
         first_item = context.memory_context_overlay["items"][0]
         self.assertEqual("story_project", first_item["source"])
         self.assertIn("path", first_item)

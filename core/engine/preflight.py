@@ -37,6 +37,7 @@ PROMPT_ASSETS = (
 SCHEMA_ASSETS = (
     Path("core/director/schema.json"),
     Path("schemas/analysis_result.schema.json"),
+    Path("schemas/attempt_context.schema.json"),
     Path("schemas/chapter_blueprint.schema.json"),
     Path("schemas/chapter_pipeline.schema.json"),
     Path("schemas/director_decision.schema.json"),
@@ -49,8 +50,10 @@ SCHEMA_ASSETS = (
     Path("schemas/oh_story_compatibility.schema.json"),
     Path("schemas/path_ref.schema.json"),
     Path("schemas/project_identity.schema.json"),
+    Path("schemas/previous_chapter_context.schema.json"),
     Path("schemas/provider_smoke_report.schema.json"),
     Path("schemas/repair_plan.schema.json"),
+    Path("schemas/recovery_context.schema.json"),
     Path("schemas/review_gate_result.schema.json"),
     Path("schemas/review_index.schema.json"),
     Path("schemas/review_pipeline_summary.schema.json"),

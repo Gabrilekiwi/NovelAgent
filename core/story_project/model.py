@@ -194,6 +194,7 @@ class StoryProjectRuntimeContext:
     chapter_index: int
     outline: dict[str, Any]
     previous_prose: dict[str, Any] | None
+    previous_chapter_context: dict[str, Any] | None
     tracking_files: dict[str, dict[str, Any]]
     setting_files: dict[str, dict[str, Any]]
     snapshot_overlay: dict[str, Any]
@@ -212,6 +213,9 @@ class StoryProjectRuntimeContext:
             "chapter_index": self.chapter_index,
             "outline": dict(self.outline),
             "previous_prose": dict(self.previous_prose) if self.previous_prose else None,
+            "previous_chapter_context": (
+                dict(self.previous_chapter_context) if self.previous_chapter_context else None
+            ),
             "tracking_files": {name: dict(value) for name, value in sorted(self.tracking_files.items())},
             "setting_files": {name: dict(value) for name, value in sorted(self.setting_files.items())},
             "snapshot_overlay": self.snapshot_overlay,

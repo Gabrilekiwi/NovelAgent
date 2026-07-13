@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AttemptContext",
+  "type": "object",
+  "required": ["schema_version", "chapter_index", "run_id", "status", "sha256", "original_chars", "excerpt"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "enum": ["preview", "rejected", "failed"]},
+    "sha256": {"type": "string", "minLength": 64},
+    "original_chars": {"type": "integer", "minimum": 0},
+    "excerpt": {"type": "object"}
+  },
+  "additionalProperties": false
+}

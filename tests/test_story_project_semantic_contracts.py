@@ -167,20 +167,21 @@ class StoryProjectSemanticContractTest(unittest.TestCase):
         self.assertTrue(spec["long_file"]["latest_fact_at_tail"])
         self.assertGreaterEqual(spec["long_file"]["tracking_prefix_chars"], 100000)
 
-    def test_current_mapper_baseline_still_truncates_context_and_projects_previous_prose(self) -> None:
+    def test_previous_chapter_uses_head_tail_excerpt_without_long_term_memory_projection(self) -> None:
         project = FIXTURE_ROOT / "cases" / "synthetic_standard" / "book"
 
         context = build_story_project_runtime_context(project, 2, max_file_chars=80)
 
         self.assertTrue(context.previous_prose["truncated"])
-        self.assertEqual(80, context.previous_prose["chars"])
+        self.assertEqual(101, context.previous_prose["chars"])
+        self.assertEqual(64, len(context.previous_prose["sha256"]))
+        self.assertIn("闸门后的声音", context.previous_prose["text"])
         previous_items = [
             item
             for item in context.memory_context_overlay["items"]
             if item["name"] == "previous_prose"
         ]
-        self.assertEqual(1, len(previous_items))
-        self.assertEqual("timeline_event", previous_items[0]["type"])
+        self.assertEqual([], previous_items)
 
 
 def _load_json(path: Path) -> dict:

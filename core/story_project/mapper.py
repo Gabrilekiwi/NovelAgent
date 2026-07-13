@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from core.chapter_contexts import ChapterContextError, PreviousChapterContext, resolve_story_project_previous_chapter
 from core.project_profile import normalize_project_profile
 from core.story_project.loader import load_text
 from core.story_project.model import (
@@ -38,6 +39,7 @@ def build_story_project_runtime_context(
     snapshot: dict[str, Any] | None = None,
     memory_context: dict[str, Any] | None = None,
     max_file_chars: int = DEFAULT_MAX_FILE_CHARS,
+    previous_chapter_fail_closed: bool = False,
 ) -> StoryProjectRuntimeContext:
     root = Path(story_project_root)
     warnings: list[str] = []
@@ -54,11 +56,17 @@ def build_story_project_runtime_context(
     )
     missing_fields.extend(chapter_blueprint.missing_fields)
 
-    previous_prose = _read_previous_prose(
+    previous_chapter_context = _read_previous_chapter_context(
         root,
         chapter_index=chapter_index,
         max_file_chars=max_file_chars,
         warnings=warnings,
+        fail_closed=previous_chapter_fail_closed,
+    )
+    previous_prose = (
+        previous_chapter_context.to_legacy_dict(root / previous_chapter_context.path_ref.relative_path)
+        if previous_chapter_context is not None
+        else None
     )
     tracking_files = _read_markdown_tree(root / TRACKING_DIR_NAME, root=root, max_chars=max_file_chars, warnings=warnings)
     setting_files = _read_markdown_tree(root / SETTING_DIR_NAME, root=root, max_chars=max_file_chars, warnings=warnings)
@@ -79,7 +87,6 @@ def build_story_project_runtime_context(
     )
     memory_context_overlay = _build_memory_context_overlay(
         outline=outline_file,
-        previous_prose=previous_prose,
         tracking_files=tracking_files,
         setting_files=setting_files,
     )
@@ -97,6 +104,9 @@ def build_story_project_runtime_context(
         chapter_index=chapter_index,
         outline=outline_file,
         previous_prose=previous_prose,
+        previous_chapter_context=(
+            previous_chapter_context.to_dict() if previous_chapter_context is not None else None
+        ),
         tracking_files=tracking_files,
         setting_files=setting_files,
         snapshot_overlay=snapshot_overlay,
@@ -109,23 +119,27 @@ def build_story_project_runtime_context(
     )
 
 
-def _read_previous_prose(
+def _read_previous_chapter_context(
     root: Path,
     *,
     chapter_index: int,
     max_file_chars: int,
     warnings: list[str],
-) -> dict[str, Any] | None:
-    if chapter_index <= 1:
+    fail_closed: bool,
+) -> PreviousChapterContext | None:
+    try:
+        return resolve_story_project_previous_chapter(
+            root,
+            chapter_index,
+            generation_max_chars=max_file_chars,
+            review_tail_chars=max_file_chars,
+            fail_closed=True,
+        )
+    except ChapterContextError as exc:
+        warnings.append(f"{exc.code}: {exc}")
+        if fail_closed:
+            raise
         return None
-    resolution = resolve_prose(root, chapter_index - 1)
-    if resolution.conflict:
-        warnings.append(f"previous_prose_conflict: multiple prose files matched chapter {chapter_index - 1}")
-        return None
-    if resolution.path is None:
-        warnings.append(f"previous_prose_missing: no prose file matched chapter {chapter_index - 1}")
-        return None
-    return _read_context_file(resolution.path, root=root, max_chars=max_file_chars, warnings=warnings)
 
 
 def _read_markdown_tree(directory: Path, *, root: Path, max_chars: int, warnings: list[str]) -> dict[str, dict[str, Any]]:
@@ -293,15 +307,12 @@ def _build_snapshot_overlay(
 def _build_memory_context_overlay(
     *,
     outline: dict[str, Any],
-    previous_prose: dict[str, Any] | None,
     tracking_files: dict[str, dict[str, Any]],
     setting_files: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     source_mappings: list[dict[str, Any]] = []
     _append_memory_item(items, source_mappings, "story_state", "current_outline", outline)
-    if previous_prose is not None:
-        _append_memory_item(items, source_mappings, "timeline_event", "previous_prose", previous_prose)
     for name, file_data in sorted(tracking_files.items()):
         _append_memory_item(items, source_mappings, "story_state", f"tracking:{name}", file_data)
     for name, file_data in sorted(setting_files.items()):

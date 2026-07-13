@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -98,4 +99,9 @@ def _write_recovered_chapter(chapter_text: str, run: dict[str, Any], chapter_dir
         f"{chapter_text.strip()}\n"
     )
     path.write_text(content, encoding="utf-8")
-    return {"path": str(path), "format": "markdown", "chars": len(chapter_text)}
+    return {
+        "path": str(path),
+        "format": "markdown",
+        "chars": len(chapter_text),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
