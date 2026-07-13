@@ -13,6 +13,7 @@ from unittest.mock import patch
 import main as cli
 from core.schema import validate_schema
 from core.story_project.identity import ProjectIdentity, project_identity_path
+from core.story_project.managed_block import build_managed_projection, write_managed_block
 from core.story_project.semantic_parser import (
     SEMANTIC_PARSER_VERSION,
     build_story_project_shadow_report,
@@ -132,6 +133,45 @@ class StoryProjectSemanticParserTest(unittest.TestCase):
             "文件尾部可核验事实",
             after["world_state"]["settings"]["旧城站"]["facts"],
         )
+
+    def test_valid_managed_projection_is_lower_priority_than_manual_tracking(self) -> None:
+        source = FIXTURES / "synthetic_standard" / "book"
+        target = Path(".tmp") / "test_semantic_parser" / uuid.uuid4().hex / "book"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, target)
+        identity = ProjectIdentity(
+            "1.0",
+            "fixture-managed-priority",
+            "2026-07-13T00:00:00Z",
+            str(target.resolve()),
+            ephemeral=True,
+        )
+        managed = build_managed_projection(
+            scope="context",
+            book_id=identity.book_id,
+            run_id="run-managed",
+            chapter=1,
+            parser_version="shadow-1.0",
+            base_revision="rev-1",
+            base_source_digest="a" * 64,
+            owned_fields=("story_state.current_location", "story_state.managed_only"),
+            values={
+                "story_state.current_location": "不得覆盖人工地点",
+                "story_state.managed_only": "低优先级补充",
+            },
+        )
+        context_path = target / "追踪" / "上下文.md"
+        context_path.write_bytes(write_managed_block(context_path.read_bytes(), managed))
+
+        state = parse_story_project_semantic_state(target, 2, project_identity=identity)
+
+        self.assertEqual("旧城站封闭闸门外", state["story_state"]["current_location"])
+        self.assertEqual("低优先级补充", state["story_state"]["managed_only"])
+        managed_sources = [
+            item for item in state["provenance"] if item["source_kind"] == "managed_projection"
+        ]
+        self.assertEqual(["story_state.managed_only"], [item["field_path"] for item in managed_sources])
+        self.assertEqual("supporting", managed_sources[0]["authority_class"])
 
     def test_shadow_cli_is_generation_free_and_does_not_create_project_state(self) -> None:
         root = (FIXTURES / "synthetic_standard" / "book").resolve()

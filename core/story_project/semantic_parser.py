@@ -9,6 +9,7 @@ from typing import Any, Iterable
 from core.schema import validate_schema
 from core.story_project.identity import ProjectIdentity, project_identity_for_operation
 from core.story_project.loader import load_text
+from core.story_project.managed_block import ManagedBlockError, parse_managed_block
 from core.story_project.paths import resolve_outline, resolve_prose
 from core.story_project.semantic_contracts import validate_story_project_semantic_state
 
@@ -110,6 +111,7 @@ class _SemanticStateBuilder:
         self._parse_foreshadowing()
         self._parse_timeline()
         self._parse_settings()
+        self._parse_managed_projections()
         for name in TRACKING_FILES:
             key = f"追踪/{name}"
             if key not in self.sources:
@@ -150,15 +152,6 @@ class _SemanticStateBuilder:
             return
         text = source["text"]
         starts = _line_starts(text)
-        managed_starts = [index for index, line in enumerate(text.splitlines()) if line.strip().startswith(MANAGED_START)]
-        managed_ends = [index for index, line in enumerate(text.splitlines()) if line.strip() == MANAGED_END]
-        if len(managed_starts) > 1 or len(managed_starts) != len(managed_ends):
-            self._conflict(
-                "managed_projection",
-                "duplicate_managed_block" if len(managed_starts) > 1 else "malformed_managed_block",
-                ["追踪/上下文.md"],
-                "Tracking file contains duplicate or malformed managed block markers",
-            )
         if "NovelAgent:story_project_writeback" in text:
             self._warn(
                 "legacy_append_block_evidence_only",
@@ -493,6 +486,107 @@ class _SemanticStateBuilder:
         if locations:
             self.world_state["locations"] = locations
 
+    def _parse_managed_projections(self) -> None:
+        scopes = {
+            "追踪/上下文.md": "context",
+            "追踪/角色状态.md": "character_state",
+            "追踪/伏笔.md": "foreshadowing",
+            "追踪/时间线.md": "timeline",
+        }
+        for relative_path, expected_scope in scopes.items():
+            source = self.sources.get(relative_path)
+            if source is None:
+                continue
+            try:
+                parsed = parse_managed_block(source["text"])
+            except ManagedBlockError as exc:
+                self._conflict(
+                    "managed_projection",
+                    exc.code,
+                    [relative_path],
+                    str(exc),
+                )
+                continue
+            if parsed is None:
+                continue
+            projection = parsed.projection
+            if projection["book_id"] != self.book_id:
+                self._conflict(
+                    "managed_projection.book_id",
+                    "managed_projection_identity_mismatch",
+                    [relative_path],
+                    "Managed projection belongs to another StoryProject",
+                )
+                continue
+            if projection["scope"] != expected_scope:
+                self._conflict(
+                    "managed_projection.scope",
+                    "managed_projection_scope_mismatch",
+                    [relative_path],
+                    f"Managed projection scope {projection['scope']} does not match {expected_scope}",
+                )
+                continue
+            tombstones = {item["field_path"] for item in projection["tombstones"]}
+            for field_path, value in projection["values"].items():
+                if field_path in tombstones or self._has_manual_authority(field_path):
+                    continue
+                if not self._apply_managed_value(expected_scope, field_path, value):
+                    self._warn(
+                        "managed_projection_field_unsupported",
+                        relative_path,
+                        f"Managed projection field is outside its scope: {field_path}",
+                    )
+                    continue
+                self._provenance(
+                    field_path,
+                    source,
+                    parsed.start_char,
+                    parsed.end_char,
+                    "managed_projection",
+                    "supporting",
+                )
+
+    def _has_manual_authority(self, field_path: str) -> bool:
+        for item in self.provenance:
+            if item["authority_class"] != "authoritative":
+                continue
+            existing = item["field_path"]
+            if existing == field_path or existing.startswith(field_path + ".") or field_path.startswith(existing + "."):
+                return True
+        return False
+
+    def _apply_managed_value(self, scope: str, field_path: str, value: Any) -> bool:
+        parts = field_path.split(".")
+        allowed = {
+            "context": {"story_state"},
+            "character_state": {"characters", "spatial_state"},
+            "foreshadowing": {"foreshadowing"},
+            "timeline": {"timeline"},
+        }[scope]
+        if len(parts) < 2 or parts[0] not in allowed:
+            return False
+        if parts[0] == "story_state":
+            return _set_missing_nested(self.story_state, parts[1:], value)
+        if parts[0] == "spatial_state":
+            return _set_missing_nested(self.spatial_state, parts[1:], value)
+        if parts[0] == "characters":
+            return _set_missing_nested(self.characters, parts[1:], value)
+        if parts[0] == "foreshadowing" and len(parts) == 2 and isinstance(value, dict):
+            if any(item.get("id") == parts[1] for item in self.foreshadowing):
+                return True
+            item = dict(value)
+            item.setdefault("id", parts[1])
+            self.foreshadowing.append(item)
+            return True
+        if parts[0] == "timeline" and len(parts) == 2 and isinstance(value, dict):
+            if any(item.get("id") == parts[1] for item in self.timeline):
+                return True
+            item = dict(value)
+            item.setdefault("id", parts[1])
+            self.timeline.append(item)
+            return True
+        return False
+
     def _add_constraint_if_normative(
         self,
         content: str,
@@ -751,6 +845,22 @@ def _first_heading(text: str) -> str | None:
         if match:
             return match.group(1).strip()
     return None
+
+
+def _set_missing_nested(target: dict[str, Any], parts: list[str], value: Any) -> bool:
+    if not parts:
+        return False
+    cursor = target
+    for part in parts[:-1]:
+        existing = cursor.get(part)
+        if existing is None:
+            existing = {}
+            cursor[part] = existing
+        if not isinstance(existing, dict):
+            return True
+        cursor = existing
+    cursor.setdefault(parts[-1], value)
+    return True
 
 
 __all__ = [
