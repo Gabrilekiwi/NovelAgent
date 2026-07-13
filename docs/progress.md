@@ -1,6 +1,14 @@
 # Project Progress
 
-Last updated: 2026-07-06
+Last updated: 2026-07-13
+
+## Reliable semantic production status
+
+Commits 1–13 of `docs/reliable-semantic-production-plan.md` are implemented. The current StoryProject default remains shadow. Strict authority now requires a qualified target-book calibration report and explicit activation; the committed synthetic fixtures do not qualify a real target book. Strict execution is fail-closed on pinned profile drift and requires transactional apply writeback for persistent runs.
+
+The offline two-chapter strict integration gate proves that chapter N+1 reads chapter N prose, managed semantic projection, and the incremented replayable Memory V2.1 revision. The billable real OpenAI two-chapter gate is present as an explicit opt-in and remains unexecuted unless a redacted real sample, its qualified calibration report, and provider credentials are supplied.
+
+Commit 14, the final behavior-preserving module split, is the remaining implementation step.
 
 ## v1.5 Status
 

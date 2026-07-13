@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import os
 import re
 import tempfile
@@ -11,6 +12,14 @@ from typing import Any
 
 from core.story_project.model import CORE_DIRECTORY_NAMES
 from core.story_project.paths import PROSE_DIR_NAME, UNTITLED_CHAPTER, canonical_prose_path, resolve_prose
+from core.story_project.managed_block import (
+    build_managed_projection,
+    compute_base_source_digest,
+    parse_managed_block,
+    parse_manual_tombstones,
+    three_way_merge_managed,
+    write_managed_block,
+)
 
 
 TRACKING_DIR_NAME = CORE_DIRECTORY_NAMES[3]
@@ -75,6 +84,9 @@ class StoryProjectWritebackPlan:
     targets: list[StoryProjectWriteTarget] = field(default_factory=list)
     blocked_reasons: list[str] = field(default_factory=list)
     errors: list[dict[str, Any]] = field(default_factory=list)
+    story_state_mode: str = "compatible"
+    project_identity: dict[str, Any] | None = None
+    semantic_state: dict[str, Any] | None = None
 
     @property
     def blocked(self) -> bool:
@@ -91,6 +103,7 @@ class StoryProjectWritebackPlan:
             "targets": [target.to_dict() for target in self.targets],
             "blocked_reasons": list(self.blocked_reasons),
             "errors": list(self.errors),
+            "story_state_mode": self.story_state_mode,
         }
 
 
@@ -190,22 +203,40 @@ def prepare_story_project_writeback(
         if target.kind == "prose":
             after = chapter_text.rstrip() + "\n"
         else:
-            if _has_existing_tracking_marker(
-                target.path,
-                run_id=str(run.get("id")),
-                chapter=plan.chapter_index,
-                kind=target.kind,
-            ):
-                target.existed = before_exists
-                target.chars_before = len(before)
-                target.chars_after = len(before)
-                target.changed = False
-                target.status = "skipped"
-                target.reason = "tracking_marker_exists"
-                continue
-            content = _tracking_content(target=target, run=run, plan=plan, analysis=analysis or {})
-            separator = "\n\n" if before.strip() else ""
-            after = before.rstrip() + separator + content.strip() + "\n"
+            if plan.story_state_mode == "strict":
+                after = _managed_tracking_content(
+                    before_bytes,
+                    target=target,
+                    run=run,
+                    plan=plan,
+                    analysis=analysis or {},
+                ).decode("utf-8")
+                current = parse_managed_block(before_bytes)
+                if current is not None and current.projection["run_id"] == str(run.get("id")):
+                    target.existed = before_exists
+                    target.chars_before = len(before)
+                    target.chars_after = len(before)
+                    target.changed = False
+                    target.status = "skipped"
+                    target.reason = "managed_projection_exists"
+                    continue
+            else:
+                if _has_existing_tracking_marker(
+                    target.path,
+                    run_id=str(run.get("id")),
+                    chapter=plan.chapter_index,
+                    kind=target.kind,
+                ):
+                    target.existed = before_exists
+                    target.chars_before = len(before)
+                    target.chars_after = len(before)
+                    target.changed = False
+                    target.status = "skipped"
+                    target.reason = "tracking_marker_exists"
+                    continue
+                content = _tracking_content(target=target, run=run, plan=plan, analysis=analysis or {})
+                separator = "\n\n" if before.strip() else ""
+                after = before.rstrip() + separator + content.strip() + "\n"
         target.existed = before_exists
         target.chars_before = len(before)
         target.chars_after = len(after)
@@ -320,6 +351,17 @@ def build_story_project_writeback_plan(
         story_project_root=root,
         chapter_index=chapter_index,
         title=title,
+        story_state_mode=str((context or {}).get("story_state_mode") or "compatible"),
+        project_identity=(
+            dict((context or {}).get("project_identity"))
+            if isinstance((context or {}).get("project_identity"), dict)
+            else None
+        ),
+        semantic_state=(
+            copy.deepcopy((context or {}).get("semantic_state"))
+            if isinstance((context or {}).get("semantic_state"), dict)
+            else None
+        ),
     )
 
     if root is None:
@@ -373,6 +415,26 @@ def apply_story_project_writeback_plan(
         try:
             if target.kind == "prose":
                 _write_target(target, chapter_text)
+            elif plan.story_state_mode == "strict":
+                before_bytes = target.path.read_bytes() if target.path.exists() else b""
+                current = parse_managed_block(before_bytes)
+                if current is not None and current.projection["run_id"] == str(run.get("id")):
+                    before = before_bytes.decode("utf-8")
+                    target.existed = target.path.exists()
+                    target.chars_before = len(before)
+                    target.chars_after = len(before)
+                    target.changed = False
+                    target.status = "skipped"
+                    target.reason = "managed_projection_exists"
+                    continue
+                after = _managed_tracking_content(
+                    before_bytes,
+                    target=target,
+                    run=run,
+                    plan=plan,
+                    analysis=analysis,
+                ).decode("utf-8")
+                _write_exact_target(target, after)
             else:
                 content = _tracking_content(target=target, run=run, plan=plan, analysis=analysis)
                 if _has_existing_tracking_marker(target.path, run_id=str(run.get("id")), chapter=plan.chapter_index, kind=target.kind):
@@ -444,7 +506,7 @@ def _plan_tracking_targets(plan: StoryProjectWritebackPlan, *, root: Path, track
             StoryProjectWriteTarget(
                 kind=kind,
                 path=path,
-                action="append",
+                action="managed_merge" if plan.story_state_mode == "strict" else "append",
                 existed=existed,
                 chars_before=_read_text_len(path),
             )
@@ -469,6 +531,12 @@ def _apply_gate(
         _block(plan, "chapter_text_empty", "Chapter text is empty.")
     if not isinstance((context or {}).get("chapter_blueprint"), dict):
         _block(plan, "chapter_blueprint_missing", "StoryProject chapter blueprint is missing.")
+    if (context or {}).get("story_state_mode") == "strict":
+        identity = (context or {}).get("project_identity")
+        if not isinstance(identity, dict) or identity.get("story_state_mode") != "strict" or identity.get("ephemeral"):
+            _block(plan, "strict_identity_invalid", "Strict writeback requires a stable activated project identity.")
+        if not isinstance((context or {}).get("semantic_state"), dict):
+            _block(plan, "strict_semantic_state_missing", "Strict writeback requires authoritative semantic state.")
     coverage = _blueprint_coverage(run)
     if not isinstance(coverage, dict):
         _block(plan, "blueprint_coverage_missing", "StoryProject blueprint coverage is missing.")
@@ -489,6 +557,16 @@ def _write_target(target: StoryProjectWriteTarget, content: str) -> None:
     target.status = "updated" if before else "created"
 
 
+def _write_exact_target(target: StoryProjectWriteTarget, content: str) -> None:
+    before = target.path.read_text(encoding="utf-8") if target.path.exists() else ""
+    _atomic_write_text(target.path, content)
+    target.existed = bool(before)
+    target.chars_before = len(before)
+    target.chars_after = len(content)
+    target.changed = before != content
+    target.status = "updated" if before else "created"
+
+
 def _append_target(target: StoryProjectWriteTarget, content: str) -> None:
     before = target.path.read_text(encoding="utf-8") if target.path.exists() else ""
     separator = "\n\n" if before.strip() else ""
@@ -505,7 +583,13 @@ def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_name = ""
     try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="",
+            dir=path.parent,
+            delete=False,
+        ) as tmp:
             tmp.write(content)
             tmp_name = tmp.name
         os.replace(tmp_name, path)
@@ -544,6 +628,98 @@ def _tracking_content(
             "<!-- /NovelAgent:story_project_writeback -->",
         ]
     )
+
+
+def _managed_tracking_content(
+    document: bytes,
+    *,
+    target: StoryProjectWriteTarget,
+    run: dict[str, Any],
+    plan: StoryProjectWritebackPlan,
+    analysis: dict[str, Any],
+) -> bytes:
+    identity = plan.project_identity or {}
+    book_id = str(identity.get("book_id") or "")
+    if not book_id:
+        raise ValueError("strict managed projection requires book_id")
+    current_parsed = parse_managed_block(document)
+    current = current_parsed.projection if current_parsed is not None else None
+    values = dict(current.get("values") or {}) if current is not None else {}
+    values.update(_managed_values(target.kind, int(plan.chapter_index or 0), analysis))
+    tombstones = parse_manual_tombstones(document)
+    if current is not None:
+        existing_tombstones = {
+            item["field_path"]: dict(item) for item in current.get("tombstones") or []
+        }
+        existing_tombstones.update({item["field_path"]: dict(item) for item in tombstones})
+        tombstones = [existing_tombstones[key] for key in sorted(existing_tombstones)]
+    tombstone_fields = {item["field_path"] for item in tombstones}
+    for field_path in tombstone_fields:
+        values.pop(field_path, None)
+    semantic = plan.semantic_state or {}
+    source_digest = str(semantic.get("source_digest") or hashlib.sha256(document).hexdigest())
+    parser_version = str(semantic.get("parser_version") or "shadow-1.0")
+    proposed = build_managed_projection(
+        scope=target.kind,
+        book_id=book_id,
+        run_id=str(run.get("id") or ""),
+        chapter=int(plan.chapter_index or run.get("chapter_index") or 0),
+        parser_version=parser_version,
+        base_revision=str((current or {}).get("payload_sha256") or source_digest),
+        base_source_digest=compute_base_source_digest(document),
+        owned_fields=sorted(set(values) | tombstone_fields),
+        values=values,
+        tombstones=tombstones,
+    )
+    merged = three_way_merge_managed(
+        base=current,
+        current=current,
+        proposed=proposed,
+        manual_tombstones=tombstones,
+    )
+    if not merged.ok or merged.projection is None:
+        raise ValueError("managed_projection_merge_conflict: " + json.dumps(merged.to_dict(), ensure_ascii=False))
+    return write_managed_block(document, merged.projection)
+
+
+def _managed_values(kind: str, chapter: int, analysis: dict[str, Any]) -> dict[str, Any]:
+    if kind == "context":
+        story_state = analysis.get("story_state")
+        if not isinstance(story_state, dict):
+            return {}
+        return {f"story_state.{key}": copy.deepcopy(value) for key, value in story_state.items()}
+    if kind == "character_state":
+        values: dict[str, Any] = {}
+        for change in analysis.get("character_changes") or []:
+            if not isinstance(change, dict) or not str(change.get("name") or "").strip():
+                continue
+            name = str(change["name"]).strip().replace(".", "_")
+            values[f"characters.{name}"] = copy.deepcopy(change)
+        spatial = analysis.get("spatial_state")
+        if isinstance(spatial, dict):
+            for key, value in spatial.items():
+                values[f"spatial_state.{key}"] = copy.deepcopy(value)
+        return values
+    if kind == "timeline":
+        return {
+            f"timeline.chapter-{chapter:06d}": {
+                "id": f"chapter-{chapter:06d}",
+                "chapter_index": chapter,
+                "summary": str(analysis.get("summary") or ""),
+                "events": copy.deepcopy(analysis.get("events") or []),
+                "world_changes": copy.deepcopy(analysis.get("world_changes") or []),
+            }
+        }
+    if kind == "foreshadowing":
+        entries = analysis.get("foreshadowing")
+        if not isinstance(entries, list):
+            return {}
+        return {
+            f"foreshadowing.{item['id']}": copy.deepcopy(item)
+            for item in entries
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        }
+    return {}
 
 
 def _tracking_body(kind: str, analysis: dict[str, Any]) -> list[str]:

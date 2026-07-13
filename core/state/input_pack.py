@@ -124,7 +124,12 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         ).get("context_digest"),
         "outline_source": _compact_story_source(story_project_context.get("outline"), excerpt_chars=800),
         "previous_chapter_context": story_project_context.get("previous_chapter_context"),
-        "semantic_state": story_project_context.get("semantic_state"),
+        "semantic_state": _compact_semantic_state(story_project_context.get("semantic_state")),
+        "semantic_audit": story_project_context.get("semantic_audit"),
+        "memory_v2": {
+            key: (story_project_context.get("memory_v2") or {}).get(key)
+            for key in ("status", "revision", "projection_hash")
+        },
         "tracking_excerpts": _compact_story_sources(
             story_project_context.get("tracking_files"), excerpt_chars=2000
         ),
@@ -144,6 +149,31 @@ def _compact_story_sources(value: Any, *, excerpt_chars: int) -> dict[str, Any]:
         str(name): _compact_story_source(source, excerpt_chars=excerpt_chars)
         for name, source in sorted(value.items())
         if isinstance(source, dict)
+    }
+
+
+def _compact_semantic_state(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: value.get(key)
+        for key in (
+            "schema_version",
+            "book_id",
+            "chapter_index",
+            "parser_version",
+            "layout_profile_version",
+            "source_digest",
+        )
+    } | {
+        "provenance_count": len(value.get("provenance") or []),
+        "blocking_conflict_count": sum(
+            1
+            for item in value.get("conflicts") or []
+            if isinstance(item, dict) and item.get("blocking") is True
+        ),
+        "parse_warning_count": len(value.get("parse_warnings") or []),
+        "unsupported_excerpt_count": len(value.get("unsupported_excerpts") or []),
     }
 
 

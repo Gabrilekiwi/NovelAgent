@@ -71,6 +71,15 @@ from core.story_project.semantic_contracts import (
     validate_story_project_semantic_fixture_manifest,
     validate_story_project_semantic_state,
 )
+from core.story_project.activation import (
+    CALIBRATION_REPORT_SCHEMA_VERSION,
+    StoryStateActivationError,
+    activate_story_state,
+    build_story_state_calibration_report,
+    evaluate_story_state_activation,
+    load_story_state_calibration_report,
+    validate_story_state_calibration_report,
+)
 from core.story_project.semantic_parser import (
     SEMANTIC_PARSER_VERSION,
     SHADOW_REPORT_SCHEMA_VERSION,
@@ -119,6 +128,7 @@ __all__ = [
     "build_managed_projection",
     "build_story_project_writeback_plan",
     "build_story_project_shadow_report",
+    "build_story_state_calibration_report",
     "canonical_outline_path",
     "canonical_prose_path",
     "capture_story_project_read_set",
@@ -148,6 +158,12 @@ __all__ = [
     "validate_story_project",
     "validate_story_project_semantic_fixture_manifest",
     "validate_story_project_semantic_state",
+    "CALIBRATION_REPORT_SCHEMA_VERSION",
+    "StoryStateActivationError",
+    "activate_story_state",
+    "evaluate_story_state_activation",
+    "load_story_state_calibration_report",
+    "validate_story_state_calibration_report",
     "verify_story_project_read_set",
     "write_managed_block",
 ]

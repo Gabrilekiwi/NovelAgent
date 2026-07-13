@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import unittest
 import uuid
 from datetime import datetime, timezone
@@ -10,7 +11,11 @@ from pathlib import Path
 import core.engine.preflight as preflight_module
 from core.engine.preflight import run_preflight
 from core.engine.run_record import build_run_record
-from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_MEMORY_OUTBOX, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
+from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_MEMORY_OUTBOX, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH, RuntimePaths
+from core.story_project.activation import activate_story_state, build_story_state_calibration_report
+from core.story_project.identity import ensure_project_identity, project_identity_path
+from core.story_project.semantic_contracts import STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION
+from core.story_project.semantic_parser import SEMANTIC_PARSER_VERSION
 
 
 def _restore_env(name: str, value: str | None) -> None:
@@ -37,6 +42,99 @@ class PreflightTest(unittest.TestCase):
         case_dir = Path.cwd() / ".tmp" / "test_preflight" / f"{name}_{uuid.uuid4().hex}"
         case_dir.mkdir(parents=True)
         return case_dir
+
+    def _strict_story_project(self, name: str) -> tuple[Path, RuntimePaths]:
+        case_dir = self._case_dir(name)
+        root = case_dir / "book"
+        shutil.copytree(
+            Path("tests/fixtures/story_project_semantics/cases/synthetic_standard/book"),
+            root,
+        )
+        identity = ensure_project_identity(root)
+        report = build_story_state_calibration_report(
+            book_id=identity.book_id,
+            parser_version=SEMANTIC_PARSER_VERSION,
+            semantic_schema_version=STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION,
+            target_layout_profile_version="canonical-zh-1",
+            evidence={
+                "target_sample_count": 1,
+                "format_variant_count": 2,
+                "managed_round_trip_rate": 1.0,
+                "required_field_exact_match_rate": 1.0,
+                "authoritative_precision": 1.0,
+                "supported_optional_recall": 0.95,
+                "unsupported_structure_count": 1,
+                "unsupported_structure_captured_count": 1,
+                "consecutive_shadow_chapters": 10,
+                "blocking_conflict_count": 0,
+                "missing_provenance_fields": [],
+            },
+            generated_at="2026-07-13T00:00:00+00:00",
+        )
+        activated = activate_story_state(root, report)
+        paths = RuntimePaths.for_story_project(root)
+        paths.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.snapshot_path.write_text(
+            json.dumps(
+                {
+                    "book_id": activated.book_id,
+                    "chapter_index": 2,
+                    "world_state": {},
+                    "story_state": {},
+                    "spatial_state": {},
+                    "characters": {},
+                    "timeline": [],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return root, paths
+
+    def test_strict_story_project_preflight_fails_closed_on_profile_drift(self) -> None:
+        root, paths = self._strict_story_project("strict_drift")
+        identity_payload = json.loads(project_identity_path(root).read_text(encoding="utf-8"))
+        identity_payload["activation"]["parser_version"] = "shadow-0.9"
+        project_identity_path(root).write_text(json.dumps(identity_payload, indent=2), encoding="utf-8")
+
+        blocked = run_preflight(
+            snapshot_path=paths.snapshot_path,
+            memory_path=Path("data/notion_memory.example.json"),
+            memory_source="file",
+            run_dir=paths.run_dir,
+            chapter_dir=paths.chapter_dir,
+            dry_run=True,
+            story_project=root,
+            chapter=2,
+        )
+
+        self.assertFalse(blocked["ok"])
+        runtime_check = next(
+            check for check in blocked["checks"] if check["name"] == "story_project_runtime_context"
+        )
+        self.assertFalse(runtime_check["ok"])
+        self.assertIn("strict_profile_version_mismatch", runtime_check["error"])
+
+        downgraded = run_preflight(
+            snapshot_path=paths.snapshot_path,
+            memory_path=Path("data/notion_memory.example.json"),
+            memory_source="file",
+            run_dir=paths.run_dir,
+            chapter_dir=paths.chapter_dir,
+            dry_run=True,
+            story_project=root,
+            chapter=2,
+            allow_story_state_shadow_downgrade=True,
+        )
+        runtime_check = next(
+            check for check in downgraded["checks"] if check["name"] == "story_project_runtime_context"
+        )
+        audit = runtime_check["details"]["semantic_audit"]
+        self.assertTrue(runtime_check["ok"])
+        self.assertEqual("shadow", audit["effective_mode"])
+        self.assertTrue(audit["downgraded"])
+        self.assertFalse(audit["authoritative"])
+        self.assertFalse(audit["ready_for_next_step"])
 
     def test_dry_run_preflight_accepts_valid_inputs_without_api_keys(self) -> None:
         tmp_path = self._case_dir("dry_run")

@@ -200,6 +200,38 @@ class PromptAssetTest(unittest.TestCase):
         self.assertNotIn('"membership"', input_pack)
         self.assertNotIn("tracking/secret.md", input_pack)
 
+    def test_story_project_input_pack_compacts_semantic_provenance(self) -> None:
+        input_pack = build_input_pack(
+            {
+                "chapter_index": 2,
+                "world_state": {},
+                "story_state": {},
+                "spatial_state": {},
+                "characters": {},
+                "timeline": [],
+            },
+            story_project_context={
+                "chapter_index": 2,
+                "chapter_blueprint": {"required_beats": ["advance"]},
+                "semantic_state": {
+                    "schema_version": "1.0",
+                    "book_id": "book-1",
+                    "chapter_index": 2,
+                    "parser_version": "shadow-1.0",
+                    "layout_profile_version": "canonical-zh-1",
+                    "source_digest": "a" * 64,
+                    "provenance": [{"field_path": "story_state.open_threads[0]", "secret": "omit"}],
+                    "conflicts": [],
+                    "parse_warnings": [],
+                    "unsupported_excerpts": [],
+                },
+            },
+        )
+
+        self.assertIn('"provenance_count": 1', input_pack)
+        self.assertNotIn('"field_path"', input_pack)
+        self.assertNotIn('"secret"', input_pack)
+
     def test_prompt_assets_are_ascii_text(self) -> None:
         for path in sorted(Path("prompts").glob("*.md")):
             content = path.read_text(encoding="utf-8-sig")

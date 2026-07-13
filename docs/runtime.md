@@ -1,5 +1,29 @@
 # Runtime Commands
 
+## StoryProject semantic modes
+
+StoryProject semantic parsing defaults to read-only `shadow`. Inspect it without changing generation authority:
+
+```bash
+python main.py --story-project PATH --chapter auto --story-state-shadow-report --output-json
+```
+
+Strict authority requires a qualified target-book calibration report and an explicit activation command:
+
+```bash
+python main.py --story-project PATH --activate-story-state --story-state-calibration-report PATH/report.json
+```
+
+After activation, persistent generation must use transactional apply writeback:
+
+```bash
+python main.py --story-project PATH --chapter auto --steps 2 --story-project-writeback
+```
+
+Pinned parser/schema/layout drift fails before provider generation. `--allow-story-state-shadow-downgrade` is an explicit diagnostic fallback only; it leaves the semantic state non-authoritative and `ready_for_next_step=false`. Full calibration thresholds and audit behavior are in [Story State Calibration and Strict Activation](story-state-activation.md).
+
+The billable two-chapter real OpenAI gate is isolated in `scripts/real_storyproject_e2e.py`, is skipped by default, and emits a schema-checked redacted report. See [Real StoryProject Two-Chapter E2E](real-storyproject-e2e.md).
+
 Initialize local runtime state from committed examples:
 
 ```bash

@@ -5,7 +5,7 @@ NovelAgent v1.0 separates long-term memory, runtime state, decision making, exec
 ## Data Flow
 
 ```text
-Memory source
+Memory source + StoryProject semantic parser (shadow or calibrated strict)
   -> core.state.memory / core.state.notion_export
   -> core.state.builder
   -> core.director
@@ -16,7 +16,22 @@ Memory source
   -> modules.scene_repair
   -> core.state.snapshot
   -> run + chapter artifacts
+  -> local persistence transaction
+  -> Memory V2.1 replay store
+  -> durable delivery queue
 ```
+
+## Reliable semantic production
+
+StoryProject source files are read through a complete read set and parsed into a schema-checked semantic state with field-level provenance, stable conflicts, warnings, unsupported excerpts, parser/layout versions, and a source digest. Shadow mode records this state without changing runtime authority. A strict project must carry an explicit activation profile pinned to a qualified calibration report.
+
+In strict mode, StoryProject semantic fields replace corresponding Snapshot cache fields before Director, generation, and validation. Memory V2 is supporting context and cannot silently override StoryProject authority. Profile drift, blocking conflicts, or missing production-field provenance fail closed; an explicit shadow downgrade remains non-authoritative and not ready for the next step.
+
+Accepted strict chapters prepare prose, managed tracking projections, Snapshot, and Memory V2 event/projection/checkpoint targets together. The local persistence transaction revalidates the complete StoryProject read set before commit, verifies bytes, publishes its marker, and exposes receipt/readiness state. Managed blocks use three-way merge, one block per tracking file, owned fields, and tombstones while preserving manual bytes outside the block.
+
+Memory V2.1 uses immutable event batches and a hash chain. Canonical memory is a replayable projection rather than a separate authority. The next chapter reads the prior committed prose, the new managed projection, and the verified Memory V2 revision.
+
+External publication uses durable delivery jobs, leases, attempt receipts, and reconciliation. Provider retry policy is operation-specific: model reads and Notion queries may retry within bounded deadlines, partial streamed model output never retries, and Notion create remains a single generic attempt.
 
 ## Layers
 

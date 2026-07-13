@@ -34,6 +34,13 @@
     },
     "activation": {
       "type": ["object", "null"],
+      "required": [
+        "parser_version",
+        "semantic_schema_version",
+        "layout_profile_version",
+        "calibration_report_sha256",
+        "activated_at"
+      ],
       "properties": {
         "parser_version": {
           "type": "string",
@@ -46,6 +53,10 @@
         "layout_profile_version": {
           "type": "string",
           "minLength": 1
+        },
+        "calibration_report_sha256": {
+          "type": "string",
+          "minLength": 64
         },
         "activated_at": {
           "type": "string",

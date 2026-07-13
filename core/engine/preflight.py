@@ -16,7 +16,7 @@ from core.state.builder import build_snapshot_state_with_audit
 from core.state.memory import load_memory_context
 from core.state.memory_writer import DEFAULT_MEMORY_OUTBOX, resolve_memory_writeback_mode
 from core.state.snapshot import load_snapshot
-from core.story_project.mapper import build_story_project_runtime_context
+from core.story_project.runtime import build_generation_story_project_context
 from core.story_project.identity import load_project_identity
 from core.story_project.oh_story_detection import (
     detect_oh_story_compatibility,
@@ -61,6 +61,7 @@ SCHEMA_ASSETS = (
     Path("schemas/previous_chapter_context.schema.json"),
     Path("schemas/provider_smoke_report.schema.json"),
     Path("schemas/provider_retry_report.schema.json"),
+    Path("schemas/real_storyproject_e2e_report.schema.json"),
     Path("schemas/repair_plan.schema.json"),
     Path("schemas/recovery_context.schema.json"),
     Path("schemas/review_gate_result.schema.json"),
@@ -75,6 +76,7 @@ SCHEMA_ASSETS = (
     Path("schemas/story_project_read_set.schema.json"),
     Path("schemas/story_project_semantic_fixture_manifest.schema.json"),
     Path("schemas/story_project_shadow_report.schema.json"),
+    Path("schemas/story_state_calibration_report.schema.json"),
     Path("schemas/story_project_semantic_state.schema.json"),
     Path("schemas/state_update_audit.schema.json"),
     Path("schemas/trace_event.schema.json"),
@@ -134,6 +136,7 @@ def run_preflight(
     memory_v2_output_dir: str | Path = Path("data/memory_v2/default"),
     story_project: str | Path | None = None,
     chapter: str | int | None = "auto",
+    allow_story_state_shadow_downgrade: bool = False,
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     planned_workflow: list[str] | None = None
@@ -183,6 +186,8 @@ def run_preflight(
             story_project_validation=story_project_validation,
             snapshot=snapshot,
             memory=memory,
+            identity=story_project_identity,
+            allow_story_state_shadow_downgrade=allow_story_state_shadow_downgrade,
         )
     if check_memory_v2:
         _check_memory_v2_compile(
@@ -703,6 +708,8 @@ def _check_story_project_runtime_context(
     story_project_validation,
     snapshot: dict[str, Any],
     memory: dict[str, Any],
+    identity: Any,
+    allow_story_state_shadow_downgrade: bool,
 ) -> None:
     root = story_project_validation.root_resolution.root if story_project_validation.root_resolution else None
     chapter_resolution = story_project_validation.chapter_resolution
@@ -717,11 +724,13 @@ def _check_story_project_runtime_context(
         )
         return
     try:
-        context = build_story_project_runtime_context(
-            root,
-            chapter_index,
+        context = build_generation_story_project_context(
+            story_project=root,
+            chapter=chapter_index,
             snapshot=snapshot,
             memory_context=memory,
+            project_identity=identity,
+            allow_story_state_shadow_downgrade=allow_story_state_shadow_downgrade,
         )
     except Exception as exc:  # noqa: BLE001 - preflight reports all startup failures.
         checks.append({"name": "story_project_runtime_context", "ok": False, "error": str(exc)})

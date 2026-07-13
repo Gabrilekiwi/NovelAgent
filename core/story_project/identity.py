@@ -65,7 +65,7 @@ def validate_project_identity(value: Any) -> ProjectIdentity:
         validated = validate_schema(value, "project_identity.schema.json")
     except SchemaValidationError as exc:
         raise ProjectIdentityError(str(exc)) from exc
-    return ProjectIdentity(
+    identity = ProjectIdentity(
         schema_version=str(validated["schema_version"]),
         book_id=str(validated["book_id"]),
         created_at=str(validated["created_at"]),
@@ -74,6 +74,15 @@ def validate_project_identity(value: Any) -> ProjectIdentity:
         activation=dict(validated["activation"]) if validated["activation"] is not None else None,
         ephemeral=bool(validated["ephemeral"]),
     )
+    if identity.story_state_mode == "strict" and identity.activation is None:
+        raise ProjectIdentityError("strict StoryProject identity requires activation metadata")
+    if identity.activation is not None:
+        report_hash = identity.activation.get("calibration_report_sha256")
+        if not isinstance(report_hash, str) or len(report_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in report_hash
+        ):
+            raise ProjectIdentityError("activation calibration_report_sha256 must be lowercase SHA-256")
+    return identity
 
 
 def load_project_identity(story_project_root: str | Path) -> ProjectIdentity | None:

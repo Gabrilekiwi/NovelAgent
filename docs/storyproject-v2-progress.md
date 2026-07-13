@@ -1,5 +1,30 @@
 # StoryProject v2 Progress
 
+## Phase 6: Reliable semantic production
+
+Status: Commit 13 implemented; final structural split pending.
+
+Completed:
+
+- Stable per-book identity and project-local runtime paths.
+- Read-only shadow semantic parsing with provenance, conflicts, unsupported excerpts, and format calibration fixtures.
+- Single managed projection blocks with three-way merge, tombstones, and byte-preserving manual regions.
+- Previous/attempt/recovery context separation and model-aware prompt budgets.
+- Read-set-bound local persistence, unified quality decisions, Memory V2.1 replay, publication receipts, durable delivery jobs, and unified provider retry profiles.
+- Tamper-evident calibration reports and explicit strict activation pinned to parser/schema/layout versions.
+- Strict authority injection before Director/Validator, fail-closed drift, explicit non-authoritative downgrade, transactional strict writeback, and project-local Memory V2 chapter commits.
+- Offline two-chapter strict E2E plus a bounded, redacted, opt-in real OpenAI two-chapter E2E.
+
+Not claimed:
+
+- The repository's synthetic fixtures do not satisfy the real target-book calibration gate.
+- No real-provider two-chapter success is claimed without a supplied redacted real sample and report artifact.
+- Claude and Notion remain separate provider-smoke gates.
+
+Remaining:
+
+- Behavior-preserving final module extraction and compatibility re-exports from Commit 14.
+
 Date: 2026-07-09
 
 ## Phase 0: StoryProject compatible baseline

@@ -13,6 +13,7 @@ from core.story_project.writer import (
     StoryProjectWritebackConfig,
     run_story_project_writeback,
 )
+from core.story_project.managed_block import parse_managed_block
 
 
 class StoryProjectWriterTest(unittest.TestCase):
@@ -157,6 +158,72 @@ class StoryProjectWriterTest(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(1, second.count("run_id=chapter_3_test chapter=003 target=timeline"))
+
+    def test_strict_writeback_uses_one_managed_projection_and_honors_manual_tombstone(self) -> None:
+        root = self._story_project_root("strict_managed")
+        context_path = root / TRACKING_DIR_NAME / TRACKING_TARGETS["context"]
+        manual = (
+            "# 人工上下文\n\n"
+            "保留这段人工文本。\n"
+            "<!-- NovelAgent:tombstone field=story_state.open_threads -->\n"
+        )
+        context_path.write_text(manual, encoding="utf-8")
+        context = self._context(root)
+        context.update(
+            {
+                "story_state_mode": "strict",
+                "project_identity": {
+                    "schema_version": "1.0",
+                    "book_id": "strict-book",
+                    "created_at": "2026-07-13T00:00:00+00:00",
+                    "root_hint": str(root),
+                    "story_state_mode": "strict",
+                    "activation": {
+                        "parser_version": "shadow-1.0",
+                        "semantic_schema_version": "1.0",
+                        "layout_profile_version": "canonical-zh-1",
+                        "calibration_report_sha256": "a" * 64,
+                        "activated_at": "2026-07-13T00:00:00+00:00",
+                    },
+                    "ephemeral": False,
+                },
+                "semantic_state": {
+                    "parser_version": "shadow-1.0",
+                    "source_digest": "b" * 64,
+                },
+            }
+        )
+        analysis = {
+            "summary": "推进",
+            "events": [{"text": "进入控制室"}],
+            "world_changes": [],
+            "character_changes": [],
+            "story_state": {
+                "last_scene_location": "控制室",
+                "open_threads": ["不得复活"],
+            },
+        }
+
+        _plan, result = run_story_project_writeback(
+            context=context,
+            run=self._run(),
+            chapter_text="# Chapter\n\nChapter body with the countdown starts.",
+            validation={"ok": True},
+            analysis=analysis,
+            config=StoryProjectWritebackConfig(mode="apply"),
+        )
+
+        self.assertTrue(result.applied)
+        after = context_path.read_text(encoding="utf-8")
+        self.assertTrue(after.startswith(manual))
+        self.assertEqual(1, after.count("NovelAgent:semantic-state version=1"))
+        projection = parse_managed_block(after).projection
+        self.assertEqual("控制室", projection["values"]["story_state.last_scene_location"])
+        self.assertNotIn("story_state.open_threads", projection["values"])
+        self.assertIn(
+            "story_state.open_threads",
+            {item["field_path"] for item in projection["tombstones"]},
+        )
 
     def test_partial_apply_records_failed_target(self) -> None:
         root = self._story_project_root("partial")

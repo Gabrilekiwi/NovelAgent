@@ -145,6 +145,20 @@
         "source_resolution": {
           "type": ["object", "null"]
         },
+        "semantic_state": {
+          "type": ["object", "null"]
+        },
+        "memory_v2": {
+          "type": "object",
+          "properties": {
+            "status": {"type": ["string", "null"]},
+            "canonical_path": {"type": ["string", "null"]},
+            "event_store": {"type": ["string", "null"]},
+            "revision": {"type": ["integer", "null"], "minimum": 1},
+            "projection_hash": {"type": ["string", "null"]}
+          },
+          "additionalProperties": false
+        },
         "blueprint_coverage": {
           "type": ["object", "null"]
         },
@@ -400,6 +414,38 @@
         },
         "writeback": {
           "type": "object"
+        },
+        "v2": {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "status",
+            "memory_root",
+            "previous_revision",
+            "revision",
+            "projection_hash",
+            "patch_id",
+            "patch_content_hash",
+            "batch_id",
+            "batch_hash",
+            "event_count",
+            "checkpoint_id"
+          ],
+          "properties": {
+            "schema_version": {"type": "string", "enum": ["2.1"]},
+            "status": {"type": "string", "enum": ["prepared", "no_op"]},
+            "memory_root": {"type": "string", "minLength": 1},
+            "previous_revision": {"type": "integer", "minimum": 1},
+            "revision": {"type": "integer", "minimum": 1},
+            "projection_hash": {"type": "string", "minLength": 64},
+            "patch_id": {"type": "string", "minLength": 1},
+            "patch_content_hash": {"type": "string", "minLength": 64},
+            "batch_id": {"type": ["string", "null"]},
+            "batch_hash": {"type": ["string", "null"]},
+            "event_count": {"type": "integer", "minimum": 0},
+            "checkpoint_id": {"type": ["string", "null"]}
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

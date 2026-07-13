@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoryStateCalibrationReport",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "book_id",
+    "generated_at",
+    "parser_version",
+    "semantic_schema_version",
+    "target_layout_profile_version",
+    "evidence",
+    "strict_eligible",
+    "strict_blockers",
+    "report_sha256"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "minLength": 1},
+    "parser_version": {"type": "string", "minLength": 1},
+    "semantic_schema_version": {"type": "string", "minLength": 1},
+    "target_layout_profile_version": {"type": "string", "minLength": 1},
+    "evidence": {
+      "type": "object",
+      "required": [
+        "target_sample_count",
+        "format_variant_count",
+        "managed_round_trip_rate",
+        "required_field_exact_match_rate",
+        "authoritative_precision",
+        "supported_optional_recall",
+        "unsupported_structure_count",
+        "unsupported_structure_captured_count",
+        "consecutive_shadow_chapters",
+        "blocking_conflict_count",
+        "missing_provenance_fields"
+      ],
+      "properties": {
+        "target_sample_count": {"type": "integer", "minimum": 0},
+        "format_variant_count": {"type": "integer", "minimum": 0},
+        "managed_round_trip_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "required_field_exact_match_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "authoritative_precision": {"type": "number", "minimum": 0, "maximum": 1},
+        "supported_optional_recall": {"type": "number", "minimum": 0, "maximum": 1},
+        "unsupported_structure_count": {"type": "integer", "minimum": 0},
+        "unsupported_structure_captured_count": {"type": "integer", "minimum": 0},
+        "consecutive_shadow_chapters": {"type": "integer", "minimum": 0},
+        "blocking_conflict_count": {"type": "integer", "minimum": 0},
+        "missing_provenance_fields": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "strict_eligible": {"type": "boolean"},
+    "strict_blockers": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "report_sha256": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

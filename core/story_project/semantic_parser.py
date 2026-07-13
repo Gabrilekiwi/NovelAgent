@@ -244,6 +244,7 @@ class _SemanticStateBuilder:
             if field is None or not value:
                 continue
             character_id = _stable_id("character", current_name)
+            is_new_character = character_id not in self.characters
             character = self.characters.setdefault(character_id, {"name": current_name})
             existing = character.get(field)
             if existing is not None and existing != value:
@@ -256,8 +257,25 @@ class _SemanticStateBuilder:
                 character.pop(field, None)
                 continue
             character[field] = value
+            if is_new_character:
+                self._provenance(
+                    f"characters.{character_id}",
+                    source,
+                    starts[index],
+                    starts[index] + len(line),
+                    "tracking_manual",
+                    "authoritative",
+                )
             if field == "location":
                 self.spatial_state["character_positions"][current_name] = value
+                self._provenance(
+                    f"spatial_state.character_positions.{current_name}",
+                    source,
+                    starts[index],
+                    starts[index] + len(line),
+                    "tracking_manual",
+                    "authoritative",
+                )
             self._provenance(
                 f"characters.{character_id}.{field}",
                 source,

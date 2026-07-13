@@ -56,6 +56,7 @@ from core.story_project.migration import (
     migrate_story_project_runtime,
 )
 from core.story_project.runtime import build_generation_story_project_context_loader
+from core.story_project.activation import StoryStateActivationError, activate_story_state
 from core.story_project.semantic_parser import (
     build_story_project_shadow_report,
     parse_story_project_semantic_state,
@@ -64,7 +65,7 @@ from core.story_project.validator import validate_story_project
 from core.story_project.writer import StoryProjectWritebackConfig
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="NovelAgent v1.0 agent loop")
     parser.add_argument(
         "--dry-run",
@@ -120,6 +121,22 @@ def parse_args() -> argparse.Namespace:
         "--story-state-shadow-report",
         action="store_true",
         help="Parse StoryProject semantic state, print a read-only shadow diff, and exit without generation.",
+    )
+    parser.add_argument(
+        "--activate-story-state",
+        action="store_true",
+        help="Explicitly activate calibrated strict StoryProject semantic state for this book.",
+    )
+    parser.add_argument(
+        "--story-state-calibration-report",
+        default=None,
+        metavar="PATH",
+        help="Tamper-evident calibration report required by --activate-story-state.",
+    )
+    parser.add_argument(
+        "--allow-story-state-shadow-downgrade",
+        action="store_true",
+        help="On a pinned strict profile mismatch, explicitly run in non-authoritative shadow mode; next-step readiness remains false.",
     )
     parser.add_argument(
         "--inspect-story-project-runtime-from",
@@ -428,6 +445,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable multi-step progress lines printed to stderr.",
     )
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    parser = build_parser()
     argv = list(sys.argv[1:])
     args = parser.parse_args(argv)
     args._runtime_path_explicit = {
@@ -633,11 +655,25 @@ def main() -> None:
         _validate_story_project_multistep_args(args, story_project_writeback)
         _validate_story_project_compat_report_args(args)
         _validate_story_project_shadow_report_args(args)
+        _validate_story_state_activation_args(args)
         _validate_story_project_runtime_migration_args(args)
         _validate_story_project_read_command_identity(args)
     except ValueError as exc:
         print(f"Configuration failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+
+    if args.activate_story_state:
+        try:
+            identity = activate_story_state(
+                args._resolved_story_project_root,
+                args.story_state_calibration_report,
+            )
+        except (StoryStateActivationError, OSError, ValueError) as exc:
+            print(f"StoryProject strict activation failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        payload = {"ok": True, "project_identity": identity.to_dict()}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        raise SystemExit(0)
 
     if args.init_runtime:
         if story_runtime_paths is not None:
@@ -774,6 +810,7 @@ def main() -> None:
             memory_v2_output_dir=args.memory_v2_out,
             story_project=args.story_project,
             chapter=args.chapter,
+            allow_story_state_shadow_downgrade=args.allow_story_state_shadow_downgrade,
         )
         if args.check_json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -819,6 +856,7 @@ def main() -> None:
             chapter=args.chapter,
             overwrite=args.story_project_overwrite,
             project_identity=project_identity,
+            allow_story_state_shadow_downgrade=args.allow_story_state_shadow_downgrade,
         )
         story_project_oh_story_report = _detect_story_project_context_compatibility(story_project_context_loader)
 
@@ -1609,6 +1647,24 @@ def _validate_story_project_shadow_report_args(args: argparse.Namespace) -> None
         or getattr(args, "migrate_story_project_runtime_from", None)
     ):
         raise ValueError("--story-state-shadow-report cannot be combined with StoryProject runtime migration")
+
+
+def _validate_story_state_activation_args(args: argparse.Namespace) -> None:
+    enabled = bool(getattr(args, "activate_story_state", False))
+    report = getattr(args, "story_state_calibration_report", None)
+    if enabled and getattr(args, "story_project", None) is None:
+        raise ValueError("--activate-story-state requires --story-project")
+    if enabled and not report:
+        raise ValueError("--activate-story-state requires --story-state-calibration-report")
+    if report and not enabled:
+        raise ValueError("--story-state-calibration-report requires --activate-story-state")
+    if enabled and (
+        bool(getattr(args, "story_state_shadow_report", False))
+        or bool(getattr(args, "story_project_compat_report", False))
+        or getattr(args, "inspect_story_project_runtime_from", None)
+        or getattr(args, "migrate_story_project_runtime_from", None)
+    ):
+        raise ValueError("--activate-story-state cannot be combined with report or migration commands")
 
 
 def _build_story_state_shadow_report(args: argparse.Namespace) -> dict:

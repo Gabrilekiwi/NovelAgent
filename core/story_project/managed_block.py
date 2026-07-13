@@ -16,7 +16,7 @@ _START_RE = re.compile(r"(?m)^(?:\ufeff)?[ \t]*<!-- NovelAgent:semantic-state ve
 _END_RE = re.compile(r"(?m)^[ \t]*<!-- /NovelAgent:semantic-state -->[ \t]*(?:\r?\n|$)")
 _JSON_FENCE_RE = re.compile(r"```json[ \t]*\r?\n(.*?)\r?\n```", re.DOTALL)
 _TOMBSTONE_RE = re.compile(
-    r"^[ \t]*<!-- NovelAgent:tombstone field=([^\s]+)(?: superseded_by=([^\s]+))? -->[ \t]*$",
+    r"^[ \t]*<!-- NovelAgent:tombstone field=([^\s]+)(?: superseded_by=([^\s]+))? -->[ \t]*\r?$",
     re.MULTILINE,
 )
 _MISSING = object()

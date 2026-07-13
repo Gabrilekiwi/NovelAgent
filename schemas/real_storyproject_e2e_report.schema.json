@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RealStoryProjectE2EReport",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "redacted",
+    "ok",
+    "generated_at",
+    "provider",
+    "limits",
+    "calibration_report_sha256",
+    "chapters",
+    "evidence"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "kind": {"type": "string", "enum": ["real_storyproject_e2e"]},
+    "redacted": {"type": "boolean", "enum": [true]},
+    "ok": {"type": "boolean", "enum": [true]},
+    "generated_at": {"type": "string", "minLength": 1},
+    "provider": {
+      "type": "object",
+      "required": ["name", "model", "attempt_count"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "enum": ["openai"]},
+        "model": {"type": "string", "minLength": 1},
+        "attempt_count": {"type": "integer", "minimum": 1, "maximum": 8}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": ["steps", "scene_limit", "max_output_tokens", "request_timeout_seconds", "provider_max_attempts"],
+      "additionalProperties": false,
+      "properties": {
+        "steps": {"type": "integer", "enum": [2]},
+        "scene_limit": {"type": "integer", "minimum": 1, "maximum": 2},
+        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 2000},
+        "request_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 90},
+        "provider_max_attempts": {"type": "integer", "minimum": 1, "maximum": 2}
+      }
+    },
+    "calibration_report_sha256": {"type": "string", "minLength": 64},
+    "chapters": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["chapter_index", "status", "committed", "run_id_sha256", "memory_revision"],
+        "additionalProperties": false,
+        "properties": {
+          "chapter_index": {"type": "integer", "minimum": 1},
+          "status": {"type": "string", "enum": ["committed"]},
+          "committed": {"type": "boolean", "enum": [true]},
+          "run_id_sha256": {"type": "string", "minLength": 64},
+          "memory_revision": {"type": "integer", "minimum": 2}
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "strict_authority_both_chapters",
+        "second_read_first_prose",
+        "second_read_managed_projection",
+        "memory_hash_chain_verified",
+        "committed_chapter_count"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "strict_authority_both_chapters": {"type": "boolean", "enum": [true]},
+        "second_read_first_prose": {"type": "boolean", "enum": [true]},
+        "second_read_managed_projection": {"type": "boolean", "enum": [true]},
+        "memory_hash_chain_verified": {"type": "boolean", "enum": [true]},
+        "committed_chapter_count": {"type": "integer", "enum": [2]}
+      }
+    }
+  }
+}

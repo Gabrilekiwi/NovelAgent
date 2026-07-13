@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 import unittest
 import uuid
@@ -14,7 +15,10 @@ from unittest.mock import patch
 import main as cli
 from core.engine.run_record import build_run_record
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
-from core.story_project.identity import load_project_identity, project_identity_path
+from core.story_project.activation import build_story_state_calibration_report
+from core.story_project.identity import ensure_project_identity, load_project_identity, project_identity_path
+from core.story_project.semantic_contracts import STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION
+from core.story_project.semantic_parser import SEMANTIC_PARSER_VERSION
 
 
 class CliTest(unittest.TestCase):
@@ -92,6 +96,76 @@ class CliTest(unittest.TestCase):
 
         self.assertEqual("auto", args.story_project)
         self.assertEqual("21", args.chapter)
+
+    def test_story_state_cli_help_matches_snapshot(self) -> None:
+        wanted = {
+            "--story-state-shadow-report",
+            "--activate-story-state",
+            "--story-state-calibration-report",
+            "--allow-story-state-shadow-downgrade",
+        }
+        lines: list[str] = []
+        for action in cli.build_parser()._actions:
+            option = next((item for item in action.option_strings if item in wanted), None)
+            if option is None:
+                continue
+            suffix = f" {action.metavar}" if action.metavar else ""
+            lines.extend((f"{option}{suffix}", str(action.help)))
+
+        expected = Path("tests/fixtures/cli_help_story_state.snapshot.txt").read_text(encoding="utf-8").strip()
+        self.assertEqual(expected, "\n".join(lines))
+
+    def test_activate_story_state_command_pins_qualified_profile(self) -> None:
+        case_dir = self._case_dir("activate_story_state")
+        source = Path("tests/fixtures/story_project_semantics/cases/synthetic_standard/book")
+        root = case_dir / "book"
+        shutil.copytree(source, root)
+        identity = ensure_project_identity(root)
+        report = build_story_state_calibration_report(
+            book_id=identity.book_id,
+            parser_version=SEMANTIC_PARSER_VERSION,
+            semantic_schema_version=STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION,
+            target_layout_profile_version="canonical-zh-1",
+            evidence={
+                "target_sample_count": 1,
+                "format_variant_count": 2,
+                "managed_round_trip_rate": 1.0,
+                "required_field_exact_match_rate": 1.0,
+                "authoritative_precision": 1.0,
+                "supported_optional_recall": 0.95,
+                "unsupported_structure_count": 1,
+                "unsupported_structure_captured_count": 1,
+                "consecutive_shadow_chapters": 10,
+                "blocking_conflict_count": 0,
+                "missing_provenance_fields": [],
+            },
+            generated_at="2026-07-13T00:00:00+00:00",
+        )
+        report_path = case_dir / "calibration.json"
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        output = io.StringIO()
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                str(root),
+                "--activate-story-state",
+                "--story-state-calibration-report",
+                str(report_path),
+            ],
+        ), contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            cli.main()
+
+        self.assertEqual(0, raised.exception.code)
+        payload = json.loads(output.getvalue())
+        self.assertTrue(payload["ok"])
+        activated = load_project_identity(root)
+        self.assertIsNotNone(activated)
+        self.assertEqual("strict", activated.story_state_mode)
+        self.assertEqual(SEMANTIC_PARSER_VERSION, activated.activation["parser_version"])
 
     def test_story_project_uses_project_internal_runtime_defaults_without_creating_files(self) -> None:
         case_dir = self._case_dir("story_runtime_defaults")

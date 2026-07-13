@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import inspect
@@ -23,6 +24,7 @@ from core.review.index import build_review_index_entry, review_index_path, updat
 from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH, RuntimePaths
+from core.memory_v2 import ensure_memory_v2_storage_layout, prepare_chapter_memory_commit
 from core.schema import validate_schema
 from core.engine.artifacts import (
     chapter_artifact_metadata,
@@ -229,10 +231,11 @@ class AgentExecutor:
             self._active_story_project_context,
             persist=persist,
         )
+        self._require_strict_story_project_writeback(persist=persist)
         base_snapshot, memory_context = self._apply_story_project_context(base_snapshot, memory_context)
         snapshot_pack = build_snapshot_input_pack(base_snapshot, memory_context)
         state_result = build_snapshot_state_with_audit(base_snapshot, memory_context)
-        snapshot = state_result["snapshot"]
+        snapshot = self._apply_story_project_authority(state_result["snapshot"])
         snapshot_audit = state_result["audit"]
         memory_context["snapshot_builder_audit"] = snapshot_audit
         decision_started_at = utc_now()
@@ -1060,6 +1063,43 @@ class AgentExecutor:
             }
         return merged_snapshot, merged_memory
 
+    def _apply_story_project_authority(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        context = self._story_project_context_dict()
+        if not isinstance(context, dict) or context.get("story_state_mode") != "strict":
+            return snapshot
+        merged = dict(snapshot)
+        memory_v2 = context.get("memory_v2")
+        projection = memory_v2.get("projection") if isinstance(memory_v2, dict) else None
+        if isinstance(projection, dict):
+            from core.memory_v2 import canonical_memory_to_snapshot
+
+            memory_snapshot = canonical_memory_to_snapshot(projection)
+            merged = _deep_merge_dict(memory_snapshot, merged)
+        semantic = context.get("semantic_state")
+        if not isinstance(semantic, dict):
+            raise StoryProjectContextError(
+                "strict_semantic_state_missing",
+                "strict StoryProject context is missing authoritative semantic state",
+            )
+        for field in (
+            "story_state",
+            "world_state",
+            "spatial_state",
+            "characters",
+            "timeline",
+            "constraints",
+            "foreshadowing",
+        ):
+            merged[field] = copy.deepcopy(semantic.get(field))
+        merged["semantic_authority"] = {
+            "source": "story_project",
+            "parser_version": semantic.get("parser_version"),
+            "layout_profile_version": semantic.get("layout_profile_version"),
+            "source_digest": semantic.get("source_digest"),
+            "provenance": copy.deepcopy(semantic.get("provenance") or []),
+        }
+        return normalize_snapshot(merged)
+
     def _normalize_story_project_identity(self, context: Any, *, persist: bool) -> Any:
         if context is None:
             return None
@@ -1144,6 +1184,19 @@ class AgentExecutor:
             return None
         blueprint = context.get("chapter_blueprint")
         return blueprint if isinstance(blueprint, dict) else None
+
+    def _require_strict_story_project_writeback(self, *, persist: bool) -> None:
+        context = self._story_project_context_dict()
+        if (
+            persist
+            and isinstance(context, dict)
+            and context.get("story_state_mode") == "strict"
+            and self.story_project_writeback.mode != "apply"
+        ):
+            raise StoryProjectContextError(
+                "strict_story_state_requires_apply_writeback",
+                "persistent strict StoryProject execution requires --story-project-writeback",
+            )
 
     def _model_trace_metadata(self, action: str, state: dict[str, Any]) -> dict[str, Any] | None:
         config = get_config()
@@ -1613,7 +1666,7 @@ class AgentExecutor:
         writeback = existing.get("writeback") if isinstance(existing.get("writeback"), dict) else default_story_project_writeback()
         run["story_project"] = {
             "enabled": True,
-            "mode": "compatible",
+            "mode": context.get("story_state_mode") or "compatible",
             "root": context.get("story_project_root"),
             "book_id": (context.get("project_identity") or {}).get("book_id"),
             "project_identity": context.get("project_identity"),
@@ -1622,6 +1675,11 @@ class AgentExecutor:
             "chapter_blueprint": context.get("chapter_blueprint"),
             "source_paths": context.get("source_paths"),
             "source_resolution": context.get("source_resolution"),
+            "semantic_state": context.get("semantic_audit"),
+            "memory_v2": {
+                key: (context.get("memory_v2") or {}).get(key)
+                for key in ("status", "canonical_path", "event_store", "revision", "projection_hash")
+            },
             "blueprint_coverage": pipeline_summary.get("blueprint_coverage"),
             "writeback": writeback,
         }
@@ -1743,6 +1801,24 @@ class AgentExecutor:
             output_dir=self.chapter_dir,
         )
         memory_updates = build_memory_updates(result["run"], analysis)
+        memory_v2_commit = self._prepare_strict_memory_v2_commit(
+            run=result["run"],
+            analysis=analysis,
+            runtime_snapshot=runtime_snapshot,
+        )
+        if memory_v2_commit is not None:
+            result["run"].setdefault("memory", {})["v2"] = memory_v2_commit["audit"]
+            for target in memory_v2_commit["targets"]:
+                persistence_targets.append(
+                    PersistenceTarget(
+                        str(target["kind"]),
+                        target["path"],
+                        str(target["content"]),
+                        metadata={"memory_v2": True},
+                        expected_before_exists=bool(target["expected_before_exists"]),
+                        expected_before_sha256=target.get("expected_before_sha256"),
+                    )
+                )
         writeback_gate = _memory_writeback_gate(
             committed=True,
             validation=validation,
@@ -1894,6 +1970,45 @@ class AgentExecutor:
             return
         self._save_run_record(result)
         transaction.complete_publication()
+
+    def _prepare_strict_memory_v2_commit(
+        self,
+        *,
+        run: dict[str, Any],
+        analysis: dict[str, Any],
+        runtime_snapshot: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        context = self._story_project_context_dict()
+        if not isinstance(context, dict) or context.get("story_state_mode") != "strict":
+            return None
+        identity = context.get("project_identity")
+        semantic = context.get("semantic_state")
+        read_set = context.get("read_set")
+        if not isinstance(identity, dict) or not isinstance(semantic, dict) or not isinstance(read_set, dict):
+            raise PersistenceError("strict Memory V2 commit requires identity, semantic state, and read set")
+        root = Path(str(context["story_project_root"]))
+        memory_root = RuntimePaths.for_story_project(root).memory_dir / "v2"
+        ensure_memory_v2_storage_layout(memory_root)
+        source_digest = str(semantic.get("source_digest") or "")
+        context_digest = str(read_set.get("context_digest") or "")
+        quality = run.get("quality_decision") if isinstance(run.get("quality_decision"), dict) else {}
+        blueprint = context.get("chapter_blueprint") if isinstance(context.get("chapter_blueprint"), dict) else {}
+        return prepare_chapter_memory_commit(
+            memory_root=memory_root,
+            book_id=str(identity.get("book_id") or ""),
+            run_id=str(run.get("id") or ""),
+            chapter_index=int(run.get("chapter_index") or 0),
+            analysis=analysis,
+            source_project_digest=source_digest,
+            context_digest=context_digest,
+            quality_state={
+                "accepted": bool(run.get("accepted")),
+                "policy": quality.get("policy"),
+                "decision_id": quality.get("decision_id"),
+            },
+            title=str(blueprint.get("title") or "Untitled"),
+            language=project_language(runtime_snapshot) or "zh-CN",
+        )
 
     def _anticipated_persistence(
         self,

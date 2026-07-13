@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -207,6 +208,10 @@ class StoryProjectRuntimeContext:
     warnings: tuple[str, ...] = ()
     missing_fields: tuple[str, ...] = ()
     chapter_resolution: ChapterResolution | None = None
+    story_state_mode: str = "compatible"
+    semantic_state: dict[str, Any] | None = None
+    semantic_audit: dict[str, Any] | None = None
+    memory_v2: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -229,4 +234,8 @@ class StoryProjectRuntimeContext:
             "warnings": list(self.warnings),
             "missing_fields": list(self.missing_fields),
             "chapter_resolution": self.chapter_resolution.to_dict() if self.chapter_resolution else None,
+            "story_state_mode": self.story_state_mode,
+            "semantic_state": copy.deepcopy(self.semantic_state) if self.semantic_state else None,
+            "semantic_audit": copy.deepcopy(self.semantic_audit) if self.semantic_audit else None,
+            "memory_v2": copy.deepcopy(self.memory_v2) if self.memory_v2 else None,
         }

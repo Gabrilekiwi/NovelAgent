@@ -1,0 +1,8 @@
+--story-state-shadow-report
+Parse StoryProject semantic state, print a read-only shadow diff, and exit without generation.
+--activate-story-state
+Explicitly activate calibrated strict StoryProject semantic state for this book.
+--story-state-calibration-report PATH
+Tamper-evident calibration report required by --activate-story-state.
+--allow-story-state-shadow-downgrade
+On a pinned strict profile mismatch, explicitly run in non-authoritative shadow mode; next-step readiness remains false.

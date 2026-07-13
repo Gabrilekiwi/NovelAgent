@@ -1,13 +1,13 @@
 # NovelAgent
 
-Version: 1.5
+Version: 1.5 compatibility baseline with opt-in reliable semantic production
 
-NovelAgent is fixed at the v1.5 baseline: a schema-checked agent loop for long-form fiction generation with memory ingestion, directed execution, validation, repair, language/profile safeguards, recoverable drafts, provider failure tolerance, output-quality guards, loop progress telemetry, easier Notion runtime modes, and auditable runtime artifacts.
+NovelAgent keeps the v1.5-compatible agent loop and adds an opt-in reliable semantic production path for StoryProject: calibrated semantic authority, field provenance, managed tracking projections, Memory V2.1 replay, receipt-backed persistence, durable delivery, and unified provider retry policy.
 
 Current v1.5 flow:
 
 ```text
-Notion / Memory
+Notion / Memory + StoryProject shadow/strict semantic state
   -> Snapshot Builder
   -> Director
   -> Execution Engine
@@ -18,6 +18,8 @@ Notion / Memory
   -> optional LLM Validator
   -> Scene Repair
   -> Snapshot / Run Artifacts
+  -> transactional StoryProject + Memory V2 persistence
+  -> durable delivery queue
 ```
 
 ## Quick Start
@@ -80,6 +82,8 @@ python main.py --story-project auto --chapter 2 --steps 2 --story-project-writeb
 
 StoryProject multi-step mode requires real writeback. Context, previous prose, settings, and tracking files are reloaded for every step, and the chapter cursor advances only after a complete commit.
 
+StoryProject remains in non-authoritative shadow mode unless a target-book calibration report passes every strict gate and is explicitly activated. See [Story State Calibration and Strict Activation](docs/story-state-activation.md). Persistent strict runs require `--story-project-writeback`; parser/schema/layout drift fails closed. The opt-in, billable two-chapter real OpenAI gate is documented in [Real StoryProject Two-Chapter E2E](docs/real-storyproject-e2e.md).
+
 Multi-step runs print progress lines to stderr by default, including step start/end, commit status, run id, and duration. Add `--no-progress` to suppress those lines, or use `--output-json` for a clean machine-readable loop result.
 
 Run tests:
@@ -136,6 +140,8 @@ python main.py --report-runs
 - `core/director`: decision layer with schema-checked decisions and run audit records.
 - `core/engine`: execution loop, schema-checked workflow plans and trace events, model-call stage diagnostics, run records, artifacts, preflight, and run reports.
 - `core/state`: snapshot, input pack plus metadata, memory, Notion export normalization, and schema-checked state builder audit.
+- `core/story_project`: project identity, semantic parser/authority, activation, managed projection merge, read sets, and StoryProject writeback.
+- `core/memory_v2`: immutable event batches, replay/checkpoint verification, canonical projection, and Snapshot adaptation.
 - `core/validator`: continuity, spatial, and logic validation with explicit requested/executed/skipped coverage metadata.
 - `modules`: feature modules for chapter planning/scene generation/merge, polish, schema-checked conflict analysis, and schema-checked repair planning.
 - `api`: provider adapters for OpenAI, Claude, and Notion.
@@ -157,6 +163,7 @@ Persistent runs write schema-checked run result envelopes:
 - `.tmp/runtime/runs/input_packs/*.md`: full input packs; run records include input pack metadata.
 - `.tmp/runtime/runs/chapter_pipeline/*`: chapter plan, scene drafts with merged-chapter spans, merged chapter, validation report, and repair delta artifacts for the pipeline stages.
 - `.tmp/runtime/chapters/*.md`: chapter body artifacts.
+- `<StoryProject>/.novelagent/runtime/memory/v2/`: project-local canonical Memory V2.1 projection, immutable event batches, and checkpoints.
 
 Run records, run reports, and loop session summaries expose compact validation, repair evidence, and per-step timing, so common Validator/Repair/provider stalls can be diagnosed without opening the full run-result envelope. Both directories are ignored by git by default.
 
@@ -171,3 +178,5 @@ The v1.5 project contract keeps the established directory layout and legacy wrap
 - [Architecture](docs/architecture.md)
 - [Runtime Commands](docs/runtime.md)
 - [Memory Input](docs/memory.md)
+- [Story State Calibration and Strict Activation](docs/story-state-activation.md)
+- [Real StoryProject Two-Chapter E2E](docs/real-storyproject-e2e.md)
