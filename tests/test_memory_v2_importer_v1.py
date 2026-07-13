@@ -10,7 +10,7 @@ class MemoryV2ImporterV1Test(unittest.TestCase):
     def test_imports_notion_memory_example_to_patch(self) -> None:
         patch = import_v1_memory_file_to_patch(Path("data/notion_memory.example.json"))
 
-        self.assertEqual("2.0", patch["schema_version"])
+        self.assertEqual("2.1", patch["schema_version"])
         self.assertEqual("patch_import_v1_default", patch["patch_id"])
         self.assertEqual("local_memory", patch["source"]["kind"])
         self.assertEqual(str(Path("data/notion_memory.example.json")), patch["source"]["path"])

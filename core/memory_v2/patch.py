@@ -6,7 +6,8 @@ from typing import Any
 from core.schema import SchemaValidationError, validate_schema
 
 
-MEMORY_PATCH_SCHEMA_VERSION = "2.0"
+MEMORY_PATCH_SCHEMA_VERSION = "2.1"
+LEGACY_MEMORY_PATCH_SCHEMA_VERSION = "2.0"
 MEMORY_PATCH_CREATED_BY = "NovelAgent Memory System V2"
 
 
@@ -52,6 +53,7 @@ def validate_memory_patch(patch: Any) -> dict[str, Any]:
 __all__ = [
     "MEMORY_PATCH_CREATED_BY",
     "MEMORY_PATCH_SCHEMA_VERSION",
+    "LEGACY_MEMORY_PATCH_SCHEMA_VERSION",
     "MemoryPatchValidationError",
     "create_memory_patch",
     "validate_memory_patch",

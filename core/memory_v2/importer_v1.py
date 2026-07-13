@@ -27,12 +27,13 @@ def load_v1_memory_file(path: str | Path) -> dict[str, Any] | list[Any]:
         return json.load(f)
 
 
-def import_v1_memory_file_to_patch(path: str | Path) -> dict[str, Any]:
+def import_v1_memory_file_to_patch(path: str | Path, *, patch_id: str | None = None) -> dict[str, Any]:
     memory_path = Path(path)
     return import_v1_memory_to_patch(
         load_v1_memory_file(memory_path),
         source_kind="local_memory",
         source_path=str(memory_path),
+        patch_id=patch_id,
     )
 
 

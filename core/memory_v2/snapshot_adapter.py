@@ -7,6 +7,7 @@ from typing import Any
 from core.memory_v2.storage import load_canonical_memory
 from core.memory_v2.validator import validate_canonical_memory
 from core.state.snapshot import normalize_snapshot, validate_snapshot
+from core.story_project.semantic_contracts import validate_story_project_semantic_state
 
 
 PROMOTED_CHARACTER_DATA_FIELDS = ("role", "identity", "status", "current_goal")
@@ -52,6 +53,43 @@ def canonical_memory_to_snapshot(canonical_memory: dict[str, Any]) -> dict[str, 
 
 def load_canonical_memory_snapshot(path: str | Path) -> dict[str, Any]:
     return canonical_memory_to_snapshot(load_canonical_memory(path))
+
+
+def rebuild_semantic_snapshot(
+    story_project_state: dict[str, Any],
+    memory_projection: dict[str, Any],
+) -> dict[str, Any]:
+    """Rebuild a snapshot with StoryProject facts as the authority layer.
+
+    Memory contributes non-conflicting projection fields. For the same field or
+    record id, parsed StoryProject text wins so replayed model memory can never
+    overwrite a human-maintained fact.
+    """
+
+    story = copy.deepcopy(validate_story_project_semantic_state(story_project_state))
+    memory = copy.deepcopy(validate_canonical_memory(memory_projection))
+    if str(story["book_id"]) != str(memory["book_id"]):
+        raise ValueError("StoryProjectSemanticState and Memory projection book_id must match")
+
+    snapshot = canonical_memory_to_snapshot(memory)
+    snapshot["book_id"] = str(story["book_id"])
+    snapshot["chapter_index"] = int(story["chapter_index"])
+    snapshot["world_state"] = _deep_authority_merge(snapshot.get("world_state", {}), story["world_state"])
+    snapshot["story_state"] = _deep_authority_merge(snapshot.get("story_state", {}), story["story_state"])
+    snapshot["spatial_state"] = _deep_authority_merge(snapshot.get("spatial_state", {}), story["spatial_state"])
+    snapshot["characters"] = _deep_authority_merge(snapshot.get("characters", {}), story["characters"])
+    snapshot["timeline"] = _merge_records_by_id(snapshot.get("timeline", []), story["timeline"])
+    snapshot["constraints"] = _merge_records_by_id(snapshot.get("constraints", []), story["constraints"])
+    snapshot["active_constraints"] = _active_constraints(snapshot["constraints"])
+    snapshot["foreshadowing"] = copy.deepcopy(story["foreshadowing"])
+    snapshot["story_project_semantics"] = {
+        "source_digest": story["source_digest"],
+        "parser_version": story["parser_version"],
+        "layout_profile_version": story["layout_profile_version"],
+        "provenance": copy.deepcopy(story["provenance"]),
+        "conflicts": copy.deepcopy(story["conflicts"]),
+    }
+    return validate_snapshot(normalize_snapshot(snapshot))
 
 
 def _chapter_index(memory: dict[str, Any]) -> int:
@@ -199,7 +237,48 @@ def _thread_title(thread: Any) -> str:
     return str(thread).strip()
 
 
+def _deep_authority_merge(base: Any, authority: Any) -> Any:
+    if not isinstance(base, dict) or not isinstance(authority, dict):
+        return copy.deepcopy(authority)
+    merged = copy.deepcopy(base)
+    for key, value in authority.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_authority_merge(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _merge_records_by_id(memory_records: Any, authority_records: Any) -> list[dict[str, Any]]:
+    memory_items = [copy.deepcopy(item) for item in memory_records if isinstance(item, dict)] if isinstance(memory_records, list) else []
+    authority_items = [copy.deepcopy(item) for item in authority_records if isinstance(item, dict)] if isinstance(authority_records, list) else []
+    authority_by_id = {
+        str(item["id"]): item
+        for item in authority_items
+        if isinstance(item.get("id"), str) and item["id"]
+    }
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in memory_items:
+        item_id = str(item.get("id") or "")
+        if item_id and item_id in authority_by_id:
+            merged.append(_deep_authority_merge(item, authority_by_id[item_id]))
+            seen.add(item_id)
+        else:
+            merged.append(item)
+            if item_id:
+                seen.add(item_id)
+    for item in authority_items:
+        item_id = str(item.get("id") or "")
+        if not item_id or item_id not in seen:
+            merged.append(item)
+            if item_id:
+                seen.add(item_id)
+    return merged
+
+
 __all__ = [
     "canonical_memory_to_snapshot",
     "load_canonical_memory_snapshot",
+    "rebuild_semantic_snapshot",
 ]

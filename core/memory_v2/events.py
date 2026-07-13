@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from core.memory_v2.canonical import canonical_json_hash
 from core.schema import SchemaValidationError, validate_schema
 
 
-MEMORY_EVENT_SCHEMA_VERSION = "2.0"
+MEMORY_EVENT_SCHEMA_VERSION = "2.1"
+LEGACY_MEMORY_EVENT_SCHEMA_VERSION = "2.0"
 MEMORY_EVENT_CREATED_BY = "NovelAgent Memory System V2"
 
 
@@ -26,9 +28,10 @@ def create_memory_event(
     old_value: Any = None,
     new_value: Any = None,
     metadata: dict[str, Any] | None = None,
+    schema_version: str = MEMORY_EVENT_SCHEMA_VERSION,
 ) -> dict[str, Any]:
     event: dict[str, Any] = {
-        "schema_version": MEMORY_EVENT_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "event_id": event_id,
         "revision": revision,
         "op": op,
@@ -45,6 +48,8 @@ def create_memory_event(
         event["field"] = field
     if metadata:
         event["metadata"].update(metadata)
+    if schema_version == MEMORY_EVENT_SCHEMA_VERSION:
+        event["event_hash"] = memory_event_hash(event)
     return validate_memory_event(event)
 
 
@@ -52,9 +57,30 @@ def validate_memory_event(event: Any) -> dict[str, Any]:
     if not isinstance(event, dict):
         raise MemoryEventValidationError("memory event must be a JSON object")
     try:
-        return validate_schema(event, "memory_event.schema.json")
+        validated = validate_schema(event, "memory_event.schema.json")
     except SchemaValidationError as exc:
         raise MemoryEventValidationError(str(exc)) from exc
+    schema_version = validated.get("schema_version")
+    if schema_version == MEMORY_EVENT_SCHEMA_VERSION:
+        event_hash = validated.get("event_hash")
+        if not _is_sha256(event_hash):
+            raise MemoryEventValidationError("Memory 2.1 event_hash must be a lowercase SHA-256 digest")
+        expected_hash = memory_event_hash(validated)
+        if event_hash != expected_hash:
+            raise MemoryEventValidationError("Memory 2.1 event_hash mismatch")
+    elif schema_version == LEGACY_MEMORY_EVENT_SCHEMA_VERSION and "event_hash" in validated:
+        raise MemoryEventValidationError("Memory 2.0 events must not contain event_hash")
+    return validated
+
+
+def memory_event_hash(event: dict[str, Any]) -> str:
+    return canonical_json_hash(event, exclude_fields=("event_hash",))
+
+
+def _is_sha256(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    return all(character in "0123456789abcdef" for character in value)
 
 
 def append_memory_event(path: str | Path, event: dict[str, Any]) -> dict[str, Any]:
@@ -98,10 +124,12 @@ def load_memory_events(path: str | Path) -> list[dict[str, Any]]:
 __all__ = [
     "MEMORY_EVENT_CREATED_BY",
     "MEMORY_EVENT_SCHEMA_VERSION",
+    "LEGACY_MEMORY_EVENT_SCHEMA_VERSION",
     "MemoryEventValidationError",
     "append_memory_event",
     "append_memory_events",
     "create_memory_event",
     "load_memory_events",
+    "memory_event_hash",
     "validate_memory_event",
 ]

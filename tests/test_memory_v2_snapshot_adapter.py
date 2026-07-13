@@ -12,6 +12,7 @@ from core.memory_v2 import (
     create_empty_canonical_memory,
     import_v1_memory_file_to_patch,
     load_canonical_memory_snapshot,
+    rebuild_semantic_snapshot,
 )
 from core.state.input_pack import build_input_pack
 from core.state.snapshot import validate_snapshot
@@ -171,6 +172,64 @@ class MemoryV2SnapshotAdapterTest(unittest.TestCase):
         self.assertTrue(snapshot["characters"])
         self.assertTrue(snapshot["locations"])
         self.assertIs(snapshot, validate_snapshot(snapshot))
+
+    def test_semantic_rebuild_keeps_story_project_facts_authoritative(self) -> None:
+        canonical = self._canonical()
+        canonical["world"]["infection_level"] = "memory-low"
+        canonical["characters"]["char_lin_xue"]["data"]["role"] = "memory-role"
+        story = {
+            "schema_version": "1.0",
+            "book_id": "book-1",
+            "chapter_index": 8,
+            "story_state": {"last_scene_location": "manual shelter"},
+            "world_state": {"infection_level": "manual-high"},
+            "spatial_state": {"character_positions": {"Lin Xue": "manual shelter"}},
+            "characters": {"char_lin_xue": {"name": "Lin Xue", "data": {"role": "manual-role"}}},
+            "timeline": [{"id": "event_001", "summary": "Manual timeline", "data": {}}],
+            "constraints": [{"id": "constraint_001", "text": "Manual constraint", "status": "active", "data": {}}],
+            "foreshadowing": [],
+            "provenance": [],
+            "conflicts": [],
+            "parse_warnings": [],
+            "unsupported_excerpts": [],
+            "parser_version": "test-parser",
+            "layout_profile_version": "test-layout",
+            "source_digest": "a" * 64,
+        }
+
+        snapshot = rebuild_semantic_snapshot(story, canonical)
+
+        self.assertEqual(8, snapshot["chapter_index"])
+        self.assertEqual("manual-high", snapshot["world_state"]["infection_level"])
+        self.assertEqual("manual shelter", snapshot["story_state"]["last_scene_location"])
+        self.assertEqual("manual-role", snapshot["characters"]["char_lin_xue"]["data"]["role"])
+        self.assertEqual("Manual timeline", snapshot["timeline"][0]["summary"])
+        self.assertEqual("Manual constraint", snapshot["constraints"][0]["text"])
+
+    def test_semantic_rebuild_rejects_cross_book_projection(self) -> None:
+        canonical = self._canonical()
+        story = {
+            "schema_version": "1.0",
+            "book_id": "other-book",
+            "chapter_index": 1,
+            "story_state": {},
+            "world_state": {},
+            "spatial_state": {},
+            "characters": {},
+            "timeline": [],
+            "constraints": [],
+            "foreshadowing": [],
+            "provenance": [],
+            "conflicts": [],
+            "parse_warnings": [],
+            "unsupported_excerpts": [],
+            "parser_version": "test-parser",
+            "layout_profile_version": "test-layout",
+            "source_digest": "b" * 64,
+        }
+
+        with self.assertRaisesRegex(ValueError, "book_id"):
+            rebuild_semantic_snapshot(story, canonical)
 
 
 if __name__ == "__main__":

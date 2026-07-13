@@ -8,9 +8,10 @@ import uuid
 from pathlib import Path
 
 from core.memory_v2 import (
+    MemoryCompileError,
     compile_memory_v2,
     load_canonical_memory,
-    load_memory_events,
+    load_memory_event_batches,
     validate_canonical_memory,
     validate_memory_event,
 )
@@ -38,7 +39,7 @@ class MemoryV2CompileScriptTest(unittest.TestCase):
 
         for name in (
             "canonical_memory.json",
-            "memory_events.jsonl",
+            "memory_events",
             "memory_patch.json",
             "snapshot_preview.json",
             "memory_compile_report.json",
@@ -72,7 +73,8 @@ class MemoryV2CompileScriptTest(unittest.TestCase):
         output_dir = self._case_dir("events")
         report = self._compile(output_dir)
 
-        events = load_memory_events(output_dir / "memory_events.jsonl")
+        batches = load_memory_event_batches(output_dir / "memory_events")
+        events = [event for batch in batches for event in batch["events"]]
 
         self.assertEqual(report["events"]["event_count"], len(events))
         self.assertTrue(all(validate_memory_event(event) is event for event in events))
@@ -98,7 +100,7 @@ class MemoryV2CompileScriptTest(unittest.TestCase):
         self.assertTrue(report["dry_run"])
         for name in (
             "canonical_memory.json",
-            "memory_events.jsonl",
+            "memory_events",
             "memory_patch.json",
             "snapshot_preview.json",
             "memory_compile_report.json",
@@ -109,22 +111,40 @@ class MemoryV2CompileScriptTest(unittest.TestCase):
         output_dir = self._case_dir("incremental")
 
         first = self._compile(output_dir)
-        first_event_count = len(load_memory_events(output_dir / "memory_events.jsonl"))
+        first_event_count = len(load_memory_event_batches(output_dir / "memory_events"))
         second = self._compile(output_dir)
-        second_event_count = len(load_memory_events(output_dir / "memory_events.jsonl"))
+        second_event_count = len(load_memory_event_batches(output_dir / "memory_events"))
 
+        self.assertEqual(first["canonical_memory"]["revision"], second["canonical_memory"]["revision"])
+        self.assertEqual("no_op", second["patch"]["apply_status"])
+        self.assertEqual(first_event_count, second_event_count)
+
+    def test_changed_source_creates_new_source_sync_transaction(self) -> None:
+        output_dir = self._case_dir("changed_source")
+        source_path = output_dir / "source.json"
+        payload = json.loads(Path("data/notion_memory.example.json").read_text(encoding="utf-8"))
+        source_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        first = compile_memory_v2(memory_path=source_path, output_dir=output_dir / "out")
+        if isinstance(payload, dict) and isinstance(payload.get("pages"), list):
+            payload["pages"].append(
+                {"properties": {"Type": "world_state", "Data": {"weather": "rain"}}}
+            )
+        else:
+            self.fail("memory example must contain a pages list")
+        source_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        second = compile_memory_v2(memory_path=source_path, output_dir=output_dir / "out")
+
+        self.assertNotEqual(first["patch"]["patch_id"], second["patch"]["patch_id"])
+        self.assertEqual("applied", second["patch"]["apply_status"])
         self.assertGreater(second["canonical_memory"]["revision"], first["canonical_memory"]["revision"])
-        self.assertGreater(second_event_count, first_event_count)
 
     def test_reset_starts_from_empty_canonical_memory(self) -> None:
         output_dir = self._case_dir("reset")
         self._compile(output_dir)
 
-        report = self._compile(output_dir, reset=True)
-
-        self.assertTrue(report["reset"])
-        self.assertEqual(1, report["canonical_memory"]["previous_revision"])
-        self.assertEqual(1 + report["patch"]["operation_count"], report["canonical_memory"]["revision"])
+        with self.assertRaisesRegex(MemoryCompileError, "immutable"):
+            self._compile(output_dir, reset=True)
 
     def test_cli_can_compile(self) -> None:
         output_dir = self._case_dir("cli")

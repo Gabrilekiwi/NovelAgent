@@ -35,9 +35,24 @@ class MemoryV2EventsTest(unittest.TestCase):
     def test_create_and_validate_memory_event(self) -> None:
         event = self._event()
 
-        self.assertEqual("2.0", event["schema_version"])
+        self.assertEqual("2.1", event["schema_version"])
         self.assertEqual("evt_000002", event["event_id"])
+        self.assertEqual(64, len(event["event_hash"]))
         self.assertIs(event, validate_memory_event(event))
+
+    def test_reads_legacy_20_event_without_hash(self) -> None:
+        event = self._event()
+        event["schema_version"] = "2.0"
+        event.pop("event_hash")
+
+        self.assertIs(event, validate_memory_event(event))
+
+    def test_rejects_tampered_21_event(self) -> None:
+        event = self._event()
+        event["new_value"]["name"] = "Changed"
+
+        with self.assertRaisesRegex(MemoryEventValidationError, "hash mismatch"):
+            validate_memory_event(event)
 
     def test_rejects_missing_required_fields(self) -> None:
         required_fields = ("event_id", "revision", "op", "source", "metadata")

@@ -10,7 +10,7 @@ class MemoryV2PatchTest(unittest.TestCase):
     def test_create_empty_memory_patch(self) -> None:
         patch = create_memory_patch(patch_id="patch_import_v1_default")
 
-        self.assertEqual("2.0", patch["schema_version"])
+        self.assertEqual("2.1", patch["schema_version"])
         self.assertEqual("patch_import_v1_default", patch["patch_id"])
         self.assertEqual("local_memory", patch["source"]["kind"])
         self.assertEqual([], patch["operations"])

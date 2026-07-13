@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryReplayReport21",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "book_id",
+    "revision",
+    "batch_count",
+    "event_count",
+    "committed_chapter_count",
+    "last_batch_id",
+    "last_batch_hash",
+    "checkpoint_id",
+    "projection_hash",
+    "patch_index",
+    "quality_state",
+    "projection"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["2.1"]},
+    "status": {"type": "string", "enum": ["ok"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "batch_count": {"type": "integer", "minimum": 0},
+    "event_count": {"type": "integer", "minimum": 0},
+    "committed_chapter_count": {"type": "integer", "minimum": 0},
+    "last_batch_id": {"type": ["string", "null"]},
+    "last_batch_hash": {"type": ["string", "null"]},
+    "checkpoint_id": {"type": ["string", "null"]},
+    "projection_hash": {"type": "string", "minLength": 64},
+    "patch_index": {"type": "object", "additionalProperties": true},
+    "quality_state": {"type": "object", "additionalProperties": true},
+    "projection": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": false
+}
