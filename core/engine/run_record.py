@@ -7,6 +7,7 @@ from typing import Any
 
 from core.engine.workflow import validate_workflow_plan
 from core.schema import validate_schema
+from core.quality_decision import build_quality_decision, quality_decision_accepted
 
 
 def utc_now() -> datetime:
@@ -129,12 +130,17 @@ def build_run_record(
     snapshot_audit: dict[str, Any] | None = None,
     state_update_audit: dict[str, Any] | None = None,
     chapter_pipeline: dict[str, Any] | None = None,
-    accepted: bool | None = None,
+    quality_decision: dict[str, Any] | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
     chapter_index = int(decision["chapter_index"])
     problems = validation.get("problems", [])
-    accepted_value = bool(committed) if accepted is None else bool(accepted)
+    final_quality_decision = quality_decision or build_quality_decision(
+        policy="minimal",
+        validation=validation,
+        chapter_index=chapter_index,
+    )
+    accepted_value = quality_decision_accepted(final_quality_decision)
     status_value = status or ("committed" if committed else "rejected")
     record = {
         "id": build_run_id(chapter_index, started_at),
@@ -142,6 +148,7 @@ def build_run_record(
         "finished_at": finished_at.isoformat(),
         "status": status_value,
         "accepted": accepted_value,
+        "quality_decision": final_quality_decision,
         "committed": committed,
         "chapter_index": chapter_index,
         "snapshot": {

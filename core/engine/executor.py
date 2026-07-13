@@ -11,6 +11,12 @@ from core.chapter_contexts import ChapterContextError, resolve_committed_previou
 from core.config import get_config
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
+from core.quality_decision import (
+    QualityPolicy,
+    SEVERITY_RANK,
+    build_quality_decision,
+    resolve_quality_policy,
+)
 from core.review.gate import evaluate_review_gate
 from core.review.index import build_review_index_entry, review_index_path, update_review_index
 from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop, validate_review_repair_config
@@ -77,7 +83,7 @@ from core.validator.spatial import validate_bridge_preconditions
 from modules.chapter_generator import PIPELINE_STAGE_NAMES, generate_chapter, run_chapter_pipeline
 from modules.claude_polish import polish_chapter
 from modules.conflict_engine import analyze_chapter
-from modules.scene_repair import repair_scene
+from modules.scene_repair import RepairContext, repair_scene
 from modules.scene_repair import build_repair_plan
 from workflows.dynamic_flow import build_dynamic_flow_plan
 
@@ -127,6 +133,7 @@ class AgentExecutor:
         story_project_context_loader: StoryProjectContextLoader | None = None,
         story_project_oh_story_report: dict[str, Any] | None = None,
         story_project_writeback: StoryProjectWritebackConfig | None = None,
+        quality_policy: str | QualityPolicy | None = None,
     ) -> None:
         self.snapshot_path = Path(snapshot_path)
         self.memory_path = Path(memory_path) if memory_path else None
@@ -158,6 +165,7 @@ class AgentExecutor:
         self._allow_legacy_snapshot_adoption = False
         self.story_project_oh_story_report = story_project_oh_story_report
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
+        self.quality_policy = resolve_quality_policy(quality_policy) if quality_policy is not None else None
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
         return self._invoke_once(persist=persist)
@@ -273,6 +281,7 @@ class AgentExecutor:
             raise
 
         story_project_context = self._story_project_context_dict()
+        quality_policy = self._effective_quality_policy(persist=persist)
         input_pack = build_input_pack(
             snapshot,
             decision,
@@ -357,12 +366,17 @@ class AgentExecutor:
                 self._save_run_record(failed_result)
             raise exc.original from exc
 
-        accepted = bool(validation["ok"])
+        quality_decision = build_quality_decision(
+            policy=quality_policy.with_overrides(include_review=False),
+            validation=validation,
+            chapter_index=int(decision["chapter_index"]),
+        )
+        accepted = bool(quality_decision["accepted"])
         planned_run_id = build_run_id(int(decision["chapter_index"]), started_at)
         review_pipeline = None
         review_gate = None
         review_repair = None
-        chapter, validation, accepted, chapter_pipeline, review_pipeline, review_gate, review_repair = (
+        chapter, validation, accepted, chapter_pipeline, review_pipeline, review_gate, review_repair, quality_decision = (
             self._run_runtime_review_before_commit(
                 chapter=chapter,
                 validation=validation,
@@ -380,6 +394,8 @@ class AgentExecutor:
                     chapter_artifact_root=self.chapter_dir,
                 ),
                 run_id=planned_run_id,
+                quality_policy=quality_policy,
+                base_quality_decision=quality_decision,
             )
         )
         committed = bool(accepted and persist)
@@ -496,7 +512,7 @@ class AgentExecutor:
             snapshot_audit=snapshot_audit,
             state_update_audit=state_update_audit,
             chapter_pipeline=chapter_pipeline,
-            accepted=accepted,
+            quality_decision=quality_decision,
             status="preview" if accepted and not persist else None,
         )
 
@@ -511,6 +527,7 @@ class AgentExecutor:
             "snapshot": next_snapshot,
             "repair_attempts": repair_attempts,
             "accepted": accepted,
+            "quality_decision": quality_decision,
             "committed": committed,
             "state_update": state_update_audit,
         }
@@ -728,6 +745,8 @@ class AgentExecutor:
         input_pack: str,
         repair_plan: dict[str, Any],
         recovery_context: dict[str, Any],
+        language: str = "en",
+        repair_context: RepairContext | None = None,
     ) -> str:
         if self.repairer:
             if _repairer_accepts_recovery_context(self.repairer):
@@ -742,6 +761,8 @@ class AgentExecutor:
             dry_run=self.dry_run,
             repair_plan=repair_plan,
             recovery_context=recovery_context,
+            language=language,
+            repair_context=repair_context,
         )
 
     def _analyze(self, chapter: str, validation: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -948,6 +969,8 @@ class AgentExecutor:
                 input_pack,
                 state["repair_plan"],
                 recovery_context,
+                project_language(snapshot),
+                _repair_context_for_snapshot(snapshot),
             )
             self._handle_validate(state, snapshot, decision)
             state["repair_attempts"] += 1
@@ -1150,6 +1173,8 @@ class AgentExecutor:
         recovery_context: dict[str, Any],
         previous_chapter_text: str | None,
         run_id: str,
+        quality_policy: QualityPolicy,
+        base_quality_decision: dict[str, Any],
     ) -> tuple[
         str,
         dict[str, Any],
@@ -1158,9 +1183,13 @@ class AgentExecutor:
         dict[str, Any] | None,
         dict[str, Any] | None,
         dict[str, Any] | None,
+        dict[str, Any],
     ]:
-        if not self.review_config.enabled or not committed:
-            return chapter, validation, committed, chapter_pipeline, None, None, None
+        review_config = self._runtime_review_config_for_policy(quality_policy)
+        if not committed or not base_quality_decision["accepted"]:
+            return chapter, validation, False, chapter_pipeline, None, None, None, base_quality_decision
+        if not review_config.enabled:
+            return chapter, validation, True, chapter_pipeline, None, None, None, base_quality_decision
 
         original_chapter = chapter
         original_review = self._run_runtime_review_for_chapter(
@@ -1169,14 +1198,37 @@ class AgentExecutor:
             previous_chapter_text=previous_chapter_text,
             run_id=run_id,
             artifact_suffix="original" if self.review_repair_config.enabled else None,
+            config=review_config,
         )
-        review_gate = self._review_gate_for_review(original_review)
+        original_quality_decision = self._quality_decision_with_review(
+            policy=quality_policy,
+            validation=validation,
+            review=original_review,
+            chapter_index=int(decision["chapter_index"]),
+        )
+        review_gate = self._review_gate_for_review(original_review, original_quality_decision)
         if not self.review_repair_config.enabled:
-            gate_passed = not review_gate or review_gate.get("exit_code") != 1
-            return chapter, validation, committed and gate_passed, chapter_pipeline, original_review, review_gate, None
+            return (
+                chapter,
+                validation,
+                bool(original_quality_decision["accepted"]),
+                chapter_pipeline,
+                original_review,
+                review_gate,
+                None,
+                original_quality_decision,
+            )
 
         def repair(current_chapter: str, current_validation: dict[str, Any], repair_plan: dict[str, Any]) -> str:
-            return self._repair(current_chapter, current_validation, input_pack, repair_plan, recovery_context)
+            return self._repair(
+                current_chapter,
+                current_validation,
+                input_pack,
+                repair_plan,
+                recovery_context,
+                project_language(snapshot),
+                _repair_context_for_snapshot(snapshot),
+            )
 
         def validate(repaired_chapter: str) -> dict[str, Any]:
             return self._validate_repaired_chapter(
@@ -1193,6 +1245,18 @@ class AgentExecutor:
                 previous_chapter_text=previous_chapter_text,
                 run_id=run_id,
                 artifact_suffix=f"repair_attempt_{attempt:02d}",
+                config=review_config,
+            )
+
+        def decide_quality(
+            current_validation: dict[str, Any],
+            current_review: dict[str, Any],
+        ) -> dict[str, Any]:
+            return self._quality_decision_with_review(
+                policy=quality_policy,
+                validation=current_validation,
+                review=current_review,
+                chapter_index=int(decision["chapter_index"]),
             )
 
         review_repair = run_review_repair_loop(
@@ -1203,18 +1267,19 @@ class AgentExecutor:
             repair=repair,
             validate=validate,
             review=review,
+            quality_policy=quality_policy,
+            decide=decide_quality,
         )
         if not review_repair.get("attempted"):
-            gate_passed = not review_gate or review_gate.get("exit_code") != 1
-            review_failed = review_repair.get("rejected_reason") in {"review_error", "review_gate_error"}
             return (
                 chapter,
                 validation,
-                committed and gate_passed and not review_failed,
+                bool(original_quality_decision["accepted"]),
                 chapter_pipeline,
                 original_review,
                 review_gate,
                 review_repair,
+                original_quality_decision,
             )
 
         final_review = (
@@ -1222,13 +1287,19 @@ class AgentExecutor:
             if isinstance(review_repair.get("final_review"), dict)
             else original_review
         )
-        final_gate = self._review_gate_for_review(final_review)
-        if review_repair.get("accepted") and final_gate and final_gate.get("exit_code") == 1:
-            review_repair = dict(review_repair)
-            review_repair["accepted"] = False
-            review_repair["rejected_reason"] = "post_repair_review_gate_failed"
+        final_quality_decision = (
+            review_repair.get("final_quality_decision")
+            if isinstance(review_repair.get("final_quality_decision"), dict)
+            else decide_quality(
+                review_repair.get("final_validation")
+                if isinstance(review_repair.get("final_validation"), dict)
+                else validation,
+                final_review,
+            )
+        )
+        final_gate = self._review_gate_for_review(final_review, final_quality_decision)
 
-        if review_repair.get("accepted"):
+        if final_quality_decision["accepted"]:
             repaired_chapter = str(review_repair.get("final_chapter") or chapter)
             repaired_validation = (
                 review_repair.get("final_validation")
@@ -1236,7 +1307,16 @@ class AgentExecutor:
                 else validation
             )
             repaired_pipeline = self._chapter_pipeline_after_repair(chapter_pipeline, repaired_chapter)
-            return repaired_chapter, repaired_validation, True, repaired_pipeline, final_review, final_gate, review_repair
+            return (
+                repaired_chapter,
+                repaired_validation,
+                True,
+                repaired_pipeline,
+                final_review,
+                final_gate,
+                review_repair,
+                final_quality_decision,
+            )
 
         final_chapter = str(review_repair.get("final_chapter") or original_chapter)
         final_validation = (
@@ -1245,7 +1325,16 @@ class AgentExecutor:
             else validation
         )
         final_pipeline = self._chapter_pipeline_after_repair(chapter_pipeline, final_chapter)
-        return final_chapter, final_validation, False, final_pipeline, final_review, final_gate, review_repair
+        return (
+            final_chapter,
+            final_validation,
+            False,
+            final_pipeline,
+            final_review,
+            final_gate,
+            review_repair,
+            final_quality_decision,
+        )
 
     def _run_runtime_review_for_chapter(
         self,
@@ -1255,20 +1344,84 @@ class AgentExecutor:
         previous_chapter_text: str | None,
         run_id: str,
         artifact_suffix: str | None,
+        config: RuntimeReviewConfig | None = None,
     ) -> dict[str, Any]:
         return run_runtime_review(
             chapter_text=chapter_text,
             snapshot=snapshot,
             previous_chapter_text=previous_chapter_text,
             run_id=run_id,
-            config=self.review_config,
+            config=config or self.review_config,
             artifact_suffix=artifact_suffix,
         )
 
-    def _review_gate_for_review(self, review: dict[str, Any] | None) -> dict[str, Any] | None:
+    def _review_gate_for_review(
+        self,
+        review: dict[str, Any] | None,
+        quality_decision: dict[str, Any],
+    ) -> dict[str, Any] | None:
         if self.review_config.gate_threshold == "off" or not isinstance(review, dict):
             return None
-        return evaluate_review_gate(review_pipeline=review, threshold=self.review_config.gate_threshold)
+        return evaluate_review_gate(
+            review_pipeline=review,
+            quality_decision=quality_decision,
+            threshold=self.review_config.gate_threshold,
+        )
+
+    def _effective_quality_policy(self, *, persist: bool) -> QualityPolicy:
+        if self.quality_policy is not None:
+            policy = self.quality_policy
+        elif persist and self.story_project_writeback.mode == "apply" and self._story_project_context_dict():
+            policy = resolve_quality_policy("standard")
+        else:
+            policy = resolve_quality_policy("minimal")
+        include_review = bool(
+            policy.include_review
+            or self.review_config.enabled
+            or self.review_repair_config.enabled
+        )
+        threshold = policy.threshold
+        if self.review_config.enabled and self.review_config.gate_threshold != "off":
+            gate_threshold = (
+                "blocking"
+                if self.review_config.gate_threshold == "blocked"
+                else self.review_config.gate_threshold
+            )
+            threshold = min(
+                (threshold, gate_threshold),
+                key=lambda item: SEVERITY_RANK[item],
+            )
+        return policy.with_overrides(threshold=threshold, include_review=include_review)
+
+    def _runtime_review_config_for_policy(self, policy: QualityPolicy) -> RuntimeReviewConfig:
+        if self.review_config.enabled or not policy.include_review:
+            return self.review_config
+        return RuntimeReviewConfig(
+            enabled=True,
+            output_dir=self.review_config.output_dir,
+            rules_path=self.review_config.rules_path,
+            use_default_rules=self.review_config.use_default_rules,
+            build_repair_prompt=self.review_config.build_repair_prompt,
+            build_human_report=self.review_config.build_human_report,
+            gate_threshold="off",
+        )
+
+    def _quality_decision_with_review(
+        self,
+        *,
+        policy: QualityPolicy,
+        validation: dict[str, Any],
+        review: dict[str, Any],
+        chapter_index: int,
+    ) -> dict[str, Any]:
+        upstream = review.get("quality_decision") if isinstance(review, dict) else None
+        return build_quality_decision(
+            policy=policy,
+            validation=validation,
+            upstream_decisions=[upstream] if isinstance(upstream, dict) else [],
+            review_pipeline=review,
+            chapter_index=chapter_index,
+        )
 
     def _validate_repaired_chapter(
         self,
@@ -1905,37 +2058,6 @@ class AgentExecutor:
         pipeline_summary = chapter.setdefault("pipeline", {})
         pipeline_summary["artifacts"] = artifacts
 
-    def _attach_runtime_review(
-        self,
-        result: dict[str, Any],
-        *,
-        snapshot: dict[str, Any],
-        previous_chapter_text: str | None,
-    ) -> None:
-        if not self.review_config.enabled:
-            return
-        run = result.get("run")
-        chapter = result.get("chapter")
-        if not isinstance(run, dict) or not isinstance(chapter, str) or not chapter.strip():
-            return
-        review = run_runtime_review(
-            chapter_text=chapter,
-            snapshot=snapshot,
-            previous_chapter_text=previous_chapter_text,
-            run_id=str(run["id"]),
-            config=self.review_config,
-        )
-        run["review_pipeline"] = review
-        result["review_pipeline"] = review
-        if self.review_config.gate_threshold != "off":
-            gate = evaluate_review_gate(
-                review_pipeline=review,
-                threshold=self.review_config.gate_threshold,
-            )
-            run["review_gate"] = gate
-            result["review_gate"] = gate
-        self._attach_review_index(result)
-
     def _attach_review_index(self, result: dict[str, Any]) -> None:
         run = result.get("run")
         if not isinstance(run, dict):
@@ -2057,6 +2179,29 @@ def _notify_loop(observer: LoopObserver | None, event: dict[str, Any]) -> None:
     if observer is None:
         return
     observer(event)
+
+
+def _repair_context_for_snapshot(snapshot: dict[str, Any]) -> RepairContext:
+    hint: str | None = None
+    world_state = snapshot.get("world_state") if isinstance(snapshot.get("world_state"), dict) else {}
+    story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
+    for collection in (world_state.get("active_conflicts"), story_state.get("open_threads")):
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if isinstance(item, dict):
+                value = item.get("description") or item.get("name") or item.get("title")
+            else:
+                value = item
+            if isinstance(value, str) and value.strip():
+                hint = value.strip()
+                break
+        if hint:
+            break
+    return RepairContext(
+        language=project_language(snapshot) or "en",
+        known_conflict_hint=hint,
+    )
 
 
 def _previous_chapter_text(

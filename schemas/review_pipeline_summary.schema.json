@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Review Pipeline Summary",
   "type": "object",
-  "required": ["schema_version", "status", "decision", "scores", "reports", "tasks", "artifacts", "flags", "metadata"],
+  "required": ["schema_version", "status", "decision", "scores", "reports", "tasks", "artifacts", "flags", "metadata", "quality_decision"],
   "properties": {
     "schema_version": {
       "type": "string",
@@ -169,6 +169,9 @@
         }
       },
       "additionalProperties": false
+    },
+    "quality_decision": {
+      "type": "object"
     }
   },
   "additionalProperties": false

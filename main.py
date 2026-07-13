@@ -195,6 +195,12 @@ def parse_args() -> argparse.Namespace:
         help="Run the optional OpenAI-backed story-level validator after rule validation.",
     )
     parser.add_argument(
+        "--quality-policy",
+        choices=["auto", "minimal", "standard", "strict"],
+        default="auto",
+        help="Quality policy. auto uses standard for real StoryProject writeback and minimal otherwise.",
+    )
+    parser.add_argument(
         "--enable-review-pipeline",
         action="store_true",
         help="After chapter generation, run the optional deterministic Review Pipeline.",
@@ -762,6 +768,7 @@ def main() -> None:
         story_project_context_loader=story_project_context_loader,
         story_project_oh_story_report=story_project_oh_story_report,
         story_project_writeback=story_project_writeback,
+        quality_policy=None if args.quality_policy == "auto" else args.quality_policy,
     )
     persist = (
         not args.dry_run

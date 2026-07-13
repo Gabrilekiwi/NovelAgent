@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop
+from core.quality_decision import build_quality_decision
+from core.review.repair_loop import ReviewRepairConfig, build_review_repair_plan, run_review_repair_loop
 from core.schema import validate_schema
 
 
@@ -43,6 +44,27 @@ def _validation(ok: bool = True, code: str | None = None) -> dict:
 
 
 class ReviewRepairLoopTests(unittest.TestCase):
+    def test_repair_plan_uses_quality_finding_identity_as_primary_task(self) -> None:
+        validation = _validation(False, "missing_conflict_marker")
+        decision = build_quality_decision(
+            policy="standard",
+            validation=validation,
+            review_pipeline={"status": "pass"},
+        )
+
+        plan = build_review_repair_plan(
+            before_review={"enabled": True, "status": "blocked", "decision": "blocked"},
+            validation=validation,
+            quality_decision=decision,
+            attempt=1,
+            max_attempts=2,
+            dry_run=False,
+        )
+
+        self.assertEqual(decision["decision_digest"], plan["quality_decision_digest"])
+        self.assertTrue(plan["repair_tasks"][0]["id"].startswith("qf:v1:"))
+        self.assertEqual("add_conflict_signal", plan["scene_repair_plan"]["steps"][0]["action"])
+
     def test_invalid_gate_threshold_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported review gate threshold"):
             run_review_repair_loop(
@@ -67,7 +89,8 @@ class ReviewRepairLoopTests(unittest.TestCase):
         )
 
         self.assertFalse(result["attempted"])
-        self.assertFalse(result["accepted"])
+        self.assertTrue(result["accepted"])
+        self.assertTrue(result["final_quality_decision"]["accepted"])
         self.assertEqual("review_status_does_not_require_repair", result["rejected_reason"])
 
     def test_dry_run_builds_plan_without_mutating_chapter(self) -> None:

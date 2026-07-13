@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QualityDecision",
+  "type": "object",
+  "required": ["schema_version", "policy", "accepted", "status", "max_severity", "findings", "finding_ids", "blocking_finding_ids", "manual_review_finding_ids", "validation_coverage", "producers", "llm_validator", "decision_digest"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "policy": {
+      "type": "object",
+      "required": ["name", "version", "threshold", "max_repair_attempts", "include_review", "llm_validator_required", "producers"],
+      "properties": {
+        "name": {"type": "string", "enum": ["minimal", "standard", "strict"]},
+        "version": {"type": "string", "minLength": 1},
+        "threshold": {"type": "string", "enum": ["info", "warning", "needs_revision", "blocking"]},
+        "max_repair_attempts": {"type": "integer", "minimum": 0, "maximum": 3},
+        "include_review": {"type": "boolean"},
+        "llm_validator_required": {"type": "boolean"},
+        "producers": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      },
+      "additionalProperties": false
+    },
+    "accepted": {"type": "boolean"},
+    "status": {"type": "string", "enum": ["accepted", "needs_revision", "blocked"]},
+    "max_severity": {"type": "string", "enum": ["info", "warning", "needs_revision", "blocking"]},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "identity_version", "code_family", "codes", "category", "severity", "blocking", "canonical", "evidence", "source_artifacts", "repair", "validation_coverage", "producer_evidence"],
+        "properties": {
+          "id": {"type": "string", "minLength": 70},
+          "identity_version": {"type": "string", "enum": ["1.0"]},
+          "code_family": {"type": "string", "minLength": 1},
+          "codes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "category": {"type": "string", "minLength": 1},
+          "severity": {"type": "string", "enum": ["info", "warning", "needs_revision", "blocking"]},
+          "blocking": {"type": "boolean"},
+          "canonical": {
+            "type": "object",
+            "required": ["subject", "predicate", "time_range"],
+            "properties": {
+              "subject": {"type": "string", "minLength": 1},
+              "predicate": {"type": "string", "minLength": 1},
+              "time_range": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          },
+          "evidence": {"type": "array", "items": {"type": "object"}},
+          "source_artifacts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "repair": {
+            "type": "object",
+            "required": ["action", "parameters"],
+            "properties": {
+              "action": {"type": "string", "minLength": 1},
+              "parameters": {"type": "object"}
+            },
+            "additionalProperties": false
+          },
+          "validation_coverage": {
+            "type": "object",
+            "required": ["requested_checks", "executed_checks", "skipped_checks"],
+            "properties": {
+              "requested_checks": {"type": "array", "items": {"type": "string"}},
+              "executed_checks": {"type": "array", "items": {"type": "string"}},
+              "skipped_checks": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          },
+          "producer_evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["producer", "code", "source_artifact", "evidence"],
+              "properties": {
+                "producer": {"type": "string", "minLength": 1},
+                "code": {"type": "string", "minLength": 1},
+                "source_artifact": {"type": "string", "minLength": 1},
+                "evidence": {"type": "array", "items": {"type": "object"}}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "finding_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "blocking_finding_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "manual_review_finding_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "validation_coverage": {
+      "type": "object",
+      "required": ["requested_checks", "executed_checks", "skipped_checks"],
+      "properties": {
+        "requested_checks": {"type": "array", "items": {"type": "string"}},
+        "executed_checks": {"type": "array", "items": {"type": "string"}},
+        "skipped_checks": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "producers": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "llm_validator": {
+      "type": "object",
+      "required": ["required", "configured", "available", "provider", "model", "prompt_hash", "policy_version", "attempt_history"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "configured": {"type": "boolean"},
+        "available": {"type": "boolean"},
+        "provider": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "prompt_hash": {"type": ["string", "null"]},
+        "policy_version": {"type": "string", "minLength": 1},
+        "attempt_history": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    },
+    "decision_digest": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

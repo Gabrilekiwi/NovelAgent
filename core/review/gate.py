@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.schema import validate_schema
+from core.quality_decision import quality_decision_review_status
 
 
 REVIEW_STATUS_RANK = {
@@ -21,7 +22,12 @@ GATE_THRESHOLD_RANK = {
 }
 
 
-def evaluate_review_gate(*, review_pipeline: dict[str, Any] | None, threshold: str = "off") -> dict[str, Any]:
+def evaluate_review_gate(
+    *,
+    review_pipeline: dict[str, Any] | None = None,
+    quality_decision: dict[str, Any] | None = None,
+    threshold: str = "off",
+) -> dict[str, Any]:
     if threshold not in GATE_THRESHOLD_RANK:
         raise ValueError(f"unsupported review gate threshold: {threshold}")
     if threshold == "off":
@@ -34,7 +40,13 @@ def evaluate_review_gate(*, review_pipeline: dict[str, Any] | None, threshold: s
             reason="review gate disabled",
             exit_code=0,
         )
-    if not isinstance(review_pipeline, dict):
+    if isinstance(review_pipeline, dict) and review_pipeline.get("status") == "error":
+        review_status = "error"
+    elif isinstance(quality_decision, dict):
+        review_status = quality_decision_review_status(quality_decision)
+    elif isinstance(review_pipeline, dict):
+        review_status = review_pipeline.get("status")
+    else:
         return _result(
             enabled=True,
             threshold=threshold,
@@ -45,7 +57,6 @@ def evaluate_review_gate(*, review_pipeline: dict[str, Any] | None, threshold: s
             exit_code=1,
         )
 
-    review_status = review_pipeline.get("status")
     if review_status not in REVIEW_STATUS_RANK:
         return _result(
             enabled=True,

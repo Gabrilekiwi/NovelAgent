@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
 from api.openai_client import chat_completion
 from core.config import get_config
+from core.quality_decision import QUALITY_POLICY_VERSION
 from core.schema import validate_schema
 
 
@@ -24,8 +26,20 @@ def validate_llm(
     *,
     model: str | None = None,
 ) -> dict[str, Any]:
-    payload = _call_llm_validator(snapshot, chapter_text, decision, model=model)
-    return llm_payload_to_check(payload)
+    selected_model = model or get_config().openai_model
+    messages = _llm_messages(snapshot, chapter_text, decision)
+    payload = _call_llm_validator(messages, model=selected_model)
+    check = llm_payload_to_check(payload)
+    check["metadata"] = {
+        "provider": "openai",
+        "model": selected_model,
+        "prompt_hash": hashlib.sha256(
+            json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+        "policy_version": QUALITY_POLICY_VERSION,
+        "attempt_history": [{"attempt": 1, "status": "succeeded"}],
+    }
+    return check
 
 
 def llm_payload_to_check(payload: dict[str, Any]) -> dict[str, Any]:
@@ -39,37 +53,13 @@ def llm_payload_to_check(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _call_llm_validator(
-    snapshot: dict[str, Any],
-    chapter_text: str,
-    decision: dict[str, Any] | None,
+    messages: list[dict[str, str]],
     *,
-    model: str | None,
+    model: str,
 ) -> dict[str, Any]:
     response = chat_completion(
-        [
-            {
-                "role": "system",
-                "content": (
-                    "You are a strict fiction continuity validator. Return only JSON matching "
-                    "the supplied schema. Report high-signal story problems; do not rewrite prose."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "schema": _llm_output_schema_hint(),
-                        "check_areas": list(LLM_VALIDATION_AREAS),
-                        "snapshot": snapshot,
-                        "decision": decision or {},
-                        "chapter": chapter_text,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-            },
-        ],
-        model=model or get_config().openai_model,
+        messages,
+        model=model,
         temperature=0.0,
         stage="llm_validation",
     )
@@ -80,6 +70,36 @@ def _call_llm_validator(
     if not isinstance(payload, dict):
         raise ValueError("LLM validator response must be a JSON object")
     return payload
+
+
+def _llm_messages(
+    snapshot: dict[str, Any],
+    chapter_text: str,
+    decision: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a strict fiction continuity validator. Return only JSON matching "
+                "the supplied schema. Report high-signal story problems; do not rewrite prose."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "schema": _llm_output_schema_hint(),
+                    "check_areas": list(LLM_VALIDATION_AREAS),
+                    "snapshot": snapshot,
+                    "decision": decision or {},
+                    "chapter": chapter_text,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        },
+    ]
 
 
 def _normalize_llm_problem(problem: dict[str, Any]) -> dict[str, Any]:

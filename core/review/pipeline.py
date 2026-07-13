@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from core.quality import evaluate_chapter_quality
+from core.quality_decision import build_quality_decision
 from core.review.report import build_human_review_report
 from core.rules import (
     build_rule_repair_plan,
@@ -101,6 +102,7 @@ def run_review_pipeline(
         human_review_report=human_review_report,
         previous_chapter_text=previous,
         used_default_rules=rule_pack is None and rule_pack_path is None and use_default_rules,
+        chapter_index=_chapter_index(snapshot_copy),
     )
 
     if output_dir is not None:
@@ -128,6 +130,7 @@ def _build_summary(
     human_review_report: dict | None,
     previous_chapter_text: str | None,
     used_default_rules: bool,
+    chapter_index: int | None,
 ) -> dict:
     decision = _decision(human_review_report)
     artifacts = dict(artifact_paths)
@@ -172,10 +175,25 @@ def _build_summary(
             "created_by": "NovelAgent",
             "source": "review-pipeline-orchestrator",
         },
+        "quality_decision": build_quality_decision(
+            policy="standard",
+            chapter_quality_report=quality_report,
+            rule_validation_report=rule_validation_report,
+            chapter_index=chapter_index,
+            source_artifacts={
+                "deterministic_review": str(artifact_paths.get("chapter_quality_report") or "chapter_quality_report"),
+                "narrative_rules": str(artifact_paths.get("rule_validation_report") or "rule_validation_report"),
+            },
+        ),
     }
     if output_dir is None:
         summary["artifacts"]["output_dir"] = None
     return validate_schema(summary, "review_pipeline_summary.schema.json")
+
+
+def _chapter_index(snapshot: dict[str, Any]) -> int | None:
+    value = snapshot.get("chapter_index")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
 def _decision(human_review_report: dict | None) -> dict:

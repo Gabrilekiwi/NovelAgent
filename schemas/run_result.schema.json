@@ -41,6 +41,9 @@
     "accepted": {
       "type": "boolean"
     },
+    "quality_decision": {
+      "type": "object"
+    },
     "committed": {
       "type": "boolean"
     },

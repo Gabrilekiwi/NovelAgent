@@ -224,6 +224,13 @@ class CliTest(unittest.TestCase):
         self.assertEqual("dry_run", config.mode)
         self.assertTrue(config.overwrite)
 
+    def test_parse_args_accepts_explicit_quality_policy(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--quality-policy", "strict", "--llm-validator"]):
+            args = cli.parse_args()
+
+        self.assertEqual("strict", args.quality_policy)
+        self.assertTrue(args.llm_validator)
+
     def test_story_project_compat_report_requires_story_project(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--story-project-compat-report"]):
             args = cli.parse_args()

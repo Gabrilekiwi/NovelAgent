@@ -1,13 +1,28 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from core.validator import validate_chapter
-from core.validator.llm import LLM_VALIDATION_AREAS, llm_payload_to_check
+from core.validator.llm import LLM_VALIDATION_AREAS, llm_payload_to_check, validate_llm
 from core.validator.spatial import validate_bridge_preconditions
 
 
 class ValidatorTest(unittest.TestCase):
+    def test_llm_validator_records_replay_audit_metadata(self) -> None:
+        with patch("core.validator.llm.chat_completion", return_value='{"problems": []}'):
+            check = validate_llm(
+                {"chapter_index": 2},
+                "A complete chapter.",
+                {"chapter_index": 2},
+                model="validator-test",
+            )
+
+        self.assertEqual("openai", check["metadata"]["provider"])
+        self.assertEqual("validator-test", check["metadata"]["model"])
+        self.assertEqual(64, len(check["metadata"]["prompt_hash"]))
+        self.assertEqual([{"attempt": 1, "status": "succeeded"}], check["metadata"]["attempt_history"])
+
     def test_rejects_short_chapter_without_conflict(self) -> None:
         snapshot = {
             "chapter_index": 1,

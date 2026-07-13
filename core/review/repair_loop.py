@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from core.quality_decision import (
+    QualityPolicy,
+    SEVERITY_RANK,
+    build_quality_decision,
+    resolve_quality_policy,
+)
 from core.review.gate import GATE_THRESHOLD_RANK, evaluate_review_gate
 from core.schema import validate_schema
 from modules.scene_repair import build_repair_plan
@@ -16,6 +22,7 @@ REPAIR_ACCEPT_STATUSES = {"pass", "warning"}
 RepairCallback = Callable[[str, dict[str, Any], dict[str, Any]], str]
 ValidateCallback = Callable[[str], dict[str, Any]]
 ReviewCallback = Callable[[str, int], dict[str, Any]]
+QualityDecisionCallback = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -67,10 +74,21 @@ def run_review_repair_loop(
     repair: RepairCallback,
     validate: ValidateCallback,
     review: ReviewCallback,
+    quality_policy: str | QualityPolicy = "standard",
+    decide: QualityDecisionCallback | None = None,
 ) -> dict[str, Any]:
     config = validate_review_repair_config(config)
+    effective_policy = _repair_quality_policy(quality_policy, config.gate_threshold)
+    decide_quality = decide or (
+        lambda current_validation, current_review: _quality_decision(
+            validation=current_validation,
+            review=current_review,
+            policy=effective_policy,
+        )
+    )
     trigger_status = str(before_review.get("status") or "")
-    before_gate = _review_gate(before_review, config.gate_threshold)
+    before_decision = decide_quality(validation, before_review)
+    before_gate = _review_gate(before_review, config.gate_threshold, before_decision)
     if not config.enabled:
         return disabled_review_repair()
     if trigger_status == "error":
@@ -81,6 +99,7 @@ def run_review_repair_loop(
             before_gate=before_gate,
             config=config,
             rejected_reason="review_error",
+            quality_decision=before_decision,
         )
     if before_gate.get("status") == "error":
         return _non_attempt_result(
@@ -90,13 +109,14 @@ def run_review_repair_loop(
             before_gate=before_gate,
             config=config,
             rejected_reason="review_gate_error",
+            quality_decision=before_decision,
         )
-    gate_requires_repair = bool(before_gate.get("enabled")) and int(before_gate.get("exit_code") or 0) != 0
-    if trigger_status not in REPAIR_TRIGGER_STATUSES and not gate_requires_repair:
+    if before_decision["accepted"]:
         result = disabled_review_repair()
         result.update(
             {
                 "enabled": True,
+                "accepted": bool(before_decision["accepted"]),
                 "max_attempts": config.max_attempts,
                 "trigger_status": trigger_status or None,
                 "before_review": before_review,
@@ -104,6 +124,8 @@ def run_review_repair_loop(
                 "gate_threshold": config.gate_threshold,
                 "before_gate": before_gate,
                 "after_gate": before_gate,
+                "before_quality_decision": before_decision,
+                "final_quality_decision": before_decision,
             }
         )
         return result
@@ -111,6 +133,7 @@ def run_review_repair_loop(
     repair_plan = build_review_repair_plan(
         before_review=before_review,
         validation=validation,
+        quality_decision=before_decision,
         attempt=1,
         max_attempts=config.max_attempts,
         dry_run=config.dry_run,
@@ -137,12 +160,15 @@ def run_review_repair_loop(
             "final_chapter": chapter_text,
             "final_validation": validation,
             "final_review": before_review,
+            "before_quality_decision": before_decision,
+            "final_quality_decision": before_decision,
         }
 
     current_chapter = chapter_text
     current_validation = validation
     current_review = before_review
     current_gate = before_gate
+    current_decision = before_decision
     repair_deltas: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
@@ -150,6 +176,7 @@ def run_review_repair_loop(
         attempt_plan = repair_plan if attempt == 1 else build_review_repair_plan(
             before_review=current_review,
             validation=current_validation,
+            quality_decision=current_decision,
             attempt=attempt,
             max_attempts=config.max_attempts,
             dry_run=False,
@@ -162,7 +189,8 @@ def run_review_repair_loop(
             repaired_chapter = repair(current_chapter, current_validation, attempt_plan)
             repaired_validation = validate(repaired_chapter)
             repaired_review = review(repaired_chapter, attempt)
-            repaired_gate = _review_gate(repaired_review, config.gate_threshold)
+            repaired_decision = decide_quality(repaired_validation, repaired_review)
+            repaired_gate = _review_gate(repaired_review, config.gate_threshold, repaired_decision)
         except Exception as exc:  # noqa: BLE001 - repair attempts are audited rather than hidden.
             errors.append({"attempt": attempt, "error": f"{type(exc).__name__}: {exc}"})
             repair_deltas.append(
@@ -177,12 +205,14 @@ def run_review_repair_loop(
                     before_gate=before_attempt_gate,
                     after_gate=current_gate,
                     accepted=False,
+                    before_quality_decision=current_decision,
+                    after_quality_decision=current_decision,
                     error=f"{type(exc).__name__}: {exc}",
                 )
             )
             break
 
-        accepted = _accepted(validation=repaired_validation, review=repaired_review, gate=repaired_gate)
+        accepted = bool(repaired_decision["accepted"])
         repair_deltas.append(
             _attempt_delta(
                 attempt=attempt,
@@ -195,6 +225,8 @@ def run_review_repair_loop(
                 before_gate=before_attempt_gate,
                 after_gate=repaired_gate,
                 accepted=accepted,
+                before_quality_decision=current_decision,
+                after_quality_decision=repaired_decision,
                 error=None,
             )
         )
@@ -202,12 +234,13 @@ def run_review_repair_loop(
         current_validation = repaired_validation
         current_review = repaired_review
         current_gate = repaired_gate
+        current_decision = repaired_decision
         if accepted:
             break
         if str(current_review.get("status") or "") == "error" or current_gate.get("status") == "error":
             break
 
-    accepted = _accepted(validation=current_validation, review=current_review, gate=current_gate)
+    accepted = bool(current_decision["accepted"])
     return {
         "enabled": True,
         "attempted": True,
@@ -234,6 +267,8 @@ def run_review_repair_loop(
         "final_chapter": current_chapter,
         "final_validation": current_validation,
         "final_review": current_review,
+        "before_quality_decision": before_decision,
+        "final_quality_decision": current_decision,
     }
 
 
@@ -244,8 +279,9 @@ def build_review_repair_plan(
     attempt: int,
     max_attempts: int,
     dry_run: bool,
+    quality_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    review_tasks = _review_tasks(before_review)
+    review_tasks = _quality_finding_tasks(quality_decision) or _review_tasks(before_review)
     synthetic_validation = _synthetic_validation(review_tasks, validation)
     scene_repair_plan = build_repair_plan(
         synthetic_validation,
@@ -264,7 +300,56 @@ def build_review_repair_plan(
         "risk_level": scene_repair_plan.get("risk_level"),
         "dry_run": dry_run,
         "scene_repair_plan": scene_repair_plan,
+        "quality_decision_digest": (
+            quality_decision.get("decision_digest")
+            if isinstance(quality_decision, dict)
+            else None
+        ),
     }
+
+
+def _quality_finding_tasks(quality_decision: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(quality_decision, dict):
+        return []
+    tasks: list[dict[str, Any]] = []
+    for finding in quality_decision.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        severity = str(finding.get("severity") or "needs_revision")
+        if severity == "info":
+            continue
+        repair = finding.get("repair") if isinstance(finding.get("repair"), dict) else {}
+        evidence = finding.get("evidence") if isinstance(finding.get("evidence"), list) else []
+        instruction = next(
+            (
+                str(item.get("value"))
+                for item in evidence
+                if isinstance(item, dict) and item.get("kind") == "message" and item.get("value")
+            ),
+            f"Resolve quality finding {finding.get('code_family') or finding.get('id')}",
+        )
+        tasks.append(
+            {
+                "id": str(finding.get("id") or f"quality_finding_{len(tasks) + 1:03d}"),
+                "severity": {
+                    "blocking": "high",
+                    "needs_revision": "medium",
+                    "warning": "low",
+                }.get(severity, "medium"),
+                "category": str(finding.get("category") or "quality"),
+                "instruction": instruction,
+                "evidence": evidence,
+                "target_scope": "chapter",
+                "source_review_task_id": str(finding.get("id") or ""),
+                "repair_type": str(repair.get("action") or "manual_review"),
+                "repair_action": str(repair.get("action") or "manual_review"),
+                "repair_parameters": (
+                    repair.get("parameters") if isinstance(repair.get("parameters"), dict) else {}
+                ),
+                "blocking": severity in {"needs_revision", "blocking"},
+            }
+        )
+    return tasks
 
 
 def _review_tasks(before_review: dict[str, Any]) -> list[dict[str, Any]]:
@@ -333,7 +418,11 @@ def _synthetic_validation(review_tasks: list[dict[str, Any]], validation: dict[s
                 "category": "blocking" if bool(task.get("blocking", True)) else "warning",
                 "repair_action": _repair_action_for_task(task),
                 "repair_hint": str(task.get("instruction") or "Revise chapter according to review."),
-                "repair_parameters": {},
+                "repair_parameters": (
+                    task.get("repair_parameters")
+                    if isinstance(task.get("repair_parameters"), dict)
+                    else {}
+                ),
                 "evidence": _evidence(task, index),
             }
         )
@@ -370,6 +459,9 @@ def _problem_code_for_task(task: dict[str, Any]) -> str:
 
 
 def _repair_action_for_task(task: dict[str, Any]) -> str:
+    explicit = task.get("repair_action")
+    if isinstance(explicit, str) and explicit:
+        return explicit
     repair_type = str(task.get("repair_type") or "")
     mapping = {
         "advance_conflict_or_thread": "add_conflict_signal",
@@ -379,15 +471,6 @@ def _repair_action_for_task(task: dict[str, Any]) -> str:
         "fix_location_transition": "rewrite_spatial_transition",
     }
     return mapping.get(repair_type, "manual_review")
-
-
-def _accepted(*, validation: dict[str, Any], review: dict[str, Any], gate: dict[str, Any]) -> bool:
-    return (
-        bool(validation.get("ok"))
-        and str(review.get("status")) in REPAIR_ACCEPT_STATUSES
-        and int(gate.get("exit_code") or 0) == 0
-        and str(gate.get("status") or "") != "error"
-    )
 
 
 def _rejected_reason(
@@ -426,6 +509,8 @@ def _attempt_delta(
     before_gate: dict[str, Any],
     after_gate: dict[str, Any],
     accepted: bool,
+    before_quality_decision: dict[str, Any],
+    after_quality_decision: dict[str, Any],
     error: str | None,
 ) -> dict[str, Any]:
     before_codes = _problem_codes(before_validation)
@@ -447,6 +532,8 @@ def _attempt_delta(
         "new_problem_codes": sorted(set(after_codes) - set(before_codes)),
         "remaining_problem_codes": sorted(set(before_codes) & set(after_codes)),
         "accepted": accepted,
+        "before_quality_finding_ids": list(before_quality_decision.get("finding_ids") or []),
+        "after_quality_finding_ids": list(after_quality_decision.get("finding_ids") or []),
         "error": error,
     }
 
@@ -455,8 +542,16 @@ def _problem_codes(validation: dict[str, Any]) -> list[str]:
     return [str(problem.get("code")) for problem in validation.get("problems", []) if isinstance(problem, dict)]
 
 
-def _review_gate(review: dict[str, Any], threshold: str) -> dict[str, Any]:
-    return evaluate_review_gate(review_pipeline=review, threshold=threshold)
+def _review_gate(
+    review: dict[str, Any],
+    threshold: str,
+    quality_decision: dict[str, Any],
+) -> dict[str, Any]:
+    return evaluate_review_gate(
+        review_pipeline=review,
+        quality_decision=quality_decision,
+        threshold=threshold,
+    )
 
 
 def _non_attempt_result(
@@ -467,6 +562,7 @@ def _non_attempt_result(
     before_gate: dict[str, Any],
     config: ReviewRepairConfig,
     rejected_reason: str,
+    quality_decision: dict[str, Any],
 ) -> dict[str, Any]:
     result = disabled_review_repair()
     result.update(
@@ -483,9 +579,38 @@ def _non_attempt_result(
             "final_chapter": chapter_text,
             "final_validation": validation,
             "final_review": before_review,
+            "before_quality_decision": quality_decision,
+            "final_quality_decision": quality_decision,
         }
     )
     return result
+
+
+def _repair_quality_policy(policy: str | QualityPolicy, gate_threshold: str) -> QualityPolicy:
+    resolved = resolve_quality_policy(policy)
+    if gate_threshold == "off":
+        return resolved.with_overrides(include_review=True)
+    quality_threshold = "blocking" if gate_threshold == "blocked" else gate_threshold
+    threshold = min(
+        (resolved.threshold, quality_threshold),
+        key=lambda item: SEVERITY_RANK[item],
+    )
+    return resolved.with_overrides(threshold=threshold, include_review=True)
+
+
+def _quality_decision(
+    *,
+    validation: dict[str, Any],
+    review: dict[str, Any],
+    policy: QualityPolicy,
+) -> dict[str, Any]:
+    upstream = review.get("quality_decision")
+    return build_quality_decision(
+        policy=policy,
+        validation=validation,
+        upstream_decisions=[upstream] if isinstance(upstream, dict) else [],
+        review_pipeline=review,
+    )
 
 
 def _evidence(task: dict[str, Any], index: int) -> list[dict[str, str]]:

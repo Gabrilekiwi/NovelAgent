@@ -46,6 +46,9 @@
     "accepted": {
       "type": "boolean"
     },
+    "quality_decision": {
+      "type": "object"
+    },
     "committed": {
       "type": "boolean"
     },
@@ -2743,6 +2746,9 @@
             "string",
             "null"
           ]
+        },
+        "quality_decision": {
+          "type": "object"
         },
         "error": {
           "type": "string"

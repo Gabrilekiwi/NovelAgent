@@ -77,6 +77,7 @@ def summarize_review_pipeline(summary: dict[str, Any], *, artifacts_dir: str | P
         "blocking_task_count": summary["tasks"]["blocking_task_count"],
         "artifacts_dir": str(artifacts_dir),
         "summary_path": summary["artifacts"]["review_pipeline_summary"],
+        "quality_decision": summary["quality_decision"],
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import Any, Callable
@@ -17,6 +18,13 @@ _PROMPT_PATH = Path("prompts/repair_prompt.md")
 RepairStrategy = Callable[[str, dict[str, Any], list[dict[str, Any]]], str]
 
 
+@dataclass(frozen=True)
+class RepairContext:
+    language: str = "en"
+    allow_new_facts: bool = False
+    known_conflict_hint: str | None = None
+
+
 def repair_scene(
     chapter_text: str,
     validation: dict[str, Any],
@@ -25,14 +33,17 @@ def repair_scene(
     dry_run: bool = False,
     repair_plan: dict[str, Any] | None = None,
     recovery_context: dict[str, Any] | None = None,
+    language: str = "en",
+    repair_context: RepairContext | None = None,
 ) -> str:
+    context = repair_context or RepairContext(language=language or "en")
     effective_plan = validate_schema(
         repair_plan if repair_plan is not None else build_repair_plan(validation, recovery_context=recovery_context),
         "repair_plan.schema.json",
     )
     if not dry_run:
-        return _repair_with_model(chapter_text, validation, input_pack, effective_plan, recovery_context)
-    return _repair_locally(chapter_text, validation, effective_plan)
+        return _repair_with_model(chapter_text, validation, input_pack, effective_plan, recovery_context, context)
+    return _repair_locally(chapter_text, validation, effective_plan, context)
 
 
 def _repair_with_model(
@@ -41,6 +52,7 @@ def _repair_with_model(
     input_pack: str,
     repair_plan: dict[str, Any],
     recovery_context: dict[str, Any] | None,
+    repair_context: RepairContext,
 ) -> str:
     compact_context = compile_prompt_contexts(input_pack).repair.text
     payload = json.dumps(
@@ -49,6 +61,11 @@ def _repair_with_model(
             "validation": validation,
             "repair_plan": repair_plan,
             "recovery_context": recovery_context or {"available": False},
+            "repair_context": {
+                "language": _normalized_language(repair_context.language),
+                "allow_new_facts": repair_context.allow_new_facts,
+                "known_conflict_hint": repair_context.known_conflict_hint,
+            },
             "context_digest_and_excerpts": compact_context,
         },
         ensure_ascii=False,
@@ -77,18 +94,41 @@ def _load_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def _repair_locally(chapter_text: str, validation: dict[str, Any], repair_plan: dict[str, Any]) -> str:
+def _repair_locally(
+    chapter_text: str,
+    validation: dict[str, Any],
+    repair_plan: dict[str, Any],
+    repair_context: RepairContext,
+) -> str:
     repaired = chapter_text.strip()
-    return apply_repair_plan(repaired, repair_plan)
+    return apply_repair_plan(repaired, repair_plan, repair_context=repair_context)
 
 
-def apply_repair_plan(chapter_text: str, repair_plan: dict[str, Any]) -> str:
+def apply_repair_plan(
+    chapter_text: str,
+    repair_plan: dict[str, Any],
+    *,
+    language: str = "en",
+    repair_context: RepairContext | None = None,
+) -> str:
+    context = repair_context or RepairContext(language=language or "en")
+    strategies = REPAIR_STRATEGY_REGISTRY[_normalized_language(context.language)]
     repaired = chapter_text.strip()
     steps = [step for step in repair_plan.get("steps", []) if isinstance(step, dict)]
     steps.sort(key=lambda step: (int(step.get("priority") or 0), int(step.get("index") or 0)))
     for step in steps:
         action = str(step.get("action") or "")
-        strategy = REPAIR_STRATEGIES.get(action, _manual_review)
+        if (
+            action == "add_conflict_signal"
+            and _normalized_language(context.language) == "zh-CN"
+            and context.known_conflict_hint
+        ):
+            step = dict(step)
+            step["parameters"] = {
+                **_parameters(step),
+                "conflict_hint": context.known_conflict_hint,
+            }
+        strategy = strategies.get(action, _manual_review)
         repaired = strategy(repaired, step, steps).strip()
     return repaired
 
@@ -104,7 +144,7 @@ def _seed_conflict_scene(text: str, step: dict[str, Any], steps: list[dict[str, 
 
 def _expand_scene(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
     return (
-        f"{text}\n\nThe decision carries a visible cost: retreat protects the serum, but rescue risks "
+        f"{text}\n\nThe decision carries a visible cost: retreat protects what the team carries, but rescue risks "
         "spreading the infection and splitting the team."
     )
 
@@ -228,12 +268,142 @@ def _manual_review(text: str, step: dict[str, Any], steps: list[dict[str, Any]])
     return text
 
 
+def _zh_no_safe_repair(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    return text
+
+
+def _zh_add_known_conflict_signal(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    hint = str(_parameters(step).get("conflict_hint", "")).strip()
+    return f"{text}\n\n冲突焦点仍是：{hint}。" if hint else text
+
+
+def _zh_repair_forbidden_term(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    term = str(_parameters(step).get("term", "")).strip()
+    return re.sub(re.escape(term), "该事项", text, flags=re.IGNORECASE) if term else text
+
+
+def _zh_repair_required_term(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    term = str(_parameters(step).get("term", "")).strip()
+    return f"{text}\n\n场景仍围绕“{term}”推进。" if term else text
+
+
+def _zh_repair_known_location(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    location = str(_parameters(step).get("suggested_term", "")).strip()
+    return f"{text}\n\n行动始终发生在{location}。" if location else text
+
+
+def _zh_insert_opening_bridge(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    bridge = str(_parameters(step).get("bridge", "")).strip()
+    return _prepend_sentence(text, bridge) if bridge else text
+
+
+def _zh_rewrite_spatial_transition(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    parameters = _parameters(step)
+    expected = str(parameters.get("expected", "")).strip()
+    actual = str(parameters.get("actual", "")).strip()
+    if not expected or not actual:
+        return text
+    return _prepend_sentence(text, f"从{expected}到{actual}的移动过程清晰发生在场景中")
+
+
+def _zh_anchor_last_scene_state(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    parameters = _parameters(step)
+    location = str(parameters.get("location", "")).strip()
+    character = str(parameters.get("character", "")).strip()
+    if location and character:
+        return _prepend_sentence(text, f"在{location}，{character}仍在承受上一场景的直接后果")
+    if location:
+        return _prepend_sentence(text, f"在{location}，上一场景的直接后果仍在延续")
+    if character:
+        return _prepend_sentence(text, f"{character}仍在承受上一场景的直接后果")
+    return text
+
+
+def _zh_repair_character_position(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    parameters = _parameters(step)
+    character = str(parameters.get("character", "")).strip()
+    expected = str(parameters.get("expected", "")).strip()
+    actual = str(parameters.get("actual", "")).strip()
+    if not character or not expected:
+        return text
+    suffix = f"，随后才向{actual}移动" if actual else ""
+    return f"{text}\n\n{character}起初位于{expected}{suffix}。"
+
+
+def _zh_add_transition_event(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    parameters = _parameters(step)
+    expected = str(parameters.get("expected", "")).strip()
+    actual = str(parameters.get("actual", "")).strip()
+    if not expected or not actual:
+        return text
+    return f"{text}\n\n场景明确呈现了从{expected}前往{actual}的过程。"
+
+
+def _zh_repair_character_location(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    parameters = _parameters(step)
+    character = str(parameters.get("character", "")).strip()
+    location = str(parameters.get("location", "")).strip()
+    return f"{text}\n\n{character}仍在{location}。" if character and location else text
+
+
+def _zh_repair_inactive_character_action(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    character = str(_parameters(step).get("character", "")).strip()
+    if not character:
+        return text
+    pattern = re.compile(rf"[^。！？!?\n]*{re.escape(character)}[^。！？!?\n]*(?:[。！？!?]|$)")
+
+    def replacement(match: re.Match[str]) -> str:
+        sentence = match.group(0)
+        if not re.search(r"说|走|跑|笑|看|喊|冲|抓|推|打开|关闭|拿起|放下", sentence):
+            return sentence
+        return ""
+
+    return pattern.sub(replacement, text, count=1).strip()
+
+
+def _zh_repair_chapter_index(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    expected = str(_parameters(step).get("expected", "")).strip()
+    if not expected:
+        return text
+    rendered = _zh_integer(int(expected)) if expected.isdigit() else expected
+    if re.search(r"第[零〇一二三四五六七八九十百千0-9]+章", text):
+        return re.sub(r"第[零〇一二三四五六七八九十百千0-9]+章", f"第{rendered}章", text, count=1)
+    if re.search(r"\bchapter\s+\d+\b", text, flags=re.IGNORECASE):
+        return re.sub(r"\bchapter\s+\d+\b", f"第{rendered}章", text, count=1, flags=re.IGNORECASE)
+    return f"第{rendered}章\n\n{text}"
+
+
+def _zh_integer(value: int) -> str:
+    if value == 0:
+        return "零"
+    if value < 0 or value > 9999:
+        return str(value)
+    digits = "零一二三四五六七八九"
+    units = ("", "十", "百", "千")
+    result: list[str] = []
+    zero_pending = False
+    text = str(value)
+    for index, raw in enumerate(text):
+        digit = int(raw)
+        position = len(text) - index - 1
+        if digit == 0:
+            zero_pending = bool(result) and any(char != "0" for char in text[index + 1 :])
+            continue
+        if zero_pending:
+            result.append("零")
+            zero_pending = False
+        if not (digit == 1 and position == 1 and not result):
+            result.append(digits[digit])
+        result.append(units[position])
+    return "".join(result)
+
+
 def _prepend_sentence(text: str, sentence: str) -> str:
     sentence = sentence.strip()
     if not sentence:
         return text
-    if sentence[-1] not in ".!?":
-        sentence = f"{sentence}."
+    if sentence[-1] not in ".!?。！？":
+        sentence = f"{sentence}。" if re.search(r"[\u4e00-\u9fff]", sentence) else f"{sentence}."
     return f"{sentence}\n\n{text}" if text else sentence
 
 
@@ -255,7 +425,9 @@ def _parameters(step: dict[str, Any]) -> dict[str, Any]:
 
 
 def _remove_case_insensitive(text: str, term: str) -> str:
-    replacement = "serum conflict remains unresolved" if "serum" in term.lower() else "the unresolved issue"
+    replacement = re.sub(r"\bresolved\b", "remains unresolved", term, count=1, flags=re.IGNORECASE)
+    if replacement == term:
+        replacement = "the unresolved issue"
     return re.sub(re.escape(term), replacement, text, flags=re.IGNORECASE)
 
 
@@ -283,3 +455,36 @@ REPAIR_STRATEGIES: dict[str, RepairStrategy] = {
     "correct_chapter_index": _repair_chapter_index,
     "manual_review": _manual_review,
 }
+
+ZH_CN_REPAIR_STRATEGIES: dict[str, RepairStrategy] = {
+    "seed_conflict_scene": _zh_no_safe_repair,
+    "expand_scene": _zh_no_safe_repair,
+    "add_conflict_signal": _zh_add_known_conflict_signal,
+    "remove_forbidden_term": _zh_repair_forbidden_term,
+    "add_required_term": _zh_repair_required_term,
+    "anchor_known_location": _zh_repair_known_location,
+    "insert_opening_bridge": _zh_insert_opening_bridge,
+    "rewrite_spatial_transition": _zh_rewrite_spatial_transition,
+    "anchor_last_scene_state": _zh_anchor_last_scene_state,
+    "repair_character_position": _zh_repair_character_position,
+    "add_transition_event": _zh_add_transition_event,
+    "flag_unknown_location": _zh_no_safe_repair,
+    "add_character_location": _zh_repair_character_location,
+    "rewrite_inactive_character_action": _zh_repair_inactive_character_action,
+    "correct_chapter_index": _zh_repair_chapter_index,
+    "manual_review": _manual_review,
+}
+
+REPAIR_STRATEGY_REGISTRY: dict[str, dict[str, RepairStrategy]] = {
+    "en": REPAIR_STRATEGIES,
+    "zh-CN": ZH_CN_REPAIR_STRATEGIES,
+}
+
+
+def _normalized_language(value: str) -> str:
+    normalized = str(value or "en").strip().lower().replace("_", "-")
+    if normalized in {"zh", "zh-cn", "zh-hans", "chinese"}:
+        return "zh-CN"
+    if normalized in {"", "en", "en-us", "en-gb", "english"}:
+        return "en"
+    raise ValueError(f"unsupported local repair language: {value}")

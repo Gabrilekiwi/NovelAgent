@@ -548,6 +548,7 @@ class AgentExecutorTest(unittest.TestCase):
             dry_run=True,
             story_project_context=story_project_context,
             story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy="minimal",
         ).run_once(persist=True)
 
         saved_run = json.loads(next((tmp_path / "runs").glob("chapter_2_*.json")).read_text(encoding="utf-8"))
@@ -603,6 +604,7 @@ class AgentExecutorTest(unittest.TestCase):
             dry_run=True,
             story_project_context=story_project_context,
             story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy="minimal",
         ).run_once(persist=True)
 
         self.assertTrue(result["accepted"])
@@ -615,6 +617,54 @@ class AgentExecutorTest(unittest.TestCase):
         journal = Path(result["run"]["persistence"]["journal_path"])
         self.assertTrue((journal / "commit.marker").exists())
         self.assertTrue((journal / "candidate_result.json").exists())
+
+    def test_story_project_real_writeback_defaults_to_standard_quality_policy(self) -> None:
+        tmp_path = self._case_dir("story_project_standard_quality")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        outline = book / "大纲" / "细纲_第002章.md"
+        outline.write_text("# Audit", encoding="utf-8")
+        context = {
+            "story_project_root": str(book),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": {
+                "chapter_index": 2,
+                "outline_path": str(outline),
+                "title": "Audit",
+                "core_event": "danger forces the route choice",
+                "required_beats": [
+                    {"index": 1, "text": "danger forces the route choice"},
+                    {"index": 2, "text": "open conflict over the serum"},
+                ],
+                "ending_pressure": "the locked door starts a countdown",
+                "source_path": str(outline),
+                "missing_fields": [],
+            },
+            "source_paths": {"outline_path": str(outline)},
+            "source_resolution": {"entries": []},
+        }
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            story_project_context=context,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        ).run_once(persist=True)
+
+        self.assertFalse(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertEqual("standard", result["quality_decision"]["policy"]["name"])
+        self.assertIn("chapter_length", {item["code_family"] for item in result["quality_decision"]["findings"]})
+        self.assertEqual(result["accepted"], result["run"]["quality_decision"]["accepted"])
+        self.assertFalse(canonical_prose_path(book, 2, "Audit").exists())
 
     def test_reconcile_republishes_chapter_and_idempotent_file_outbox_after_marker_crash(self) -> None:
         import main as cli
@@ -659,6 +709,7 @@ class AgentExecutorTest(unittest.TestCase):
                 "source_resolution": {"entries": []},
             },
             story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy="minimal",
         ).run_once(persist=True)
 
         run_id = result["run"]["id"]
@@ -1795,6 +1846,7 @@ class AgentExecutorTest(unittest.TestCase):
             dry_run=True,
             story_project_context_loader=RecordingLoader(),
             story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy="minimal",
         ).run_loop(steps=2, persist=True)
 
         self.assertEqual([2, 3], [item["run"]["chapter_index"] for item in loop_result["runs"]])
@@ -1869,6 +1921,7 @@ class AgentExecutorTest(unittest.TestCase):
             validator=validator,
             story_project_context_loader=RecordingLoader(),
             story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy="minimal",
         ).run_loop(steps=2, persist=True, stop_on_rejection=False)
 
         self.assertEqual([2, 2], [item["run"]["chapter_index"] for item in loop_result["runs"]])
@@ -1900,6 +1953,7 @@ class AgentExecutorTest(unittest.TestCase):
                     dry_run=True,
                     story_project_context_loader=loader,
                     story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+                    quality_policy="minimal",
                 ).run_loop(steps=2, persist=True)
 
         self.assertEqual(1, provider.call_count)
@@ -1931,6 +1985,7 @@ class AgentExecutorTest(unittest.TestCase):
                     dry_run=True,
                     story_project_context_loader=loader,
                     story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+                    quality_policy="minimal",
                 ).run_loop(steps=2, persist=True)
 
         self.assertEqual(1, provider.call_count)

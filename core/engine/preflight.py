@@ -51,6 +51,7 @@ SCHEMA_ASSETS = (
     Path("schemas/oh_story_compatibility.schema.json"),
     Path("schemas/path_ref.schema.json"),
     Path("schemas/project_identity.schema.json"),
+    Path("schemas/quality_decision.schema.json"),
     Path("schemas/prompt_context_bundle.schema.json"),
     Path("schemas/previous_chapter_context.schema.json"),
     Path("schemas/provider_smoke_report.schema.json"),
