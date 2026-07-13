@@ -305,8 +305,10 @@ def _head_tail_excerpt(text: str, *, max_chars: int, policy: str) -> dict[str, A
         return _excerpt(text, [(0, len(text))], policy=policy, original_chars=len(text))
     head_chars = max(1, int(max_chars * 0.1))
     tail_chars = max_chars - head_chars
-    ranges = [(0, head_chars), (len(text) - tail_chars, len(text))]
-    excerpt_text = text[:head_chars] + "\n\n[…中段已省略…]\n\n" + text[-tail_chars:]
+    head_end = _paragraph_end_at_or_before(text, head_chars)
+    tail_start = _paragraph_start_at_or_after(text, len(text) - tail_chars)
+    ranges = [(0, head_end), (tail_start, len(text))]
+    excerpt_text = text[:head_end].rstrip() + "\n\n[…中段已省略…]\n\n" + text[tail_start:].lstrip()
     return _excerpt(excerpt_text, ranges, policy=policy, original_chars=len(text))
 
 
@@ -355,6 +357,16 @@ def _validate_chapter_index(value: int) -> None:
 def _validate_max_chars(value: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ChapterContextError("context_excerpt_limit_invalid", "excerpt limit must be a positive integer")
+
+
+def _paragraph_end_at_or_before(text: str, limit: int) -> int:
+    boundary = text.rfind("\n\n", 0, limit + 1)
+    return boundary + 2 if boundary >= max(0, limit // 2) else limit
+
+
+def _paragraph_start_at_or_after(text: str, start: int) -> int:
+    boundary = text.find("\n\n", max(0, start))
+    return boundary + 2 if 0 <= boundary <= min(len(text), start + max(100, (len(text) - start) // 2)) else start
 
 
 __all__ = [

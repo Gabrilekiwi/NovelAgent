@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
 
 from core.chapter_contexts import ChapterContextError, PreviousChapterContext, resolve_story_project_previous_chapter
 from core.project_profile import normalize_project_profile
-from core.story_project.loader import load_text
 from core.story_project.model import (
     ChapterBlueprint,
     SourcePathSet,
@@ -48,11 +48,18 @@ def build_story_project_runtime_context(
     outline_resolution = resolve_outline(root, chapter_index)
     if outline_resolution.path is None:
         raise FileNotFoundError(f"No unique outline file matched chapter {chapter_index}.")
-    outline_file = _read_context_file(outline_resolution.path, root=root, max_chars=max_file_chars, warnings=warnings)
+    outline_file = _read_context_file(
+        outline_resolution.path,
+        root=root,
+        max_chars=max_file_chars,
+        warnings=warnings,
+        include_full_text=True,
+    )
+    outline_parse_text = str(outline_file.pop("_full_text"))
     chapter_blueprint = _build_chapter_blueprint(
         chapter_index=chapter_index,
         outline_path=outline_resolution.path,
-        outline_text=str(outline_file["text"]),
+        outline_text=outline_parse_text,
     )
     missing_fields.extend(chapter_blueprint.missing_fields)
 
@@ -153,19 +160,71 @@ def _read_markdown_tree(directory: Path, *, root: Path, max_chars: int, warnings
     return files
 
 
-def _read_context_file(path: Path, *, root: Path, max_chars: int, warnings: list[str]) -> dict[str, Any]:
-    text = load_text(path)
-    truncated = len(text) > max_chars
+def _read_context_file(
+    path: Path,
+    *,
+    root: Path,
+    max_chars: int,
+    warnings: list[str],
+    include_full_text: bool = False,
+) -> dict[str, Any]:
+    raw = path.read_bytes()
+    full_text = raw.decode("utf-8-sig")
+    excerpt = _prompt_excerpt(full_text, max_chars=max_chars)
+    truncated = excerpt["truncated"]
     if truncated:
         warnings.append(f"truncated_file: {_relative_path(path, root)} exceeded {max_chars} chars")
-        text = text[:max_chars]
-    return {
+    result = {
         "path": str(path),
         "relative_path": _relative_path(path, root),
-        "text": text,
-        "chars": len(text),
+        "text": excerpt["text"],
+        "chars": len(full_text),
+        "excerpt_chars": len(excerpt["text"]),
+        "excerpt_ranges": excerpt["ranges"],
+        "sha256": hashlib.sha256(raw).hexdigest(),
         "truncated": truncated,
     }
+    if include_full_text:
+        result["_full_text"] = full_text
+    return result
+
+
+def _prompt_excerpt(text: str, *, max_chars: int) -> dict[str, Any]:
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars < 1:
+        raise ValueError("max_chars must be a positive integer")
+    if len(text) <= max_chars:
+        return {
+            "text": text,
+            "ranges": [{"start_char": 0, "end_char": len(text)}],
+            "truncated": False,
+        }
+    head_limit = max(1, int(max_chars * 0.1))
+    tail_limit = max_chars - head_limit
+    head_end = _paragraph_end_at_or_before(text, head_limit)
+    tail_start = _paragraph_start_at_or_after(text, len(text) - tail_limit)
+    if head_end <= 0:
+        head_end = head_limit
+    if tail_start >= len(text):
+        tail_start = len(text) - tail_limit
+    excerpt_text = text[:head_end].rstrip() + "\n\n[…中段已省略…]\n\n" + text[tail_start:].lstrip()
+    return {
+        "text": excerpt_text,
+        "ranges": [
+            {"start_char": 0, "end_char": head_end},
+            {"start_char": tail_start, "end_char": len(text)},
+        ],
+        "truncated": True,
+    }
+
+
+def _paragraph_end_at_or_before(text: str, limit: int) -> int:
+    boundary = text.rfind("\n\n", 0, limit + 1)
+    return boundary + 2 if boundary >= max(0, limit // 2) else limit
+
+
+def _paragraph_start_at_or_after(text: str, start: int) -> int:
+    boundary = text.find("\n\n", max(0, start))
+    return boundary + 2 if 0 <= boundary <= min(len(text), start + max(100, (len(text) - start) // 2)) else start
 
 
 def _build_chapter_blueprint(*, chapter_index: int, outline_path: Path, outline_text: str) -> ChapterBlueprint:

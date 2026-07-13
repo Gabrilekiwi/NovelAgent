@@ -6,6 +6,8 @@ from typing import Any
 
 from api.contracts import CHAPTER_CONTRACT, validate_language_output, validate_text_output
 from api.openai_client import chat_completion
+from core.context_budget import default_context_budget
+from core.prompt_compiler import compile_prompt_contexts
 from core.schema import validate_schema
 from core.story_project.coverage import (
     blueprint_to_dict,
@@ -36,19 +38,22 @@ def run_chapter_pipeline(
     chapter_blueprint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     blueprint = blueprint_to_dict(chapter_blueprint)
+    prompt_contexts = compile_prompt_contexts(input_pack)
+    plan_input = prompt_contexts.plan.text
+    scene_input = prompt_contexts.scene.text
     if blueprint is None:
-        plan = plan_chapter(input_pack, chapter_index=chapter_index, dry_run=dry_run)
+        plan = plan_chapter(plan_input, chapter_index=chapter_index, dry_run=dry_run)
         plan = _limit_plan_scenes(plan, scene_limit)
     else:
         validate_generation_blueprint_contract(blueprint)
         plan = plan_chapter(
-            input_pack,
+            plan_input,
             chapter_index=chapter_index,
             dry_run=dry_run,
             chapter_blueprint=blueprint,
             scene_limit=scene_limit,
         )
-    scenes = generate_scenes(input_pack, plan, dry_run=dry_run, language=language, chapter_blueprint=blueprint)
+    scenes = generate_scenes(scene_input, plan, dry_run=dry_run, language=language, chapter_blueprint=blueprint)
     merged, scene_spans = _merge_scene_texts(scenes)
     merged = validate_language_output(merged, CHAPTER_CONTRACT, language=language)
     blueprint_coverage = build_blueprint_coverage(blueprint, scenes, merged) if blueprint is not None else None
@@ -62,6 +67,15 @@ def run_chapter_pipeline(
             "merged_chapter": merged,
             "scene_spans": scene_spans,
             "blueprint_coverage": blueprint_coverage,
+            "context_budget": {
+                "context_digest": prompt_contexts.context_digest,
+                "plan": prompt_contexts.plan.report,
+                "scene": prompt_contexts.scene.report,
+                "repair": prompt_contexts.repair.report,
+                "plan_sections": list(prompt_contexts.plan.selected_sections),
+                "scene_sections": list(prompt_contexts.scene.selected_sections),
+                "repair_sections": list(prompt_contexts.repair.selected_sections),
+            },
             "stages": _pipeline_stages(
                 {
                     "plan_chapter": {
@@ -133,6 +147,11 @@ def plan_chapter(
 
 
 def _request_chapter_plan(input_pack: str, prompt: str) -> str:
+    default_context_budget().require_input(
+        input_pack,
+        stage="plan",
+        protocol_texts=(prompt,),
+    )
     return chat_completion(
         [
             {"role": "system", "content": prompt},
@@ -149,6 +168,10 @@ def _request_chapter_plan_json_repair(
     invalid_payload: str,
     error: json.JSONDecodeError,
 ) -> str:
+    default_context_budget().require_input(
+        input_pack[:6000] + invalid_payload,
+        stage="plan_json_repair",
+    )
     return chat_completion(
         [
             {
@@ -220,20 +243,12 @@ def generate_scenes(
                 {"role": "system", "content": _load_prompt()},
                 {
                     "role": "user",
-                    "content": json.dumps(
-                        {
-                            "input_pack": input_pack,
-                            "chapter_plan": plan,
-                            "scene": scene,
-                            "story_project_required_beats": scene_required_beats,
-                            "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
-                            "instruction": (
-                                "Draft only this scene as continuous prose. No heading. "
-                                "If story_project_required_beats are provided, cover each listed beat in the prose."
-                            ),
-                        },
-                        ensure_ascii=False,
-                        indent=2,
+                    "content": _scene_request_payload(
+                        input_pack=input_pack,
+                        plan=plan,
+                        scene=scene,
+                        scene_required_beats=scene_required_beats,
+                        blueprint=blueprint,
                     ),
                 },
             ],
@@ -253,6 +268,37 @@ def generate_scenes(
             }
         )
     return _validate_scene_drafts(scene_drafts)
+
+
+def _scene_request_payload(
+    *,
+    input_pack: str,
+    plan: dict[str, Any],
+    scene: dict[str, Any],
+    scene_required_beats: list[dict[str, Any]],
+    blueprint: dict[str, Any] | None,
+) -> str:
+    payload = json.dumps(
+        {
+            "shared_context": input_pack,
+            "chapter_plan": plan,
+            "scene": scene,
+            "story_project_required_beats": scene_required_beats,
+            "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
+            "instruction": (
+                "Draft only this scene as continuous prose. No heading. "
+                "If story_project_required_beats are provided, cover each listed beat in the prose."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    default_context_budget().require_input(
+        payload,
+        stage="scene",
+        protocol_texts=(_load_prompt(),),
+    )
+    return payload
 
 
 def merge_scenes(scene_drafts: list[dict[str, Any]]) -> str:

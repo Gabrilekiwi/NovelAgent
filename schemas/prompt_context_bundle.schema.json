@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PromptContextBundle",
+  "type": "object",
+  "required": ["schema_version", "context_digest", "plan", "scene", "repair"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "context_digest": {"type": "string", "minLength": 64},
+    "plan": {"type": "object"},
+    "scene": {"type": "object"},
+    "repair": {"type": "object"}
+  },
+  "additionalProperties": false
+}

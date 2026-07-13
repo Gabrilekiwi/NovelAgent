@@ -119,15 +119,45 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         return ""
     payload = {
         "chapter_blueprint": story_project_context.get("chapter_blueprint"),
-        "outline": story_project_context.get("outline"),
-        "previous_prose": story_project_context.get("previous_prose"),
+        "outline_source": _compact_story_source(story_project_context.get("outline"), excerpt_chars=800),
         "previous_chapter_context": story_project_context.get("previous_chapter_context"),
-        "tracking_files": story_project_context.get("tracking_files"),
-        "setting_files": story_project_context.get("setting_files"),
+        "semantic_state": story_project_context.get("semantic_state"),
+        "tracking_excerpts": _compact_story_sources(
+            story_project_context.get("tracking_files"), excerpt_chars=2000
+        ),
+        "setting_excerpts": _compact_story_sources(
+            story_project_context.get("setting_files"), excerpt_chars=1200
+        ),
         "source_paths": story_project_context.get("source_paths"),
         "source_resolution": story_project_context.get("source_resolution"),
     }
     return "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+
+
+def _compact_story_sources(value: Any, *, excerpt_chars: int) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(name): _compact_story_source(source, excerpt_chars=excerpt_chars)
+        for name, source in sorted(value.items())
+        if isinstance(source, dict)
+    }
+
+
+def _compact_story_source(value: Any, *, excerpt_chars: int) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    text = str(value.get("text") or "")
+    if len(text) > excerpt_chars:
+        head = max(1, excerpt_chars // 4)
+        text = text[:head].rstrip() + "\n[…excerpt…]\n" + text[-(excerpt_chars - head) :].lstrip()
+    return {
+        "relative_path": value.get("relative_path"),
+        "sha256": value.get("sha256"),
+        "original_chars": value.get("chars"),
+        "excerpt": text,
+        "truncated": bool(value.get("truncated")) or len(str(value.get("text") or "")) > excerpt_chars,
+    }
 
 
 def build_input_pack_metadata(

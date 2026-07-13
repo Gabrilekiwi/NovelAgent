@@ -7,6 +7,8 @@ from typing import Any, Callable
 
 from api.contracts import REPAIR_CONTRACT, validate_text_output
 from api.openai_client import chat_completion
+from core.context_budget import default_context_budget
+from core.prompt_compiler import compile_prompt_contexts
 from core.schema import validate_schema
 from modules.scene_repair.plan import build_repair_plan
 
@@ -40,22 +42,29 @@ def _repair_with_model(
     repair_plan: dict[str, Any],
     recovery_context: dict[str, Any] | None,
 ) -> str:
+    compact_context = compile_prompt_contexts(input_pack).repair.text
+    payload = json.dumps(
+        {
+            "chapter": chapter_text,
+            "validation": validation,
+            "repair_plan": repair_plan,
+            "recovery_context": recovery_context or {"available": False},
+            "context_digest_and_excerpts": compact_context,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    default_context_budget().require_input(
+        payload,
+        stage="repair",
+        protocol_texts=(_load_prompt(),),
+    )
     output = chat_completion(
         [
             {"role": "system", "content": _load_prompt()},
             {
                 "role": "user",
-                "content": json.dumps(
-                    {
-                        "chapter": chapter_text,
-                        "validation": validation,
-                        "repair_plan": repair_plan,
-                        "recovery_context": recovery_context or {"available": False},
-                        "input_pack": input_pack,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
+                "content": payload,
             },
         ],
         temperature=0.2,

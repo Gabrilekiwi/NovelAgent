@@ -57,6 +57,9 @@
       },
       "additionalProperties": false
     },
+    "context_budget": {
+      "type": "object"
+    },
     "plan": {
       "type": "object",
       "required": ["goal", "scenes"],

@@ -4,6 +4,8 @@ from pathlib import Path
 
 from api.contracts import CHAPTER_CONTRACT, validate_text_output
 from api.openai_client import chat_completion
+from core.context_budget import default_context_budget
+from core.prompt_compiler import compile_prompt_contexts
 
 _PROMPT_PATH = Path("prompts/chapter_prompt.md")
 _DRY_RUN_CHAPTER = (
@@ -26,10 +28,16 @@ def generate_chapter(input_pack: str, *, dry_run: bool = False) -> str:
     if dry_run:
         output = _DRY_RUN_CHAPTER
     else:
+        compiled = compile_prompt_contexts(input_pack).plan.text
+        default_context_budget().require_input(
+            compiled,
+            stage="chapter_generation",
+            protocol_texts=(_load_prompt(),),
+        )
         output = chat_completion(
             [
                 {"role": "system", "content": _load_prompt()},
-                {"role": "user", "content": input_pack},
+                {"role": "user", "content": compiled},
             ],
             stage="chapter_generation",
         )

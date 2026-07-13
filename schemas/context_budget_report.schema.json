@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ContextBudgetReport",
+  "type": "object",
+  "required": ["schema_version", "stage", "provider", "model", "model_context_window", "usable_input_tokens", "hard_input_limit", "raw_input_tokens", "budgeted_input_tokens", "count_mode", "counter_version", "within_budget", "context_digest"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "stage": {"type": "string", "minLength": 1},
+    "provider": {"type": "string", "minLength": 1},
+    "model": {"type": "string", "minLength": 1},
+    "model_context_window": {"type": "integer", "minimum": 1},
+    "usable_input_tokens": {"type": "integer", "minimum": 0},
+    "hard_input_limit": {"type": "integer", "minimum": 0},
+    "raw_input_tokens": {"type": "integer", "minimum": 0},
+    "budgeted_input_tokens": {"type": "integer", "minimum": 0},
+    "count_mode": {"type": "string", "enum": ["exact", "estimate"]},
+    "counter_version": {"type": "string", "minLength": 1},
+    "within_budget": {"type": "boolean"},
+    "context_digest": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}
