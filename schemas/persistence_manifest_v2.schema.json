@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PersistenceManifestV2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "immutable",
+    "manifest_digest",
+    "state",
+    "progress",
+    "errors",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["2.0"]},
+    "immutable": {"type": "object", "additionalProperties": true},
+    "manifest_digest": {"type": "string", "minLength": 64},
+    "state": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "applying",
+        "commit_marked",
+        "publishing",
+        "completed",
+        "rolling_back",
+        "rolled_back",
+        "recovery_required"
+      ]
+    },
+    "progress": {"type": "object", "additionalProperties": true},
+    "errors": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "created_at": {"type": "string", "minLength": 1},
+    "updated_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
