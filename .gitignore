@@ -17,3 +17,6 @@ data/memory.json
 data/memory_v2/
 data/memory_outbox.jsonl
 data/memory_outbox*.jsonl
+/.active-book
+/books/
+/pytest-cache-files-*/
