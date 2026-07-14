@@ -466,7 +466,12 @@ def _chapter_operations(chapter_index: int, analysis: Mapping[str, Any]) -> list
     operations: list[dict[str, Any]] = []
     story_state = analysis.get("story_state")
     spatial_state = analysis.get("spatial_state")
-    current: dict[str, Any] = {"chapter_index": chapter_index}
+    # Runtime snapshots point at the next chapter to generate.  Event and
+    # timeline records below remain bound to the chapter that just committed.
+    current: dict[str, Any] = {
+        "chapter_index": chapter_index + 1,
+        "last_committed_chapter_index": chapter_index,
+    }
     if isinstance(story_state, Mapping):
         current["story_state"] = copy.deepcopy(dict(story_state))
     if isinstance(spatial_state, Mapping):

@@ -178,6 +178,10 @@ class MemoryV2RuntimeTest(unittest.TestCase):
         self.assertEqual("committed", prepared["batch"]["publication_status"])
         self.assertEqual("2.2", prepared["projection"]["schema_version"])
         self.assertEqual(3, prepared["projection"]["authority_epoch"])
+        self.assertEqual(2, prepared["projection"]["current_state"]["chapter_index"])
+        self.assertEqual(
+            1, prepared["projection"]["current_state"]["last_committed_chapter_index"]
+        )
         self.assertEqual(
             base["head_event_hash"],
             prepared["batch"]["events"][0]["precondition"]["expected_head_event_hash"],
