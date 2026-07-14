@@ -346,18 +346,26 @@ class PersistenceV21Test(unittest.TestCase):
         ]
         self.assertNotIn("abandoned_prepare", errors)
 
-    def _story_read_set_case(self, name: str) -> tuple[dict, dict, Path, Path]:
+    def _story_read_set_case(
+        self, name: str, *, activate_before_prose: bool = False
+    ) -> tuple[dict, dict, Path, Path]:
         case = self._case(name)
         story = case["story"]
         for directory in ("设定", "大纲", "正文", "追踪"):
             (story / directory).mkdir()
         (story / "大纲" / "细纲_第002章.md").write_text("# 第二章", encoding="utf-8")
-        (story / "正文" / "第001章_一.md").write_text("第一章", encoding="utf-8")
         tracking = story / "追踪" / "上下文.md"
         settings = story / "设定" / "地点.md"
         tracking.write_text("# 上下文\n旧", encoding="utf-8")
         settings.write_text("# 地点\n旧", encoding="utf-8")
         identity = ensure_project_identity(story)
+        if activate_before_prose:
+            identity = activate_event_authority(
+                story,
+                expected_identity_sha256=project_identity_sha256(story),
+                head_event_hash="a" * 64,
+            )
+        (story / "正文" / "第001章_一.md").write_text("第一章", encoding="utf-8")
         read_set = capture_story_project_read_set(story, 2, project_identity=identity)
         return case, read_set, tracking, settings
 
@@ -463,17 +471,10 @@ class PersistenceV21Test(unittest.TestCase):
         self.assertEqual("# 上下文\n旧", tracking.read_text(encoding="utf-8"))
 
     def test_event_authority_source_write_requires_identity_head_transition(self) -> None:
-        case, _read_set, tracking, _settings = self._story_read_set_case(
-            "event_source_without_identity"
+        case, read_set, tracking, _settings = self._story_read_set_case(
+            "event_source_without_identity", activate_before_prose=True
         )
-        activated = activate_event_authority(
-            case["story"],
-            expected_identity_sha256=project_identity_sha256(case["story"]),
-            head_event_hash="a" * 64,
-        )
-        read_set = capture_story_project_read_set(
-            case["story"], 2, project_identity=activated
-        )
+        activated = load_project_identity(case["story"])
         target, declared = self._story_target_and_declared(case, read_set, tracking)
         case["root_map"]["snapshot"] = case["story"]
 
@@ -535,17 +536,10 @@ class PersistenceV21Test(unittest.TestCase):
         self.assertEqual("# 上下文\n旧", tracking.read_text(encoding="utf-8"))
 
     def test_project_identity_head_advance_uses_before_and_after_read_set_cas(self) -> None:
-        case, _read_set, _tracking, _settings = self._story_read_set_case(
-            "identity_advance"
+        case, read_set, _tracking, _settings = self._story_read_set_case(
+            "identity_advance", activate_before_prose=True
         )
-        activated = activate_event_authority(
-            case["story"],
-            expected_identity_sha256=project_identity_sha256(case["story"]),
-            head_event_hash="a" * 64,
-        )
-        read_set = capture_story_project_read_set(
-            case["story"], 2, project_identity=activated
-        )
+        activated = load_project_identity(case["story"])
         advanced = prepare_event_authority_advance(
             activated,
             expected_authority_epoch=activated.authority["authority_epoch"],

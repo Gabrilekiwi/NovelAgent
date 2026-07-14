@@ -58,6 +58,12 @@ def build_migration_plan(
     identity = load_project_identity(root)
     if identity is None or identity.ephemeral:
         raise MigrationV2Error("migration_identity_missing", "a stable ProjectIdentity is required")
+    authority = identity.authority or {}
+    if authority.get("mode") != "legacy_markdown_v1":
+        raise MigrationV2Error(
+            "migration_event_authority_already_active",
+            "event authority is already active; migration preview cannot authorize a downgrade or replay",
+        )
     identity_path = project_identity_path(root)
     expected_identity_sha256 = _file_sha256(identity_path)
     sources = _capture_sources(root)
@@ -183,6 +189,51 @@ def assert_migration_plan_current(
         raise MigrationPlanStaleError("StoryProject source bytes or membership changed")
     if canonical_json_hash(current_sources) != validated["source_digest"]:
         raise MigrationPlanStaleError("StoryProject source digest changed")
+    return validated
+
+
+def assert_migration_source_snapshot_current(
+    plan: Mapping[str, Any],
+    story_project_root: str | Path,
+    *,
+    expected_identity_sha256: str | None = None,
+    ignored_relative_prefixes: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Recheck frozen migration inputs during an atomic identity transition.
+
+    Migration bootstrap writes its Memory 2.2 files before the commit marker and
+    replaces ProjectIdentity last.  This narrower CAS check permits only those
+    explicitly named transition effects while keeping every pre-existing source
+    byte and membership entry frozen through the marker boundary.
+    """
+
+    validated = validate_migration_plan(dict(plan))
+    root = _story_root(story_project_root)
+    prefixes = tuple(_safe_relative_prefix(item) for item in ignored_relative_prefixes)
+    current = _capture_sources(root)
+
+    expected_items = [
+        item
+        for item in validated["sources"]
+        if not _matches_relative_prefix(item["relative_path"], prefixes)
+    ]
+    current_items = [
+        item
+        for item in current
+        if not _matches_relative_prefix(item["relative_path"], prefixes)
+    ]
+    if expected_identity_sha256 is not None:
+        expected_after = _sha256("expected_identity_sha256", expected_identity_sha256)
+        identity_items = [item for item in current_items if item["role"] == "project_identity"]
+        if len(identity_items) != 1 or identity_items[0]["sha256"] != expected_after:
+            raise MigrationPlanStaleError("ProjectIdentity did not match the atomic transition target")
+        expected_items = [item for item in expected_items if item["role"] != "project_identity"]
+        current_items = [item for item in current_items if item["role"] != "project_identity"]
+
+    if current_items != expected_items:
+        raise MigrationPlanStaleError(
+            "StoryProject source bytes or membership changed during migration bootstrap"
+        )
     return validated
 
 
@@ -404,6 +455,17 @@ def _validate_decisions(
             raise MigrationV2Error(
                 "migration_conflict_resolution_invalid", "conflict resolution keys or values are incomplete"
             )
+        conflict_paths = {
+            f"{item['code']}:{item['role']}:{item['chapter_index']}": set(item["paths"])
+            for item in conflicts
+        }
+        for key, chosen in resolutions.items():
+            normalized = _safe_relative_path(chosen)
+            if normalized not in conflict_paths[key]:
+                raise MigrationV2Error(
+                    "migration_conflict_resolution_invalid",
+                    f"conflict resolution must select a reported source path: {key}",
+                )
     elif conflicts is not None and "conflict_resolutions" in decisions and decisions["conflict_resolutions"] not in ({}, None):
         raise MigrationV2Error(
             "migration_conflict_resolution_invalid", "no conflict resolutions are expected for this plan"
@@ -495,6 +557,18 @@ def _safe_relative_path(value: Any) -> str:
     return normalized
 
 
+def _safe_relative_prefix(value: Any) -> str:
+    normalized = _safe_relative_path(value)
+    return normalized.rstrip("/")
+
+
+def _matches_relative_prefix(relative_path: str, prefixes: tuple[str, ...]) -> bool:
+    return any(
+        relative_path == prefix or relative_path.startswith(prefix + "/")
+        for prefix in prefixes
+    )
+
+
 def _file_sha256(path: Path) -> str:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -527,6 +601,7 @@ __all__ = [
     "MigrationPlanStaleError",
     "MigrationV2Error",
     "assert_migration_plan_current",
+    "assert_migration_source_snapshot_current",
     "build_migration_approval",
     "build_migration_plan",
     "validate_migration_approval",

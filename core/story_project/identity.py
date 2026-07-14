@@ -160,6 +160,10 @@ def load_project_identity(story_project_root: str | Path) -> ProjectIdentity | N
         from core.story_project.authority import validate_persisted_authority_receipts
 
         validate_persisted_authority_receipts(story_project_root, identity)
+    else:
+        from core.story_project.authority import assert_no_event_receipt_for_legacy_identity
+
+        assert_no_event_receipt_for_legacy_identity(story_project_root, identity)
     return identity
 
 

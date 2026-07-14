@@ -178,6 +178,18 @@ class StoryProjectMigrationV2Test(unittest.TestCase):
         self.assertEqual(approval, validate_migration_approval(approval, plan=plan))
         self.assertEqual(approval, validate_migration_approval(approval))
 
+        invented = self._decisions()
+        invented["conflict_resolutions"] = {
+            "duplicate_chapter_source:published_prose:1": "正文/not-a-reported-source.md"
+        }
+        with self.assertRaisesRegex(MigrationV2Error, "migration_conflict_resolution_invalid"):
+            build_migration_approval(
+                plan,
+                decisions=invented,
+                approver_id="operator",
+                approved_at=NOW,
+            )
+
     def test_linked_sources_are_rejected_when_supported(self) -> None:
         root = self._populated_book("link")
         target = root / "outside.md"

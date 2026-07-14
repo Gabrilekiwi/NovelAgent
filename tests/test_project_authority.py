@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 import uuid
 
+import core.story_project.authority as authority_module
 from core.story_project.authority import (
     AUTHORITY_MODE_EVENT,
     AUTHORITY_MODE_LEGACY,
@@ -189,14 +190,15 @@ class ProjectAuthorityTest(unittest.TestCase):
         receipt_dir = root / ".novelagent" / "authority" / "receipts"
         self.assertFalse(receipt_dir.exists())
 
-    def test_receipt_publication_failure_leaves_v2_fail_closed_not_legacy(self) -> None:
-        root = self._story_project("receipt_failure")
+    def test_failure_before_first_event_receipt_preserves_legacy_authority(self) -> None:
+        root = self._story_project("intent_failure")
         ensure_project_identity(root, now=self._now)
+        before = project_identity_path(root).read_bytes()
 
         with patch(
             "core.story_project.authority.atomic_create_json",
-            side_effect=OSError("injected receipt failure"),
-        ), self.assertRaisesRegex(AuthorityError, "receipt_publish_failed"):
+            side_effect=OSError("injected intent failure"),
+        ), self.assertRaisesRegex(AuthorityError, "intent_publish_failed"):
             activate_event_authority(
                 root,
                 expected_identity_sha256=project_identity_sha256(root),
@@ -204,18 +206,85 @@ class ProjectAuthorityTest(unittest.TestCase):
                 now=self._now,
             )
 
-        raw = json.loads(project_identity_path(root).read_text(encoding="utf-8"))
-        identity = validate_project_identity(raw)
-        self.assertEqual("2.0", identity.schema_version)
-        self.assertEqual(AUTHORITY_MODE_EVENT, identity.authority["mode"])
-        with self.assertRaisesRegex(AuthorityWriterContractError, "legacy_writer_forbidden"):
-            assert_authority_writer(
-                identity,
-                writer_mode=AUTHORITY_MODE_LEGACY,
-                writer_contract=1,
+        self.assertEqual(before, project_identity_path(root).read_bytes())
+        self.assertEqual(AUTHORITY_MODE_LEGACY, load_project_identity(root).authority["mode"])
+        receipt_dir = root / ".novelagent" / "authority" / "receipts"
+        self.assertFalse(receipt_dir.exists())
+
+    def test_receipt_first_identity_failure_blocks_legacy_and_reenters_forward(self) -> None:
+        root = self._story_project("receipt_first_recovery")
+        ensure_project_identity(root, now=self._now)
+        expected_sha = project_identity_sha256(root)
+
+        with patch(
+            "core.story_project.authority.atomic_write_json",
+            side_effect=OSError("injected identity failure"),
+        ), self.assertRaisesRegex(AuthorityError, "authority_identity_publish_failed"):
+            activate_event_authority(
+                root,
+                expected_identity_sha256=expected_sha,
+                canonical_state_sha256="9" * 64,
+                now=self._now,
             )
-        with self.assertRaises(AuthorityError):
+
+        raw = json.loads(project_identity_path(root).read_text(encoding="utf-8"))
+        self.assertEqual("1.0", raw["schema_version"])
+        with self.assertRaisesRegex(
+            AuthorityWriterContractError, "legacy_writer_forbidden_after_event_receipt"
+        ):
             load_project_identity(root)
+
+        activated = activate_event_authority(
+            root,
+            expected_identity_sha256=expected_sha,
+            canonical_state_sha256="9" * 64,
+            now=self._now,
+        )
+        self.assertEqual(AUTHORITY_MODE_EVENT, activated.authority["mode"])
+        self.assertEqual(activated, load_project_identity(root))
+
+    def test_first_genesis_receipt_blocks_legacy_until_activation_recovers(self) -> None:
+        root = self._story_project("genesis_receipt_recovery")
+        ensure_project_identity(root, now=self._now)
+        expected_sha = project_identity_sha256(root)
+        original_publish = authority_module._publish_immutable_receipt
+        calls = 0
+
+        def fail_second(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise AuthorityError(
+                    "injected activation receipt failure",
+                    code="authority_receipt_publish_failed",
+                )
+            return original_publish(*args, **kwargs)
+
+        with patch(
+            "core.story_project.authority._publish_immutable_receipt",
+            side_effect=fail_second,
+        ), self.assertRaisesRegex(AuthorityError, "receipt_publish_failed"):
+            activate_event_authority(
+                root,
+                expected_identity_sha256=expected_sha,
+                canonical_state_sha256="8" * 64,
+                now=self._now,
+            )
+
+        raw = json.loads(project_identity_path(root).read_text(encoding="utf-8"))
+        self.assertEqual("1.0", raw["schema_version"])
+        with self.assertRaisesRegex(
+            AuthorityWriterContractError, "legacy_writer_forbidden_after_event_receipt"
+        ):
+            load_project_identity(root)
+
+        activated = activate_event_authority(
+            root,
+            expected_identity_sha256=expected_sha,
+            canonical_state_sha256="8" * 64,
+            now=self._now,
+        )
+        self.assertEqual(AUTHORITY_MODE_EVENT, activated.authority["mode"])
 
     def test_activation_and_persisted_receipt_tampering_fail_closed(self) -> None:
         root = self._story_project("tamper")

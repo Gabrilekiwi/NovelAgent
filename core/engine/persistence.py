@@ -977,7 +977,10 @@ def _write_new_durable_file(path: Path, content: bytes) -> None:
 
 def _atomic_replace_from_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.novelagent-", suffix=".tmp", dir=path.parent)
+    # The target name can itself be a 64-character content hash. Repeating it
+    # in the temporary name needlessly crosses classic Windows MAX_PATH limits
+    # for otherwise valid StoryProject roots.
+    fd, tmp_name = tempfile.mkstemp(prefix=".na-", suffix=".tmp", dir=path.parent)
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -1001,7 +1004,7 @@ def _atomic_create_from_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         raise FileExistsError(f"atomic create target already exists: {path}")
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.novelagent-", suffix=".tmp", dir=path.parent)
+    fd, tmp_name = tempfile.mkstemp(prefix=".na-", suffix=".tmp", dir=path.parent)
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as handle:
