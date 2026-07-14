@@ -182,7 +182,7 @@ class PreflightTest(unittest.TestCase):
         audit = [check for check in result["checks"] if check["name"] == "state_builder_audit"][0]
         self.assertEqual(0, audit["details"]["applied_count"])
         consistency = [check for check in result["checks"] if check["name"] == "schema_consistency"][0]
-        self.assertEqual(9, consistency["details"]["count"])
+        self.assertEqual(10, consistency["details"]["count"])
         execution = [check for check in result["checks"] if check["name"] == "execution_mode"][0]
         self.assertFalse(execution["details"]["persist"])
         self.assertTrue(execution["details"]["dry_run"])

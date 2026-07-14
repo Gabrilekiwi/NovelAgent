@@ -38,6 +38,12 @@ EMBEDDED_SCHEMA_CONTRACTS = (
         "path": ("properties", "state_update"),
     },
     {
+        "source": "project_identity.schema.json",
+        "embedded_in": "run_record.schema.json",
+        "path": ("properties", "story_project", "properties", "project_identity"),
+        "nullable": True,
+    },
+    {
         "source": "review_gate_result.schema.json",
         "embedded_in": "run_record.schema.json",
         "path": ("properties", "review_gate"),

@@ -23,7 +23,7 @@ class SchemaContractTest(unittest.TestCase):
     def test_schema_contracts_match_standalone_schemas(self) -> None:
         checked = validate_schema_consistency()
 
-        self.assertEqual(9, len(checked))
+        self.assertEqual(10, len(checked))
         self.assertIn(
             {
                 "source": str(Path("schemas/director_decision.schema.json")),
