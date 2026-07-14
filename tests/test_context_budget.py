@@ -379,6 +379,16 @@ class ContextBudgetTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(tracking.read_bytes()).hexdigest(), tracked["sha256"])
         self.assertTrue(tracked["truncated"])
         self.assertIn("最新事实：门已打开", tracked["text"])
+        mapped_source = tracking.read_bytes().decode("utf-8-sig")
+        self.assertEqual(
+            hashlib.sha256(mapped_source.encode("utf-8")).hexdigest(),
+            tracked["selection"]["source_sha256"],
+        )
+        for item in tracked["selection"]["selected_items"]:
+            selected_source = mapped_source[item["start_char"] : item["end_char"]]
+            self.assertEqual(item["original_chars"], len(selected_source))
+            self.assertEqual(item["sha256"], hashlib.sha256(selected_source.encode("utf-8")).hexdigest())
+            self.assertIn(selected_source, tracked["text"])
         self.assertEqual("发现门禁记录", context.chapter_blueprint.required_beats[0]["text"])
         self.assertEqual("警报响起", context.chapter_blueprint.ending_pressure)
 
@@ -388,6 +398,7 @@ class ContextBudgetTest(unittest.TestCase):
         )
         self.assertLess(len(pack), 20_000)
         self.assertIn("最新事实：门已打开", pack)
+        self.assertIn(tracked["selection"]["source_sha256"], pack)
         self.assertNotIn("旧事实。" * 2_000, pack)
 
     def test_pipeline_records_stage_budget_reports(self) -> None:

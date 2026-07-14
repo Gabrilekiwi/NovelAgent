@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OutlineReadiness",
+  "type": "object",
+  "required": ["schema_version", "kind", "ok", "reasons", "book_id", "chapter_index", "authority", "context_digest", "checked_at", "evidence"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "kind": {"type": "string", "enum": ["outline"]},
+    "ok": {"type": "boolean"},
+    "reasons": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "book_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "authority": {
+      "type": "object",
+      "required": ["epoch", "head_event_hash"],
+      "properties": {
+        "epoch": {"type": "integer", "minimum": 0},
+        "head_event_hash": {"type": ["string", "null"], "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "context_digest": {"type": "string", "minLength": 64},
+    "checked_at": {"type": "string", "minLength": 1},
+    "evidence": {
+      "type": "object",
+      "required": ["project_identity_matches", "canonical_next_chapter_matches", "book_lease_held", "required_delivery_allows_progress", "sources_current", "outline_exists"],
+      "properties": {
+        "project_identity_matches": {"type": "boolean"},
+        "canonical_next_chapter_matches": {"type": "boolean"},
+        "book_lease_held": {"type": "boolean"},
+        "required_delivery_allows_progress": {"type": "boolean"},
+        "sources_current": {"type": "boolean"},
+        "outline_exists": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -6,6 +6,7 @@ from typing import Any
 
 from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
+from core.structured_context import select_text_blocks
 
 
 _SNAPSHOT_PROMPT_PATH = Path("prompts/snapshot_prompt.md")
@@ -180,16 +181,22 @@ def _compact_semantic_state(value: Any) -> dict[str, Any] | None:
 def _compact_story_source(value: Any, *, excerpt_chars: int) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
-    text = str(value.get("text") or "")
-    if len(text) > excerpt_chars:
-        head = max(1, excerpt_chars // 4)
-        text = text[:head].rstrip() + "\n[…excerpt…]\n" + text[-(excerpt_chars - head) :].lstrip()
+    source_text = str(value.get("text") or "")
+    selection = select_text_blocks(
+        source_text,
+        max_chars=excerpt_chars,
+        required=(),
+        prefer_recent=True,
+        policy="input_pack_story_source_paragraph_relevance_v1",
+    )
     return {
         "relative_path": value.get("relative_path"),
         "sha256": value.get("sha256"),
         "original_chars": value.get("chars"),
-        "excerpt": text,
-        "truncated": bool(value.get("truncated")) or len(str(value.get("text") or "")) > excerpt_chars,
+        "excerpt": selection.text,
+        "source_selection": value.get("selection"),
+        "selection": selection.manifest(),
+        "truncated": bool(value.get("truncated")) or selection.omitted_count > 0,
     }
 
 

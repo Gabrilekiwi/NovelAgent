@@ -12,7 +12,18 @@ from core.schema import SchemaValidationError, validate_schema
 
 
 PROJECT_IDENTITY_SCHEMA_VERSION = "1.0"
+PROJECT_IDENTITY_V2_SCHEMA_VERSION = "2.0"
+SUPPORTED_PROJECT_IDENTITY_SCHEMA_VERSIONS = frozenset(
+    {PROJECT_IDENTITY_SCHEMA_VERSION, PROJECT_IDENTITY_V2_SCHEMA_VERSION}
+)
 PROJECT_IDENTITY_RELATIVE_PATH = Path(".novelagent/project.json")
+LEGACY_AUTHORITY_PROJECTION: dict[str, Any] = {
+    "mode": "legacy_markdown_v1",
+    "authority_epoch": 0,
+    "head_event_hash": None,
+    "activation_receipt": None,
+    "minimum_writer_contract": 1,
+}
 
 
 class ProjectIdentityError(ValueError):
@@ -41,9 +52,27 @@ class ProjectIdentity:
     story_state_mode: str = "shadow"
     activation: dict[str, Any] | None = None
     ephemeral: bool = False
+    authority: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        # ProjectIdentity 1.0 remains byte-for-byte unchanged on disk.  Its
+        # authority is an in-memory compatibility projection only.
+        if self.schema_version == PROJECT_IDENTITY_SCHEMA_VERSION and self.authority is None:
+            object.__setattr__(self, "authority", dict(LEGACY_AUTHORITY_PROJECTION))
+        elif (
+            self.schema_version == PROJECT_IDENTITY_SCHEMA_VERSION
+            and self.authority != LEGACY_AUTHORITY_PROJECTION
+        ):
+            raise ProjectIdentityError(
+                "ProjectIdentity 1.0 authority can only be the legacy in-memory projection"
+            )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        if self.schema_version not in SUPPORTED_PROJECT_IDENTITY_SCHEMA_VERSIONS:
+            raise ProjectIdentityError(
+                f"unsupported ProjectIdentity schema_version: {self.schema_version!r}"
+            )
+        payload: dict[str, Any] = {
             "schema_version": self.schema_version,
             "book_id": self.book_id,
             "created_at": self.created_at,
@@ -52,6 +81,16 @@ class ProjectIdentity:
             "activation": dict(self.activation) if self.activation is not None else None,
             "ephemeral": self.ephemeral,
         }
+        if (
+            self.schema_version == PROJECT_IDENTITY_SCHEMA_VERSION
+            and self.authority != LEGACY_AUTHORITY_PROJECTION
+        ):
+            raise ProjectIdentityError("ProjectIdentity 1.0 authority projection was mutated")
+        if self.schema_version == PROJECT_IDENTITY_V2_SCHEMA_VERSION:
+            if not isinstance(self.authority, dict):
+                raise ProjectIdentityError("ProjectIdentity 2.0 requires authority metadata")
+            payload["authority"] = _copy_json_object(self.authority)
+        return payload
 
 
 def project_identity_path(story_project_root: str | Path) -> Path:
@@ -73,7 +112,30 @@ def validate_project_identity(value: Any) -> ProjectIdentity:
         story_state_mode=str(validated["story_state_mode"]),
         activation=dict(validated["activation"]) if validated["activation"] is not None else None,
         ephemeral=bool(validated["ephemeral"]),
+        authority=(
+            _copy_json_object(validated["authority"])
+            if isinstance(validated.get("authority"), dict)
+            else None
+        ),
     )
+    if identity.schema_version not in SUPPORTED_PROJECT_IDENTITY_SCHEMA_VERSIONS:
+        raise ProjectIdentityError(
+            f"unsupported ProjectIdentity schema_version: {identity.schema_version!r}"
+        )
+    if identity.schema_version == PROJECT_IDENTITY_SCHEMA_VERSION:
+        if "authority" in validated:
+            raise ProjectIdentityError("ProjectIdentity 1.0 cannot persist authority metadata")
+        if identity.authority != LEGACY_AUTHORITY_PROJECTION:
+            raise ProjectIdentityError("ProjectIdentity 1.0 authority projection is invalid")
+    else:
+        if identity.ephemeral:
+            raise ProjectIdentityError("ProjectIdentity 2.0 cannot be ephemeral")
+        if Path(identity.root_hint).is_absolute() or identity.root_hint != ".":
+            raise ProjectIdentityError("ProjectIdentity 2.0 root_hint must be the safe relative value '.'")
+        from core.story_project.authority import validate_authority_config
+
+        authority = validate_authority_config(identity.authority, book_id=identity.book_id)
+        object.__setattr__(identity, "authority", authority)
     if identity.story_state_mode == "strict" and identity.activation is None:
         raise ProjectIdentityError("strict StoryProject identity requires activation metadata")
     if identity.activation is not None:
@@ -93,7 +155,12 @@ def load_project_identity(story_project_root: str | Path) -> ProjectIdentity | N
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
         raise ProjectIdentityError(f"Could not read project identity: {path}: {exc}") from exc
-    return validate_project_identity(payload)
+    identity = validate_project_identity(payload)
+    if identity.schema_version == PROJECT_IDENTITY_V2_SCHEMA_VERSION:
+        from core.story_project.authority import validate_persisted_authority_receipts
+
+        validate_persisted_authority_receipts(story_project_root, identity)
+    return identity
 
 
 def create_ephemeral_project_identity(
@@ -218,9 +285,18 @@ def _utc_timestamp(now: Callable[[], datetime] | None) -> str:
     return value.astimezone(timezone.utc).isoformat()
 
 
+def _copy_json_object(value: dict[str, Any]) -> dict[str, Any]:
+    # JSON round-tripping prevents callers from retaining mutable nested
+    # references inside the frozen identity value.
+    return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
+
+
 __all__ = [
     "PROJECT_IDENTITY_RELATIVE_PATH",
     "PROJECT_IDENTITY_SCHEMA_VERSION",
+    "PROJECT_IDENTITY_V2_SCHEMA_VERSION",
+    "SUPPORTED_PROJECT_IDENTITY_SCHEMA_VERSIONS",
+    "LEGACY_AUTHORITY_PROJECTION",
     "ProjectIdentity",
     "ProjectIdentityError",
     "ProjectIdentityMismatchError",

@@ -14,7 +14,7 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["1.0"]
+      "enum": ["1.0", "2.0"]
     },
     "book_id": {
       "type": "string",
@@ -67,6 +67,67 @@
     },
     "ephemeral": {
       "type": "boolean"
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "mode",
+        "authority_epoch",
+        "head_event_hash",
+        "activation_receipt",
+        "minimum_writer_contract"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["legacy_markdown_v1", "event_v1"]
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head_event_hash": {
+          "type": ["string", "null"],
+          "minLength": 64
+        },
+        "activation_receipt": {
+          "type": ["object", "null"],
+          "required": [
+            "schema_version",
+            "receipt_type",
+            "book_id",
+            "from_mode",
+            "to_mode",
+            "authority_epoch",
+            "expected_identity_sha256",
+            "head_event_hash",
+            "genesis_receipt_sha256",
+            "minimum_writer_contract",
+            "activated_at",
+            "receipt_sha256"
+          ],
+          "properties": {
+            "schema_version": {"type": "string", "enum": ["1.0"]},
+            "receipt_type": {"type": "string", "enum": ["authority_activation"]},
+            "book_id": {"type": "string", "minLength": 1},
+            "from_mode": {"type": "string", "enum": ["legacy_markdown_v1"]},
+            "to_mode": {"type": "string", "enum": ["event_v1"]},
+            "authority_epoch": {"type": "integer", "minimum": 1},
+            "expected_identity_sha256": {"type": "string", "minLength": 64},
+            "head_event_hash": {"type": "string", "minLength": 64},
+            "genesis_receipt_sha256": {"type": ["string", "null"], "minLength": 64},
+            "minimum_writer_contract": {"type": "integer", "minimum": 1},
+            "activated_at": {"type": "string", "minLength": 1},
+            "receipt_sha256": {"type": "string", "minLength": 64}
+          },
+          "additionalProperties": false
+        },
+        "minimum_writer_contract": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

@@ -7,6 +7,7 @@ from typing import Any
 
 from core.chapter_contexts import ChapterContextError, PreviousChapterContext, resolve_story_project_previous_chapter
 from core.project_profile import normalize_project_profile
+from core.structured_context import select_text_blocks
 from core.story_project.model import (
     ChapterBlueprint,
     SourcePathSet,
@@ -181,6 +182,7 @@ def _read_context_file(
         "chars": len(full_text),
         "excerpt_chars": len(excerpt["text"]),
         "excerpt_ranges": excerpt["ranges"],
+        "selection": excerpt["selection"],
         "sha256": hashlib.sha256(raw).hexdigest(),
         "truncated": truncated,
     }
@@ -192,39 +194,26 @@ def _read_context_file(
 def _prompt_excerpt(text: str, *, max_chars: int) -> dict[str, Any]:
     if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars < 1:
         raise ValueError("max_chars must be a positive integer")
-    if len(text) <= max_chars:
-        return {
-            "text": text,
-            "ranges": [{"start_char": 0, "end_char": len(text)}],
-            "truncated": False,
-        }
-    head_limit = max(1, int(max_chars * 0.1))
-    tail_limit = max_chars - head_limit
-    head_end = _paragraph_end_at_or_before(text, head_limit)
-    tail_start = _paragraph_start_at_or_after(text, len(text) - tail_limit)
-    if head_end <= 0:
-        head_end = head_limit
-    if tail_start >= len(text):
-        tail_start = len(text) - tail_limit
-    excerpt_text = text[:head_end].rstrip() + "\n\n[…中段已省略…]\n\n" + text[tail_start:].lstrip()
+    selection = select_text_blocks(
+        text,
+        max_chars=max_chars,
+        required=(),
+        prefer_recent=True,
+        policy="story_project_source_paragraph_relevance_v1",
+    )
     return {
-        "text": excerpt_text,
+        "text": selection.text,
         "ranges": [
-            {"start_char": 0, "end_char": head_end},
-            {"start_char": tail_start, "end_char": len(text)},
+            {
+                "start_char": item["start_char"],
+                "end_char": item["end_char"],
+            }
+            for item in selection.selected_items
+            if "start_char" in item and "end_char" in item
         ],
-        "truncated": True,
+        "truncated": selection.omitted_count > 0,
+        "selection": selection.manifest(),
     }
-
-
-def _paragraph_end_at_or_before(text: str, limit: int) -> int:
-    boundary = text.rfind("\n\n", 0, limit + 1)
-    return boundary + 2 if boundary >= max(0, limit // 2) else limit
-
-
-def _paragraph_start_at_or_after(text: str, start: int) -> int:
-    boundary = text.find("\n\n", max(0, start))
-    return boundary + 2 if 0 <= boundary <= min(len(text), start + max(100, (len(text) - start) // 2)) else start
 
 
 def _build_chapter_blueprint(*, chapter_index: int, outline_path: Path, outline_text: str) -> ChapterBlueprint:

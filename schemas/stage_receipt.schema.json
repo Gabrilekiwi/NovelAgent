@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StageReceipt",
+  "type": "object",
+  "required": ["schema_version", "receipt_hash", "authorization_hash", "stage", "status", "book_id", "session_id", "plan_id", "chapter_index", "authority", "input_digest", "output_digest", "model_call_receipt_hash", "previous_stage_receipt_hash", "created_at"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "receipt_hash": {"type": "string", "minLength": 64},
+    "authorization_hash": {"type": "string", "minLength": 64},
+    "stage": {"type": "string", "enum": ["outline", "scene_plan", "draft", "polish", "validator", "repair"]},
+    "status": {"type": "string", "enum": ["succeeded", "failed", "provider_call_uncertain", "budget_rejected", "cancelled"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "session_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "authority": {
+      "type": "object",
+      "required": ["epoch", "head_event_hash"],
+      "properties": {
+        "epoch": {"type": "integer", "minimum": 0},
+        "head_event_hash": {"type": ["string", "null"], "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "input_digest": {"type": "string", "minLength": 64},
+    "output_digest": {"type": ["string", "null"], "minLength": 64},
+    "model_call_receipt_hash": {"type": ["string", "null"], "minLength": 64},
+    "previous_stage_receipt_hash": {"type": ["string", "null"], "minLength": 64},
+    "created_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

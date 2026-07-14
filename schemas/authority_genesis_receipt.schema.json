@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuthorityGenesisReceipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "receipt_type",
+    "book_id",
+    "authority_epoch",
+    "previous_event_hash",
+    "canonical_state_sha256",
+    "minimum_writer_contract",
+    "created_at",
+    "event_hash",
+    "receipt_sha256"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "receipt_type": {"type": "string", "enum": ["authority_genesis"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "authority_epoch": {"type": "integer", "enum": [1]},
+    "previous_event_hash": {"type": "null"},
+    "canonical_state_sha256": {"type": "string", "minLength": 64},
+    "minimum_writer_contract": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "event_hash": {"type": "string", "minLength": 64},
+    "receipt_sha256": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}
