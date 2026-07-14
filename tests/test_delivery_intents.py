@@ -16,13 +16,13 @@ from core.delivery_intents import (
     validate_file_delivery_profile,
 )
 from core.memory_v2.canonical import canonical_json_hash
+from core.memory_v2.event_store import create_genesis_memory_batch
 
 
 NOW = "2026-07-14T00:00:00+00:00"
 BOOK = "book-delivery-intent"
 RUN = "chapter_11_20260714T000000000000Z"
 BODY = "b" * 64
-BATCH = "a" * 64
 
 
 class DeliveryIntentTest(unittest.TestCase):
@@ -47,10 +47,18 @@ class DeliveryIntentTest(unittest.TestCase):
             book_id=BOOK,
             run_id=RUN,
             chapter_index=11,
-            event_batch=batch or {"schema_version": "2.2", "batch_hash": BATCH, "events": []},
+            event_batch=batch or self._batch(),
             chapter_body_sha256=BODY,
             policy="required",
             created_at=NOW,
+        )
+
+    def _batch(self) -> dict:
+        return create_genesis_memory_batch(
+            book_id=BOOK,
+            title="Delivery contract fixture",
+            source_project_digest="a" * 64,
+            context_digest="b" * 64,
         )
 
     def _receipt(self, intent: dict) -> dict:
@@ -82,7 +90,7 @@ class DeliveryIntentTest(unittest.TestCase):
         intent = self._intent()
 
         self.assertEqual("file", intent["target_type"])
-        self.assertEqual(BATCH, intent["canonical_payload"]["event_batch_hash"])
+        self.assertEqual(self._batch()["batch_hash"], intent["canonical_payload"]["event_batch_hash"])
         self.assertEqual(BODY, intent["canonical_payload"]["chapter_body_sha256"])
         self.assertIn(RUN, intent["target"]["path_ref"]["relative_path"])
         self.assertIn("000011", intent["target"]["path_ref"]["relative_path"])
@@ -107,9 +115,9 @@ class DeliveryIntentTest(unittest.TestCase):
 
     def test_intent_rejects_credentials_and_absolute_paths_in_event_batch(self) -> None:
         for batch in (
-            {"batch_hash": BATCH, "api_key": "hidden", "events": []},
-            {"batch_hash": BATCH, "evidence_path": "C:/private/chapter.md", "events": []},
-            {"batch_hash": BATCH, "token": "hidden", "events": []},
+            {"batch_hash": "a" * 64, "api_key": "hidden", "events": []},
+            {"batch_hash": "a" * 64, "evidence_path": "C:/private/chapter.md", "events": []},
+            {"batch_hash": "a" * 64, "token": "hidden", "events": []},
         ):
             with self.subTest(batch=batch):
                 with self.assertRaises(DeliveryIntentError):
@@ -124,8 +132,13 @@ class DeliveryIntentTest(unittest.TestCase):
 
         tampered = copy.deepcopy(intent)
         tampered["canonical_payload"]["event_batch"]["batch_hash"] = "8" * 64
-        with self.assertRaisesRegex(DeliveryIntentError, "delivery_intent_batch_hash_mismatch"):
+        with self.assertRaisesRegex(DeliveryIntentError, "delivery_intent_event_batch_invalid"):
             validate_delivery_intent(tampered)
+
+    def test_intent_rejects_a_hash_bound_but_structurally_invalid_batch(self) -> None:
+        invalid = {"schema_version": "2.2", "batch_hash": "a" * 64, "events": []}
+        with self.assertRaisesRegex(DeliveryIntentError, "delivery_intent_event_batch_invalid"):
+            self._intent(batch=invalid)
 
     def test_receipt_materialization_is_idempotent_and_does_not_deliver(self) -> None:
         intent = self._intent()

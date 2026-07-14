@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from core.delivery import DeliveryQueue, delivery_payload_hash
 from core.memory_v2.canonical import canonical_json_hash
+from core.memory_v2.event_store import MemoryEventStoreError, validate_memory_event_batch
 from core.path_refs import PathRef, PathRefError, validate_path_ref
 from core.schema import SchemaValidationError, validate_schema
 
@@ -194,6 +195,12 @@ def validate_delivery_intent(value: Any) -> dict[str, Any]:
     batch = payload["event_batch"]
     if not isinstance(batch, dict):
         raise DeliveryIntentError("delivery_intent_payload_invalid", "event_batch must be an object")
+    try:
+        batch = validate_memory_event_batch(batch)
+    except MemoryEventStoreError as exc:
+        raise DeliveryIntentError(
+            "delivery_intent_event_batch_invalid", "event_batch is not a valid canonical Memory batch"
+        ) from exc
     batch_hash = _sha256("event_batch_hash", payload["event_batch_hash"])
     if batch.get("batch_hash") != batch_hash:
         raise DeliveryIntentError("delivery_intent_batch_hash_mismatch", "event batch hash binding differs")

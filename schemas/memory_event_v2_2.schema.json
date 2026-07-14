@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryEvent22",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_hash",
+    "revision",
+    "op",
+    "field",
+    "before",
+    "after",
+    "precondition",
+    "chapter_body_sha256",
+    "evidence_spans",
+    "authority_epoch",
+    "reducer_version",
+    "source",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["2.2"]},
+    "event_id": {"type": "string", "minLength": 1},
+    "event_hash": {"type": "string", "minLength": 64},
+    "revision": {"type": "integer", "minimum": 1},
+    "op": {"type": "string", "minLength": 1},
+    "subject_id": {"type": "string", "minLength": 1},
+    "field": {"type": "string", "minLength": 1},
+    "before": {"type": ["object", "array", "string", "integer", "number", "boolean", "null"]},
+    "after": {"type": ["object", "array", "string", "integer", "number", "boolean", "null"]},
+    "precondition": {
+      "type": "object",
+      "required": ["expected_revision", "expected_head_event_hash", "expected_field_hash"],
+      "properties": {
+        "expected_revision": {"type": "integer", "minimum": 0},
+        "expected_head_event_hash": {"type": ["string", "null"]},
+        "expected_field_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "chapter_body_sha256": {"type": "string", "minLength": 64},
+    "evidence_spans": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "quote"],
+        "properties": {
+          "start": {"type": "integer", "minimum": 0},
+          "end": {"type": "integer", "minimum": 1},
+          "quote": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "authority_epoch": {"type": "integer", "minimum": 1},
+    "reducer_version": {"type": "string", "minLength": 1},
+    "source": {"type": "object", "additionalProperties": true},
+    "metadata": {
+      "type": "object",
+      "required": ["created_by"],
+      "properties": {"created_by": {"type": "string", "minLength": 1}},
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

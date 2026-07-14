@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryProjectionReceipt22",
+  "type": "object",
+  "required": [
+    "schema_version", "renderer_version", "reducer_version", "projection_kind", "book_id",
+    "authority_epoch", "revision", "head_event_hash", "source_projection_hash",
+    "artifact_hash", "receipt_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["2.2"]},
+    "renderer_version": {"type": "string", "minLength": 1},
+    "reducer_version": {"type": "string", "minLength": 1},
+    "projection_kind": {"type": "string", "enum": ["snapshot", "tracking"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "authority_epoch": {"type": "integer", "minimum": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "head_event_hash": {"type": ["string", "null"]},
+    "source_projection_hash": {"type": "string", "minLength": 64},
+    "artifact_hash": {"type": "string", "minLength": 64},
+    "receipt_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

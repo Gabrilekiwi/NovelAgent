@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryEventBatch22",
+  "type": "object",
+  "required": [
+    "schema_version", "reducer_version", "batch_id", "book_id", "batch_kind",
+    "publication_status", "first_revision", "last_revision", "previous_batch_hash",
+    "batch_hash", "patch_id", "patch_content_hash", "expected_revision",
+    "source_project_digest", "context_digest", "canonical_json_algorithm", "patch",
+    "events", "base_projection", "quality_state"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["2.2"]},
+    "reducer_version": {"type": "string", "minLength": 1},
+    "batch_id": {"type": "string", "minLength": 1},
+    "book_id": {"type": "string", "minLength": 1},
+    "batch_kind": {"type": "string", "enum": ["genesis", "source_sync", "chapter"]},
+    "publication_status": {"type": "string", "enum": ["genesis", "source_sync", "committed"]},
+    "first_revision": {"type": "integer", "minimum": 1},
+    "last_revision": {"type": "integer", "minimum": 1},
+    "previous_batch_hash": {"type": ["string", "null"]},
+    "batch_hash": {"type": "string", "minLength": 64},
+    "patch_id": {"type": "string", "minLength": 1},
+    "patch_content_hash": {"type": "string", "minLength": 64},
+    "expected_revision": {"type": "integer", "minimum": 0},
+    "source_project_digest": {"type": "string", "minLength": 64},
+    "context_digest": {"type": "string", "minLength": 64},
+    "canonical_json_algorithm": {"type": "string", "enum": ["novelagent-canonical-json-v1"]},
+    "patch": {"type": "object", "additionalProperties": true},
+    "events": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": true}},
+    "base_projection": {"type": ["object", "null"]},
+    "quality_state": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": false
+}

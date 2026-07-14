@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryCheckpoint22",
+  "type": "object",
+  "required": [
+    "schema_version", "reducer_version", "checkpoint_id", "book_id", "revision",
+    "last_batch_id", "last_batch_hash", "committed_chapter_count", "projection_hash",
+    "projection", "patch_index", "quality_state", "canonical_json_algorithm", "checkpoint_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["2.2"]},
+    "reducer_version": {"type": "string", "minLength": 1},
+    "checkpoint_id": {"type": "string", "minLength": 1},
+    "book_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "last_batch_id": {"type": "string", "minLength": 1},
+    "last_batch_hash": {"type": "string", "minLength": 64},
+    "committed_chapter_count": {"type": "integer", "minimum": 0},
+    "projection_hash": {"type": "string", "minLength": 64},
+    "projection": {"type": "object", "additionalProperties": true},
+    "patch_index": {"type": "object", "additionalProperties": true},
+    "quality_state": {"type": "object", "additionalProperties": true},
+    "canonical_json_algorithm": {"type": "string", "enum": ["novelagent-canonical-json-v1"]},
+    "checkpoint_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

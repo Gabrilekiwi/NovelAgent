@@ -7,17 +7,31 @@ from pathlib import Path
 from typing import Any
 
 from core.memory_v2.canonical import CANONICAL_JSON_ALGORITHM, canonical_json_hash
-from core.memory_v2.events import MEMORY_EVENT_SCHEMA_VERSION, validate_memory_event
-from core.memory_v2.models import create_empty_canonical_memory
-from core.memory_v2.patch import validate_memory_patch
-from core.memory_v2.reducer import apply_memory_patch
+from core.memory_v2.events import (
+    MEMORY_EVENT_SCHEMA_VERSION,
+    TYPED_MEMORY_EVENT_SCHEMA_VERSION,
+    create_memory_event,
+    validate_memory_event,
+)
+from core.memory_v2.models import create_empty_canonical_memory, create_empty_typed_canonical_memory
+from core.memory_v2.patch import create_memory_patch, validate_memory_patch
+from core.memory_v2.reducer import (
+    MemoryReducerError,
+    apply_genesis_event,
+    apply_memory_events,
+    apply_memory_patch,
+    resolve_memory_reducer,
+)
 from core.memory_v2.storage import load_canonical_memory, save_canonical_memory
 from core.memory_v2.validator import validate_canonical_memory
 from core.schema import SchemaValidationError, validate_schema
+from core.memory_v2.versions import CURRENT_REDUCER_VERSION, LEGACY_REDUCER_VERSION
 
 
 MEMORY_EVENT_BATCH_SCHEMA_VERSION = "2.1"
 MEMORY_CHECKPOINT_SCHEMA_VERSION = "2.1"
+TYPED_MEMORY_EVENT_BATCH_SCHEMA_VERSION = "2.2"
+TYPED_MEMORY_CHECKPOINT_SCHEMA_VERSION = "2.2"
 CHECKPOINT_CHAPTER_INTERVAL = 20
 _SAFE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _BATCH_FILE = re.compile(r"^batch_(\d{12})_(\d{12})_[0-9a-f]{12}\.json$")
@@ -61,7 +75,28 @@ def create_memory_event_batch(
     publication_status: str | None = None,
     base_projection: dict[str, Any] | None = None,
     quality_state: dict[str, Any] | None = None,
+    schema_version: str = MEMORY_EVENT_BATCH_SCHEMA_VERSION,
+    reducer_version: str | None = None,
 ) -> dict[str, Any]:
+    if schema_version == TYPED_MEMORY_EVENT_BATCH_SCHEMA_VERSION:
+        return _create_memory_event_batch_v22(
+            book_id=book_id,
+            patch=patch,
+            events=events,
+            expected_revision=expected_revision,
+            previous_batch_hash=previous_batch_hash,
+            source_project_digest=source_project_digest,
+            context_digest=context_digest,
+            batch_kind=batch_kind,
+            publication_status=publication_status,
+            base_projection=base_projection,
+            quality_state=quality_state,
+            reducer_version=reducer_version,
+        )
+    if schema_version != MEMORY_EVENT_BATCH_SCHEMA_VERSION:
+        raise MemoryEventStoreError(f"unsupported memory event batch schema_version: {schema_version}")
+    if reducer_version not in (None, LEGACY_REDUCER_VERSION):
+        raise MemoryEventStoreError("Memory 2.1 batches are frozen to memory-reducer-2.1")
     validated_patch = copy.deepcopy(validate_memory_patch(patch))
     validated_events = [copy.deepcopy(validate_memory_event(event)) for event in events]
     if not validated_events:
@@ -126,6 +161,11 @@ def create_memory_event_batch(
 def validate_memory_event_batch(batch: Any) -> dict[str, Any]:
     if not isinstance(batch, dict):
         raise MemoryEventStoreError("memory event batch must be a JSON object")
+    schema_version = batch.get("schema_version")
+    if schema_version == TYPED_MEMORY_EVENT_BATCH_SCHEMA_VERSION:
+        return _validate_memory_event_batch_v22(batch)
+    if schema_version != MEMORY_EVENT_BATCH_SCHEMA_VERSION:
+        raise MemoryEventStoreError(f"unsupported memory event batch schema_version: {schema_version}")
     try:
         validated = validate_schema(batch, "memory_event_batch.schema.json")
     except SchemaValidationError as exc:
@@ -176,6 +216,271 @@ def validate_memory_event_batch(batch: Any) -> dict[str, Any]:
     if validated["batch_hash"] != _batch_hash(validated):
         raise MemoryIntegrityError("memory event batch hash mismatch")
     return validated
+
+
+def reducer_version_for_batch(batch: dict[str, Any]) -> str:
+    validated = validate_memory_event_batch(batch)
+    if validated.get("schema_version") == MEMORY_EVENT_BATCH_SCHEMA_VERSION:
+        return LEGACY_REDUCER_VERSION
+    return str(validated["reducer_version"])
+
+
+def _create_memory_event_batch_v22(
+    *,
+    book_id: str,
+    patch: dict[str, Any],
+    events: list[dict[str, Any]],
+    expected_revision: int,
+    previous_batch_hash: str | None,
+    source_project_digest: str,
+    context_digest: str,
+    batch_kind: str,
+    publication_status: str | None,
+    base_projection: dict[str, Any] | None,
+    quality_state: dict[str, Any] | None,
+    reducer_version: str | None,
+) -> dict[str, Any]:
+    reducer = reducer_version or CURRENT_REDUCER_VERSION
+    _require_known_reducer(reducer)
+    if reducer != CURRENT_REDUCER_VERSION:
+        raise MemoryEventStoreError("Memory 2.2 batches require memory-reducer-2.2")
+    validated_patch = copy.deepcopy(validate_memory_patch(patch))
+    validated_events = [copy.deepcopy(validate_memory_event(event)) for event in events]
+    if not validated_events:
+        raise MemoryEventStoreError("Memory 2.2 event batches must contain at least one event")
+    if any(event.get("schema_version") != TYPED_MEMORY_EVENT_SCHEMA_VERSION for event in validated_events):
+        raise MemoryEventStoreError("Memory 2.2 batches require Memory 2.2 events")
+    if any(event.get("reducer_version") != reducer for event in validated_events):
+        raise MemoryEventStoreError("Memory 2.2 event reducer_version does not match its batch")
+
+    status = publication_status or (
+        "genesis" if batch_kind == "genesis" else "committed" if batch_kind == "chapter" else "source_sync"
+    )
+    _validate_publication_boundary_v22(batch_kind, status)
+    _require_sha256("source_project_digest", source_project_digest)
+    _require_sha256("context_digest", context_digest)
+    if previous_batch_hash is not None:
+        _require_sha256("previous_batch_hash", previous_batch_hash)
+
+    revisions = [int(event["revision"]) for event in validated_events]
+    expected_revisions = list(range(expected_revision + 1, expected_revision + len(validated_events) + 1))
+    if revisions != expected_revisions:
+        raise MemoryIntegrityError(f"event revisions must be contiguous after {expected_revision}: {revisions}")
+
+    if batch_kind == "genesis":
+        if previous_batch_hash is not None or expected_revision != 0 or base_projection is not None:
+            raise MemoryEventStoreError("Memory 2.2 genesis must be the root and cannot contain base_projection")
+        if len(validated_events) != 1 or validated_events[0].get("op") != "genesis":
+            raise MemoryEventStoreError("Memory 2.2 genesis batch requires exactly one genesis event")
+        validated_base = None
+    elif previous_batch_hash is None:
+        if base_projection is None:
+            raise MemoryEventStoreError("the first non-genesis Memory 2.2 batch requires base_projection")
+        validated_base = copy.deepcopy(validate_canonical_memory(base_projection))
+        if validated_base.get("schema_version") != "2.2":
+            raise MemoryEventStoreError("Memory 2.2 batch base_projection must be CanonicalMemory 2.2")
+        if int(validated_base["revision"]) != expected_revision:
+            raise MemoryIntegrityError("base_projection revision does not match expected_revision")
+        if str(validated_base["book_id"]) != book_id:
+            raise MemoryIntegrityError("base_projection book_id does not match batch book_id")
+    elif base_projection is not None:
+        raise MemoryEventStoreError("only the first non-genesis Memory 2.2 batch may contain base_projection")
+    else:
+        validated_base = None
+
+    patch_hash = memory_patch_content_hash(validated_patch)
+    first_revision = revisions[0]
+    last_revision = revisions[-1]
+    batch_id = f"batch_{first_revision:012d}_{last_revision:012d}_{patch_hash[:12]}"
+    batch: dict[str, Any] = {
+        "schema_version": TYPED_MEMORY_EVENT_BATCH_SCHEMA_VERSION,
+        "reducer_version": reducer,
+        "batch_id": batch_id,
+        "book_id": book_id,
+        "batch_kind": batch_kind,
+        "publication_status": status,
+        "first_revision": first_revision,
+        "last_revision": last_revision,
+        "previous_batch_hash": previous_batch_hash,
+        "patch_id": str(validated_patch["patch_id"]),
+        "patch_content_hash": patch_hash,
+        "expected_revision": expected_revision,
+        "source_project_digest": source_project_digest,
+        "context_digest": context_digest,
+        "canonical_json_algorithm": CANONICAL_JSON_ALGORITHM,
+        "patch": validated_patch,
+        "events": validated_events,
+        "base_projection": validated_base,
+        "quality_state": copy.deepcopy(quality_state or {}),
+    }
+    batch["batch_hash"] = _batch_hash(batch)
+    return validate_memory_event_batch(batch)
+
+
+def _validate_memory_event_batch_v22(batch: dict[str, Any]) -> dict[str, Any]:
+    try:
+        validated = validate_schema(batch, "memory_event_batch_v2_2.schema.json")
+    except SchemaValidationError as exc:
+        raise MemoryEventStoreError(str(exc)) from exc
+    reducer = str(validated["reducer_version"])
+    _require_known_reducer(reducer)
+    if reducer != CURRENT_REDUCER_VERSION:
+        raise MemoryIntegrityError("Memory 2.2 batch is not bound to memory-reducer-2.2")
+    if not _SAFE_ID.fullmatch(str(validated["batch_id"])):
+        raise MemoryEventStoreError("batch_id contains unsafe characters")
+    for field in ("batch_hash", "patch_content_hash", "source_project_digest", "context_digest"):
+        _require_sha256(field, validated[field])
+    previous_hash = validated.get("previous_batch_hash")
+    if previous_hash is not None:
+        _require_sha256("previous_batch_hash", previous_hash)
+
+    patch = validate_memory_patch(validated["patch"])
+    if patch["patch_id"] != validated["patch_id"]:
+        raise MemoryIntegrityError("batch patch_id does not match embedded patch")
+    if memory_patch_content_hash(patch) != validated["patch_content_hash"]:
+        raise MemoryIntegrityError("batch patch content hash mismatch")
+
+    events = [validate_memory_event(event) for event in validated["events"]]
+    if any(event.get("schema_version") != "2.2" or event.get("reducer_version") != reducer for event in events):
+        raise MemoryIntegrityError("Memory 2.2 batch contains an event with a mismatched version")
+    revisions = [int(event["revision"]) for event in events]
+    expected_revision = int(validated["expected_revision"])
+    if revisions != list(range(expected_revision + 1, expected_revision + len(events) + 1)):
+        raise MemoryIntegrityError("batch event revisions are not contiguous")
+    if int(validated["first_revision"]) != revisions[0] or int(validated["last_revision"]) != revisions[-1]:
+        raise MemoryIntegrityError("batch revision bounds do not match its events")
+
+    batch_kind = str(validated["batch_kind"])
+    base_projection = validated.get("base_projection")
+    if batch_kind == "genesis":
+        if previous_hash is not None or expected_revision != 0 or base_projection is not None:
+            raise MemoryIntegrityError("Memory 2.2 genesis boundary is invalid")
+        if len(events) != 1 or events[0].get("op") != "genesis":
+            raise MemoryIntegrityError("Memory 2.2 genesis batch must contain one genesis event")
+        genesis_projection = apply_genesis_event(events[0])
+        if str(genesis_projection["book_id"]) != str(validated["book_id"]):
+            raise MemoryIntegrityError("genesis projection book_id mismatch")
+    elif previous_hash is None:
+        if not isinstance(base_projection, dict):
+            raise MemoryIntegrityError("first Memory 2.2 batch is missing base_projection")
+        base = validate_canonical_memory(base_projection)
+        if base.get("schema_version") != "2.2":
+            raise MemoryIntegrityError("Memory 2.2 base_projection has the wrong schema")
+        if int(base["revision"]) != expected_revision or str(base["book_id"]) != str(validated["book_id"]):
+            raise MemoryIntegrityError("first Memory 2.2 batch base_projection identity mismatch")
+        _validate_v22_event_precondition_chain(base, events)
+    elif base_projection is not None:
+        raise MemoryIntegrityError("non-initial batch contains base_projection")
+    else:
+        _validate_v22_event_precondition_chain(None, events)
+
+    _validate_v22_patch_event_alignment(patch, events, batch_kind=batch_kind)
+    _validate_publication_boundary_v22(batch_kind, str(validated["publication_status"]))
+    if validated["canonical_json_algorithm"] != CANONICAL_JSON_ALGORITHM:
+        raise MemoryIntegrityError("unsupported canonical JSON algorithm")
+    if validated["batch_hash"] != _batch_hash(validated):
+        raise MemoryIntegrityError("memory event batch hash mismatch")
+    return validated
+
+
+def create_genesis_memory_batch(
+    *,
+    book_id: str,
+    title: str,
+    source_project_digest: str,
+    context_digest: str,
+    language: str = "zh-CN",
+    authority_epoch: int = 1,
+    evidence_text: str | None = None,
+) -> dict[str, Any]:
+    projection = create_empty_typed_canonical_memory(
+        book_id=book_id,
+        title=title,
+        language=language,
+        authority_epoch=authority_epoch,
+    )
+    evidence = evidence_text or f"Genesis authority for {book_id}"
+    event = create_memory_event(
+        event_id="evt_000001",
+        revision=1,
+        op="genesis",
+        source={"kind": "genesis", "patch_id": f"genesis_{book_id}"},
+        field="$",
+        schema_version="2.2",
+        before=None,
+        after=projection,
+        precondition={
+            "expected_revision": 0,
+            "expected_head_event_hash": None,
+            "expected_field_hash": canonical_json_hash(None),
+        },
+        chapter_body=evidence,
+        evidence_spans=[{"start_char": 0, "end_char": len(evidence), "quote": evidence}],
+        authority_epoch=authority_epoch,
+        reducer_version=CURRENT_REDUCER_VERSION,
+    )
+    patch = create_memory_patch(
+        patch_id=f"genesis_{book_id}",
+        source_kind="genesis",
+        operations=[{"op": "genesis", "value": {"book_id": book_id}}],
+    )
+    return create_memory_event_batch(
+        book_id=book_id,
+        patch=patch,
+        events=[event],
+        expected_revision=0,
+        previous_batch_hash=None,
+        source_project_digest=source_project_digest,
+        context_digest=context_digest,
+        batch_kind="genesis",
+        publication_status="genesis",
+        schema_version="2.2",
+        reducer_version=CURRENT_REDUCER_VERSION,
+    )
+
+
+def _validate_v22_event_precondition_chain(
+    base_projection: dict[str, Any] | None,
+    events: list[dict[str, Any]],
+) -> None:
+    expected_revision = int(base_projection["revision"]) if base_projection is not None else int(events[0]["revision"]) - 1
+    expected_head = base_projection.get("head_event_hash") if base_projection is not None else events[0]["precondition"]["expected_head_event_hash"]
+    authority_epoch = int(base_projection["authority_epoch"]) if base_projection is not None else int(events[0]["authority_epoch"])
+    for event in events:
+        precondition = event["precondition"]
+        if int(precondition["expected_revision"]) != expected_revision:
+            raise MemoryIntegrityError("Memory 2.2 event expected_revision chain is broken")
+        if precondition["expected_head_event_hash"] != expected_head:
+            raise MemoryIntegrityError("Memory 2.2 event head hash chain is broken")
+        if int(event["authority_epoch"]) != authority_epoch:
+            raise MemoryIntegrityError("Memory 2.2 authority_epoch changed within a batch")
+        expected_revision = int(event["revision"])
+        expected_head = str(event["event_hash"])
+
+
+def _validate_v22_patch_event_alignment(
+    patch: dict[str, Any], events: list[dict[str, Any]], *, batch_kind: str
+) -> None:
+    operations = patch.get("operations", [])
+    if len(operations) != len(events):
+        raise MemoryIntegrityError("Memory 2.2 patch operation count does not match its events")
+    for operation, event in zip(operations, events):
+        if event.get("source", {}).get("patch_id") != patch.get("patch_id"):
+            raise MemoryIntegrityError("Memory 2.2 event source patch_id does not match its patch")
+        if str(operation.get("op")) != str(event.get("op")):
+            raise MemoryIntegrityError("Memory 2.2 patch operation does not match its event")
+        operation_id = operation.get("id")
+        if operation_id is not None and str(operation_id) != str(event.get("subject_id")):
+            raise MemoryIntegrityError("Memory 2.2 patch subject does not match its event")
+    if batch_kind == "genesis" and str(operations[0].get("op")) != "genesis":
+        raise MemoryIntegrityError("genesis patch is invalid")
+
+
+def _require_known_reducer(reducer_version: str) -> None:
+    try:
+        resolve_memory_reducer(reducer_version)
+    except MemoryReducerError as exc:
+        raise MemoryEventStoreError(str(exc)) from exc
 
 
 def write_memory_event_batch(store_dir: str | Path, batch: dict[str, Any]) -> Path:
@@ -256,6 +561,14 @@ def create_memory_checkpoint(
 ) -> dict[str, Any]:
     validated_projection = copy.deepcopy(validate_canonical_memory(projection))
     validated_batch = validate_memory_event_batch(last_batch)
+    if validated_batch.get("schema_version") == TYPED_MEMORY_EVENT_BATCH_SCHEMA_VERSION:
+        return _create_memory_checkpoint_v22(
+            projection=validated_projection,
+            last_batch=validated_batch,
+            committed_chapter_count=committed_chapter_count,
+            patch_index=patch_index,
+            quality_state=quality_state,
+        )
     revision = int(validated_projection["revision"])
     if revision != int(validated_batch["last_revision"]):
         raise MemoryIntegrityError("checkpoint projection revision does not match last batch")
@@ -281,6 +594,11 @@ def create_memory_checkpoint(
 def validate_memory_checkpoint(checkpoint: Any) -> dict[str, Any]:
     if not isinstance(checkpoint, dict):
         raise MemoryEventStoreError("memory checkpoint must be a JSON object")
+    schema_version = checkpoint.get("schema_version")
+    if schema_version == TYPED_MEMORY_CHECKPOINT_SCHEMA_VERSION:
+        return _validate_memory_checkpoint_v22(checkpoint)
+    if schema_version != MEMORY_CHECKPOINT_SCHEMA_VERSION:
+        raise MemoryEventStoreError(f"unsupported memory checkpoint schema_version: {schema_version}")
     try:
         validated = validate_schema(checkpoint, "memory_checkpoint.schema.json")
     except SchemaValidationError as exc:
@@ -290,6 +608,70 @@ def validate_memory_checkpoint(checkpoint: Any) -> dict[str, Any]:
     if not _SAFE_ID.fullmatch(str(validated["checkpoint_id"])):
         raise MemoryEventStoreError("checkpoint_id contains unsafe characters")
     projection = validate_canonical_memory(validated["projection"])
+    if str(projection["book_id"]) != validated["book_id"] or int(projection["revision"]) != validated["revision"]:
+        raise MemoryIntegrityError("checkpoint projection identity mismatch")
+    if memory_projection_hash(projection) != validated["projection_hash"]:
+        raise MemoryIntegrityError("checkpoint projection hash mismatch")
+    for patch_id, patch_hash in validated["patch_index"].items():
+        if not isinstance(patch_id, str) or not patch_id:
+            raise MemoryIntegrityError("checkpoint patch_index contains an invalid patch id")
+        _require_sha256(f"patch_index.{patch_id}", patch_hash)
+    if validated["checkpoint_hash"] != _checkpoint_hash(validated):
+        raise MemoryIntegrityError("memory checkpoint hash mismatch")
+    return validated
+
+
+def _create_memory_checkpoint_v22(
+    *,
+    projection: dict[str, Any],
+    last_batch: dict[str, Any],
+    committed_chapter_count: int,
+    patch_index: dict[str, str],
+    quality_state: dict[str, Any],
+) -> dict[str, Any]:
+    if projection.get("schema_version") != "2.2":
+        raise MemoryIntegrityError("Memory 2.2 checkpoint requires CanonicalMemory 2.2")
+    reducer = str(last_batch["reducer_version"])
+    _require_known_reducer(reducer)
+    revision = int(projection["revision"])
+    if revision != int(last_batch["last_revision"]):
+        raise MemoryIntegrityError("checkpoint projection revision does not match last batch")
+    checkpoint_id = f"checkpoint_{revision:012d}_{last_batch['batch_hash'][:12]}"
+    checkpoint: dict[str, Any] = {
+        "schema_version": TYPED_MEMORY_CHECKPOINT_SCHEMA_VERSION,
+        "reducer_version": reducer,
+        "checkpoint_id": checkpoint_id,
+        "book_id": str(projection["book_id"]),
+        "revision": revision,
+        "last_batch_id": str(last_batch["batch_id"]),
+        "last_batch_hash": str(last_batch["batch_hash"]),
+        "committed_chapter_count": committed_chapter_count,
+        "projection_hash": memory_projection_hash(projection),
+        "projection": copy.deepcopy(projection),
+        "patch_index": copy.deepcopy(patch_index),
+        "quality_state": copy.deepcopy(quality_state),
+        "canonical_json_algorithm": CANONICAL_JSON_ALGORITHM,
+    }
+    checkpoint["checkpoint_hash"] = _checkpoint_hash(checkpoint)
+    return validate_memory_checkpoint(checkpoint)
+
+
+def _validate_memory_checkpoint_v22(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    try:
+        validated = validate_schema(checkpoint, "memory_checkpoint_v2_2.schema.json")
+    except SchemaValidationError as exc:
+        raise MemoryEventStoreError(str(exc)) from exc
+    reducer = str(validated["reducer_version"])
+    _require_known_reducer(reducer)
+    if reducer != CURRENT_REDUCER_VERSION:
+        raise MemoryIntegrityError("Memory 2.2 checkpoint has an unsupported frozen reducer")
+    for field in ("last_batch_hash", "projection_hash", "checkpoint_hash"):
+        _require_sha256(field, validated[field])
+    if not _SAFE_ID.fullmatch(str(validated["checkpoint_id"])):
+        raise MemoryEventStoreError("checkpoint_id contains unsafe characters")
+    projection = validate_canonical_memory(validated["projection"])
+    if projection.get("schema_version") != "2.2":
+        raise MemoryIntegrityError("Memory 2.2 checkpoint projection has the wrong schema")
     if str(projection["book_id"]) != validated["book_id"] or int(projection["revision"]) != validated["revision"]:
         raise MemoryIntegrityError("checkpoint projection identity mismatch")
     if memory_projection_hash(projection) != validated["projection_hash"]:
@@ -331,6 +713,13 @@ def load_latest_memory_checkpoint(store_dir: str | Path) -> dict[str, Any] | Non
     anchor = load_memory_event_batch(anchor_path)
     if anchor["batch_hash"] != checkpoint["last_batch_hash"]:
         raise MemoryIntegrityError("checkpoint anchor batch hash mismatch")
+    if checkpoint.get("schema_version") == "2.2":
+        if anchor.get("schema_version") != "2.2":
+            raise MemoryIntegrityError("Memory 2.2 checkpoint anchors a legacy batch")
+        if checkpoint.get("reducer_version") != anchor.get("reducer_version"):
+            raise MemoryIntegrityError("checkpoint reducer_version does not match anchor batch")
+        if checkpoint["projection"].get("head_event_hash") != anchor["events"][-1].get("event_hash"):
+            raise MemoryIntegrityError("checkpoint projection head does not match anchor batch")
     return checkpoint
 
 
@@ -350,6 +739,11 @@ def replay_memory_events(
         patch_index = copy.deepcopy(checkpoint["patch_index"])
         quality_state = copy.deepcopy(checkpoint["quality_state"])
         checkpoint_id: str | None = str(checkpoint["checkpoint_id"])
+        active_reducer = (
+            str(checkpoint["reducer_version"])
+            if checkpoint.get("schema_version") == "2.2"
+            else LEGACY_REDUCER_VERSION
+        )
     else:
         projection = copy.deepcopy(initial_memory) if initial_memory is not None else None
         after_revision = int(projection["revision"]) if isinstance(projection, dict) else 0
@@ -359,6 +753,11 @@ def replay_memory_events(
         patch_index: dict[str, str] = {}
         quality_state: dict[str, Any] = {}
         checkpoint_id = None
+        active_reducer = (
+            CURRENT_REDUCER_VERSION
+            if isinstance(projection, dict) and projection.get("schema_version") == "2.2"
+            else LEGACY_REDUCER_VERSION if isinstance(projection, dict) else None
+        )
 
     batches = load_memory_event_batches(
         store_dir,
@@ -368,19 +767,41 @@ def replay_memory_events(
     if projection is None:
         if not batches:
             raise MemoryEventStoreError("cannot replay an empty event store without initial_memory")
-        base_projection = batches[0].get("base_projection")
-        if not isinstance(base_projection, dict):
-            raise MemoryIntegrityError("first batch does not contain a valid base_projection")
-        projection = copy.deepcopy(validate_canonical_memory(base_projection))
-        after_revision = int(projection["revision"])
+        if batches[0].get("batch_kind") != "genesis":
+            base_projection = batches[0].get("base_projection")
+            if not isinstance(base_projection, dict):
+                raise MemoryIntegrityError("first batch does not contain a valid base_projection")
+            projection = copy.deepcopy(validate_canonical_memory(base_projection))
+            after_revision = int(projection["revision"])
+            active_reducer = (
+                CURRENT_REDUCER_VERSION if projection.get("schema_version") == "2.2" else LEGACY_REDUCER_VERSION
+            )
     else:
         projection = copy.deepcopy(validate_canonical_memory(projection))
 
     event_count = 0
     for batch in batches:
+        batch_schema = str(batch["schema_version"])
+        batch_reducer = (
+            str(batch["reducer_version"])
+            if batch_schema == TYPED_MEMORY_EVENT_BATCH_SCHEMA_VERSION
+            else LEGACY_REDUCER_VERSION
+        )
+        if active_reducer is not None and active_reducer != batch_reducer:
+            raise MemoryIntegrityError("memory reducer_version changed within one event history")
+        active_reducer = batch_reducer
+        if batch["batch_kind"] == "genesis":
+            if projection is not None or int(batch["expected_revision"]) != 0:
+                raise MemoryIntegrityError("genesis batch is not the root of memory history")
+            try:
+                projection = apply_genesis_event(batch["events"][0])
+            except MemoryReducerError as exc:
+                raise MemoryIntegrityError(str(exc)) from exc
+        if projection is None:
+            raise MemoryIntegrityError("memory history has no canonical projection")
         if str(batch["book_id"]) != str(projection["book_id"]):
             raise MemoryIntegrityError("memory batch book_id changed during replay")
-        if int(batch["expected_revision"]) != int(projection["revision"]):
+        if batch["batch_kind"] != "genesis" and int(batch["expected_revision"]) != int(projection["revision"]):
             raise MemoryIntegrityError("memory batch expected_revision does not match replay projection")
         patch_id = str(batch["patch_id"])
         patch_hash = str(batch["patch_content_hash"])
@@ -390,14 +811,35 @@ def replay_memory_events(
                 raise MemoryIntegrityError(f"duplicate patch id was persisted instead of being a no-op: {patch_id}")
             raise MemoryIntegrityError(f"conflicting patch id exists in event history: {patch_id}")
 
-        updated, generated_events = apply_memory_patch(projection, batch["patch"])
-        if generated_events != batch["events"]:
-            raise MemoryIntegrityError(f"batch events do not reproduce patch semantics: {batch['batch_id']}")
-        if int(updated["revision"]) != int(batch["last_revision"]):
+        if batch["batch_kind"] == "genesis":
+            generated_event_count = 1
+        elif batch_schema == MEMORY_EVENT_BATCH_SCHEMA_VERSION:
+            try:
+                updated, generated_events = apply_memory_patch(
+                    projection,
+                    batch["patch"],
+                    reducer_version=LEGACY_REDUCER_VERSION,
+                )
+            except MemoryReducerError as exc:
+                raise MemoryIntegrityError(str(exc)) from exc
+            if generated_events != batch["events"]:
+                raise MemoryIntegrityError(f"batch events do not reproduce patch semantics: {batch['batch_id']}")
+            projection = updated
+            generated_event_count = len(generated_events)
+        else:
+            try:
+                projection = apply_memory_events(
+                    projection,
+                    batch["events"],
+                    reducer_version=batch_reducer,
+                )
+            except MemoryReducerError as exc:
+                raise MemoryIntegrityError(str(exc)) from exc
+            generated_event_count = len(batch["events"])
+        if int(projection["revision"]) != int(batch["last_revision"]):
             raise MemoryIntegrityError("reducer revision does not match batch last_revision")
-        projection = updated
         patch_index[patch_id] = patch_hash
-        event_count += len(generated_events)
+        event_count += generated_event_count
         previous_hash = str(batch["batch_hash"])
         last_batch_id = str(batch["batch_id"])
         if batch["batch_kind"] == "chapter":
@@ -405,8 +847,11 @@ def replay_memory_events(
         if batch.get("quality_state"):
             quality_state[str(batch["batch_id"])] = copy.deepcopy(batch["quality_state"])
 
+    if projection is None:
+        raise MemoryIntegrityError("memory replay did not produce a projection")
+    report_schema_version = "2.2" if projection.get("schema_version") == "2.2" else "2.1"
     report = {
-        "schema_version": "2.1",
+        "schema_version": report_schema_version,
         "status": "ok",
         "book_id": str(projection["book_id"]),
         "revision": int(projection["revision"]),
@@ -421,8 +866,17 @@ def replay_memory_events(
         "quality_state": quality_state,
         "projection": projection,
     }
+    if report_schema_version == "2.2":
+        if active_reducer != CURRENT_REDUCER_VERSION:
+            raise MemoryIntegrityError("CanonicalMemory 2.2 replay is missing its frozen reducer")
+        report["reducer_version"] = active_reducer
     try:
-        return validate_schema(report, "memory_replay_report.schema.json")
+        schema_name = (
+            "memory_replay_report_v2_2.schema.json"
+            if report_schema_version == "2.2"
+            else "memory_replay_report.schema.json"
+        )
+        return validate_schema(report, schema_name)
     except SchemaValidationError as exc:
         raise MemoryEventStoreError(str(exc)) from exc
 
@@ -476,6 +930,9 @@ def commit_memory_patch(
     publication_status: str | None = None,
     quality_state: dict[str, Any] | None = None,
     checkpoint_interval: int = CHECKPOINT_CHAPTER_INTERVAL,
+    schema_version: str | None = None,
+    reducer_version: str | None = None,
+    event_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     root = Path(store_dir)
     validated_patch = copy.deepcopy(validate_memory_patch(patch))
@@ -492,8 +949,25 @@ def commit_memory_patch(
         elif Path(canonical_path).exists():
             base_projection = load_canonical_memory(canonical_path)
         else:
-            base_projection = create_empty_canonical_memory()
+            if schema_version == TYPED_MEMORY_EVENT_BATCH_SCHEMA_VERSION:
+                authority_epoch = event_context.get("authority_epoch", 1) if isinstance(event_context, dict) else 1
+                base_projection = create_empty_typed_canonical_memory(authority_epoch=authority_epoch)
+            else:
+                base_projection = create_empty_canonical_memory()
         replay = _empty_replay_state(base_projection)
+
+    inferred_schema = "2.2" if base_projection.get("schema_version") == "2.2" else "2.1"
+    selected_schema = schema_version or inferred_schema
+    if selected_schema != inferred_schema:
+        raise MemoryEventStoreError("batch schema_version does not match canonical memory schema_version")
+    selected_reducer = reducer_version or (
+        CURRENT_REDUCER_VERSION if selected_schema == "2.2" else LEGACY_REDUCER_VERSION
+    )
+    _require_known_reducer(selected_reducer)
+    if selected_schema == "2.1" and selected_reducer != LEGACY_REDUCER_VERSION:
+        raise MemoryEventStoreError("Memory 2.1 history is frozen to memory-reducer-2.1")
+    if selected_schema == "2.2" and selected_reducer != CURRENT_REDUCER_VERSION:
+        raise MemoryEventStoreError("Memory 2.2 history requires memory-reducer-2.2")
 
     existing_hash = replay["patch_index"].get(patch_id)
     if existing_hash is not None:
@@ -511,9 +985,17 @@ def commit_memory_patch(
         }
 
     previous_revision = int(base_projection["revision"])
-    updated, events = apply_memory_patch(base_projection, validated_patch)
+    try:
+        updated, events = apply_memory_patch(
+            base_projection,
+            validated_patch,
+            reducer_version=selected_reducer,
+            event_context=event_context,
+        )
+    except MemoryReducerError as exc:
+        raise MemoryEventStoreError(str(exc)) from exc
     if not events:
-        raise MemoryEventStoreError("empty patches are not persisted as Memory 2.1 batches")
+        raise MemoryEventStoreError(f"empty patches are not persisted as Memory {selected_schema} batches")
     batch = create_memory_event_batch(
         book_id=str(base_projection["book_id"]),
         patch=validated_patch,
@@ -526,6 +1008,8 @@ def commit_memory_patch(
         publication_status=publication_status,
         base_projection=base_projection if replay["last_batch_hash"] is None else None,
         quality_state=quality_state,
+        schema_version=selected_schema,
+        reducer_version=selected_reducer,
     )
     write_memory_event_batch(root, batch)
 
@@ -550,7 +1034,7 @@ def commit_memory_patch(
     saved = save_canonical_memory(canonical_path, updated)
     final_replay = replay_memory_events(root)
     if memory_projection_hash(saved) != final_replay["projection_hash"]:
-        raise MemoryIntegrityError("persisted canonical cache differs from Memory 2.1 replay")
+        raise MemoryIntegrityError(f"persisted canonical cache differs from Memory {selected_schema} replay")
     return {
         "status": "applied",
         "previous_revision": previous_revision,
@@ -564,8 +1048,9 @@ def commit_memory_patch(
 
 def _empty_replay_state(projection: dict[str, Any]) -> dict[str, Any]:
     validated = copy.deepcopy(validate_canonical_memory(projection))
-    return {
-        "schema_version": "2.1",
+    schema_version = "2.2" if validated.get("schema_version") == "2.2" else "2.1"
+    result = {
+        "schema_version": schema_version,
         "status": "ok",
         "book_id": str(validated["book_id"]),
         "revision": int(validated["revision"]),
@@ -580,12 +1065,31 @@ def _empty_replay_state(projection: dict[str, Any]) -> dict[str, Any]:
         "quality_state": {},
         "projection": validated,
     }
+    if schema_version == "2.2":
+        result["reducer_version"] = CURRENT_REDUCER_VERSION
+    return result
 
 
 def _validate_publication_boundary(batch_kind: str, publication_status: str) -> None:
     if batch_kind not in {"source_sync", "chapter"}:
         raise MemoryEventStoreError(f"unsupported memory batch kind: {batch_kind}")
     required_status = "committed" if batch_kind == "chapter" else "source_sync"
+    if publication_status != required_status:
+        raise MemoryEventStoreError(
+            f"{batch_kind} memory batches require publication_status={required_status}; "
+            "rejected, failed, and preview content cannot enter world memory"
+        )
+
+
+def _validate_publication_boundary_v22(batch_kind: str, publication_status: str) -> None:
+    required_by_kind = {
+        "genesis": "genesis",
+        "source_sync": "source_sync",
+        "chapter": "committed",
+    }
+    required_status = required_by_kind.get(batch_kind)
+    if required_status is None:
+        raise MemoryEventStoreError(f"unsupported memory batch kind: {batch_kind}")
     if publication_status != required_status:
         raise MemoryEventStoreError(
             f"{batch_kind} memory batches require publication_status={required_status}; "
@@ -627,17 +1131,21 @@ __all__ = [
     "CHECKPOINT_CHAPTER_INTERVAL",
     "MEMORY_CHECKPOINT_SCHEMA_VERSION",
     "MEMORY_EVENT_BATCH_SCHEMA_VERSION",
+    "TYPED_MEMORY_CHECKPOINT_SCHEMA_VERSION",
+    "TYPED_MEMORY_EVENT_BATCH_SCHEMA_VERSION",
     "MemoryEventStoreError",
     "MemoryIntegrityError",
     "MemoryPatchConflictError",
     "commit_memory_patch",
     "create_memory_checkpoint",
     "create_memory_event_batch",
+    "create_genesis_memory_batch",
     "load_latest_memory_checkpoint",
     "load_memory_event_batch",
     "load_memory_event_batches",
     "memory_patch_content_hash",
     "memory_projection_hash",
+    "reducer_version_for_batch",
     "rebuild_canonical_memory",
     "replay_memory_events",
     "validate_memory_checkpoint",

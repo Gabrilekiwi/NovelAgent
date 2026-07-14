@@ -48,6 +48,25 @@ def canonical_memory_to_snapshot(canonical_memory: dict[str, Any]) -> dict[str, 
             "source_resolution": copy.deepcopy(memory.get("source_resolution", {})),
         },
     }
+    if memory.get("schema_version") == "2.2":
+        snapshot["memory_v2"].update(
+            {
+                "authority_epoch": int(memory["authority_epoch"]),
+                "head_event_hash": memory.get("head_event_hash"),
+                "reducer_version": "memory-reducer-2.2",
+            }
+        )
+        for field in (
+            "relationships",
+            "injuries",
+            "inventories",
+            "resources",
+            "glossary",
+            "corruption",
+            "story_time",
+            "foreshadowing",
+        ):
+            snapshot[field] = copy.deepcopy(memory[field])
     return validate_snapshot(normalize_snapshot(snapshot))
 
 
@@ -94,7 +113,13 @@ def rebuild_semantic_snapshot(
 
 def _chapter_index(memory: dict[str, Any]) -> int:
     value = memory.get("current_state", {}).get("chapter_index")
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else 1
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    story_time = memory.get("story_time")
+    typed_value = story_time.get("chapter_index") if isinstance(story_time, dict) else None
+    if isinstance(typed_value, int) and not isinstance(typed_value, bool) and typed_value >= 1:
+        return typed_value
+    return 1
 
 
 def _world_state(memory: dict[str, Any]) -> dict[str, Any]:

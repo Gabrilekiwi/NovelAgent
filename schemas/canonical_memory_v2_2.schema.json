@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CanonicalMemory22",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "revision",
+    "head_event_hash",
+    "authority_epoch",
+    "book_id",
+    "title",
+    "language",
+    "world",
+    "current_state",
+    "characters",
+    "locations",
+    "relationships",
+    "injuries",
+    "inventories",
+    "resources",
+    "glossary",
+    "corruption",
+    "story_time",
+    "foreshadowing",
+    "timeline",
+    "open_threads",
+    "chapter_states",
+    "constraints",
+    "style_rules",
+    "source_index",
+    "source_resolution",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["2.2"]},
+    "revision": {"type": "integer", "minimum": 1},
+    "head_event_hash": {"type": ["string", "null"]},
+    "authority_epoch": {"type": "integer", "minimum": 1},
+    "book_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "language": {"type": "string", "minLength": 1},
+    "world": {"type": "object", "additionalProperties": true},
+    "current_state": {"type": "object", "additionalProperties": true},
+    "characters": {"type": "object", "additionalProperties": true},
+    "locations": {"type": "object", "additionalProperties": true},
+    "relationships": {"type": "object", "additionalProperties": true},
+    "injuries": {"type": "object", "additionalProperties": true},
+    "inventories": {"type": "object", "additionalProperties": true},
+    "resources": {"type": "object", "additionalProperties": true},
+    "glossary": {"type": "object", "additionalProperties": true},
+    "corruption": {"type": "object", "additionalProperties": true},
+    "story_time": {
+      "type": "object",
+      "required": ["label", "elapsed_minutes", "chapter_index", "scene_index"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "elapsed_minutes": {"type": "integer", "minimum": 0},
+        "chapter_index": {"type": "integer", "minimum": 0},
+        "scene_index": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "foreshadowing": {"type": "object", "additionalProperties": true},
+    "timeline": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "open_threads": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "chapter_states": {"type": "object", "additionalProperties": true},
+    "constraints": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "style_rules": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "source_index": {"type": "object", "additionalProperties": true},
+    "source_resolution": {"type": "object", "additionalProperties": true},
+    "metadata": {
+      "type": "object",
+      "required": ["source", "created_by"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "created_by": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
