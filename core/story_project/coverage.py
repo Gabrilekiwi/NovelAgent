@@ -163,7 +163,22 @@ def _text_covers(text: str, required_text: str) -> bool:
         return False
     matched = sum(1 for term in terms if _normalize_text(term) in normalized_text)
     required_matches = min(len(terms), 2) if len(terms) <= 3 else max(2, len(terms) // 2)
-    return matched >= required_matches
+    if matched >= required_matches:
+        return True
+    return _cjk_bigram_coverage(text, required_text) >= 0.22
+
+
+def _cjk_bigram_coverage(text: str, required_text: str) -> float:
+    required = "".join(re.findall(r"[\u4e00-\u9fff]", required_text))
+    actual = "".join(re.findall(r"[\u4e00-\u9fff]", text))
+    if len(required) < 8 or len(actual) < 2:
+        return 0.0
+    required_bigrams = {required[index:index + 2] for index in range(len(required) - 1)}
+    actual_bigrams = {actual[index:index + 2] for index in range(len(actual) - 1)}
+    matched = required_bigrams & actual_bigrams
+    if len(matched) < 4:
+        return 0.0
+    return len(matched) / max(1, len(required_bigrams))
 
 
 def _coverage_terms(value: str) -> list[str]:

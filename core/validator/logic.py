@@ -18,6 +18,12 @@ _CONFLICT_MARKERS = [
     "\u5a01\u80c1",
     "\u79d8\u5bc6",
     "\u4ee3\u4ef7",
+    "\u88ad\u51fb",
+    "\u54ac",
+    "\u649e\u51fb",
+    "\u5c16\u53eb",
+    "\u53cd\u6740",
+    "\u640f\u6597",
 ]
 
 

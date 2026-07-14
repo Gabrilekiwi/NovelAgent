@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from api.openai_client import chat_completion
@@ -76,9 +77,44 @@ def _call_llm_validator(
         stage="llm_validation",
     )
     try:
-        payload = json.loads(response)
+        payload = _parse_json_object(response)
+    except ValueError:
+        repaired = chat_completion(
+            messages
+            + [
+                {"role": "assistant", "content": response[:4_000]},
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous response was not valid JSON. Return only one JSON object matching the "
+                        "requested validation schema. Do not add markdown fences or commentary."
+                    ),
+                },
+            ],
+            model=model,
+            temperature=0.0,
+            stage="llm_validation",
+        )
+        payload = _parse_json_object(repaired)
+    if not isinstance(payload, dict):
+        raise ValueError("LLM validator response must be a JSON object")
+    return payload
+
+
+def _parse_json_object(response: str) -> dict[str, Any]:
+    text = str(response or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+    try:
+        payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError("LLM validator response was not valid JSON") from exc
+        start = text.find("{")
+        if start < 0:
+            raise ValueError("LLM validator response was not valid JSON") from exc
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(text[start:])
+        except json.JSONDecodeError as nested:
+            raise ValueError("LLM validator response was not valid JSON") from nested
     if not isinstance(payload, dict):
         raise ValueError("LLM validator response must be a JSON object")
     return payload

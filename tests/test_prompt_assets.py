@@ -98,7 +98,7 @@ class PromptAssetTest(unittest.TestCase):
                     "warning_count": 0,
                     "severity_counts": {"blocking": 1, "warning": 0},
                     "requested_focus": ["logic"],
-                    "executed_checks": ["logic"],
+                    "executed_checks": ["logic", "llm"],
                     "skipped_checks": ["continuity", "spatial"],
                     "repair_attempts": 1,
                     "repair_plan": {
@@ -172,7 +172,7 @@ class PromptAssetTest(unittest.TestCase):
         self.assertTrue(metadata["recovery_context"]["available"])
         self.assertEqual("chapter_1_test", metadata["recovery_context"]["source_run_id"])
         self.assertEqual(1, metadata["recovery_context"]["problem_count"])
-        self.assertEqual(["logic"], metadata["recovery_context"]["executed_checks"])
+        self.assertEqual(["logic", "llm"], metadata["recovery_context"]["executed_checks"])
         self.assertEqual(["continuity", "spatial"], metadata["recovery_context"]["skipped_checks"])
         self.assertEqual(1, metadata["recovery_context"]["repair_attempts"])
 

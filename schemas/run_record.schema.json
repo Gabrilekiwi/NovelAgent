@@ -1564,7 +1564,8 @@
                       "continuity",
                       "spatial",
                       "logic",
-                      "story_project"
+                      "story_project",
+                      "llm"
                     ]
                   }
                 },
@@ -1575,7 +1576,8 @@
                       "continuity",
                       "spatial",
                       "logic",
-                      "story_project"
+                      "story_project",
+                      "llm"
                     ]
                   }
                 },

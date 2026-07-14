@@ -9,6 +9,22 @@ from core.validator.spatial import validate_bridge_preconditions
 
 
 class ValidatorTest(unittest.TestCase):
+    def test_llm_validator_retries_once_when_response_is_not_json(self) -> None:
+        with patch(
+            "core.validator.llm.chat_completion",
+            side_effect=["I found no issues.", '{"problems": []}'],
+        ) as mocked:
+            check = validate_llm({"chapter_index": 2}, "A complete chapter.", model="validator-test")
+
+        self.assertTrue(check["ok"])
+        self.assertEqual(2, mocked.call_count)
+
+    def test_llm_validator_accepts_fenced_json(self) -> None:
+        with patch("core.validator.llm.chat_completion", return_value='```json\n{"problems": []}\n```'):
+            check = validate_llm({"chapter_index": 2}, "A complete chapter.", model="validator-test")
+
+        self.assertTrue(check["ok"])
+
     def test_llm_validator_records_replay_audit_metadata(self) -> None:
         with patch("core.validator.llm.chat_completion", return_value='{"problems": []}'):
             check = validate_llm(

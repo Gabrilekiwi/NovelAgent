@@ -301,7 +301,22 @@ def _contains_bridge_signal(opening: str, bridge: str) -> bool:
         return False
     checked_terms = bridge_terms[:4]
     matched = sum(1 for term in checked_terms if _term_in_opening(term, lowered, opening_terms))
-    return matched >= min(2, len(checked_terms))
+    if matched >= min(2, len(checked_terms)):
+        return True
+    return _cjk_bigram_overlap(opening, bridge) >= 0.22
+
+
+def _cjk_bigram_overlap(actual: str, required: str) -> float:
+    required_cjk = "".join(re.findall(r"[\u4e00-\u9fff]", required))
+    actual_cjk = "".join(re.findall(r"[\u4e00-\u9fff]", actual))
+    if len(required_cjk) < 8 or len(actual_cjk) < 2:
+        return 0.0
+    required_bigrams = {required_cjk[index:index + 2] for index in range(len(required_cjk) - 1)}
+    actual_bigrams = {actual_cjk[index:index + 2] for index in range(len(actual_cjk) - 1)}
+    matched = required_bigrams & actual_bigrams
+    if len(matched) < 4:
+        return 0.0
+    return len(matched) / max(1, len(required_bigrams))
 
 
 def _word_terms(value: str) -> list[str]:
