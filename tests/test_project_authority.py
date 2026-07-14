@@ -20,6 +20,7 @@ from core.story_project.authority import (
     authority_receipt_path,
     build_authority_genesis_receipt,
     project_identity_sha256,
+    prepare_event_authority_advance,
 )
 from core.story_project.identity import (
     LEGACY_AUTHORITY_PROJECTION,
@@ -32,6 +33,65 @@ from core.story_project.identity import (
 
 
 class ProjectAuthorityTest(unittest.TestCase):
+    def test_event_head_advance_is_pure_and_keeps_activation_boundary(self) -> None:
+        root = self._story_project("head_advance")
+        ensure_project_identity(root, book_id="book-head-advance")
+        activated = activate_event_authority(
+            root,
+            expected_identity_sha256=project_identity_sha256(root),
+            canonical_state_sha256="a" * 64,
+            now=self._now,
+        )
+        original = activated.to_dict()
+
+        advanced = prepare_event_authority_advance(
+            activated,
+            expected_authority_epoch=1,
+            expected_head_event_hash=activated.authority["head_event_hash"],
+            new_head_event_hash="b" * 64,
+        )
+
+        self.assertEqual(original, activated.to_dict())
+        self.assertEqual("b" * 64, advanced.authority["head_event_hash"])
+        self.assertEqual(1, advanced.authority["authority_epoch"])
+        self.assertEqual(
+            activated.authority["activation_receipt"],
+            advanced.authority["activation_receipt"],
+        )
+        self.assertEqual(activated.to_dict(), load_project_identity(root).to_dict())
+
+    def test_event_head_advance_fails_closed_on_stale_or_legacy_authority(self) -> None:
+        root = self._story_project("head_advance_stale")
+        legacy = ensure_project_identity(root, book_id="book-head-stale")
+        with self.assertRaises(AuthorityWriterContractError):
+            prepare_event_authority_advance(
+                legacy,
+                expected_authority_epoch=0,
+                expected_head_event_hash="a" * 64,
+                new_head_event_hash="b" * 64,
+            )
+
+        activated = activate_event_authority(
+            root,
+            expected_identity_sha256=project_identity_sha256(root),
+            canonical_state_sha256="c" * 64,
+            now=self._now,
+        )
+        with self.assertRaises(AuthorityCASMismatchError):
+            prepare_event_authority_advance(
+                activated,
+                expected_authority_epoch=2,
+                expected_head_event_hash=activated.authority["head_event_hash"],
+                new_head_event_hash="d" * 64,
+            )
+        with self.assertRaises(AuthorityCASMismatchError):
+            prepare_event_authority_advance(
+                activated,
+                expected_authority_epoch=1,
+                expected_head_event_hash="e" * 64,
+                new_head_event_hash="d" * 64,
+            )
+
     def _story_project(self, name: str) -> Path:
         root = Path.cwd() / ".tmp" / "test_project_authority" / f"{name}_{uuid.uuid4().hex}" / "book"
         root.mkdir(parents=True)

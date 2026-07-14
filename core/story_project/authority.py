@@ -302,6 +302,40 @@ def assert_authority_writer(
             )
 
 
+def prepare_event_authority_advance(
+    identity: ProjectIdentity,
+    *,
+    expected_authority_epoch: int,
+    expected_head_event_hash: str,
+    new_head_event_hash: str,
+    writer_contract: int = CURRENT_WRITER_CONTRACT,
+) -> ProjectIdentity:
+    """Build the next identity value for the same atomic chapter transaction.
+
+    The activation receipt proves the legacy-to-event boundary and therefore
+    remains unchanged as the live event head advances.  The authority epoch is
+    also stable for ordinary chapter appends; amend/retcon epoch changes use a
+    separate audited transition.
+    """
+
+    validated = validate_project_identity(identity.to_dict())
+    expected_head = _require_sha256("expected_head_event_hash", expected_head_event_hash)
+    next_head = _require_sha256("new_head_event_hash", new_head_event_hash)
+    assert_authority_writer(
+        validated,
+        writer_mode=AUTHORITY_MODE_EVENT,
+        writer_contract=writer_contract,
+        expected_authority_epoch=expected_authority_epoch,
+        expected_head_event_hash=expected_head,
+    )
+    if next_head == expected_head:
+        raise AuthorityCASMismatchError("new event head must differ from the current head")
+    authority = _json_copy(validated.authority or {})
+    authority["head_event_hash"] = next_head
+    advanced = replace(validated, authority=authority)
+    return validate_project_identity(advanced.to_dict())
+
+
 def activate_event_authority(
     story_project_root: str | Path,
     *,
@@ -595,6 +629,7 @@ __all__ = [
     "build_authority_activation_receipt",
     "build_authority_genesis_receipt",
     "project_identity_sha256",
+    "prepare_event_authority_advance",
     "validate_authority_activation_receipt",
     "validate_authority_config",
     "validate_authority_genesis_receipt",
