@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomyOperationSourceVerified",
+  "type": "object",
+  "required": ["schema_version", "operation_id", "intent_hash", "source_snapshot_hash", "lease_hash", "verified_at", "verification_hash"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "operation_id": {"type": "string", "minLength": 1},
+    "intent_hash": {"type": "string", "minLength": 64},
+    "source_snapshot_hash": {"type": "string", "minLength": 64},
+    "lease_hash": {"type": "string", "minLength": 64},
+    "verified_at": {"type": "string", "minLength": 1},
+    "verification_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

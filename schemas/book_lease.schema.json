@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BookLease",
+  "type": "object",
+  "required": ["schema_version", "book_id", "session_id", "plan_id", "generation", "previous_lease_hash", "status", "acquired_at", "renewed_at", "expires_at", "lease_hash"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "session_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 1},
+    "previous_lease_hash": {"type": ["string", "null"], "minLength": 64},
+    "status": {"type": "string", "enum": ["active", "released"]},
+    "acquired_at": {"type": "string", "minLength": 1},
+    "renewed_at": {"type": "string", "minLength": 1},
+    "expires_at": {"type": "string", "minLength": 1},
+    "lease_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

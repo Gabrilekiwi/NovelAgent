@@ -10,9 +10,11 @@ import unittest
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import main as cli
+from core.engine.persistence import PersistenceError
 from core.engine.run_record import build_run_record
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
 from core.story_project.activation import build_story_state_calibration_report
@@ -567,6 +569,60 @@ class CliTest(unittest.TestCase):
         reconcile.assert_called_once()
         executor.assert_not_called()
         self.assertEqual(report, json.loads(output.getvalue()))
+
+    def test_event_authority_reconcile_never_calls_v1_publisher(self) -> None:
+        case_dir = self._case_dir("event_reconcile_backend")
+        identity = SimpleNamespace(
+            book_id="book-event",
+            authority={"mode": "event_v1"},
+        )
+        report = {
+            "ok": True,
+            "transactions": [
+                {"run_id": "run-event", "state": "completed", "committed": True}
+            ],
+        }
+        with patch.object(
+            cli, "reconcile_pending_persistence_v2", return_value=report
+        ) as reconcile_v2, patch.object(
+            cli, "_reconcile_and_publish_persistence"
+        ) as reconcile_v1:
+            result = cli._reconcile_authority_persistence(
+                case_dir / "runs",
+                project_identity=identity,
+                expected_book_id=identity.book_id,
+                persistence_dir=case_dir / "persistence",
+            )
+
+        self.assertTrue(result["ok"])
+        reconcile_v2.assert_called_once_with(
+            case_dir / "persistence", expected_book_id=identity.book_id
+        )
+        reconcile_v1.assert_not_called()
+
+    def test_event_authority_history_blocks_downgraded_v1_reconcile(self) -> None:
+        case_dir = self._case_dir("event_reconcile_downgrade")
+        book = case_dir / "book"
+        receipts = book / ".novelagent" / "authority" / "receipts"
+        receipts.mkdir(parents=True)
+        (receipts / "activation.json").write_text(
+            json.dumps({"receipt_type": "authority_activation"}), encoding="utf-8"
+        )
+        identity = SimpleNamespace(
+            book_id="book-event",
+            authority={"mode": "legacy_markdown_v1"},
+        )
+
+        with patch.object(cli, "_reconcile_and_publish_persistence") as reconcile_v1:
+            with self.assertRaisesRegex(PersistenceError, "downgrade"):
+                cli._reconcile_authority_persistence(
+                    case_dir / "runs",
+                    project_identity=identity,
+                    story_project_root=book,
+                    persistence_dir=case_dir / "persistence",
+                )
+
+        reconcile_v1.assert_not_called()
 
     def test_delivery_resolution_requires_explicit_confirmed_absent(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--resolve-delivery", "job-1"]):

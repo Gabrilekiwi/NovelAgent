@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomyOperationResult",
+  "type": "object",
+  "required": ["schema_version", "operation_id", "intent_hash", "outcome", "event_hash", "lease_hash", "completed_at", "result_hash"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "operation_id": {"type": "string", "minLength": 1},
+    "intent_hash": {"type": "string", "minLength": 64},
+    "outcome": {"type": "string", "enum": ["completed", "rolled_back"]},
+    "event_hash": {"type": ["string", "null"], "minLength": 64},
+    "lease_hash": {"type": ["string", "null"], "minLength": 64},
+    "completed_at": {"type": "string", "minLength": 1},
+    "result_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

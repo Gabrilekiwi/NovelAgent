@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StageLeaseFence",
+  "type": "object",
+  "required": ["schema_version", "fence_hash", "receipt_hash", "authorization_hash", "book_id", "session_id", "plan_id", "chapter_index", "lease_hash", "lease_generation", "fenced_at"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "fence_hash": {"type": "string", "minLength": 64},
+    "receipt_hash": {"type": "string", "minLength": 64},
+    "authorization_hash": {"type": "string", "minLength": 64},
+    "book_id": {"type": "string", "minLength": 1},
+    "session_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "lease_hash": {"type": "string", "minLength": 64},
+    "lease_generation": {"type": "integer", "minimum": 1},
+    "fenced_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

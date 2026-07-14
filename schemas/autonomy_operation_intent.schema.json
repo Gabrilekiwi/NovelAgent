@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomyOperationIntent",
+  "type": "object",
+  "required": ["schema_version", "operation_id", "operation_key", "attempt", "operation_type", "session_id", "book_id", "plan_id", "plan_hash", "expected_state", "expected_event_hash", "expected_lease_hash", "target_event_type", "reason", "lease_ttl_seconds", "created_at", "intent_hash"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "operation_id": {"type": "string", "minLength": 1},
+    "operation_key": {"type": "string", "minLength": 64},
+    "attempt": {"type": "integer", "minimum": 1},
+    "operation_type": {"type": "string", "enum": ["execute", "resume", "cancel", "abandon", "complete"]},
+    "session_id": {"type": "string", "minLength": 1},
+    "book_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "plan_hash": {"type": "string", "minLength": 64},
+    "expected_state": {"type": "string", "enum": ["absent", "active", "cancelled"]},
+    "expected_event_hash": {"type": ["string", "null"], "minLength": 64},
+    "expected_lease_hash": {"type": ["string", "null"], "minLength": 64},
+    "target_event_type": {"type": ["string", "null"], "enum": ["started", "resumed", "cancelled", "abandoned", "completed", null]},
+    "reason": {"type": ["string", "null"], "minLength": 1},
+    "lease_ttl_seconds": {"type": ["integer", "null"], "minimum": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "intent_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

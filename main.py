@@ -4,7 +4,14 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
+from core.autonomy.cli import (
+    add_autonomy_arguments as _add_autonomy_arguments,
+    autonomy_command_requested as _autonomy_command_requested,
+    run_autonomy_command as _run_autonomy_command,
+)
+from core.autonomy.common import AutonomyContractError
 from core.config import clear_proxy_env, proxy_disabled_by_env
 from core.delivery import DeliveryError
 from core.cli.arguments import (
@@ -34,6 +41,7 @@ from core.director import ModelDirector
 from core.engine.artifacts import chapter_artifact_metadata, save_chapter_artifact
 from core.engine.executor import AgentExecutor, LoopExecutionError
 from core.engine.persistence import (
+    PersistenceError,
     atomic_create_json,
     atomic_write_json,
     complete_persistence_transaction,
@@ -41,6 +49,7 @@ from core.engine.persistence import (
     persistence_run_lock,
     reconcile_persistence,
 )
+from core.engine.persistence_v2 import reconcile_pending_persistence_v2
 from core.engine.preflight import run_preflight
 from core.engine.recovery import RecoveryError, recover_latest_chapter_draft
 from core.engine.report import build_run_report
@@ -460,6 +469,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable multi-step progress lines printed to stderr.",
     )
+    _add_autonomy_arguments(parser)
     return parser
 
 
@@ -506,9 +516,28 @@ def main() -> None:
     try:
         story_runtime_paths = _apply_story_project_runtime_defaults(args)
         delivery_command_requested = _delivery_command_requested(args)
+        autonomy_command_requested = _autonomy_command_requested(args)
     except ValueError as exc:
         print(f"Configuration failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+
+    if autonomy_command_requested:
+        try:
+            result = _run_autonomy_command(
+                args, story_runtime_paths=story_runtime_paths
+            )
+        except (AutonomyContractError, OSError, ValueError, json.JSONDecodeError) as exc:
+            payload = {
+                "ok": False,
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+            }
+            if args.output_json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(f"Autonomy command failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        raise SystemExit(0 if result.get("ok") else 1)
 
     if delivery_command_requested:
         try:
@@ -621,7 +650,12 @@ def main() -> None:
             reconcile_kwargs["persistence_dir"] = args.persistence_dir
         if reconcile_identity is not None:
             reconcile_kwargs["expected_book_id"] = reconcile_identity.book_id
-        result = _reconcile_and_publish_persistence(args.run_dir, **reconcile_kwargs)
+        result = _reconcile_authority_persistence(
+            args.run_dir,
+            project_identity=reconcile_identity,
+            story_project_root=args._resolved_story_project_root,
+            **reconcile_kwargs,
+        )
         if args.output_json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
@@ -750,7 +784,12 @@ def main() -> None:
             reconcile_kwargs["persistence_dir"] = args.persistence_dir
         if project_identity is not None:
             reconcile_kwargs["expected_book_id"] = project_identity.book_id
-        persistence_health = _reconcile_and_publish_persistence(args.run_dir, **reconcile_kwargs)
+        persistence_health = _reconcile_authority_persistence(
+            args.run_dir,
+            project_identity=project_identity,
+            story_project_root=args._resolved_story_project_root,
+            **reconcile_kwargs,
+        )
         if not persistence_health.get("ok"):
             if args.output_json:
                 print(json.dumps(persistence_health, ensure_ascii=False, indent=2))
@@ -884,6 +923,82 @@ def _reconcile_and_publish_persistence(
             expected_book_id=expected_book_id,
             persistence_dir=persistence_dir,
         )
+
+
+def _reconcile_authority_persistence(
+    run_dir: str | Path,
+    *,
+    project_identity: Any | None,
+    story_project_root: str | Path | None = None,
+    chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
+    state_paths: tuple[Path, ...] = (),
+    expected_book_id: str | None = None,
+    persistence_dir: str | Path | None = None,
+) -> dict:
+    authority = getattr(project_identity, "authority", None)
+    if isinstance(authority, dict) and authority.get("mode") == "event_v1":
+        transaction_root = (
+            Path(persistence_dir)
+            if persistence_dir is not None
+            else Path(run_dir) / "transactions"
+        )
+        report = dict(
+            reconcile_pending_persistence_v2(
+                transaction_root,
+                expected_book_id=expected_book_id,
+            )
+        )
+        report.setdefault("published_run_ids", [])
+        report.setdefault("existing_run_ids", [])
+        report.setdefault("publish_errors", [])
+        report["pending_publication"] = [
+            item.get("run_id")
+            for item in report.get("transactions") or []
+            if isinstance(item, dict)
+            and item.get("state") in {"commit_marked", "publishing", "recovery_required"}
+        ]
+        report["ok"] = bool(report.get("ok")) and not report["pending_publication"]
+        return report
+    if _historical_event_authority_exists(
+        story_project_root=story_project_root,
+        persistence_dir=persistence_dir,
+    ):
+        raise PersistenceError(
+            "event-authority downgrade detected; v1 reconcile/publisher is disabled"
+        )
+    legacy_kwargs: dict[str, Any] = {
+        "chapter_dir": chapter_dir,
+        "state_paths": state_paths,
+    }
+    if expected_book_id is not None:
+        legacy_kwargs["expected_book_id"] = expected_book_id
+    if persistence_dir is not None:
+        legacy_kwargs["persistence_dir"] = persistence_dir
+    return _reconcile_and_publish_persistence(run_dir, **legacy_kwargs)
+
+
+def _historical_event_authority_exists(
+    *,
+    story_project_root: str | Path | None,
+    persistence_dir: str | Path | None,
+) -> bool:
+    if story_project_root is not None:
+        receipts = Path(story_project_root) / ".novelagent" / "authority" / "receipts"
+        if receipts.is_dir():
+            for path in receipts.glob("*.json"):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    return True
+                if isinstance(payload, dict) and payload.get("receipt_type") == "authority_activation":
+                    return True
+    if persistence_dir is not None:
+        root = Path(persistence_dir)
+        if (root / "root_registry.json").exists():
+            return True
+        if any((root / "registry" / "completed").glob("*.json")):
+            return True
+    return False
 
 
 def _reconcile_and_publish_persistence_locked(

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InstructionPlan",
+  "type": "object",
+  "required": ["schema_version", "plan_id", "plan_hash", "state", "intent", "instruction_digest", "profile_set_id", "profile_set_hash", "source_snapshot", "selections", "requested_chapter_count", "chapter_start", "chapter_end", "created_at"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "plan_id": {"type": "string", "minLength": 1},
+    "plan_hash": {"type": "string", "minLength": 64},
+    "state": {"type": "string", "enum": ["preview"]},
+    "intent": {"type": "string", "enum": ["generate_contiguous_canonical_chapters"]},
+    "instruction_digest": {"type": "string", "minLength": 64},
+    "profile_set_id": {"type": "string", "minLength": 1},
+    "profile_set_hash": {"type": "string", "minLength": 64},
+    "source_snapshot": {
+      "type": "object",
+      "required": ["schema_version", "book_id", "root_uuid", "authority_epoch", "authority_head_event_hash", "canonical_next_chapter", "source_digest", "captured_at", "snapshot_hash"],
+      "properties": {
+        "schema_version": {"type": "string", "enum": ["1.0"]},
+        "book_id": {"type": "string", "minLength": 1},
+        "root_uuid": {"type": "string", "minLength": 1},
+        "authority_epoch": {"type": "integer", "minimum": 0},
+        "authority_head_event_hash": {"type": ["string", "null"], "minLength": 64},
+        "canonical_next_chapter": {"type": "integer", "minimum": 1},
+        "source_digest": {"type": "string", "minLength": 64},
+        "captured_at": {"type": "string", "minLength": 1},
+        "snapshot_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "selections": {
+      "type": "object",
+      "required": ["story_project", "provider_model", "file_delivery", "budget", "quality_policy"],
+      "properties": {
+        "story_project": {
+          "type": "object",
+          "required": ["profile_id", "book_id", "root_uuid", "profile_hash"],
+          "properties": {
+            "profile_id": {"type": "string", "minLength": 1},
+            "book_id": {"type": "string", "minLength": 1},
+            "root_uuid": {"type": "string", "minLength": 1},
+            "profile_hash": {"type": "string", "minLength": 64}
+          },
+          "additionalProperties": false
+        },
+        "provider_model": {
+          "type": "object",
+          "required": ["profile_id", "provider", "model", "max_output_tokens", "profile_hash"],
+          "properties": {
+            "profile_id": {"type": "string", "minLength": 1},
+            "provider": {"type": "string", "enum": ["openai", "anthropic"]},
+            "model": {"type": "string", "minLength": 1},
+            "max_output_tokens": {"type": "integer", "minimum": 1},
+            "profile_hash": {"type": "string", "minLength": 64}
+          },
+          "additionalProperties": false
+        },
+        "file_delivery": {
+          "type": "object",
+          "required": ["profile_id", "target_kind", "root_uuid", "requires_run_id", "requires_chapter_id", "profile_hash"],
+          "properties": {
+            "profile_id": {"type": "string", "minLength": 1},
+            "target_kind": {"type": "string", "enum": ["file"]},
+            "root_uuid": {"type": "string", "minLength": 1},
+            "requires_run_id": {"type": "boolean"},
+            "requires_chapter_id": {"type": "boolean"},
+            "profile_hash": {"type": "string", "minLength": 64}
+          },
+          "additionalProperties": false
+        },
+        "budget": {
+          "type": "object",
+          "required": ["profile_id", "max_chapters", "max_model_calls", "max_input_tokens", "max_output_tokens", "max_wall_seconds", "profile_hash"],
+          "properties": {
+            "profile_id": {"type": "string", "minLength": 1},
+            "max_chapters": {"type": "integer", "minimum": 1},
+            "max_model_calls": {"type": "integer", "minimum": 1},
+            "max_input_tokens": {"type": "integer", "minimum": 1},
+            "max_output_tokens": {"type": "integer", "minimum": 1},
+            "max_wall_seconds": {"type": "integer", "minimum": 1},
+            "profile_hash": {"type": "string", "minLength": 64}
+          },
+          "additionalProperties": false
+        },
+        "quality_policy": {
+          "type": "object",
+          "required": ["profile_id", "policy", "minimum_score", "profile_hash"],
+          "properties": {
+            "profile_id": {"type": "string", "minLength": 1},
+            "policy": {"type": "string", "enum": ["minimal", "standard", "strict"]},
+            "minimum_score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "profile_hash": {"type": "string", "minLength": 64}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "requested_chapter_count": {"type": "integer", "minimum": 1},
+    "chapter_start": {"type": "integer", "minimum": 1},
+    "chapter_end": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

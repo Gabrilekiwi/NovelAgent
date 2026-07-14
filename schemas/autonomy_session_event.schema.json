@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomySessionEvent",
+  "type": "object",
+  "required": ["schema_version", "session_id", "book_id", "plan_id", "plan_hash", "genesis_hash", "sequence", "event_type", "previous_event_hash", "reason", "recorded_at", "event_hash"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "session_id": {"type": "string", "minLength": 1},
+    "book_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "plan_hash": {"type": "string", "minLength": 64},
+    "genesis_hash": {"type": "string", "minLength": 64},
+    "sequence": {"type": "integer", "minimum": 1},
+    "event_type": {"type": "string", "enum": ["started", "resumed", "cancelled", "abandoned", "completed"]},
+    "previous_event_hash": {"type": ["string", "null"], "minLength": 64},
+    "reason": {"type": ["string", "null"], "minLength": 1},
+    "recorded_at": {"type": "string", "minLength": 1},
+    "event_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

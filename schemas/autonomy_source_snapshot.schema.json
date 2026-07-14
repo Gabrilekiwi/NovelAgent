@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomySourceSnapshot",
+  "type": "object",
+  "required": ["schema_version", "book_id", "root_uuid", "authority_epoch", "authority_head_event_hash", "canonical_next_chapter", "source_digest", "captured_at", "snapshot_hash"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "root_uuid": {"type": "string", "minLength": 1},
+    "authority_epoch": {"type": "integer", "minimum": 0},
+    "authority_head_event_hash": {"type": ["string", "null"], "minLength": 64},
+    "canonical_next_chapter": {"type": "integer", "minimum": 1},
+    "source_digest": {"type": "string", "minLength": 64},
+    "captured_at": {"type": "string", "minLength": 1},
+    "snapshot_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

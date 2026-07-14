@@ -334,11 +334,21 @@ def _assert_remap_idle(transaction_root: Path, *, active_sessions: Iterable[str]
 
 def _active_or_invalid_autonomy_sessions(autonomy_root: Path) -> list[str]:
     sessions_root = autonomy_root / "sessions"
+    leases_root = autonomy_root / "leases"
+    operations_root = autonomy_root / "operations"
+    if (
+        not sessions_root.exists()
+        and not leases_root.exists()
+        and not operations_root.exists()
+    ):
+        return []
     blocked: list[str] = []
     try:
         from core.autonomy.session import AutonomySessionStore
 
-        store = AutonomySessionStore(autonomy_root)
+        store = AutonomySessionStore(autonomy_root, reconcile_on_open=False)
+        for operation in store.operations.pending():
+            blocked.append(f"operation:{operation['operation_id']}")
         if sessions_root.exists():
             for directory in sorted(sessions_root.iterdir(), key=lambda item: item.name):
                 if not directory.is_dir():
@@ -353,7 +363,6 @@ def _active_or_invalid_autonomy_sessions(autonomy_root: Path) -> list[str]:
                     blocked.append(directory.name)
                 if genesis.get("session_id") != directory.name:
                     blocked.append(f"invalid:{directory.name}")
-        leases_root = autonomy_root / "leases"
         if leases_root.exists():
             from core.autonomy.common import load_json_object, now_utc, parse_utc
             from core.autonomy.lease import validate_book_lease
