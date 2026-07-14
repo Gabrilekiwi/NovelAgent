@@ -144,6 +144,11 @@ class RootRegistryService:
                 unknown = sorted(set(remaps) - set(registry["roots"]))
                 if unknown:
                     raise RootRegistryError("unknown logical roots: " + ", ".join(unknown))
+                if "runtime" in remaps:
+                    raise RootRegistryError(
+                        "runtime root remap is not supported without an explicit "
+                        "persistence control-plane relocation"
+                    )
                 validated = _validate_physical_roots(remaps, require_runtime=False)
                 updated = copy.deepcopy(registry)
                 for root_id, path in validated.items():

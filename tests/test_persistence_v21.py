@@ -30,6 +30,7 @@ from core.engine.persistence_v2 import (
 )
 from core.engine.root_registry import (
     RootRegistryCasError,
+    RootRegistryError,
     RootRegistryService,
     RootRemapBlockedError,
 )
@@ -812,6 +813,22 @@ class RootRegistryAndBackendTest(unittest.TestCase):
                 expected_revision=before["revision"],
                 expected_registry_digest=before["registry_digest"],
             )
+
+    def test_runtime_control_plane_remap_is_rejected(self) -> None:
+        transaction_root, roots = self._roots("runtime_remap")
+        service = RootRegistryService(transaction_root)
+        before = service.ensure(roots)
+        moved_runtime = transaction_root.parent.parent / "runtime-moved"
+        moved_runtime.mkdir()
+
+        with self.assertRaisesRegex(RootRegistryError, "control-plane relocation"):
+            service.remap(
+                {"runtime": moved_runtime},
+                expected_revision=before["revision"],
+                expected_registry_digest=before["registry_digest"],
+            )
+
+        self.assertEqual(before, service.load())
 
     def test_remap_is_blocked_by_pending_or_active_session(self) -> None:
         transaction_root, roots = self._roots("blocked")
