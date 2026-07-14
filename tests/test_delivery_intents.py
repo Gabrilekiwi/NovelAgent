@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 import unittest
 import uuid
@@ -15,14 +16,22 @@ from core.delivery_intents import (
     validate_delivery_intent,
     validate_file_delivery_profile,
 )
+from core.memory_v2 import (
+    CURRENT_REDUCER_VERSION,
+    apply_genesis_event,
+    apply_memory_patch,
+    create_genesis_memory_batch,
+    create_memory_event_batch,
+    create_memory_patch,
+)
 from core.memory_v2.canonical import canonical_json_hash
-from core.memory_v2.event_store import create_genesis_memory_batch
 
 
 NOW = "2026-07-14T00:00:00+00:00"
 BOOK = "book-delivery-intent"
 RUN = "chapter_11_20260714T000000000000Z"
-BODY = "b" * 64
+CHAPTER_BODY = "林雪抵达旧站。"
+BODY = hashlib.sha256(CHAPTER_BODY.encode("utf-8")).hexdigest()
 
 
 class DeliveryIntentTest(unittest.TestCase):
@@ -41,24 +50,58 @@ class DeliveryIntentTest(unittest.TestCase):
             "filename_template": "chapter-{chapter_index}-{run_id}.json",
         }
 
-    def _intent(self, *, batch: dict | None = None) -> dict:
+    def _intent(self, *, batch: dict | None = None, body_hash: str = BODY) -> dict:
         return build_file_delivery_intent(
             profile=self._profile(),
             book_id=BOOK,
             run_id=RUN,
             chapter_index=11,
-            event_batch=batch or self._batch(),
-            chapter_body_sha256=BODY,
+            event_batch=self._batch() if batch is None else batch,
+            chapter_body_sha256=body_hash,
             policy="required",
             created_at=NOW,
         )
 
-    def _batch(self) -> dict:
-        return create_genesis_memory_batch(
-            book_id=BOOK,
+    def _batch(self, *, book_id: str = BOOK, body: str = CHAPTER_BODY) -> dict:
+        genesis = create_genesis_memory_batch(
+            book_id=book_id,
             title="Delivery contract fixture",
             source_project_digest="a" * 64,
             context_digest="b" * 64,
+        )
+        projection = apply_genesis_event(genesis["events"][0])
+        patch = create_memory_patch(
+            patch_id="chapter-11",
+            source_kind="chapter",
+            operations=[
+                {
+                    "op": "update_story_time",
+                    "value": {"label": "chapter 11", "elapsed_minutes": 10, "chapter_index": 11},
+                }
+            ],
+        )
+        _, events = apply_memory_patch(
+            projection,
+            patch,
+            reducer_version=CURRENT_REDUCER_VERSION,
+            event_context={
+                "chapter_body": body,
+                "evidence_spans": [{"start_char": 0, "end_char": len(body), "quote": body}],
+                "authority_epoch": 1,
+            },
+        )
+        return create_memory_event_batch(
+            book_id=book_id,
+            patch=patch,
+            events=events,
+            expected_revision=projection["revision"],
+            previous_batch_hash=genesis["batch_hash"],
+            source_project_digest="c" * 64,
+            context_digest="d" * 64,
+            batch_kind="chapter",
+            publication_status="committed",
+            schema_version="2.2",
+            reducer_version=CURRENT_REDUCER_VERSION,
         )
 
     def _receipt(self, intent: dict) -> dict:
@@ -139,6 +182,28 @@ class DeliveryIntentTest(unittest.TestCase):
         invalid = {"schema_version": "2.2", "batch_hash": "a" * 64, "events": []}
         with self.assertRaisesRegex(DeliveryIntentError, "delivery_intent_event_batch_invalid"):
             self._intent(batch=invalid)
+
+    def test_intent_requires_same_book_committed_chapter_and_body_evidence(self) -> None:
+        with self.assertRaisesRegex(DeliveryIntentError, "delivery_intent_scope_mismatch"):
+            self._intent(batch=self._batch(book_id="another-book"))
+
+        genesis = create_genesis_memory_batch(
+            book_id=BOOK,
+            title="Not a chapter",
+            source_project_digest="a" * 64,
+            context_digest="b" * 64,
+        )
+        with self.assertRaisesRegex(DeliveryIntentError, "delivery_intent_event_batch_invalid"):
+            self._intent(batch=genesis)
+
+        with self.assertRaisesRegex(DeliveryIntentError, "delivery_intent_body_hash_mismatch"):
+            self._intent(batch=self._batch(body="另一段正文"))
+
+    def test_nested_event_validation_errors_are_normalized(self) -> None:
+        tampered = self._batch()
+        tampered["events"][0]["after"]["label"] = "forged"
+        with self.assertRaisesRegex(DeliveryIntentError, "delivery_intent_event_batch_invalid"):
+            self._intent(batch=tampered)
 
     def test_receipt_materialization_is_idempotent_and_does_not_deliver(self) -> None:
         intent = self._intent()

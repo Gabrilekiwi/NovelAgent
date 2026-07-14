@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 from core.delivery import DeliveryQueue, delivery_payload_hash
 from core.memory_v2.canonical import canonical_json_hash
-from core.memory_v2.event_store import MemoryEventStoreError, validate_memory_event_batch
+from core.memory_v2.event_store import validate_memory_event_batch
 from core.path_refs import PathRef, PathRefError, validate_path_ref
 from core.schema import SchemaValidationError, validate_schema
 
@@ -197,14 +197,26 @@ def validate_delivery_intent(value: Any) -> dict[str, Any]:
         raise DeliveryIntentError("delivery_intent_payload_invalid", "event_batch must be an object")
     try:
         batch = validate_memory_event_batch(batch)
-    except MemoryEventStoreError as exc:
+    except ValueError as exc:
         raise DeliveryIntentError(
             "delivery_intent_event_batch_invalid", "event_batch is not a valid canonical Memory batch"
         ) from exc
     batch_hash = _sha256("event_batch_hash", payload["event_batch_hash"])
     if batch.get("batch_hash") != batch_hash:
         raise DeliveryIntentError("delivery_intent_batch_hash_mismatch", "event batch hash binding differs")
-    _sha256("chapter_body_sha256", payload["chapter_body_sha256"])
+    if batch.get("schema_version") != "2.2":
+        raise DeliveryIntentError("delivery_intent_event_batch_invalid", "chapter delivery requires Memory 2.2")
+    if batch.get("book_id") != intent["book_id"]:
+        raise DeliveryIntentError("delivery_intent_scope_mismatch", "event batch belongs to another book")
+    if batch.get("batch_kind") != "chapter" or batch.get("publication_status") != "committed":
+        raise DeliveryIntentError(
+            "delivery_intent_event_batch_invalid", "chapter delivery requires a committed chapter batch"
+        )
+    body_hash = _sha256("chapter_body_sha256", payload["chapter_body_sha256"])
+    if any(event.get("chapter_body_sha256") != body_hash for event in batch["events"]):
+        raise DeliveryIntentError(
+            "delivery_intent_body_hash_mismatch", "event evidence is not bound to the exported chapter body"
+        )
     _assert_public_value(intent)
     if delivery_payload_hash(_file_job_payload(payload)) != intent["job_payload_hash"]:
         raise DeliveryIntentError("delivery_intent_job_payload_hash_mismatch", "file job payload was modified")
