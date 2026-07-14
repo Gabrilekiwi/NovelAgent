@@ -54,11 +54,11 @@ def _repair_with_model(
     recovery_context: dict[str, Any] | None,
     repair_context: RepairContext,
 ) -> str:
-    compact_context = compile_prompt_contexts(input_pack).repair.text
+    compact_context = _compact_repair_context(compile_prompt_contexts(input_pack).repair.text)
     payload = json.dumps(
         {
             "chapter": chapter_text,
-            "validation": validation,
+            "validation": _compact_validation(validation),
             "repair_plan": repair_plan,
             "recovery_context": recovery_context or {"available": False},
             "repair_context": {
@@ -88,6 +88,68 @@ def _repair_with_model(
         stage="scene_repair",
     )
     return validate_text_output(output, REPAIR_CONTRACT)
+
+
+def _compact_validation(validation: dict[str, Any]) -> dict[str, Any]:
+    problems = validation.get("problems")
+    if not isinstance(problems, list):
+        problems = []
+        for check in validation.get("checks") or []:
+            if isinstance(check, dict) and isinstance(check.get("problems"), list):
+                problems.extend(check["problems"])
+    compact_problems: list[dict[str, Any]] = []
+    for raw in problems:
+        if not isinstance(raw, dict):
+            continue
+        evidence = raw.get("evidence") if isinstance(raw.get("evidence"), list) else []
+        compact_problems.append(
+            {
+                key: raw.get(key)
+                for key in ("code", "message", "validator", "severity", "blocking", "repair_action")
+                if raw.get(key) is not None
+            }
+            | {
+                "evidence": [
+                    {
+                        "kind": str(item.get("kind") or "evidence"),
+                        "value": str(item.get("value") or "")[:600],
+                    }
+                    for item in evidence[:4]
+                    if isinstance(item, dict)
+                ]
+            }
+        )
+    return {
+        "ok": bool(validation.get("ok")),
+        "requested_focus": list(validation.get("requested_focus") or []),
+        "executed_checks": list(validation.get("executed_checks") or []),
+        "skipped_checks": list(validation.get("skipped_checks") or []),
+        "problem_codes": [str(item.get("code") or "") for item in compact_problems],
+        "problems": compact_problems,
+    }
+
+
+def _compact_repair_context(text: str, *, max_section_chars: int = 4_000) -> str:
+    """Keep repair facts while preventing large embedded StoryProject sources from duplicating the draft."""
+    if len(text) <= max_section_chars * 5:
+        return text
+    matches = list(re.finditer(r"(?m)^# ([^\r\n]+)\r?$", text))
+    if not matches:
+        return _head_tail(text, max_section_chars * 5)
+    sections: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section = text[match.start():end].rstrip()
+        sections.append(_head_tail(section, max_section_chars))
+    return "\n\n".join(sections)
+
+
+def _head_tail(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    head = max(1, int(limit * 0.7))
+    tail = max(1, limit - head)
+    return f"{text[:head].rstrip()}\n\n[...repair context excerpted...]\n\n{text[-tail:].lstrip()}"
 
 
 def _load_prompt() -> str:

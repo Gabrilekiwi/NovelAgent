@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from api.contracts import ModelOutputError
@@ -74,6 +75,40 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual([], pipeline["blueprint_coverage"]["missing_beat_indexes"])
         self.assertEqual([1, 2, 3], pipeline["blueprint_coverage"]["covered_beat_indexes"])
         self.assertTrue(pipeline["blueprint_coverage"]["ending_pressure_covered"])
+
+    def test_scene_request_bounds_zh_chapter_length_and_warns_against_restarts(self) -> None:
+        payload = json.loads(
+            pipeline_module._scene_request_payload(
+                input_pack="context",
+                plan={"scenes": [{"index": 1}, {"index": 2}, {"index": 3}]},
+                scene={"index": 1},
+                scene_required_beats=[],
+                blueprint=None,
+            )
+        )
+
+        self.assertIn("1000-1500 Chinese characters", payload["instruction"])
+        self.assertIn("Do not restart, duplicate, or retell", payload["instruction"])
+
+    def test_scene_request_compacts_large_sections_and_drops_memory_index(self) -> None:
+        context = "\n\n".join(
+            [f"# Section {index}\nHEAD-{index}\n" + (str(index) * 5_000) + f"\nTAIL-{index}" for index in range(8)]
+            + ["# Memory Index\n" + ("memory" * 1_000)]
+        )
+
+        payload = json.loads(
+            pipeline_module._scene_request_payload(
+                input_pack=context,
+                plan={"scenes": [{"index": 1}]},
+                scene={"index": 1},
+                scene_required_beats=[],
+                blueprint=None,
+            )
+        )
+
+        self.assertNotIn("Memory Index", payload["shared_context"])
+        self.assertIn("scene context excerpted", payload["shared_context"])
+        self.assertIn("TAIL-7", payload["shared_context"])
 
     def test_story_project_plan_does_not_call_model_planner(self) -> None:
         original_chat_completion = pipeline_module.chat_completion

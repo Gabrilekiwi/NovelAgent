@@ -193,7 +193,13 @@ class RunBudgetTracker:
 
 def default_context_budget(*, provider: str = "openai", model: str = "runtime-default") -> ContextBudget:
     window = _positive_env("NOVELAGENT_MODEL_CONTEXT_WINDOW", 128_000)
-    return ContextBudget(provider=provider, model=model, model_context_window=window)
+    max_input_tokens = _positive_env("NOVELAGENT_MAX_INPUT_TOKENS", 32_000)
+    return ContextBudget(
+        provider=provider,
+        model=model,
+        model_context_window=window,
+        max_input_tokens=max_input_tokens,
+    )
 
 
 def conservative_token_estimate(text: str) -> int:

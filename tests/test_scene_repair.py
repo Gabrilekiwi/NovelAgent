@@ -4,9 +4,53 @@ import unittest
 
 from core.schema import validate_schema
 from modules.scene_repair import apply_repair_plan, build_repair_plan, repair_scene
+from modules.scene_repair.repairer import _compact_repair_context, _compact_validation
 
 
 class SceneRepairTest(unittest.TestCase):
+    def test_compact_repair_context_caps_large_sections_and_keeps_head_tail(self) -> None:
+        context = "\n\n".join(
+            f"# Section {index}\nHEAD-{index}\n" + (str(index) * 200) + f"\nTAIL-{index}"
+            for index in range(6)
+        )
+
+        compact = _compact_repair_context(context, max_section_chars=80)
+
+        self.assertLess(len(compact), len(context))
+        for index in range(6):
+            self.assertIn(f"# Section {index}", compact)
+            self.assertIn(f"TAIL-{index}", compact)
+        self.assertIn("repair context excerpted", compact)
+
+    def test_compact_validation_keeps_repair_evidence_without_full_diagnostics(self) -> None:
+        compact = _compact_validation(
+            {
+                "ok": False,
+                "requested_focus": ["logic"],
+                "executed_checks": ["logic", "llm"],
+                "skipped_checks": [],
+                "large_diagnostics": "x" * 10000,
+                "problems": [
+                    {
+                        "code": "door_conflict",
+                        "message": "Door identities conflict.",
+                        "validator": "llm",
+                        "severity": "high",
+                        "blocking": True,
+                        "repair_action": "manual_review",
+                        "evidence": [{"kind": "excerpt", "value": "y" * 1000}] * 6,
+                        "large_metadata": "z" * 10000,
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(["door_conflict"], compact["problem_codes"])
+        self.assertNotIn("large_diagnostics", compact)
+        self.assertNotIn("large_metadata", compact["problems"][0])
+        self.assertEqual(4, len(compact["problems"][0]["evidence"]))
+        self.assertEqual(600, len(compact["problems"][0]["evidence"][0]["value"]))
+
     def test_build_repair_plan_orders_actions_by_priority(self) -> None:
         plan = build_repair_plan(
             {

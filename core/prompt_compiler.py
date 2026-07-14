@@ -69,7 +69,10 @@ def compile_prompt_contexts(
 ) -> PromptContextBundle:
     effective_budget = budget or default_context_budget()
     digest = hashlib.sha256(input_pack.encode("utf-8")).hexdigest()
-    sections = _markdown_sections(input_pack)
+    sections = [
+        (name, _compact_oversized_section(name, text))
+        for name, text in _markdown_sections(input_pack)
+    ]
     if not sections:
         sections = [("Context", input_pack)]
         mandatory = {"Context"}
@@ -163,6 +166,25 @@ def _markdown_sections(text: str) -> list[tuple[str, str]]:
 def _render_sections(sections: list[tuple[str, str]], *, digest: str) -> str:
     body = "\n\n".join(text for _, text in sections).strip()
     return f"# Context Digest\n{digest}\n\n{body}" if body else f"# Context Digest\n{digest}"
+
+
+def _compact_oversized_section(name: str, text: str) -> str:
+    """Bound cumulative StoryProject writeback without dropping the active blueprint.
+
+    The active chapter fields are serialized at the start of this section, while
+    validation/read-set metadata is at the end.  Managed tracking blocks in the
+    middle grow once per committed chapter and are redundant with Story State.
+    """
+    if name != "StoryProject Chapter Blueprint" or len(text) <= 8_000:
+        return text
+    head_chars = 6_000
+    tail_chars = 2_000
+    omitted = len(text) - head_chars - tail_chars
+    return (
+        text[:head_chars].rstrip()
+        + f"\n\n[... {omitted} cumulative StoryProject characters compacted ...]\n\n"
+        + text[-tail_chars:].lstrip()
+    )
 
 
 __all__ = [

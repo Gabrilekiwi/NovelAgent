@@ -278,16 +278,25 @@ def _scene_request_payload(
     scene_required_beats: list[dict[str, Any]],
     blueprint: dict[str, Any] | None,
 ) -> str:
+    scene_count = max(1, len([item for item in plan.get("scenes", []) if isinstance(item, dict)]))
+    target_min_chars = max(600, 3_000 // scene_count)
+    target_max_chars = max(target_min_chars, 4_500 // scene_count)
+    compact_scene_context = _compact_scene_context(input_pack)
     payload = json.dumps(
         {
-            "shared_context": input_pack,
+            "shared_context": compact_scene_context,
             "chapter_plan": plan,
             "scene": scene,
             "story_project_required_beats": scene_required_beats,
             "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
             "instruction": (
                 "Draft only this scene as continuous prose. No heading. "
-                "If story_project_required_beats are provided, cover each listed beat in the prose."
+                "If story_project_required_beats are provided, cover each listed beat in the prose and preserve "
+                "its essential factual phrases closely enough for deterministic coverage checks. "
+                f"Target {target_min_chars}-{target_max_chars} Chinese characters for this scene when the project "
+                "language is zh-CN, so the merged chapter remains 3000-4500 Chinese characters; treat the upper "
+                "bound as a hard limit and stop the scene before exceeding it. "
+                "Do not restart, duplicate, or retell an event already completed earlier in the scene."
             ),
         },
         ensure_ascii=False,
@@ -299,6 +308,31 @@ def _scene_request_payload(
         protocol_texts=(_load_prompt(),),
     )
     return payload
+
+
+def _compact_scene_context(text: str, *, max_section_chars: int = 1_500) -> str:
+    """Bound cumulative StoryProject writeback while preserving every current context section."""
+    if len(text) <= max_section_chars * 7:
+        return text
+    matches = list(re.finditer(r"(?m)^# ([^\r\n]+)\r?$", text))
+    if not matches:
+        return _head_tail_context(text, max_section_chars * 7)
+    compact: list[str] = []
+    for index, match in enumerate(matches):
+        name = match.group(1).strip()
+        if name == "Memory Index":
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        compact.append(_head_tail_context(text[match.start():end].rstrip(), max_section_chars))
+    return "\n\n".join(compact)
+
+
+def _head_tail_context(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    head = max(1, int(limit * 0.7))
+    tail = max(1, limit - head)
+    return f"{text[:head].rstrip()}\n\n[...scene context excerpted...]\n\n{text[-tail:].lstrip()}"
 
 
 def merge_scenes(scene_drafts: list[dict[str, Any]]) -> str:

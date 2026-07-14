@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import unittest
 import uuid
+from unittest.mock import patch
 
 from core.context_budget import (
     ContextBudget,
     ContextBudgetError,
     RunBudgetLimits,
     RunBudgetTracker,
+    default_context_budget,
 )
 from core.prompt_compiler import compile_prompt_contexts
 from core.state.input_pack import build_input_pack
@@ -61,6 +64,19 @@ class ContextBudgetTest(unittest.TestCase):
         self.assertEqual("utf8-upper-bound-v1", report["counter_version"])
         self.assertEqual(6, report["raw_input_tokens"])
         self.assertEqual(7, report["budgeted_input_tokens"])
+
+    def test_default_budget_allows_bounded_max_input_override(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "NOVELAGENT_MODEL_CONTEXT_WINDOW": "128000",
+                "NOVELAGENT_MAX_INPUT_TOKENS": "64000",
+            },
+        ):
+            budget = default_context_budget()
+
+        self.assertEqual(64_000, budget.max_input_tokens)
+        self.assertEqual(64_000, budget.hard_input_limit)
 
     def test_mandatory_context_over_budget_fails_before_provider(self) -> None:
         input_pack = "# Story State\n" + ("必须事实" * 300) + "\n\n# Requirements\nReturn prose."
