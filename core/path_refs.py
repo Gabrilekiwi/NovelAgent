@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path, PurePath
+import re
 from typing import Any, Mapping
 
 from core.schema import SchemaValidationError, validate_schema
@@ -27,6 +28,7 @@ class PathRef:
     root_id: str
     relative_path: str
     original_path_hint: str | None = None
+    root_uuid: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -35,6 +37,8 @@ class PathRef:
         }
         if self.original_path_hint is not None:
             payload["original_path_hint"] = self.original_path_hint
+        if self.root_uuid is not None:
+            payload["root_uuid"] = self.root_uuid
         return validate_schema(payload, "path_ref.schema.json")
 
 
@@ -48,6 +52,7 @@ def validate_path_ref(value: Any) -> PathRef:
                 if value.original_path_hint is not None
                 else {}
             ),
+            **({"root_uuid": value.root_uuid} if value.root_uuid is not None else {}),
         }
     if not isinstance(value, dict):
         raise PathRefError("PathRef must be a JSON object")
@@ -63,9 +68,15 @@ def validate_path_ref(value: Any) -> PathRef:
             if payload.get("original_path_hint") is not None
             else None
         ),
+        root_uuid=(str(payload["root_uuid"]) if payload.get("root_uuid") is not None else None),
     )
     _validate_relative_path(path_ref.relative_path)
     _validate_root_id(path_ref.root_id)
+    if path_ref.root_uuid is not None and not re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        path_ref.root_uuid,
+    ):
+        raise PathRefError("PathRef root_uuid must be a canonical lowercase UUID")
     return path_ref
 
 
@@ -86,6 +97,7 @@ def path_ref_for(
     root_id: str,
     root: str | Path,
     original_path_hint: str | None = None,
+    root_uuid: str | None = None,
 ) -> PathRef:
     _validate_root_id(root_id)
     root_path = _local_root(root)
@@ -100,6 +112,7 @@ def path_ref_for(
             root_id=root_id,
             relative_path=relative,
             original_path_hint=original_path_hint,
+            root_uuid=root_uuid,
         )
     )
 

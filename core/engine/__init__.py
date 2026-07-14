@@ -6,9 +6,14 @@ __all__ = [
     "AgentExecutor",
     "DeliveryCoordinator",
     "PersistenceCoordinator",
+    "PersistenceBackend",
+    "LegacyV1PersistenceBackend",
+    "PersistenceV2Backend",
     "PersistenceV2Target",
     "PersistenceV2Transaction",
     "QualityCoordinator",
+    "RootRegistryService",
+    "remap_roots",
     "StoryProjectContextService",
     "build_loop_session_record",
     "build_run_report",
@@ -46,6 +51,29 @@ def __getattr__(name: str) -> Any:
             "PersistenceCoordinator": PersistenceCoordinator,
             "QualityCoordinator": QualityCoordinator,
             "StoryProjectContextService": StoryProjectContextService,
+        }[name]
+    if name in {
+        "PersistenceBackend",
+        "LegacyV1PersistenceBackend",
+        "PersistenceV2Backend",
+    }:
+        from core.engine.persistence_backends import (
+            LegacyV1PersistenceBackend,
+            PersistenceBackend,
+            PersistenceV2Backend,
+        )
+
+        return {
+            "PersistenceBackend": PersistenceBackend,
+            "LegacyV1PersistenceBackend": LegacyV1PersistenceBackend,
+            "PersistenceV2Backend": PersistenceV2Backend,
+        }[name]
+    if name in {"RootRegistryService", "remap_roots"}:
+        from core.engine.root_registry import RootRegistryService, remap_roots
+
+        return {
+            "RootRegistryService": RootRegistryService,
+            "remap_roots": remap_roots,
         }[name]
     if name == "run_preflight":
         from core.engine.preflight import run_preflight

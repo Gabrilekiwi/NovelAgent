@@ -14,6 +14,9 @@
     },
     "original_path_hint": {
       "type": ["string", "null"]
+    },
+    "root_uuid": {
+      "type": ["string", "null"]
     }
   },
   "additionalProperties": false

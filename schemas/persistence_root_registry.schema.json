@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PersistenceRootRegistry",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "registry_id",
+    "revision",
+    "roots",
+    "created_at",
+    "updated_at",
+    "registry_digest"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "registry_id": {"type": "string", "minLength": 36},
+    "revision": {"type": "integer", "minimum": 1},
+    "roots": {"type": "object", "additionalProperties": true},
+    "created_at": {"type": "string", "minLength": 1},
+    "updated_at": {"type": "string", "minLength": 1},
+    "registry_digest": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

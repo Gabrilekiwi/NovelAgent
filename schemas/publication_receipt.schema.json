@@ -24,7 +24,7 @@
     "receipt_hash"
   ],
   "properties": {
-    "schema_version": {"type": "string", "enum": ["2.0"]},
+    "schema_version": {"type": "string", "enum": ["2.0", "2.1"]},
     "receipt_id": {"type": "string", "minLength": 1},
     "receipt_path_ref": {"type": "object", "additionalProperties": true},
     "book_id": {"type": "string", "minLength": 1},

@@ -13,7 +13,7 @@
     "updated_at"
   ],
   "properties": {
-    "schema_version": {"type": "string", "enum": ["2.0"]},
+    "schema_version": {"type": "string", "enum": ["2.0", "2.1"]},
     "immutable": {"type": "object", "additionalProperties": true},
     "manifest_digest": {"type": "string", "minLength": 64},
     "state": {

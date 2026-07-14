@@ -114,6 +114,16 @@ def verify_story_project_read_set(
     validated = validate_schema(read_set, "story_project_read_set.schema.json")
     root = Path(validated["root_identity"]["resolved_path"]).resolve()
     differences: list[dict[str, Any]] = []
+    declared: dict[str, dict[str, Any]] = {}
+    for raw in declared_writes:
+        item = dict(raw)
+        relative = str(item.get("relative_path") or "").replace("\\", "/")
+        if relative in declared:
+            differences.append(
+                {"path": relative, "code": "duplicate_declared_write"}
+            )
+        declared[relative] = item
+    identity_write = declared.pop(".novelagent/project.json", None)
     if _context_digest(validated) != validated["context_digest"]:
         differences.append({"field": "context_digest", "code": "read_set_digest_invalid"})
     if _root_identity(root) != validated["root_identity"]:
@@ -128,13 +138,47 @@ def verify_story_project_read_set(
     else:
         if identity.book_id != validated["book_id"]:
             differences.append({"field": "book_id", "code": "project_identity_changed"})
-        if _identity_revision(root, identity) != validated["identity_revision"]:
+        actual_identity_revision = _identity_revision(root, identity)
+        if identity_write is None:
+            allowed_identity_revisions = [validated["identity_revision"]]
+        elif phase in {"prepare", "pre_apply"}:
+            allowed_identity_revisions = [validated["identity_revision"]]
+        elif phase == "during_apply":
+            allowed_identity_revisions = [
+                validated["identity_revision"],
+                identity_write.get("after_sha256"),
+            ]
+        elif phase == "pre_marker":
+            allowed_identity_revisions = [identity_write.get("after_sha256")]
+        else:
+            raise ValueError(f"unknown read-set verification phase: {phase}")
+        if actual_identity_revision not in allowed_identity_revisions:
             differences.append({"field": "identity_revision", "code": "project_identity_changed"})
+        if identity_write is not None:
+            authority = identity.authority or {}
+            expected_epoch = (
+                identity_write.get("after_authority_epoch")
+                if phase == "pre_marker"
+                else identity_write.get("expected_authority_epoch")
+            )
+            expected_head = (
+                identity_write.get("after_head_event_hash")
+                if phase == "pre_marker"
+                else identity_write.get("expected_head_event_hash")
+            )
+            if (
+                identity_write.get("role") != "project_identity"
+                or identity_write.get("book_id") != identity.book_id
+                or authority.get("authority_epoch") != expected_epoch
+                or authority.get("head_event_hash") != expected_head
+            ):
+                differences.append(
+                    {"field": "identity_authority", "code": "project_identity_changed"}
+                )
 
     before = {item["relative_path"]: item for item in validated["membership"]}
     current_items = _markdown_membership(root)
     current = {item["relative_path"]: item for item in current_items}
-    declared = {str(item["relative_path"]): dict(item) for item in declared_writes}
     all_paths = sorted(set(before) | set(current) | set(declared))
     for relative in all_paths:
         original = before.get(relative)
