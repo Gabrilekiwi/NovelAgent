@@ -93,7 +93,8 @@ def bind_final_run_record_receipt(
 ) -> dict[str, Any]:
     _validate_id("receipt_id", receipt_id)
     bound = copy.deepcopy(dict(final_run_record))
-    bound["publication_receipt"] = {
+    pointer_owner = _final_run_receipt_pointer_owner(bound)
+    pointer_owner["publication_receipt"] = {
         "id": receipt_id,
         "path_ref": validate_path_ref(receipt_path_ref).to_dict(),
     }
@@ -189,7 +190,9 @@ class PersistenceV2Transaction:
             final_record = _validate_final_run_receipt_pointer(
                 final_run_record, receipt_id, raw_receipt_ref
             )
-            final_record["publication_receipt"]["path_ref"] = receipt_ref.to_dict()
+            _final_run_receipt_pointer_owner(final_record)["publication_receipt"][
+                "path_ref"
+            ] = receipt_ref.to_dict()
             final_target = PersistenceV2Target(
                 target_id="final-run-record",
                 kind="final_run_record",
@@ -1651,7 +1654,8 @@ def _validate_final_run_receipt_pointer(
     receipt_path_ref: PathRef | Mapping[str, Any],
 ) -> dict[str, Any]:
     record = copy.deepcopy(dict(final_run_record))
-    pointer = record.get("publication_receipt")
+    pointer_owner = _final_run_receipt_pointer_owner(record)
+    pointer = pointer_owner.get("publication_receipt")
     expected = {"id": receipt_id, "path_ref": validate_path_ref(receipt_path_ref).to_dict()}
     if pointer != expected:
         raise PersistenceV2PreparationError(
@@ -1661,6 +1665,33 @@ def _validate_final_run_receipt_pointer(
     if forbidden.intersection(pointer):
         raise PersistenceV2PreparationError("Final RunRecord cannot contain a Publication Receipt hash")
     return record
+
+
+def _final_run_receipt_pointer_owner(record: dict[str, Any]) -> dict[str, Any]:
+    """Return the RunRecord object that owns the immutable receipt pointer.
+
+    Persistence V2 accepts both a bare RunRecord and the existing RunResult
+    envelope emitted by ``validate_run_result``.  The envelope itself is the
+    published/hash-bound file, while its nested ``run`` object exclusively owns
+    the pointer.  A pointer at both levels would make the commitment ambiguous,
+    so even identical duplicate values are rejected.
+    """
+
+    if "run" not in record:
+        return record
+    if "publication_receipt" in record:
+        raise PersistenceV2PreparationError(
+            "RunResult envelope cannot contain an outer publication receipt pointer"
+        )
+    run_record = record.get("run")
+    if not isinstance(run_record, Mapping):
+        raise PersistenceV2PreparationError(
+            "RunResult envelope run must be an object"
+        )
+    if not isinstance(run_record, dict):
+        run_record = copy.deepcopy(dict(run_record))
+        record["run"] = run_record
+    return run_record
 
 
 def _validate_delivery_jobs(jobs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:

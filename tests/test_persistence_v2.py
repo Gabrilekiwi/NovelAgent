@@ -4,10 +4,12 @@ import hashlib
 import json
 import unittest
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.engine.persistence_v2 import (
     PersistenceV2IntegrityError,
+    PersistenceV2PreparationError,
     PersistenceV2Target,
     PersistenceV2Transaction,
     bind_final_run_record_receipt,
@@ -19,6 +21,7 @@ from core.engine.persistence_v2 import (
     validate_persistence_manifest_v2,
     verify_publication_receipt,
 )
+from core.engine.run_record import build_run_record, validate_run_result
 from core.path_refs import path_ref_for
 from core.schema import validate_schema
 
@@ -59,7 +62,50 @@ class PersistenceV2Test(unittest.TestCase):
     def _digest(value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
-    def _prepared(self, case: dict, run_id: str = "run-1", *, fault_injector=None) -> tuple[PersistenceV2Transaction, dict]:
+    @staticmethod
+    def _run_result_envelope(run_id: str) -> dict:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        record = build_run_record(
+            started_at=now,
+            finished_at=now,
+            base_snapshot={"chapter_index": 2},
+            runtime_snapshot={"chapter_index": 2},
+            memory_context={"source": "test", "status": "ready", "items": []},
+            decision={
+                "chapter_index": 2,
+                "goal": "continue_existing_arc",
+                "actions": ["generate_chapter", "validate"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 1,
+                "notes": [],
+            },
+            workflow=["generate_chapter", "validate"],
+            input_pack="input",
+            chapter="The shelter faced danger and the team chose a costly rescue.",
+            validation={"ok": True, "problems": []},
+            analysis={
+                "validation_ok": True,
+                "conflicts": ["danger"],
+                "events": [{"text": "The team chose a rescue."}],
+                "character_changes": [],
+                "world_changes": [],
+                "new_locations": [],
+                "summary": "The team chose a rescue.",
+            },
+            repair_attempts=0,
+            committed=True,
+        )
+        record["id"] = run_id
+        return validate_run_result({"run": record})
+
+    def _prepared(
+        self,
+        case: dict,
+        run_id: str = "run-1",
+        *,
+        fault_injector=None,
+        final_payload: dict | None = None,
+    ) -> tuple[PersistenceV2Transaction, dict]:
         runtime = case["runtime"]
         receipt_ref = path_ref_for(
             runtime / "receipts" / f"{run_id}.json",
@@ -72,7 +118,9 @@ class PersistenceV2Test(unittest.TestCase):
             root=runtime,
         )
         final_record = bind_final_run_record_receipt(
-            {
+            final_payload
+            if final_payload is not None
+            else {
                 "id": run_id,
                 "status": "committed",
                 "committed": True,
@@ -146,6 +194,54 @@ class PersistenceV2Test(unittest.TestCase):
         )
         return transaction, manifest
 
+    def test_receipt_binding_supports_bare_run_and_valid_run_result_envelope(self) -> None:
+        case = self._case("binding_shapes")
+        receipt_ref = path_ref_for(
+            case["runtime"] / "receipts" / "shape.json",
+            root_id="runtime",
+            root=case["runtime"],
+        )
+        expected = {"id": "receipt-shape", "path_ref": receipt_ref.to_dict()}
+
+        bare = {"id": "bare"}
+        bound_bare = bind_final_run_record_receipt(
+            bare,
+            receipt_id="receipt-shape",
+            receipt_path_ref=receipt_ref,
+        )
+        self.assertEqual(expected, bound_bare["publication_receipt"])
+        self.assertNotIn("publication_receipt", bare)
+
+        envelope = self._run_result_envelope("run-envelope")
+        bound_envelope = bind_final_run_record_receipt(
+            envelope,
+            receipt_id="receipt-shape",
+            receipt_path_ref=receipt_ref,
+        )
+        self.assertNotIn("publication_receipt", bound_envelope)
+        self.assertEqual(expected, bound_envelope["run"]["publication_receipt"])
+        self.assertNotIn("publication_receipt", envelope["run"])
+        self.assertIs(bound_envelope, validate_run_result(bound_envelope))
+
+    def test_run_result_envelope_rejects_duplicate_receipt_pointer_locations(self) -> None:
+        case = self._case("ambiguous_pointer")
+        receipt_ref = path_ref_for(
+            case["runtime"] / "receipts" / "ambiguous.json",
+            root_id="runtime",
+            root=case["runtime"],
+        )
+        pointer = {"id": "receipt-ambiguous", "path_ref": receipt_ref.to_dict()}
+        envelope = self._run_result_envelope("run-ambiguous")
+        envelope["run"]["publication_receipt"] = pointer
+        envelope["publication_receipt"] = pointer
+
+        with self.assertRaisesRegex(PersistenceV2PreparationError, "outer publication receipt"):
+            bind_final_run_record_receipt(
+                envelope,
+                receipt_id="receipt-ambiguous",
+                receipt_path_ref=receipt_ref,
+            )
+
     def test_commit_requires_valid_receipt_and_binds_hash_dag(self) -> None:
         case = self._case("commit")
         transaction, manifest = self._prepared(case)
@@ -170,6 +266,90 @@ class PersistenceV2Test(unittest.TestCase):
         )
         self.assertFalse(transaction.pending_entry_path.exists())
         self.assertTrue((case["transaction_root"] / "registry" / "completed" / "run-1.json").exists())
+
+    def test_run_result_envelope_is_published_whole_and_tampering_invalidates_receipt(self) -> None:
+        case = self._case("envelope_commit")
+        envelope = self._run_result_envelope("run-envelope")
+        transaction, _ = self._prepared(
+            case,
+            "run-envelope",
+            final_payload=envelope,
+        )
+
+        result = transaction.commit()
+        final_path = case["runtime"] / "runs" / "run-envelope.json"
+        receipt_path = case["runtime"] / "receipts" / "run-envelope.json"
+        published = json.loads(final_path.read_text(encoding="utf-8"))
+
+        self.assertEqual("completed", result["state"])
+        self.assertNotIn("publication_receipt", published)
+        self.assertEqual(
+            "receipt-run-envelope",
+            published["run"]["publication_receipt"]["id"],
+        )
+        self.assertIn(
+            "root_uuid",
+            published["run"]["publication_receipt"]["path_ref"],
+        )
+        self.assertIs(published, validate_run_result(published))
+        self.assertTrue(
+            committed_from_publication_receipt(
+                published,
+                receipt_path,
+                root_map=case["root_map"],
+            )
+        )
+        self.assertTrue(
+            verify_publication_receipt(receipt_path, root_map=case["root_map"])["valid"]
+        )
+
+        published["run"]["id"] = "tampered-envelope"
+        final_path.write_text(json.dumps(published), encoding="utf-8")
+
+        verification = verify_publication_receipt(receipt_path, root_map=case["root_map"])
+        self.assertFalse(verification["valid"])
+        self.assertFalse(verification["committed"])
+
+    def test_orphan_run_result_envelope_recovers_without_changing_its_shape(self) -> None:
+        case = self._case("envelope_orphan")
+
+        def crash(event: str, _index: int | None, _path: Path | None) -> None:
+            if event == "before_publication_receipt":
+                raise SimulatedCrash("power loss before envelope receipt")
+
+        transaction, _ = self._prepared(
+            case,
+            "run-envelope-orphan",
+            fault_injector=crash,
+            final_payload=self._run_result_envelope("run-envelope-orphan"),
+        )
+        with self.assertRaises(SimulatedCrash):
+            transaction.commit()
+
+        final_path = case["runtime"] / "runs" / "run-envelope-orphan.json"
+        receipt_path = case["runtime"] / "receipts" / "run-envelope-orphan.json"
+        orphan = json.loads(final_path.read_text(encoding="utf-8"))
+        self.assertNotIn("publication_receipt", orphan)
+        self.assertIn("publication_receipt", orphan["run"])
+        self.assertFalse(receipt_path.exists())
+        self.assertFalse(
+            committed_from_publication_receipt(
+                final_path,
+                receipt_path,
+                root_map=case["root_map"],
+            )
+        )
+
+        report = reconcile_pending_persistence_v2(case["transaction_root"])
+
+        self.assertTrue(report["ok"])
+        self.assertEqual("completed", report["transactions"][0]["state"])
+        recovered = json.loads(final_path.read_text(encoding="utf-8"))
+        self.assertEqual(orphan, recovered)
+        self.assertIs(recovered, validate_run_result(recovered))
+        self.assertTrue(
+            verify_publication_receipt(receipt_path, root_map=case["root_map"])["valid"]
+        )
 
     def test_orphan_final_run_is_not_committed_and_marker_recovery_ignores_candidate(self) -> None:
         case = self._case("orphan")

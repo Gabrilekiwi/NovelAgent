@@ -95,7 +95,8 @@
           "properties": {
             "root_id": {"type": "string", "minLength": 1},
             "relative_path": {"type": "string", "minLength": 1},
-            "original_path_hint": {"type": ["string", "null"]}
+            "original_path_hint": {"type": ["string", "null"]},
+            "root_uuid": {"type": ["string", "null"]}
           },
           "additionalProperties": false
         }
