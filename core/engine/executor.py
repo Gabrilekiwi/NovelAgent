@@ -8,7 +8,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from api.contracts import ModelCallError, ModelOutputError
 from api.retry import consume_retry_telemetry, reset_retry_telemetry
@@ -23,6 +23,12 @@ from core.model_call_runtime import (
 )
 from core.model_calls import ModelCallStore
 from core.path_refs import path_ref_for
+from core.delivery import DeliveryQueue
+from core.delivery_intents import (
+    build_file_delivery_intent,
+    delivery_intent_receipt_binding,
+    validate_file_delivery_profile,
+)
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
 from core.quality_decision import (
@@ -70,6 +76,11 @@ from core.engine.persistence_v2 import (
     PersistenceV2Target,
     bind_final_run_record_receipt,
     verify_publication_receipt,
+)
+from core.engine.delivery_intent_recovery import (
+    DELIVERY_INTENT_ARTIFACT_KIND,
+    recover_completed_delivery_jobs,
+    recover_delivery_jobs_for_receipt,
 )
 from core.engine.root_registry import RootRegistryService
 from core.engine.quality_coordinator import QualityCoordinator
@@ -166,6 +177,8 @@ class AgentExecutor:
         repository_root: str | Path | None = None,
         enable_execution_provenance: bool = True,
         run_budget_limits: RunBudgetLimits | None = None,
+        file_delivery_profile: Mapping[str, Any] | None = None,
+        delivery_queue: DeliveryQueue | None = None,
     ) -> None:
         self.snapshot_path = Path(snapshot_path)
         self.memory_path = Path(memory_path) if memory_path else None
@@ -205,6 +218,23 @@ class AgentExecutor:
         )
         self.enable_execution_provenance = bool(enable_execution_provenance)
         self.run_budget_limits = run_budget_limits or RunBudgetLimits()
+        if (file_delivery_profile is None) != (delivery_queue is None):
+            raise ValueError(
+                "file_delivery_profile and delivery_queue must be configured together"
+            )
+        self.file_delivery_profile = (
+            validate_file_delivery_profile(dict(file_delivery_profile))
+            if file_delivery_profile is not None
+            else None
+        )
+        if (
+            self.file_delivery_profile is not None
+            and self.file_delivery_profile.get("root_uuid") is None
+        ):
+            raise ValueError(
+                "event-authority file delivery requires a trusted external root_uuid"
+            )
+        self.delivery_queue = delivery_queue
         self._execution_scope_depth = 0
         self._execution_evidence: dict[str, Any] | None = None
         self._run_budget_tracker: RunBudgetTracker | None = None
@@ -1662,7 +1692,17 @@ class AgentExecutor:
                 root_map=root_map,
             )
             self._event_authority_root_map = root_map
+            if self.delivery_queue is not None:
+                recover_completed_delivery_jobs(
+                    self.persistence_dir,
+                    root_map=root_map,
+                    queue=self.delivery_queue,
+                )
             return
+        if self.file_delivery_profile is not None:
+            raise PersistenceError(
+                "required file delivery requires event-authority persistence v2"
+            )
         if story_root is not None and self._event_authority_was_activated(story_root):
             raise PersistenceError(
                 "event-authority downgrade detected; legacy persistence is permanently disabled"
@@ -1696,7 +1736,11 @@ class AgentExecutor:
             raise PersistenceError(
                 "event-authority runtime root is too broad; configure run and persistence siblings"
             )
-        delivery_root = runtime_root / "deliveries"
+        delivery_root = (
+            self.delivery_queue.root
+            if self.delivery_queue is not None
+            else runtime_root / "deliveries"
+        )
         roots = {
             "story_project": story_root.resolve(),
             "runtime": runtime_root.resolve(),
@@ -1714,6 +1758,7 @@ class AgentExecutor:
             self.run_dir / "chapter_pipeline",
             self.run_dir / "review_repairs",
             self.run_dir / "story_project_writebacks",
+            self.run_dir / "delivery_intents",
         ):
             path.mkdir(parents=True, exist_ok=True)
         memory_root = RuntimePaths.for_story_project(story_root).memory_dir / "v2"
@@ -2184,6 +2229,18 @@ class AgentExecutor:
             raise PersistencePreparationError(
                 "event-authority chapter run did not prepare a new immutable Memory batch"
             )
+        delivery_intent = None
+        if self.file_delivery_profile is not None:
+            delivery_intent = build_file_delivery_intent(
+                profile=self.file_delivery_profile,
+                book_id=identity.book_id,
+                run_id=str(run["id"]),
+                chapter_index=int(run["chapter_index"]),
+                event_batch=memory_commit["batch"],
+                chapter_body_sha256=chapter_body_sha256,
+                policy="required",
+                created_at=str(run.get("finished_at") or utc_now().isoformat()),
+            )
         next_snapshot = canonical_memory_to_snapshot(memory_commit["projection"])
         memory_updates = build_memory_updates(run, analysis)
         state_update = build_state_update_audit(
@@ -2334,6 +2391,27 @@ class AgentExecutor:
             writeback_plan=plan.to_dict(),
             writeback_result=expected_writeback,
         )
+        if delivery_intent is not None:
+            prepared_artifacts.append(
+                {
+                    "kind": DELIVERY_INTENT_ARTIFACT_KIND,
+                    "path": self.run_dir
+                    / "delivery_intents"
+                    / f"{run['id']}.json",
+                    "content": json.dumps(
+                        delivery_intent,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    "root_id": "runtime",
+                    "metadata": {
+                        "intent_id": delivery_intent["intent_id"],
+                        "policy": delivery_intent["policy"],
+                    },
+                }
+            )
         artifact_targets = [
             PersistenceV2Target(
                 target_id=f"artifact-{index:03d}",
@@ -2386,6 +2464,11 @@ class AgentExecutor:
             story_project_read_set=read_set,
             read_set_declared_writes=declared_writes,
         )
+        delivery_jobs = (
+            [delivery_intent_receipt_binding(delivery_intent)]
+            if delivery_intent is not None
+            else []
+        )
         transaction.prepare(
             apply_targets=apply_targets,
             artifacts=artifact_targets,
@@ -2399,7 +2482,7 @@ class AgentExecutor:
             ).hexdigest(),
             story_project_source_revision_after=source_revision_after,
             candidate_result=result,
-            delivery_jobs=[],
+            delivery_jobs=delivery_jobs,
         )
         committed = transaction.commit()
         if not committed.get("committed") or committed.get("state") != "completed":
@@ -2410,6 +2493,16 @@ class AgentExecutor:
         if not verification.get("valid") or not verification.get("committed"):
             raise PersistenceError(
                 "event-authority PublicationReceipt failed durable verification"
+            )
+        if delivery_intent is not None:
+            if self.delivery_queue is None:
+                raise PersistenceError(
+                    "event-authority file delivery queue disappeared after commit"
+                )
+            recover_delivery_jobs_for_receipt(
+                receipt_path,
+                root_map=root_map,
+                queue=self.delivery_queue,
             )
 
     def _event_path_ref(
