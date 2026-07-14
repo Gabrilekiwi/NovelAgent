@@ -33,7 +33,7 @@ def validate_llm(
     telemetry_offset = len(retry_telemetry_snapshot())
     payload = _call_llm_validator(messages, model=selected_model)
     retry_reports = retry_telemetry_snapshot()[telemetry_offset:]
-    check = llm_payload_to_check(payload)
+    check = llm_payload_to_check(payload, chapter_text=chapter_text)
     check["metadata"] = {
         "provider": "openai",
         "model": selected_model,
@@ -55,9 +55,19 @@ def validate_llm(
     return check
 
 
-def llm_payload_to_check(payload: dict[str, Any]) -> dict[str, Any]:
+def llm_payload_to_check(
+    payload: dict[str, Any],
+    *,
+    chapter_text: str,
+) -> dict[str, Any]:
     checked = validate_schema(payload, "llm_validation.schema.json")
-    problems = [_normalize_llm_problem(problem) for problem in checked.get("problems", [])]
+    chapter_fact_id = _chapter_fact_id(chapter_text)
+    problems = [
+        _normalize_llm_problem(
+            _require_verifiable_problem(problem, chapter_text=chapter_text, chapter_fact_id=chapter_fact_id)
+        )
+        for problem in checked.get("problems", [])
+    ]
     return {
         "name": "llm",
         "ok": not any(problem["blocking"] for problem in problems),
@@ -82,7 +92,7 @@ def _call_llm_validator(
         repaired = chat_completion(
             messages
             + [
-                {"role": "assistant", "content": response[:4_000]},
+                {"role": "assistant", "content": response},
                 {
                     "role": "user",
                     "content": (
@@ -138,6 +148,7 @@ def _llm_messages(
             "content": json.dumps(
                 {
                     "schema": _llm_output_schema_hint(),
+                    "chapter_fact_id": _chapter_fact_id(chapter_text),
                     "check_areas": list(LLM_VALIDATION_AREAS),
                     "snapshot": snapshot,
                     "decision": decision or {},
@@ -152,8 +163,11 @@ def _llm_messages(
 
 def _normalize_llm_problem(problem: dict[str, Any]) -> dict[str, Any]:
     severity = str(problem.get("severity") or "medium")
-    blocking = severity in {"critical", "high", "medium"}
+    # Until the independent calibration/holdout gate is complete, medium LLM
+    # findings are advisory.  Only high and critical findings can block.
+    blocking = severity in {"critical", "high"}
     area = str(problem.get("area") or "complex_plot_logic")
+    spans = [dict(item) for item in problem.get("evidence") or []]
     return {
         "code": str(problem.get("code") or "llm_story_problem"),
         "message": str(problem.get("message") or ""),
@@ -164,9 +178,42 @@ def _normalize_llm_problem(problem: dict[str, Any]) -> dict[str, Any]:
         "category": "blocking" if blocking else "warning",
         "repair_hint": str(problem.get("repair_hint") or "Review and repair this story-level issue manually."),
         "repair_action": "manual_review",
-        "repair_parameters": {"area": area, "raw_problem": dict(problem)},
-        "evidence": list(problem.get("evidence") or []),
+        "fact_id": str(problem["fact_id"]),
+        "evidence_spans": spans,
+        "repair_parameters": {
+            "area": area,
+            "fact_id": str(problem["fact_id"]),
+            "evidence_spans": spans,
+        },
+        "evidence": [
+            {"kind": "chapter_span", "value": str(item["quote"])}
+            for item in spans
+        ],
     }
+
+
+def _require_verifiable_problem(
+    problem: dict[str, Any],
+    *,
+    chapter_text: str,
+    chapter_fact_id: str,
+) -> dict[str, Any]:
+    if problem.get("fact_id") != chapter_fact_id:
+        raise ValueError("LLM finding fact_id does not match the current chapter digest")
+    for evidence in problem.get("evidence") or []:
+        start = int(evidence["start_char"])
+        end = int(evidence["end_char"])
+        quote = str(evidence["quote"])
+        if start < 0 or end <= start or end > len(chapter_text):
+            raise ValueError("LLM finding evidence span is outside the chapter")
+        if chapter_text[start:end] != quote:
+            raise ValueError("LLM finding evidence quote does not match its chapter span")
+    return problem
+
+
+def _chapter_fact_id(chapter_text: str) -> str:
+    digest = hashlib.sha256(str(chapter_text).encode("utf-8")).hexdigest()
+    return f"chapter:sha256:{digest}"
 
 
 def _llm_output_schema_hint() -> dict[str, Any]:
@@ -177,7 +224,15 @@ def _llm_output_schema_hint() -> dict[str, Any]:
                 "message": "Short human-readable problem.",
                 "area": "character_motivation_consistency",
                 "severity": "high|medium|low|critical",
-                "evidence": [{"kind": "chapter_excerpt_or_fact", "value": "Concrete evidence."}],
+                "fact_id": "Copy chapter_fact_id exactly.",
+                "evidence": [
+                    {
+                        "kind": "chapter_span",
+                        "start_char": 0,
+                        "end_char": 4,
+                        "quote": "Exact chapter_text[start_char:end_char].",
+                    }
+                ],
                 "repair_hint": "Specific scene-level repair guidance.",
             }
         ]

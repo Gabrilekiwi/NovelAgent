@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ModelResponse",
+  "type": "object",
+  "required": [
+    "text",
+    "usage",
+    "finish_reason",
+    "request_id",
+    "actual_model",
+    "endpoint_type"
+  ],
+  "properties": {
+    "text": {"type": "string"},
+    "usage": {"type": "object", "additionalProperties": true},
+    "finish_reason": {"type": ["string", "null"]},
+    "request_id": {"type": ["string", "null"]},
+    "actual_model": {"type": ["string", "null"]},
+    "endpoint_type": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

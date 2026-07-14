@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from core.schema import validate_schema
-from core.quality_decision import quality_decision_review_status
 
 
 REVIEW_STATUS_RANK = {
@@ -16,7 +15,9 @@ REVIEW_STATUS_RANK = {
 
 GATE_THRESHOLD_RANK = {
     "off": None,
-    "warning": 1,
+    # The legacy name remains accepted, but warning-only review output is
+    # advisory.  Therefore this threshold starts blocking at needs_revision.
+    "warning": 2,
     "needs_revision": 2,
     "blocked": 3,
 }
@@ -28,6 +29,9 @@ def evaluate_review_gate(
     quality_decision: dict[str, Any] | None = None,
     threshold: str = "off",
 ) -> dict[str, Any]:
+    # `quality_decision` remains in the signature for old callers, but is
+    # deliberately ignored.  The gate must be computed from the raw review.
+    del quality_decision
     if threshold not in GATE_THRESHOLD_RANK:
         raise ValueError(f"unsupported review gate threshold: {threshold}")
     if threshold == "off":
@@ -42,8 +46,6 @@ def evaluate_review_gate(
         )
     if isinstance(review_pipeline, dict) and review_pipeline.get("status") == "error":
         review_status = "error"
-    elif isinstance(quality_decision, dict):
-        review_status = quality_decision_review_status(quality_decision)
     elif isinstance(review_pipeline, dict):
         review_status = review_pipeline.get("status")
     else:

@@ -49,6 +49,35 @@
     "quality_decision": {
       "type": "object"
     },
+    "execution_evidence": {
+      "type": "object",
+      "required": [
+        "execution_id",
+        "provenance_hash",
+        "provenance_artifact_ref",
+        "model_calls_ref"
+      ],
+      "properties": {
+        "execution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provenance_hash": {
+          "type": "string",
+          "minLength": 64
+        },
+        "provenance_artifact_ref": {
+          "type": ["string", "null"]
+        },
+        "model_calls_ref": {
+          "type": ["string", "null"]
+        },
+        "budget": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
     "committed": {
       "type": "boolean"
     },

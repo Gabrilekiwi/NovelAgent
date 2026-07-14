@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionProvenance",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "canonical_json_algorithm",
+    "hash_algorithm",
+    "provenance_hash",
+    "code",
+    "assets",
+    "runtime",
+    "model",
+    "config",
+    "feature_flags"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "canonical_json_algorithm": {
+      "type": "string",
+      "enum": ["novelagent-execution-provenance-canonical-json-v1"]
+    },
+    "hash_algorithm": {
+      "type": "string",
+      "enum": ["sha256"]
+    },
+    "provenance_hash": {
+      "type": "string",
+      "minLength": 64
+    },
+    "code": {
+      "type": "object",
+      "required": ["bundle_algorithm", "bundle_hash", "file_count", "git"],
+      "properties": {
+        "bundle_algorithm": {
+          "type": "string",
+          "enum": ["novelagent-code-bundle-v1"]
+        },
+        "bundle_hash": {
+          "type": "string",
+          "minLength": 64
+        },
+        "file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "git": {
+          "type": "object",
+          "required": ["commit", "dirty"],
+          "properties": {
+            "commit": {
+              "type": ["string", "null"]
+            },
+            "dirty": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "assets": {
+      "type": "object",
+      "required": ["prompts", "schemas"],
+      "properties": {
+        "prompts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "minLength": 64
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "schemas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "minLength": 64
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["python", "dependencies"],
+      "properties": {
+        "python": {
+          "type": "object",
+          "required": ["implementation", "version"],
+          "properties": {
+            "implementation": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "version"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "required": ["provider", "model"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "value"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": ["object", "array", "string", "number", "boolean", "null"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "feature_flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "enabled"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -13,8 +13,24 @@
     "hard_input_limit": {"type": "integer", "minimum": 0},
     "raw_input_tokens": {"type": "integer", "minimum": 0},
     "budgeted_input_tokens": {"type": "integer", "minimum": 0},
-    "count_mode": {"type": "string", "enum": ["exact", "estimate"]},
+    "count_mode": {"type": "string", "enum": ["provider_exact", "model_tokenizer", "calibrated_estimate", "exact", "estimate"]},
     "counter_version": {"type": "string", "minLength": 1},
+    "count_metadata": {
+      "type": "object",
+      "required": ["provider", "model", "endpoint_type", "model_is_known", "counter_source"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "endpoint_type": {"type": "string", "enum": ["official", "openai_compatible", "unknown"]},
+        "model_is_known": {"type": "boolean"},
+        "counter_source": {"type": "string", "enum": ["provider_usage", "tokenizer", "calibration"]},
+        "tokenizer": {"type": "string", "minLength": 1},
+        "tokenizer_version": {"type": "string", "minLength": 1},
+        "provider_counter_version": {"type": "string", "minLength": 1},
+        "calibration_version": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
     "within_budget": {"type": "boolean"},
     "context_digest": {"type": "string", "minLength": 64}
   },

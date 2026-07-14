@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from core.config import get_config
+from core.context_budget import preview_chinese_output_compatibility
 from core.director import decide_next_step
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH, RuntimePaths
 from core.engine.report import build_run_report
@@ -47,15 +48,20 @@ SCHEMA_ASSETS = (
     Path("schemas/delivery_job.schema.json"),
     Path("schemas/delivery_outcome.schema.json"),
     Path("schemas/input_pack_metadata.schema.json"),
+    Path("schemas/execution_provenance.schema.json"),
     Path("schemas/llm_validation.schema.json"),
     Path("schemas/loop_session.schema.json"),
     Path("schemas/memory_context.schema.json"),
     Path("schemas/memory_writeback.schema.json"),
+    Path("schemas/model_call_intent.schema.json"),
+    Path("schemas/model_call_receipt.schema.json"),
+    Path("schemas/model_response.schema.json"),
     Path("schemas/next_step_context_preflight.schema.json"),
     Path("schemas/oh_story_compatibility.schema.json"),
     Path("schemas/path_ref.schema.json"),
     Path("schemas/project_identity.schema.json"),
     Path("schemas/quality_decision.schema.json"),
+    Path("schemas/quality_calibration_report.schema.json"),
     Path("schemas/readiness_decision.schema.json"),
     Path("schemas/prompt_context_bundle.schema.json"),
     Path("schemas/previous_chapter_context.schema.json"),
@@ -80,6 +86,7 @@ SCHEMA_ASSETS = (
     Path("schemas/story_project_semantic_state.schema.json"),
     Path("schemas/state_update_audit.schema.json"),
     Path("schemas/trace_event.schema.json"),
+    Path("schemas/token_calibration_report.schema.json"),
     Path("schemas/validation_result.schema.json"),
     Path("schemas/workflow_plan.schema.json"),
 )
@@ -89,6 +96,11 @@ V1_STRUCTURE_PATHS = (
     Path("core/director/prompt.md"),
     Path("core/director/schema.json"),
     Path("core/engine/executor.py"),
+    Path("core/execution_provenance.py"),
+    Path("core/model_call_runtime.py"),
+    Path("core/model_calls.py"),
+    Path("core/structured_context.py"),
+    Path("core/token_calibration.py"),
     Path("core/engine/delivery_coordinator.py"),
     Path("core/engine/persistence_coordinator.py"),
     Path("core/engine/quality_coordinator.py"),
@@ -249,6 +261,13 @@ def run_preflight(
             )
 
     config = get_config()
+    _check_output_token_compatibility(
+        checks,
+        provider="openai",
+        model=config.openai_model,
+        max_output_tokens=config.openai_max_output_tokens,
+        required=True,
+    )
     checks.append(
         {
             "name": "execution_mode",
@@ -305,6 +324,13 @@ def run_preflight(
         director_model=director_model,
         planned_workflow=planned_workflow,
     ):
+        _check_output_token_compatibility(
+            checks,
+            provider="anthropic",
+            model=config.claude_model or "unconfigured",
+            max_output_tokens=config.claude_max_tokens,
+            required=True,
+        )
         _check_python_dependency(
             checks,
             "dependency:anthropic",
@@ -344,6 +370,63 @@ def run_preflight(
         "ok": all(check["ok"] for check in checks),
         "checks": checks,
     }
+
+
+def _check_output_token_compatibility(
+    checks: list[dict[str, Any]],
+    *,
+    provider: str,
+    model: str,
+    max_output_tokens: int,
+    required: bool,
+) -> None:
+    """Preview whether a configured model cap can emit a complete chapter.
+
+    This deliberately runs before any provider call.  Unknown or compatible
+    endpoints use the conservative calibrated estimate and are never labelled
+    as an exact tokenizer result.
+    """
+
+    name = f"output_token_compatibility:{provider}"
+    try:
+        details = preview_chinese_output_compatibility(max_output_tokens)
+    except Exception as exc:  # noqa: BLE001 - preflight reports configuration faults.
+        checks.append(
+            {
+                "name": name,
+                "ok": False,
+                "details": {
+                    "provider": provider,
+                    "model": model,
+                    "max_output_tokens": max_output_tokens,
+                    "required": required,
+                },
+                "error": str(exc),
+            }
+        )
+        return
+
+    details = {
+        "provider": provider,
+        "model": model,
+        "required": required,
+        **details,
+    }
+    compatible = bool(details["full_target_range_compatible"])
+    check: dict[str, Any] = {
+        "name": name,
+        "ok": compatible or not required,
+        "details": details,
+    }
+    if required and not compatible:
+        check["error"] = (
+            f"{provider} model {model} cannot cover the configured "
+            "3,000-4,500 Chinese-character target: "
+            f"{max_output_tokens} output tokens configured, "
+            f"{details['maximum_required_tokens']} required by "
+            f"{details['calibration_version']}"
+        )
+    checks.append(check)
 
 
 def _capture_check(checks: list[dict[str, Any]], name: str, fn) -> Any:

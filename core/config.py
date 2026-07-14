@@ -66,14 +66,17 @@ def get_config() -> RuntimeConfig:
         openai_base_url=_env("OPENAI_BASE_URL"),
         openai_model=_env("OPENAI_MODEL") or "gpt-4.1-mini",
         openai_timeout_seconds=_int_env("OPENAI_TIMEOUT_SECONDS", 90),
-        openai_max_output_tokens=_int_env("OPENAI_MAX_OUTPUT_TOKENS", 1200),
+        # A full chapter target is 3,000-4,500 Chinese characters.  Keep the
+        # cold-start default compatible even when the conservative estimator
+        # has no model tokenizer or provider usage yet.
+        openai_max_output_tokens=_int_env("OPENAI_MAX_OUTPUT_TOKENS", 16000),
         openai_max_retries=max(0, _int_env("OPENAI_MAX_RETRIES", 0)),
         openai_stream=_bool_env("OPENAI_STREAM", True),
         anthropic_api_key=_env("ANTHROPIC_API_KEY") or _env("ANTHROPIC_AUTH_TOKEN"),
         claude_base_url=_env("CLAUDE_BASE_URL") or _env("ANTHROPIC_BASE_URL"),
         claude_user_agent=_env("CLAUDE_USER_AGENT"),
         claude_model=_env("CLAUDE_MODEL") or _env("ANTHROPIC_MODEL"),
-        claude_max_tokens=_int_env("CLAUDE_MAX_TOKENS", 8000),
+        claude_max_tokens=_int_env("CLAUDE_MAX_TOKENS", 16000),
         claude_timeout_seconds=_int_env("CLAUDE_TIMEOUT_SECONDS", 90),
         claude_stream=_bool_env("CLAUDE_STREAM", True),
         memory_path=Path(_env("NOVELAGENT_MEMORY_PATH") or DEFAULT_MEMORY_PATH),

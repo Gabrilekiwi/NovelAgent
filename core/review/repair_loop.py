@@ -7,7 +7,6 @@ from typing import Any, Callable
 
 from core.quality_decision import (
     QualityPolicy,
-    SEVERITY_RANK,
     build_quality_decision,
     resolve_quality_policy,
 )
@@ -111,7 +110,7 @@ def run_review_repair_loop(
             rejected_reason="review_gate_error",
             quality_decision=before_decision,
         )
-    if before_decision["accepted"]:
+    if before_decision["accepted"] and _gate_allows_commit(before_gate):
         result = disabled_review_repair()
         result.update(
             {
@@ -212,7 +211,7 @@ def run_review_repair_loop(
             )
             break
 
-        accepted = bool(repaired_decision["accepted"])
+        accepted = bool(repaired_decision["accepted"]) and _gate_allows_commit(repaired_gate)
         repair_deltas.append(
             _attempt_delta(
                 attempt=attempt,
@@ -240,7 +239,7 @@ def run_review_repair_loop(
         if str(current_review.get("status") or "") == "error" or current_gate.get("status") == "error":
             break
 
-    accepted = bool(current_decision["accepted"])
+    accepted = bool(current_decision["accepted"]) and _gate_allows_commit(current_gate)
     return {
         "enabled": True,
         "attempted": True,
@@ -547,11 +546,17 @@ def _review_gate(
     threshold: str,
     quality_decision: dict[str, Any],
 ) -> dict[str, Any]:
+    del quality_decision
     return evaluate_review_gate(
         review_pipeline=review,
-        quality_decision=quality_decision,
         threshold=threshold,
     )
+
+
+def _gate_allows_commit(gate: dict[str, Any] | None) -> bool:
+    if not isinstance(gate, dict) or not gate.get("enabled"):
+        return True
+    return gate.get("status") == "pass" and int(gate.get("exit_code") or 0) == 0
 
 
 def _non_attempt_result(
@@ -587,15 +592,9 @@ def _non_attempt_result(
 
 
 def _repair_quality_policy(policy: str | QualityPolicy, gate_threshold: str) -> QualityPolicy:
+    del gate_threshold
     resolved = resolve_quality_policy(policy)
-    if gate_threshold == "off":
-        return resolved.with_overrides(include_review=True)
-    quality_threshold = "blocking" if gate_threshold == "blocked" else gate_threshold
-    threshold = min(
-        (resolved.threshold, quality_threshold),
-        key=lambda item: SEVERITY_RANK[item],
-    )
-    return resolved.with_overrides(threshold=threshold, include_review=True)
+    return resolved.with_overrides(include_review=True)
 
 
 def _quality_decision(

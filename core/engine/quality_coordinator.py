@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.quality_decision import QualityPolicy, SEVERITY_RANK, build_quality_decision, resolve_quality_policy
+from core.quality_decision import QualityPolicy, build_quality_decision, resolve_quality_policy
 from core.review.gate import evaluate_review_gate
 from core.review.repair_loop import ReviewRepairConfig
 from core.review.runtime import RuntimeReviewConfig
@@ -28,11 +28,7 @@ class QualityCoordinator:
         else:
             policy = resolve_quality_policy("minimal")
         include_review = bool(policy.include_review or review_config.enabled or review_repair_config.enabled)
-        threshold = policy.threshold
-        if review_config.enabled and review_config.gate_threshold != "off":
-            gate_threshold = "blocking" if review_config.gate_threshold == "blocked" else review_config.gate_threshold
-            threshold = min((threshold, gate_threshold), key=lambda item: SEVERITY_RANK[item])
-        return policy.with_overrides(threshold=threshold, include_review=include_review)
+        return policy.with_overrides(include_review=include_review)
 
     @staticmethod
     def decide(
@@ -56,13 +52,16 @@ class QualityCoordinator:
         *,
         review_config: RuntimeReviewConfig,
         review: dict[str, Any] | None,
-        quality_decision: dict[str, Any],
+        quality_decision: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        # Kept as an optional compatibility argument.  A review gate is an
+        # independent authority and must never be derived from, or overridden
+        # by, the aggregate QualityDecision.
+        del quality_decision
         if review_config.gate_threshold == "off" or not isinstance(review, dict):
             return None
         return evaluate_review_gate(
             review_pipeline=review,
-            quality_decision=quality_decision,
             threshold=review_config.gate_threshold,
         )
 

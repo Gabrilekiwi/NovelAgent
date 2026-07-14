@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
-from api.contracts import ModelCallError
+from api.contracts import (
+    MODEL_ENDPOINT_OFFICIAL,
+    MODEL_ENDPOINT_OPENAI_COMPATIBLE,
+    MODEL_ENDPOINT_UNKNOWN,
+    ModelCallError,
+    ModelResponse,
+)
 from api.retry import (
     MODEL_READ_GENERATION,
     PartialResponseError,
@@ -11,6 +17,7 @@ from api.retry import (
     retry_policy_for_profile,
 )
 from core.config import get_config
+from core.model_call_runtime import ModelCallRuntimeContext, resolve_model_call_runtime
 
 
 def chat_completion(
@@ -22,7 +29,10 @@ def chat_completion(
     max_tokens: int | None = None,
     retry_policy: RetryPolicy | None = None,
     retry_budget_remaining: Callable[[], float | None] | None = None,
-) -> str:
+    model_call_runtime: ModelCallRuntimeContext | None = None,
+    call_id: str | None = None,
+    input_tokens: int | None = None,
+) -> ModelResponse:
     config = get_config()
     api_key = config.openai_api_key
     resolved_model = model or config.openai_model
@@ -72,18 +82,69 @@ def chat_completion(
     if resolved_max_tokens > 0:
         request_kwargs["max_tokens"] = resolved_max_tokens
 
+    runtime = resolve_model_call_runtime(model_call_runtime)
+    endpoint_type = (
+        MODEL_ENDPOINT_OPENAI_COMPATIBLE
+        if config.openai_base_url
+        else MODEL_ENDPOINT_OFFICIAL
+    )
+    resolved_call_id = call_id or (
+        runtime.new_call_id(provider="openai", stage=stage) if runtime is not None else None
+    )
+    if runtime is not None and int(resolved_max_tokens or 0) <= 0:
+        raise ValueError(
+            "durable model calls require a positive OpenAI max output token reservation"
+        )
+    stream_request_kwargs = dict(request_kwargs)
+    if config.openai_stream and endpoint_type == MODEL_ENDPOINT_OFFICIAL:
+        stream_request_kwargs["stream_options"] = {"include_usage": True}
+    evidence_request = dict(stream_request_kwargs)
+    evidence_request["stream"] = bool(config.openai_stream)
     client_holder: dict[str, Any] = {}
+    physical_attempt = 0
 
-    def invoke() -> str:
+    def invoke_provider(client: Any) -> ModelResponse:
+        if config.openai_stream:
+            response = client.chat.completions.create(
+                **stream_request_kwargs,
+                stream=True,
+            )
+            return _extract_streamed_message_content(
+                response,
+                stage=stage,
+                model=resolved_model,
+                endpoint_type=endpoint_type,
+            )
+        response = client.chat.completions.create(**request_kwargs)
+        return _extract_message_content(
+            response,
+            stage=stage,
+            model=resolved_model,
+            endpoint_type=endpoint_type,
+        )
+
+    def invoke() -> ModelResponse:
+        nonlocal physical_attempt
         client = client_holder.get("client")
         if client is None:
             client = OpenAI(**client_kwargs)
             client_holder["client"] = client
-        if config.openai_stream:
-            response = client.chat.completions.create(**request_kwargs, stream=True)
-            return _extract_streamed_message_content(response, stage=stage, model=resolved_model)
-        response = client.chat.completions.create(**request_kwargs)
-        return _extract_message_content(response, stage=stage, model=resolved_model)
+        if runtime is None:
+            return invoke_provider(client)
+        physical_attempt += 1
+        assert resolved_call_id is not None
+        return runtime.execute_attempt(
+            call_id=resolved_call_id,
+            attempt_number=physical_attempt,
+            provider="openai",
+            model=resolved_model,
+            stage=stage,
+            endpoint_type=endpoint_type,
+            request=evidence_request,
+            max_output_tokens=max(0, int(resolved_max_tokens or 0)),
+            operation=lambda: invoke_provider(client),
+            input_tokens=input_tokens,
+        )
 
     try:
         execution = policy.execute(invoke, budget_remaining_seconds=retry_budget_remaining)
@@ -106,7 +167,13 @@ def chat_completion(
     return execution.value
 
 
-def _extract_message_content(response: Any, *, stage: str, model: str | None) -> str:
+def _extract_message_content(
+    response: Any,
+    *,
+    stage: str,
+    model: str | None,
+    endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
+) -> ModelResponse:
     choices = getattr(response, "choices", None)
     if not isinstance(choices, list) or not choices:
         raise ModelCallError(
@@ -138,17 +205,48 @@ def _extract_message_content(response: Any, *, stage: str, model: str | None) ->
             failure_category="output_contract",
             retryable=False,
         )
-    return content
+    choice = choices[0]
+    return ModelResponse(
+        content,
+        usage=_sdk_mapping(getattr(response, "usage", None)),
+        finish_reason=_optional_metadata(getattr(choice, "finish_reason", None)),
+        request_id=_response_request_id(response),
+        actual_model=_optional_metadata(getattr(response, "model", None)) or model,
+        endpoint_type=endpoint_type,
+    )
 
 
-def _extract_streamed_message_content(response: Any, *, stage: str, model: str | None) -> str:
+def _extract_streamed_message_content(
+    response: Any,
+    *,
+    stage: str,
+    model: str | None,
+    endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
+) -> ModelResponse:
     parts: list[str] = []
+    usage: dict[str, Any] = {}
+    finish_reason: str | None = None
+    request_id = _response_request_id(response)
+    actual_model: str | None = model
     try:
         for chunk in response:
+            chunk_request_id = _response_request_id(chunk)
+            if chunk_request_id:
+                request_id = chunk_request_id
+            chunk_model = _optional_metadata(getattr(chunk, "model", None))
+            if chunk_model:
+                actual_model = chunk_model
+            chunk_usage = _sdk_mapping(getattr(chunk, "usage", None))
+            if chunk_usage:
+                usage = chunk_usage
             choices = getattr(chunk, "choices", None)
             if not isinstance(choices, list) or not choices:
                 continue
-            delta = getattr(choices[0], "delta", None)
+            choice = choices[0]
+            reason = _optional_metadata(getattr(choice, "finish_reason", None))
+            if reason:
+                finish_reason = reason
+            delta = getattr(choice, "delta", None)
             content = getattr(delta, "content", None)
             if isinstance(content, str):
                 parts.append(content)
@@ -164,4 +262,51 @@ def _extract_streamed_message_content(response: Any, *, stage: str, model: str |
             failure_category="output_contract",
             retryable=False,
         )
-    return text
+    return ModelResponse(
+        text,
+        usage=usage,
+        finish_reason=finish_reason,
+        request_id=request_id,
+        actual_model=actual_model,
+        endpoint_type=endpoint_type,
+    )
+
+
+def _response_request_id(response: Any) -> str | None:
+    for value in (
+        getattr(response, "_request_id", None),
+        getattr(response, "request_id", None),
+        getattr(response, "id", None),
+    ):
+        normalized = _optional_metadata(value)
+        if normalized:
+            return normalized
+    return None
+
+
+def _sdk_mapping(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return {str(key): child for key, child in value.items()}
+    for method_name in ("model_dump", "to_dict", "dict"):
+        method = getattr(value, method_name, None)
+        if callable(method):
+            rendered = method()
+            if isinstance(rendered, Mapping):
+                return {str(key): child for key, child in rendered.items()}
+    attributes = getattr(value, "__dict__", None)
+    if isinstance(attributes, dict):
+        return {
+            str(key): child
+            for key, child in attributes.items()
+            if not str(key).startswith("_")
+        }
+    return {}
+
+
+def _optional_metadata(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None

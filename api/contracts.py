@@ -1,7 +1,124 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 import re
+from types import MappingProxyType
+from typing import Any, Mapping
+
+
+MODEL_ENDPOINT_OFFICIAL = "official"
+MODEL_ENDPOINT_OPENAI_COMPATIBLE = "openai_compatible"
+MODEL_ENDPOINT_UNKNOWN = "unknown"
+
+
+class ModelResponse(str):
+    """Provider-neutral result metadata for one successful model response.
+
+    Provider clients may migrate to this contract independently.  Existing
+    string-returning call sites intentionally remain compatible until that
+    migration is wired into the executor.
+    """
+
+    def __new__(
+        cls,
+        text: str,
+        usage: Mapping[str, Any] | None = None,
+        finish_reason: str | None = None,
+        request_id: str | None = None,
+        actual_model: str | None = None,
+        endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
+    ) -> "ModelResponse":
+        if not isinstance(text, str):
+            raise TypeError("ModelResponse.text must be a string")
+        if usage is not None and not isinstance(usage, Mapping):
+            raise TypeError("ModelResponse.usage must be a mapping or None")
+        for name, value in (
+            ("finish_reason", finish_reason),
+            ("request_id", request_id),
+            ("actual_model", actual_model),
+        ):
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"ModelResponse.{name} must be a string or None")
+        if not isinstance(endpoint_type, str) or not endpoint_type.strip():
+            raise ValueError("ModelResponse.endpoint_type must be a non-empty string")
+        instance = str.__new__(cls, text)
+        object.__setattr__(
+            instance,
+            "usage",
+            MappingProxyType(copy.deepcopy(dict(usage or {}))),
+        )
+        object.__setattr__(instance, "finish_reason", finish_reason)
+        object.__setattr__(instance, "request_id", request_id)
+        object.__setattr__(instance, "actual_model", actual_model)
+        object.__setattr__(instance, "endpoint_type", endpoint_type.strip())
+        object.__setattr__(instance, "_model_response_frozen", True)
+        return instance
+
+    @property
+    def text(self) -> str:
+        return str(self)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_model_response_frozen", False):
+            raise AttributeError("ModelResponse is immutable")
+        object.__setattr__(self, name, value)
+
+    def to_dict(self, *, include_text: bool = True) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "usage": copy.deepcopy(dict(self.usage or {})),
+            "finish_reason": self.finish_reason,
+            "request_id": self.request_id,
+            "actual_model": self.actual_model,
+            "endpoint_type": self.endpoint_type,
+        }
+        if include_text:
+            result["text"] = self.text
+        return result
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ModelResponse":
+        if not isinstance(value, Mapping):
+            raise TypeError("ModelResponse value must be a mapping")
+        return cls(
+            text=value.get("text"),
+            usage=value.get("usage"),
+            finish_reason=value.get("finish_reason"),
+            request_id=value.get("request_id"),
+            actual_model=value.get("actual_model"),
+            endpoint_type=value.get("endpoint_type", MODEL_ENDPOINT_UNKNOWN),
+        )
+
+
+def coerce_model_response(
+    value: ModelResponse | str,
+    *,
+    usage: Mapping[str, Any] | None = None,
+    finish_reason: str | None = None,
+    request_id: str | None = None,
+    actual_model: str | None = None,
+    endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
+) -> ModelResponse:
+    """Accept legacy string mocks while normalizing real provider results."""
+
+    if isinstance(value, ModelResponse):
+        return value
+    if not isinstance(value, str):
+        raise TypeError("model response must be ModelResponse or string")
+    return ModelResponse(
+        value,
+        usage=usage,
+        finish_reason=finish_reason,
+        request_id=request_id,
+        actual_model=actual_model,
+        endpoint_type=endpoint_type,
+    )
+
+
+def model_response_text(value: ModelResponse | str) -> str:
+    if not isinstance(value, str):
+        raise TypeError("model response must be ModelResponse or string")
+    return str(value)
 
 
 class ModelCallError(RuntimeError):

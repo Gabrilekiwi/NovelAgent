@@ -9,6 +9,7 @@ from typing import Any
 
 from core.path_refs import PathRef, path_ref_for
 from core.schema import validate_schema
+from core.structured_context import StructuredContextError, TextSelection, select_text_blocks
 
 
 CHAPTER_CONTEXT_SCHEMA_VERSION = "1.0"
@@ -125,25 +126,31 @@ def resolve_story_project_previous_chapter(
     review_tail_chars: int = DEFAULT_REVIEW_TAIL_CHARS,
     fail_closed: bool = True,
 ) -> PreviousChapterContext | None:
-    from core.story_project.paths import resolve_prose
+    from core.story_project.paths import resolve_prose, scan_prose_chapters
 
     root = Path(story_project_root).resolve()
     _validate_chapter_index(chapter_index)
-    if chapter_index == 1:
+    previous_index = chapter_index - 1
+    resolution = resolve_prose(root, previous_index) if previous_index >= 1 else None
+    if resolution is None:
         return None
-    resolution = resolve_prose(root, chapter_index - 1)
     if resolution.conflict:
         raise ChapterContextError(
             "previous_chapter_conflict",
             f"multiple prose files matched chapter {chapter_index - 1}",
         )
     if resolution.path is None:
-        if fail_closed:
-            raise ChapterContextError(
-                "previous_chapter_missing",
-                f"no prose file matched chapter {chapter_index - 1}",
-            )
-        return None
+        earlier_chapters = {
+            index for index in scan_prose_chapters(root) if index < chapter_index
+        }
+        if not earlier_chapters:
+            return None
+        # ``fail_closed`` remains in the call signature for historical callers;
+        # once this authority contains earlier prose, a continuity gap is always blocking.
+        raise ChapterContextError(
+            "previous_chapter_missing",
+            f"no prose file matched chapter {previous_index}; earlier prose exists at {sorted(earlier_chapters)}",
+        )
     raw = resolution.path.read_bytes()
     text = raw.decode("utf-8-sig")
     return _previous_context_from_text(
@@ -166,11 +173,11 @@ def resolve_committed_previous_chapter_artifact(
     review_tail_chars: int = DEFAULT_REVIEW_TAIL_CHARS,
 ) -> PreviousChapterContext | None:
     _validate_chapter_index(chapter_index)
-    if chapter_index == 1:
-        return None
     run_root = Path(run_dir)
     artifact_root = Path(chapter_artifact_root).resolve()
+    previous_index = chapter_index - 1
     valid: dict[Path, tuple[str, str]] = {}
+    claimed_earlier_commit = False
     for run_path in sorted(run_root.glob("chapter_*.json")) if run_root.is_dir() else ():
         try:
             payload = json.loads(run_path.read_text(encoding="utf-8"))
@@ -181,7 +188,13 @@ def resolve_committed_previous_chapter_artifact(
             continue
         if run.get("committed") is not True or run.get("status") != "committed":
             continue
-        if run.get("chapter_index") != chapter_index - 1:
+        committed_chapter = run.get("chapter_index")
+        if isinstance(committed_chapter, bool) or not isinstance(committed_chapter, int):
+            continue
+        if committed_chapter >= chapter_index:
+            continue
+        claimed_earlier_commit = True
+        if committed_chapter != previous_index:
             continue
         artifact = ((run.get("chapter") or {}).get("artifact") or {}) if isinstance(run.get("chapter"), dict) else {}
         path_value = artifact.get("path") if isinstance(artifact, dict) else None
@@ -196,9 +209,11 @@ def resolve_committed_previous_chapter_artifact(
             continue
         valid[path] = (_markdown_body(raw.decode("utf-8-sig")), expected_hash)
     if not valid:
+        if not claimed_earlier_commit:
+            return None
         raise ChapterContextError(
             "committed_previous_chapter_artifact_missing",
-            f"no hash-verified committed artifact matched chapter {chapter_index - 1}",
+            f"no hash-verified committed artifact matched chapter {previous_index}",
         )
     if len(valid) > 1:
         raise ChapterContextError(
@@ -301,30 +316,64 @@ def _previous_context_from_text(
 
 def _head_tail_excerpt(text: str, *, max_chars: int, policy: str) -> dict[str, Any]:
     _validate_max_chars(max_chars)
-    if len(text) <= max_chars:
-        return _excerpt(text, [(0, len(text))], policy=policy, original_chars=len(text))
-    head_chars = max(1, int(max_chars * 0.1))
-    tail_chars = max_chars - head_chars
-    head_end = _paragraph_end_at_or_before(text, head_chars)
-    tail_start = _paragraph_start_at_or_after(text, len(text) - tail_chars)
-    ranges = [(0, head_end), (tail_start, len(text))]
-    excerpt_text = text[:head_end].rstrip() + "\n\n[…中段已省略…]\n\n" + text[tail_start:].lstrip()
-    return _excerpt(excerpt_text, ranges, policy=policy, original_chars=len(text))
+    return _paragraph_excerpt(
+        text,
+        max_chars=max_chars,
+        policy=policy,
+        required="tail",
+        prefer_recent=True,
+    )
 
 
 def _tail_excerpt(text: str, *, max_chars: int, policy: str) -> dict[str, Any]:
     _validate_max_chars(max_chars)
-    start = max(0, len(text) - max_chars)
-    return _excerpt(text[start:], [(start, len(text))], policy=policy, original_chars=len(text))
+    return _paragraph_excerpt(
+        text,
+        max_chars=max_chars,
+        policy=policy,
+        required="tail",
+        prefer_recent=True,
+    )
 
 
-def _excerpt(text: str, ranges: list[tuple[int, int]], *, policy: str, original_chars: int) -> dict[str, Any]:
+def _paragraph_excerpt(
+    text: str,
+    *,
+    max_chars: int,
+    policy: str,
+    required: str,
+    prefer_recent: bool,
+) -> dict[str, Any]:
+    try:
+        selection = select_text_blocks(
+            text,
+            max_chars=max_chars,
+            required=required,
+            prefer_recent=prefer_recent,
+            policy=policy,
+        )
+    except StructuredContextError as exc:
+        raise ChapterContextError(
+            "context_required_paragraph_exceeds_limit",
+            f"a required complete paragraph cannot fit the {max_chars}-character context limit: {exc}",
+        ) from exc
+    return _excerpt(selection)
+
+
+def _excerpt(selection: TextSelection) -> dict[str, Any]:
     return {
-        "text": text,
-        "policy": policy,
-        "ranges": [{"start_char": start, "end_char": end} for start, end in ranges],
-        "estimated_tokens": math.ceil(len(text) / 4),
-        "truncated": sum(end - start for start, end in ranges) < original_chars,
+        "text": selection.text,
+        "policy": selection.policy,
+        "ranges": [
+            {"start_char": start, "end_char": end}
+            for start, end in selection.ranges
+        ],
+        "estimated_tokens": math.ceil(len(selection.text) / 4),
+        "truncated": selection.omitted_count > 0,
+        "source_sha256": selection.source_sha256,
+        "original_chars": selection.original_chars,
+        "selected_items": [dict(item) for item in selection.selected_items],
+        "omitted_count": selection.omitted_count,
     }
 
 
@@ -357,16 +406,6 @@ def _validate_chapter_index(value: int) -> None:
 def _validate_max_chars(value: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ChapterContextError("context_excerpt_limit_invalid", "excerpt limit must be a positive integer")
-
-
-def _paragraph_end_at_or_before(text: str, limit: int) -> int:
-    boundary = text.rfind("\n\n", 0, limit + 1)
-    return boundary + 2 if boundary >= max(0, limit // 2) else limit
-
-
-def _paragraph_start_at_or_after(text: str, start: int) -> int:
-    boundary = text.find("\n\n", max(0, start))
-    return boundary + 2 if 0 <= boundary <= min(len(text), start + max(100, (len(text) - start) // 2)) else start
 
 
 __all__ = [

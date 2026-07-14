@@ -60,7 +60,9 @@ class QualityPolicy:
 QUALITY_POLICIES = {
     "minimal": QualityPolicy("minimal", QUALITY_POLICY_VERSION, "blocking", 1, False, False),
     "standard": QualityPolicy("standard", QUALITY_POLICY_VERSION, "needs_revision", 2, True, False),
-    "strict": QualityPolicy("strict", QUALITY_POLICY_VERSION, "warning", 3, True, True),
+    # Warnings are advisory for every policy.  Strict mode still requires the
+    # LLM producer, but it cannot turn a warning-only chapter into a rejection.
+    "strict": QualityPolicy("strict", QUALITY_POLICY_VERSION, "needs_revision", 3, True, True),
 }
 
 

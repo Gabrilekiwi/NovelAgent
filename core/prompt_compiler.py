@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import re
 from typing import Any
 
 from core.context_budget import ContextBudget, ContextBudgetError, default_context_budget
 from core.schema import validate_schema
+from core.structured_context import (
+    StructuredContextError,
+    compact_markdown_section,
+    rank_texts,
+    sha256_text,
+)
 
 
 PROMPT_CONTEXT_SCHEMA_VERSION = "1.0"
@@ -32,12 +39,14 @@ class CompiledPromptContext:
     text: str
     report: dict[str, Any]
     selected_sections: tuple[str, ...]
+    selection_manifest: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "text": self.text,
             "report": dict(self.report),
             "selected_sections": list(self.selected_sections),
+            "selection_manifest": dict(self.selection_manifest),
         }
 
 
@@ -69,9 +78,15 @@ def compile_prompt_contexts(
 ) -> PromptContextBundle:
     effective_budget = budget or default_context_budget()
     digest = hashlib.sha256(input_pack.encode("utf-8")).hexdigest()
+    raw_sections = _markdown_sections(input_pack)
+    query = "\n\n".join(
+        section_text
+        for name, section_text in raw_sections
+        if name in {"Director Decision", "Story State", "StoryProject Chapter Blueprint", "Requirements"}
+    )
     sections = [
-        (name, _compact_oversized_section(name, text))
-        for name, text in _markdown_sections(input_pack)
+        (name, _compact_oversized_section(name, text, query=query))
+        for name, text in raw_sections
     ]
     if not sections:
         sections = [("Context", input_pack)]
@@ -86,6 +101,8 @@ def compile_prompt_contexts(
         digest=digest,
         budget=effective_budget,
         exact_counter=exact_counter,
+        original_chars=len(input_pack),
+        query=query,
     )
     scene = _compile_stage(
         sections,
@@ -95,6 +112,8 @@ def compile_prompt_contexts(
         digest=digest,
         budget=effective_budget,
         exact_counter=exact_counter,
+        original_chars=len(input_pack),
+        query=query,
     )
     repair_required = mandatory if "Context" in mandatory else mandatory & set(REPAIR_SECTIONS)
     repair_preferred = {"Context"} if "Context" in mandatory else set(REPAIR_SECTIONS)
@@ -106,6 +125,8 @@ def compile_prompt_contexts(
         digest=digest,
         budget=effective_budget,
         exact_counter=exact_counter,
+        original_chars=len(input_pack),
+        query=query,
     )
     return PromptContextBundle(context_digest=digest, plan=plan, scene=scene, repair=repair)
 
@@ -119,12 +140,23 @@ def _compile_stage(
     digest: str,
     budget: ContextBudget,
     exact_counter,
+    original_chars: int,
+    query: str,
 ) -> CompiledPromptContext:
     available = {name for name, _ in sections}
     required_available = required & available
-    required_text = _render_sections(
-        [(name, text) for name, text in sections if name in required_available],
+    required_indexes = {
+        index for index, (name, _text) in enumerate(sections) if name in required_available
+    }
+    required_chosen = [
+        item for index, item in enumerate(sections) if index in required_indexes
+    ]
+    required_text, _required_manifest = _render_sections(
+        required_chosen,
+        all_sections=sections,
         digest=digest,
+        original_chars=original_chars,
+        stage=stage,
     )
     required_report = budget.measure(required_text, stage=stage, exact_counter=exact_counter)
     if not required_report["within_budget"]:
@@ -132,24 +164,54 @@ def _compile_stage(
             "story_project_context_budget_exceeded",
             f"mandatory {stage} context requires {required_report['budgeted_input_tokens']} tokens",
         )
-    chosen = [(name, text) for name, text in sections if name in preferred or name in required_available]
-    while True:
-        rendered = _render_sections(chosen, digest=digest)
+    chosen_indexes = set(required_indexes)
+    optional_indexes = [
+        index
+        for index, (name, _text) in enumerate(sections)
+        if index not in required_indexes and name in preferred
+    ]
+    ranked_optional = rank_texts(
+        [sections[index][1] for index in optional_indexes],
+        query=query,
+        prefer_recent=True,
+    )
+    for ranked_index in ranked_optional:
+        candidate_index = optional_indexes[ranked_index]
+        candidate_indexes = chosen_indexes | {candidate_index}
+        candidate = [
+            item for index, item in enumerate(sections) if index in candidate_indexes
+        ]
+        rendered, _selection = _render_sections(
+            candidate,
+            all_sections=sections,
+            digest=digest,
+            original_chars=original_chars,
+            stage=stage,
+        )
         report = budget.measure(rendered, stage=stage, exact_counter=exact_counter)
         if report["within_budget"]:
-            return CompiledPromptContext(
-                text=rendered,
-                report=report,
-                selected_sections=tuple(name for name, _ in chosen),
-            )
-        optional_indexes = [index for index, (name, _) in enumerate(chosen) if name not in required_available]
-        if not optional_indexes:
-            raise ContextBudgetError(
-                "story_project_context_budget_exceeded",
-                f"mandatory {stage} context exceeds hard input limit",
-            )
-        largest = max(optional_indexes, key=lambda index: len(chosen[index][1].encode("utf-8")))
-        chosen.pop(largest)
+            chosen_indexes = candidate_indexes
+
+    chosen = [item for index, item in enumerate(sections) if index in chosen_indexes]
+    rendered, selection_manifest = _render_sections(
+        chosen,
+        all_sections=sections,
+        digest=digest,
+        original_chars=original_chars,
+        stage=stage,
+    )
+    report = budget.measure(rendered, stage=stage, exact_counter=exact_counter)
+    if not report["within_budget"]:
+        raise ContextBudgetError(
+            "story_project_context_budget_exceeded",
+            f"mandatory {stage} context exceeds hard input limit",
+        )
+    return CompiledPromptContext(
+        text=rendered,
+        report=report,
+        selected_sections=tuple(name for name, _ in chosen),
+        selection_manifest=selection_manifest,
+    )
 
 
 def _markdown_sections(text: str) -> list[tuple[str, str]]:
@@ -163,28 +225,58 @@ def _markdown_sections(text: str) -> list[tuple[str, str]]:
     return sections
 
 
-def _render_sections(sections: list[tuple[str, str]], *, digest: str) -> str:
+def _render_sections(
+    sections: list[tuple[str, str]],
+    *,
+    all_sections: list[tuple[str, str]],
+    digest: str,
+    original_chars: int,
+    stage: str,
+) -> tuple[str, dict[str, Any]]:
+    selected = [
+        {
+            "id": f"section:{name}",
+            "name": name,
+            "sha256": sha256_text(text),
+            "original_chars": len(text),
+        }
+        for name, text in sections
+    ]
+    manifest = {
+        "schema_version": "1.0",
+        "policy": f"prompt_{stage}_section_relevance_v1",
+        "source_sha256": digest,
+        "original_chars": original_chars,
+        "selected_items": selected,
+        "omitted_count": max(0, len(all_sections) - len(sections)),
+    }
     body = "\n\n".join(text for _, text in sections).strip()
-    return f"# Context Digest\n{digest}\n\n{body}" if body else f"# Context Digest\n{digest}"
+    prefix = (
+        f"# Context Digest\n{digest}\n\n"
+        "# Prompt Context Selection\n"
+        + json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
+    )
+    return (f"{prefix}\n\n{body}" if body else prefix), manifest
 
 
-def _compact_oversized_section(name: str, text: str) -> str:
-    """Bound cumulative StoryProject writeback without dropping the active blueprint.
-
-    The active chapter fields are serialized at the start of this section, while
-    validation/read-set metadata is at the end.  Managed tracking blocks in the
-    middle grow once per committed chapter and are redundant with Story State.
-    """
+def _compact_oversized_section(name: str, text: str, *, query: str = "") -> str:
+    """Bound cumulative writeback by selecting complete JSON/paragraph entries."""
     if name != "StoryProject Chapter Blueprint" or len(text) <= 8_000:
         return text
-    head_chars = 6_000
-    tail_chars = 2_000
-    omitted = len(text) - head_chars - tail_chars
-    return (
-        text[:head_chars].rstrip()
-        + f"\n\n[... {omitted} cumulative StoryProject characters compacted ...]\n\n"
-        + text[-tail_chars:].lstrip()
-    )
+    try:
+        return compact_markdown_section(
+            name,
+            text,
+            max_chars=8_000,
+            query=query,
+            required_json_keys={"chapter_blueprint", "read_set_context_digest"},
+            policy="story_project_blueprint_json_items_v1",
+        )
+    except StructuredContextError as exc:
+        raise ContextBudgetError(
+            "story_project_context_budget_exceeded",
+            f"required structured entries in {name} exceed the section budget: {exc}",
+        ) from exc
 
 
 __all__ = [

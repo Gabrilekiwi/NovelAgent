@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 from unittest.mock import patch
 
@@ -406,6 +407,10 @@ class ValidatorTest(unittest.TestCase):
             "timeline": [],
         }
 
+        chapter = "The danger forced a choice that created open conflict in the shelter."
+        quote = "forced a choice"
+        start = chapter.index(quote)
+
         def fake_llm_validator(snapshot, chapter_text, decision):
             return llm_payload_to_check(
                 {
@@ -415,16 +420,25 @@ class ValidatorTest(unittest.TestCase):
                             "message": "The protagonist changes goals without a cause.",
                             "area": "character_motivation_consistency",
                             "severity": "high",
-                            "evidence": [{"kind": "motivation", "value": "Goal shift has no trigger."}],
+                            "fact_id": "chapter:sha256:" + hashlib.sha256(chapter_text.encode("utf-8")).hexdigest(),
+                            "evidence": [
+                                {
+                                    "kind": "chapter_span",
+                                    "start_char": start,
+                                    "end_char": start + len(quote),
+                                    "quote": quote,
+                                }
+                            ],
                             "repair_hint": "Add a causal beat before the goal changes.",
                         }
                     ]
-                }
+                },
+                chapter_text=chapter_text,
             )
 
         result = validate_chapter(
             snapshot,
-            "The danger forced a choice that created open conflict in the shelter.",
+            chapter,
             enable_llm=True,
             llm_validator=fake_llm_validator,
         )
@@ -436,7 +450,8 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual("high", problem["severity"])
         self.assertEqual("character_motivation_consistency", problem["area"])
         self.assertEqual("character_motivation_consistency", problem["repair_parameters"]["area"])
-        self.assertEqual([{"kind": "motivation", "value": "Goal shift has no trigger."}], problem["evidence"])
+        self.assertEqual([{"kind": "chapter_span", "value": quote}], problem["evidence"])
+        self.assertEqual("chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest(), problem["fact_id"])
 
     def test_llm_payload_contract_rejects_missing_evidence(self) -> None:
         with self.assertRaisesRegex(Exception, "llm_validation.schema.json"):
@@ -451,7 +466,8 @@ class ValidatorTest(unittest.TestCase):
                             "repair_hint": "Add the missing cause.",
                         }
                     ]
-                }
+                },
+                chapter_text="Missing causal bridge.",
             )
 
     def test_llm_payload_contract_rejects_missing_area(self) -> None:
@@ -463,12 +479,79 @@ class ValidatorTest(unittest.TestCase):
                             "code": "llm_timeline_gap",
                             "message": "Missing causal bridge.",
                             "severity": "medium",
-                            "evidence": [{"kind": "timeline", "value": "Effect appears before cause."}],
+                            "fact_id": "chapter:sha256:" + hashlib.sha256(b"Effect appears before cause.").hexdigest(),
+                            "evidence": [
+                                {
+                                    "kind": "chapter_span",
+                                    "start_char": 0,
+                                    "end_char": len("Effect appears before cause."),
+                                    "quote": "Effect appears before cause.",
+                                }
+                            ],
                             "repair_hint": "Add the missing cause.",
                         }
                     ]
-                }
+                },
+                chapter_text="Effect appears before cause.",
             )
+
+    def test_llm_evidence_must_match_chapter_digest_and_exact_span(self) -> None:
+        chapter = "Alpha beta gamma."
+        fact_id = "chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest()
+        payload = {
+            "problems": [
+                {
+                    "code": "llm_timeline_gap",
+                    "message": "The evidence is inconsistent.",
+                    "area": "timeline_causality",
+                    "severity": "high",
+                    "fact_id": fact_id,
+                    "evidence": [
+                        {
+                            "kind": "chapter_span",
+                            "start_char": 0,
+                            "end_char": 5,
+                            "quote": "wrong",
+                        }
+                    ],
+                    "repair_hint": "Repair the causal transition.",
+                }
+            ]
+        }
+
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            llm_payload_to_check(payload, chapter_text=chapter)
+
+    def test_medium_llm_finding_is_advisory_before_calibration(self) -> None:
+        chapter = "The alarm rang before the door opened."
+        quote = "alarm rang"
+        start = chapter.index(quote)
+        check = llm_payload_to_check(
+            {
+                "problems": [
+                    {
+                        "code": "llm_possible_timeline_gap",
+                        "message": "The causal ordering may be unclear.",
+                        "area": "timeline_causality",
+                        "severity": "medium",
+                        "fact_id": "chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest(),
+                        "evidence": [
+                            {
+                                "kind": "chapter_span",
+                                "start_char": start,
+                                "end_char": start + len(quote),
+                                "quote": quote,
+                            }
+                        ],
+                        "repair_hint": "Clarify the order if another check confirms it.",
+                    }
+                ]
+            },
+            chapter_text=chapter,
+        )
+
+        self.assertTrue(check["ok"])
+        self.assertFalse(check["problems"][0]["blocking"])
 
     def test_llm_validation_areas_match_story_level_contract(self) -> None:
         self.assertEqual(

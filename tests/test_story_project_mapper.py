@@ -129,12 +129,23 @@ class StoryProjectMapperTest(unittest.TestCase):
         self.assertIsNone(context.previous_prose)
         self.assertIsNone(context.source_paths.previous_prose_path)
 
-    def test_missing_previous_prose_warns_without_blocking(self) -> None:
+    def test_empty_prose_authority_treats_requested_chapter_as_first_commit(self) -> None:
         case_dir = self._case_dir("missing_previous")
         root = self._story_project(case_dir)
         self._write_outline(root, 2)
 
         context = build_story_project_runtime_context(root, 2)
+
+        self.assertIsNone(context.previous_prose)
+        self.assertNotIn("previous_chapter_missing", " ".join(context.warnings))
+
+    def test_gapped_previous_prose_warns_without_blocking_in_legacy_mapper_mode(self) -> None:
+        case_dir = self._case_dir("gapped_previous")
+        root = self._story_project(case_dir)
+        self._write_outline(root, 3)
+        (root / "正文" / "第001章_开端.md").write_text("更早正文。", encoding="utf-8")
+
+        context = build_story_project_runtime_context(root, 3)
 
         self.assertIsNone(context.previous_prose)
         self.assertIn("previous_chapter_missing", " ".join(context.warnings))

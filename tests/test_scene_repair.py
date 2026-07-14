@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from core.schema import validate_schema
@@ -8,19 +9,22 @@ from modules.scene_repair.repairer import _compact_repair_context, _compact_vali
 
 
 class SceneRepairTest(unittest.TestCase):
-    def test_compact_repair_context_caps_large_sections_and_keeps_head_tail(self) -> None:
+    def test_compact_repair_context_selects_complete_relevant_paragraphs(self) -> None:
         context = "\n\n".join(
             f"# Section {index}\nHEAD-{index}\n" + (str(index) * 200) + f"\nTAIL-{index}"
             for index in range(6)
         )
 
-        compact = _compact_repair_context(context, max_section_chars=80)
+        compact = _compact_repair_context(context, max_section_chars=120, query="TAIL-3")
 
         self.assertLess(len(compact), len(context))
-        for index in range(6):
-            self.assertIn(f"# Section {index}", compact)
-            self.assertIn(f"TAIL-{index}", compact)
-        self.assertIn("repair context excerpted", compact)
+        self.assertIn("# Section 3", compact)
+        self.assertIn("TAIL-3", compact)
+        self.assertIn("完整条目已省略", compact)
+        manifest = json.loads(compact.split("# Structured Context Manifest\n", 1)[1])
+        self.assertEqual(len(context), manifest["original_chars"])
+        self.assertEqual(64, len(manifest["source_sha256"]))
+        self.assertTrue(any("Section 3" in item for item in manifest["selected_items"]))
 
     def test_compact_validation_keeps_repair_evidence_without_full_diagnostics(self) -> None:
         compact = _compact_validation(
@@ -48,8 +52,10 @@ class SceneRepairTest(unittest.TestCase):
         self.assertEqual(["door_conflict"], compact["problem_codes"])
         self.assertNotIn("large_diagnostics", compact)
         self.assertNotIn("large_metadata", compact["problems"][0])
-        self.assertEqual(4, len(compact["problems"][0]["evidence"]))
-        self.assertEqual(600, len(compact["problems"][0]["evidence"][0]["value"]))
+        self.assertEqual(2, len(compact["problems"][0]["evidence"]))
+        self.assertTrue(all(len(item["value"]) == 1_000 for item in compact["problems"][0]["evidence"]))
+        self.assertEqual(64, len(compact["selection"]["source_sha256"]))
+        self.assertGreater(compact["problems"][0]["evidence_selection"]["omitted_count"], 0)
 
     def test_build_repair_plan_orders_actions_by_priority(self) -> None:
         plan = build_repair_plan(

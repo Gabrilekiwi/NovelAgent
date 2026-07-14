@@ -9,6 +9,7 @@ from api.openai_client import chat_completion
 from core.context_budget import default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
 from core.schema import validate_schema
+from core.structured_context import compact_markdown_context, select_text_blocks
 from core.story_project.coverage import (
     blueprint_to_dict,
     build_blueprint_coverage,
@@ -75,6 +76,9 @@ def run_chapter_pipeline(
                 "plan_sections": list(prompt_contexts.plan.selected_sections),
                 "scene_sections": list(prompt_contexts.scene.selected_sections),
                 "repair_sections": list(prompt_contexts.repair.selected_sections),
+                "plan_selection": dict(prompt_contexts.plan.selection_manifest),
+                "scene_selection": dict(prompt_contexts.scene.selection_manifest),
+                "repair_selection": dict(prompt_contexts.repair.selection_manifest),
             },
             "stages": _pipeline_stages(
                 {
@@ -168,10 +172,47 @@ def _request_chapter_plan_json_repair(
     invalid_payload: str,
     error: json.JSONDecodeError,
 ) -> str:
-    default_context_budget().require_input(
-        input_pack[:6000] + invalid_payload,
-        stage="plan_json_repair",
+    query = f"chapter plan JSON repair\n{error}"
+    input_selection = compact_markdown_context(
+        input_pack,
+        max_chars=6_000,
+        per_section_max_chars=1_200,
+        query=query,
+        required_sections={
+            "Context Digest",
+            "Prompt Context Selection",
+            "Director Decision",
+            "Story State",
+            "StoryProject Chapter Blueprint",
+            "Requirements",
+        },
+        excluded_sections={"Memory Index", "Structured Context Manifest"},
+        required_json_keys={
+            "StoryProject Chapter Blueprint": {"chapter_blueprint", "read_set_context_digest"},
+        },
+        policy="plan_json_repair_input_v1",
     )
+    invalid_selection = select_text_blocks(
+        invalid_payload,
+        max_chars=4_000,
+        query=str(error),
+        required="edges",
+        prefer_recent=False,
+        policy="invalid_plan_response_blocks_v1",
+    )
+    request_payload = json.dumps(
+        {
+            "chapter_index": chapter_index,
+            "json_error": str(error),
+            "invalid_response": invalid_selection.text,
+            "invalid_response_selection": invalid_selection.manifest(),
+            "input_pack_excerpt": input_selection.text,
+            "input_pack_selection": input_selection.manifest(),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    default_context_budget().require_input(request_payload, stage="plan_json_repair")
     return chat_completion(
         [
             {
@@ -186,16 +227,7 @@ def _request_chapter_plan_json_repair(
             },
             {
                 "role": "user",
-                "content": json.dumps(
-                    {
-                        "chapter_index": chapter_index,
-                        "json_error": str(error),
-                        "invalid_response": invalid_payload,
-                        "input_pack_excerpt": input_pack[:6000],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
+                "content": request_payload,
             },
         ],
         temperature=0.0,
@@ -281,7 +313,17 @@ def _scene_request_payload(
     scene_count = max(1, len([item for item in plan.get("scenes", []) if isinstance(item, dict)]))
     target_min_chars = max(600, 3_000 // scene_count)
     target_max_chars = max(target_min_chars, 4_500 // scene_count)
-    compact_scene_context = _compact_scene_context(input_pack)
+    context_query = json.dumps(
+        {
+            "chapter_plan": plan,
+            "scene": scene,
+            "required_beats": scene_required_beats,
+            "ending_pressure": (blueprint or {}).get("ending_pressure"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    compact_scene_context = _compact_scene_context(input_pack, query=context_query)
     payload = json.dumps(
         {
             "shared_context": compact_scene_context,
@@ -310,29 +352,37 @@ def _scene_request_payload(
     return payload
 
 
-def _compact_scene_context(text: str, *, max_section_chars: int = 1_500) -> str:
-    """Bound cumulative StoryProject writeback while preserving every current context section."""
-    if len(text) <= max_section_chars * 7:
-        return text
-    matches = list(re.finditer(r"(?m)^# ([^\r\n]+)\r?$", text))
-    if not matches:
-        return _head_tail_context(text, max_section_chars * 7)
-    compact: list[str] = []
-    for index, match in enumerate(matches):
-        name = match.group(1).strip()
-        if name == "Memory Index":
-            continue
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        compact.append(_head_tail_context(text[match.start():end].rstrip(), max_section_chars))
-    return "\n\n".join(compact)
-
-
-def _head_tail_context(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    head = max(1, int(limit * 0.7))
-    tail = max(1, limit - head)
-    return f"{text[:head].rstrip()}\n\n[...scene context excerpted...]\n\n{text[-tail:].lstrip()}"
+def _compact_scene_context(
+    text: str,
+    *,
+    max_section_chars: int = 1_500,
+    query: str = "",
+) -> str:
+    """Retrieve complete sections/JSON items relevant to the current scene."""
+    selection = compact_markdown_context(
+        text,
+        max_chars=max_section_chars * 7,
+        per_section_max_chars=max_section_chars,
+        query=query,
+        required_sections={
+            "Context Digest",
+            "Prompt Context Selection",
+            "Project Profile",
+            "Director Decision",
+            "Story State",
+            "Spatial State",
+            "StoryProject Chapter Blueprint",
+            "Requirements",
+            "灏忚鐢熸垚瑙勫垯濂戠害",
+        },
+        excluded_sections={"Memory Index", "Structured Context Manifest"},
+        required_json_keys={
+            "StoryProject Chapter Blueprint": {"chapter_blueprint", "read_set_context_digest"},
+        },
+        prefer_recent=True,
+        policy="scene_markdown_json_retrieval_v1",
+    )
+    return selection.text
 
 
 def merge_scenes(scene_drafts: list[dict[str, Any]]) -> str:

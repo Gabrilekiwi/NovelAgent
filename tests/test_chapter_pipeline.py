@@ -107,8 +107,13 @@ class ChapterPipelineTest(unittest.TestCase):
         )
 
         self.assertNotIn("Memory Index", payload["shared_context"])
-        self.assertIn("scene context excerpted", payload["shared_context"])
+        self.assertIn("完整条目已省略", payload["shared_context"])
         self.assertIn("TAIL-7", payload["shared_context"])
+        self.assertLessEqual(len(payload["shared_context"]), 1_500 * 7)
+        manifest = json.loads(payload["shared_context"].split("# Structured Context Manifest\n", 1)[1])
+        self.assertEqual(len(context), manifest["original_chars"])
+        self.assertEqual(64, len(manifest["source_sha256"]))
+        self.assertTrue(manifest["selected_items"])
 
     def test_story_project_plan_does_not_call_model_planner(self) -> None:
         original_chat_completion = pipeline_module.chat_completion

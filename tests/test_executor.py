@@ -7,9 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from api.contracts import ModelCallError, ModelOutputError
+from api.contracts import ModelCallError, ModelOutputError, ModelResponse
 from core.director import DirectorDecisionError
 from core.engine.executor import AgentExecutor, LoopExecutionError
+from core.execution_provenance import validate_execution_provenance
+from core.model_call_runtime import ProviderCallUncertainError, current_model_call_runtime
+from core.model_calls import ModelCallStore
 from core.engine.persistence import LocalPersistenceTransaction, PersistenceError, PersistenceTarget
 from core.engine.run_record import build_run_record
 from core.engine.workflow import WorkflowError
@@ -136,6 +139,8 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertTrue(result["validation"]["ok"])
         self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))
         self.assertFalse((tmp_path / "runs").exists())
+        self.assertIsNone(result["run"]["execution_evidence"]["provenance_artifact_ref"])
+        self.assertIsNone(result["run"]["execution_evidence"]["model_calls_ref"])
 
     def test_persist_updates_snapshot_and_writes_run_record(self) -> None:
         tmp_path = self._case_dir("persist")
@@ -167,6 +172,14 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(1, len(run_files))
         saved_run = json.loads(run_files[0].read_text(encoding="utf-8"))
         self.assertIs(saved_run, validate_schema(saved_run, "run_result.schema.json"))
+        evidence = saved_run["run"]["execution_evidence"]
+        provenance_path = tmp_path / "runs" / Path(evidence["provenance_artifact_ref"])
+        self.assertTrue(provenance_path.is_file())
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        self.assertEqual(evidence["provenance_hash"], provenance["provenance_hash"])
+        self.assertEqual(provenance, validate_execution_provenance(provenance))
+        self.assertFalse(Path(evidence["provenance_artifact_ref"]).is_absolute())
+        self.assertFalse(Path(evidence["model_calls_ref"]).is_absolute())
         self.assertEqual("committed", saved_run["run"]["status"])
         self.assertTrue(saved_run["run"]["committed"])
         self.assertEqual("rule", saved_run["run"]["director"]["mode"])
@@ -178,6 +191,7 @@ class AgentExecutorTest(unittest.TestCase):
             saved_run["run"]["director"],
             validate_schema(saved_run["run"]["director"], "director_audit.schema.json"),
         )
+
         self.assertEqual(
             ["generate_chapter", "polish", "validate", "repair_if_needed"],
             [event["action"] for event in saved_run["run"]["trace"]],
@@ -279,6 +293,96 @@ class AgentExecutorTest(unittest.TestCase):
         for scene_artifact in pipeline_artifacts["scene_drafts"]:
             self.assertTrue(Path(scene_artifact["path"]).exists())
             self.assertIn("Merged Span", Path(scene_artifact["path"]).read_text(encoding="utf-8"))
+
+    def test_executor_injects_shared_model_call_store_and_budget_before_provider(self) -> None:
+        tmp_path = self._case_dir("model_call_evidence")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        private_prompt = "private prompt must only be hashed"
+
+        def generator(_: str) -> str:
+            runtime = current_model_call_runtime()
+            self.assertIsNotNone(runtime)
+            assert runtime is not None
+            return str(
+                runtime.execute_attempt(
+                    call_id="executor-generation",
+                    attempt_number=1,
+                    provider="openai",
+                    model="gpt-test",
+                    stage="chapter_generation",
+                    endpoint_type="official",
+                    request={"messages": [{"role": "user", "content": private_prompt}]},
+                    max_output_tokens=20,
+                    input_tokens=4,
+                    operation=lambda: ModelResponse(
+                        "The shelter alarm failed, so the group crossed the flooded service tunnel.",
+                        usage={"input_tokens": 4, "output_tokens": 8},
+                        finish_reason="stop",
+                        request_id="req-executor",
+                        actual_model="gpt-test-actual",
+                        endpoint_type="official",
+                    ),
+                )
+            )
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            generator=generator,
+            polisher=lambda chapter: chapter,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+        ).run_once(persist=True)
+
+        evidence = result["run"]["execution_evidence"]
+        model_root = tmp_path / "runs" / Path(evidence["model_calls_ref"])
+        intent_path = model_root / "intents" / "executor-generation-a1.json"
+        receipt_path = model_root / "receipts" / "executor-generation-a1.json"
+        response_path = model_root / "responses" / "executor-generation-a1.txt"
+        self.assertTrue(intent_path.is_file())
+        self.assertTrue(receipt_path.is_file())
+        self.assertTrue(response_path.is_file())
+        self.assertNotIn(private_prompt, intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("req-executor", json.loads(receipt_path.read_text(encoding="utf-8"))["request_id"])
+        self.assertEqual(1, evidence["budget"]["provider_calls"])
+        self.assertEqual(8, evidence["budget"]["total_output_tokens"])
+        self.assertEqual(0, evidence["budget"]["reserved_output_tokens"])
+
+    def test_executor_refuses_new_provider_work_when_prior_intent_is_uncertain(self) -> None:
+        tmp_path = self._case_dir("prior_uncertain_model_call")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        run_dir = tmp_path / "runs"
+        store = ModelCallStore(run_dir / "executions" / "execution_old" / "model_calls")
+        store.create_intent(
+            call_id="old-call",
+            attempt_id="old-call-a1",
+            provider="openai",
+            model="gpt-test",
+            stage="chapter_generation",
+            budget_reservation={
+                "reserved_input_tokens": 1,
+                "reserved_output_tokens": 5,
+                "reserved_total_tokens": 6,
+            },
+            request={"messages": [{"role": "user", "content": "private"}]},
+        )
+
+        with self.assertRaises(ProviderCallUncertainError) as caught:
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                run_dir=run_dir,
+                dry_run=True,
+            ).run_once(persist=True)
+
+        self.assertEqual("old-call-a1", caught.exception.attempt_id)
+        self.assertEqual(
+            ["execution_old"],
+            [path.name for path in (run_dir / "executions").iterdir()],
+        )
 
     def test_review_auto_repair_accepts_repaired_chapter_before_commit(self) -> None:
         tmp_path = self._case_dir("review_repair_accept")
@@ -2067,6 +2171,15 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertTrue(loop_result["session"]["runs"][0]["trace_plan_aligned"])
         self.assertIs(loop_result["session"], validate_schema(loop_result["session"], "loop_session.schema.json"))
         self.assertEqual([True, True], [run["committed"] for run in loop_result["runs"]])
+        execution_ids = {
+            run["run"]["execution_evidence"]["execution_id"]
+            for run in loop_result["runs"]
+        }
+        self.assertEqual(1, len(execution_ids))
+        self.assertEqual(
+            1,
+            len(list((tmp_path / "runs" / "executions").glob("*/provenance.json"))),
+        )
         self.assertEqual(4, saved["chapter_index"])
         self.assertEqual(2, len(list((tmp_path / "runs").glob("chapter_*.json"))))
         session_files = list((tmp_path / "runs" / "loop_sessions").glob("loop_*.json"))

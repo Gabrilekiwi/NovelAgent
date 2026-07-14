@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ModelCallReceipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "canonical_json_algorithm",
+    "call_id",
+    "attempt_id",
+    "intent_hash",
+    "response_artifact_hash",
+    "response_artifact_ref",
+    "usage",
+    "finish_reason",
+    "request_id",
+    "actual_model",
+    "endpoint_type",
+    "status",
+    "received_at",
+    "receipt_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "canonical_json_algorithm": {"type": "string", "enum": ["novelagent-canonical-json-v1"]},
+    "call_id": {"type": "string", "minLength": 1},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "intent_hash": {"type": "string", "minLength": 64},
+    "response_artifact_hash": {"type": "string", "minLength": 64},
+    "response_artifact_ref": {"type": ["string", "null"]},
+    "usage": {"type": "object", "additionalProperties": true},
+    "finish_reason": {"type": ["string", "null"]},
+    "request_id": {"type": ["string", "null"]},
+    "actual_model": {"type": ["string", "null"]},
+    "endpoint_type": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "minLength": 1},
+    "received_at": {"type": "string", "minLength": 1},
+    "receipt_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

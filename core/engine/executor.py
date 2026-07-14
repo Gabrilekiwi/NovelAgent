@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import inspect
+import threading
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,6 +13,14 @@ from api.contracts import ModelCallError, ModelOutputError
 from api.retry import consume_retry_telemetry, reset_retry_telemetry
 from core.chapter_contexts import ChapterContextError, resolve_committed_previous_chapter_artifact
 from core.config import get_config
+from core.context_budget import RunBudgetLimits, RunBudgetTracker
+from core.execution_provenance import ExecutionProvenance, capture_execution_provenance
+from core.model_call_runtime import (
+    ModelCallRuntimeContext,
+    ProviderCallUncertainError,
+    use_model_call_runtime,
+)
+from core.model_calls import ModelCallStore
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
 from core.quality_decision import (
@@ -37,6 +48,7 @@ from core.engine.persistence import (
     PersistenceError,
     PersistencePreparationError,
     PersistenceTarget,
+    atomic_create_json,
     atomic_write_json,
     persistence_run_lock,
 )
@@ -95,6 +107,11 @@ ChapterValidator = Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any
 Director = Callable[[dict[str, Any], dict[str, Any] | None], dict[str, Any]]
 MemoryLoader = Callable[[], dict[str, Any]]
 LoopObserver = Callable[[dict[str, Any]], None]
+
+_PROVENANCE_CACHE: dict[tuple[Any, ...], ExecutionProvenance] = {}
+_PROVENANCE_CACHE_LOCK = threading.Lock()
+
+
 class AgentExecutor:
     def __init__(
         self,
@@ -124,6 +141,9 @@ class AgentExecutor:
         story_project_oh_story_report: dict[str, Any] | None = None,
         story_project_writeback: StoryProjectWritebackConfig | None = None,
         quality_policy: str | QualityPolicy | None = None,
+        repository_root: str | Path | None = None,
+        enable_execution_provenance: bool = True,
+        run_budget_limits: RunBudgetLimits | None = None,
     ) -> None:
         self.snapshot_path = Path(snapshot_path)
         self.memory_path = Path(memory_path) if memory_path else None
@@ -156,6 +176,17 @@ class AgentExecutor:
         self.story_project_oh_story_report = story_project_oh_story_report
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
         self.quality_policy = resolve_quality_policy(quality_policy) if quality_policy is not None else None
+        self.repository_root = (
+            Path(repository_root)
+            if repository_root is not None
+            else Path(__file__).resolve().parents[2]
+        )
+        self.enable_execution_provenance = bool(enable_execution_provenance)
+        self.run_budget_limits = run_budget_limits or RunBudgetLimits()
+        self._execution_scope_depth = 0
+        self._execution_evidence: dict[str, Any] | None = None
+        self._run_budget_tracker: RunBudgetTracker | None = None
+        self._model_call_runtime: ModelCallRuntimeContext | None = None
         self.story_project_context_service = StoryProjectContextService()
         self.quality_coordinator = QualityCoordinator()
         self.persistence_coordinator = PersistenceCoordinator(
@@ -164,7 +195,113 @@ class AgentExecutor:
         )
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
-        return self._invoke_once(persist=persist)
+        with self._execution_scope(persist=persist):
+            return self._invoke_once(persist=persist)
+
+    @contextmanager
+    def _execution_scope(self, *, persist: bool):
+        if self._execution_scope_depth:
+            self._execution_scope_depth += 1
+            try:
+                yield
+            finally:
+                self._execution_scope_depth -= 1
+            return
+
+        self._execution_scope_depth = 1
+        previous_evidence = self._execution_evidence
+        previous_tracker = self._run_budget_tracker
+        previous_runtime = self._model_call_runtime
+        try:
+            self._execution_evidence = self._begin_execution_evidence(persist=persist)
+            self._run_budget_tracker = RunBudgetTracker(self.run_budget_limits)
+            model_calls_ref = (
+                self._execution_evidence.get("model_calls_ref")
+                if isinstance(self._execution_evidence, dict)
+                else None
+            )
+            self._model_call_runtime = (
+                ModelCallRuntimeContext(
+                    ModelCallStore(self.run_dir / Path(model_calls_ref)),
+                    tracker=self._run_budget_tracker,
+                )
+                if isinstance(model_calls_ref, str) and model_calls_ref
+                else None
+            )
+            if self._model_call_runtime is None:
+                yield
+            else:
+                with use_model_call_runtime(self._model_call_runtime):
+                    yield
+        finally:
+            self._execution_evidence = previous_evidence
+            self._run_budget_tracker = previous_tracker
+            self._model_call_runtime = previous_runtime
+            self._execution_scope_depth = 0
+
+    def _begin_execution_evidence(self, *, persist: bool) -> dict[str, Any] | None:
+        if not self.enable_execution_provenance:
+            return None
+        persist_evidence = (
+            persist
+            or not self.dry_run
+            or self.enable_llm_validator
+            or _director_mode(self.director) == "model"
+        )
+        if persist_evidence:
+            unresolved = _unresolved_provider_calls(self.run_dir)
+            if unresolved:
+                first = unresolved[0]
+                raise ProviderCallUncertainError(
+                    call_id=str(first["call_id"]),
+                    attempt_id=str(first["attempt_id"]),
+                )
+        config = get_config()
+        public_config = {
+            "openai_max_output_tokens": config.openai_max_output_tokens,
+            "claude_max_tokens": config.claude_max_tokens,
+            "provider_max_attempts": config.provider_max_attempts,
+            "provider_retry_deadline_seconds": config.provider_retry_deadline_seconds,
+            "quality_policy": self.quality_policy.name if self.quality_policy is not None else "runtime_default",
+        }
+        feature_flags = {
+            "dry_run": self.dry_run,
+            "llm_validator": self.enable_llm_validator,
+            "memory_v2": True,
+            "review_gate": self.review_config.enabled,
+            "story_project_writeback": self.story_project_writeback.enabled,
+        }
+        provenance = _capture_execution_provenance_cached(
+            self.repository_root,
+            provider="openai",
+            model=config.openai_model,
+            config=public_config,
+            feature_flags=feature_flags,
+        )
+        payload = validate_schema(provenance.to_dict(), "execution_provenance.schema.json")
+        execution_id = f"execution_{uuid.uuid4().hex}"
+        provenance_ref: str | None = None
+        model_calls_ref: str | None = None
+        if persist_evidence:
+            provenance_ref = f"executions/{execution_id}/provenance.json"
+            model_calls_ref = f"executions/{execution_id}/model_calls"
+            atomic_create_json(self.run_dir / Path(provenance_ref), payload)
+        return {
+            "execution_id": execution_id,
+            "provenance_hash": provenance.provenance_hash,
+            "provenance_artifact_ref": provenance_ref,
+            "model_calls_ref": model_calls_ref,
+        }
+
+    def _attach_execution_evidence(self, result: dict[str, Any]) -> None:
+        if self._execution_evidence is None:
+            return
+        run = result.get("run") if isinstance(result, dict) else None
+        if isinstance(run, dict):
+            evidence = dict(self._execution_evidence)
+            if self._run_budget_tracker is not None:
+                evidence["budget"] = self._run_budget_tracker.report()
+            run["execution_evidence"] = evidence
 
     def _invoke_once(
         self,
@@ -530,6 +667,7 @@ class AgentExecutor:
             state_update_audit=state_update_audit,
             chapter_pipeline=chapter_pipeline,
             quality_decision=quality_decision,
+            accepted=accepted,
             status="preview" if accepted and not persist else None,
         )
 
@@ -550,6 +688,7 @@ class AgentExecutor:
         }
         self._attach_precomputed_runtime_review(result, review_pipeline, review_gate, review_repair)
         self._attach_story_project_audit(result)
+        self._attach_execution_evidence(result)
 
         if persist:
             if accepted:
@@ -583,6 +722,22 @@ class AgentExecutor:
         return result
 
     def run_loop(
+        self,
+        *,
+        steps: int,
+        persist: bool = True,
+        stop_on_rejection: bool = True,
+        observer: LoopObserver | None = None,
+    ) -> dict[str, Any]:
+        with self._execution_scope(persist=persist):
+            return self._run_loop_impl(
+                steps=steps,
+                persist=persist,
+                stop_on_rejection=stop_on_rejection,
+                observer=observer,
+            )
+
+    def _run_loop_impl(
         self,
         *,
         steps: int,
@@ -1158,7 +1313,7 @@ class AgentExecutor:
             return (
                 chapter,
                 validation,
-                bool(original_quality_decision["accepted"]),
+                bool(original_quality_decision["accepted"]) and _review_gate_allows_commit(review_gate),
                 chapter_pipeline,
                 original_review,
                 review_gate,
@@ -1229,7 +1384,7 @@ class AgentExecutor:
             return (
                 chapter,
                 validation,
-                bool(original_quality_decision["accepted"]),
+                bool(original_quality_decision["accepted"]) and _review_gate_allows_commit(review_gate),
                 chapter_pipeline,
                 original_review,
                 review_gate,
@@ -1254,7 +1409,7 @@ class AgentExecutor:
         )
         final_gate = self._review_gate_for_review(final_review, final_quality_decision)
 
-        if final_quality_decision["accepted"]:
+        if final_quality_decision["accepted"] and _review_gate_allows_commit(final_gate):
             repaired_chapter = str(review_repair.get("final_chapter") or chapter)
             repaired_validation = (
                 review_repair.get("final_validation")
@@ -1438,6 +1593,7 @@ class AgentExecutor:
 
     def _save_run_record(self, result: dict[str, Any]) -> None:
         self._attach_story_project_audit(result)
+        self._attach_execution_evidence(result)
         validate_run_result(result)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         path = self.run_dir / f"{result['run']['id']}.json"
@@ -2016,6 +2172,53 @@ class AgentExecutor:
         result["review_index"] = summary
 
 
+def _capture_execution_provenance_cached(
+    repository_root: Path,
+    *,
+    provider: str,
+    model: str,
+    config: dict[str, Any],
+    feature_flags: dict[str, bool],
+) -> ExecutionProvenance:
+    resolved_root = repository_root.resolve(strict=True)
+    key = (
+        str(resolved_root),
+        provider,
+        model,
+        json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        json.dumps(feature_flags, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    )
+    with _PROVENANCE_CACHE_LOCK:
+        cached = _PROVENANCE_CACHE.get(key)
+        if cached is not None:
+            return cached
+        captured = capture_execution_provenance(
+            resolved_root,
+            provider=provider,
+            model=model,
+            config=config,
+            feature_flags=feature_flags,
+        )
+        _PROVENANCE_CACHE[key] = captured
+        return captured
+
+
+def _unresolved_provider_calls(run_dir: Path) -> list[dict[str, Any]]:
+    executions_root = run_dir / "executions"
+    if not executions_root.is_dir():
+        return []
+    unresolved: list[dict[str, Any]] = []
+    for execution_dir in sorted(executions_root.glob("execution_*")):
+        model_root = execution_dir / "model_calls"
+        if not model_root.is_dir():
+            continue
+        unresolved.extend(ModelCallStore(model_root).list_uncertain_calls())
+    return sorted(
+        unresolved,
+        key=lambda item: (str(item.get("created_at") or ""), str(item.get("attempt_id") or "")),
+    )
+
+
 def run_once(*, dry_run: bool = False, persist: bool = True, enable_llm_validator: bool = False) -> dict[str, Any]:
     return AgentExecutor(dry_run=dry_run, enable_llm_validator=enable_llm_validator).run_once(persist=persist)
 
@@ -2172,6 +2375,12 @@ def _previous_chapter_text(
             return None
         return fallback.review_tail["text"] if fallback is not None else None
     return None
+
+
+def _review_gate_allows_commit(gate: dict[str, Any] | None) -> bool:
+    if not isinstance(gate, dict) or not gate.get("enabled"):
+        return True
+    return gate.get("status") == "pass" and int(gate.get("exit_code") or 0) == 0
 
 
 def _loop_local_run_summary(result: dict[str, Any] | None) -> dict[str, Any] | None:

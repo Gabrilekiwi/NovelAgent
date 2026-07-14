@@ -116,6 +116,20 @@ class QualityDecisionTest(unittest.TestCase):
         self.assertTrue(strict_with_llm["accepted"])
         self.assertEqual("test-model", strict_with_llm["llm_validator"]["model"])
 
+        llm_warning = _validation(
+            _problem("soft_warning", blocking=False),
+            executed=["continuity", "logic", "llm"],
+        )
+        llm_warning["checks"] = copy.deepcopy(llm_validation["checks"])
+        strict_warning = build_quality_decision(
+            policy="strict",
+            validation=llm_warning,
+            chapter_quality_report={"checks": []},
+            rule_validation_report={"violations": []},
+        )
+        self.assertTrue(strict_warning["accepted"])
+        self.assertEqual("warning", strict_warning["max_severity"])
+
     def test_minimal_ignores_review_while_standard_rejects_needs_revision(self) -> None:
         review_report = {
             "checks": [

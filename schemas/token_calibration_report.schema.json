@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TokenCalibrationReport",
+  "type": "object",
+  "required": ["schema_version", "method", "dataset_source", "estimator", "split", "coverage", "metrics", "holdout_results"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "method": {"type": "string", "enum": ["max-observed-tokens-per-utf8-byte-v1"]},
+    "dataset_source": {"type": "string", "minLength": 1},
+    "estimator": {
+      "type": "object",
+      "required": ["version", "tokens_per_utf8_byte", "fixed_overhead_tokens"],
+      "properties": {
+        "version": {"type": "string", "minLength": 1},
+        "tokens_per_utf8_byte": {"type": "number", "minimum": 0},
+        "fixed_overhead_tokens": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "split": {
+      "type": "object",
+      "required": ["calibration_sample_count", "holdout_sample_count", "calibration_manifest_hash", "holdout_manifest_hash", "sample_ids_disjoint", "content_fingerprints_disjoint", "error_evaluated_on"],
+      "properties": {
+        "calibration_sample_count": {"type": "integer", "minimum": 1},
+        "holdout_sample_count": {"type": "integer", "minimum": 1},
+        "calibration_manifest_hash": {"type": "string", "minLength": 64},
+        "holdout_manifest_hash": {"type": "string", "minLength": 64},
+        "sample_ids_disjoint": {"type": "boolean"},
+        "content_fingerprints_disjoint": {"type": "boolean"},
+        "error_evaluated_on": {"type": "string", "enum": ["holdout"]}
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["providers", "models", "endpoint_types", "language_profiles", "known_model_count", "unknown_model_count"],
+      "properties": {
+        "providers": {"type": "array", "items": {"type": "string"}},
+        "models": {"type": "array", "items": {"type": "string"}},
+        "endpoint_types": {"type": "array", "items": {"type": "string"}},
+        "language_profiles": {"type": "array", "items": {"type": "string"}},
+        "known_model_count": {"type": "integer", "minimum": 0},
+        "unknown_model_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["mean_absolute_percentage_error", "maximum_absolute_percentage_error", "maximum_underestimate_ratio"],
+      "properties": {
+        "mean_absolute_percentage_error": {"type": "number", "minimum": 0},
+        "maximum_absolute_percentage_error": {"type": "number", "minimum": 0},
+        "maximum_underestimate_ratio": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "holdout_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "provider", "model", "endpoint_type", "language_profile", "reference_count_mode", "actual_tokens", "estimated_tokens", "absolute_error_tokens", "absolute_percentage_error", "underestimate_ratio"],
+        "properties": {
+          "id": {"type": "string"},
+          "provider": {"type": "string"},
+          "model": {"type": "string"},
+          "endpoint_type": {"type": "string", "enum": ["official", "openai_compatible", "unknown"]},
+          "language_profile": {"type": "string", "enum": ["zh", "en", "mixed"]},
+          "reference_count_mode": {"type": "string", "enum": ["provider_exact", "calibration_reference"]},
+          "actual_tokens": {"type": "integer", "minimum": 1},
+          "estimated_tokens": {"type": "integer", "minimum": 0},
+          "absolute_error_tokens": {"type": "integer", "minimum": 0},
+          "absolute_percentage_error": {"type": "number", "minimum": 0},
+          "underestimate_ratio": {"type": "number", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

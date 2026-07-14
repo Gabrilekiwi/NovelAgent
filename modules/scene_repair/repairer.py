@@ -11,6 +11,7 @@ from api.openai_client import chat_completion
 from core.context_budget import default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
 from core.schema import validate_schema
+from core.structured_context import compact_markdown_context, select_json_items, sha256_text
 from modules.scene_repair.plan import build_repair_plan
 
 
@@ -54,7 +55,18 @@ def _repair_with_model(
     recovery_context: dict[str, Any] | None,
     repair_context: RepairContext,
 ) -> str:
-    compact_context = _compact_repair_context(compile_prompt_contexts(input_pack).repair.text)
+    repair_query = json.dumps(
+        {
+            "problem_codes": [str(item.get("code") or "") for item in validation.get("problems") or [] if isinstance(item, dict)],
+            "repair_plan": repair_plan,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    compact_context = _compact_repair_context(
+        compile_prompt_contexts(input_pack).repair.text,
+        query=repair_query,
+    )
     payload = json.dumps(
         {
             "chapter": chapter_text,
@@ -102,6 +114,21 @@ def _compact_validation(validation: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(raw, dict):
             continue
         evidence = raw.get("evidence") if isinstance(raw.get("evidence"), list) else []
+        normalized_evidence = [
+            {
+                "kind": str(item.get("kind") or "evidence"),
+                "value": str(item.get("value") or ""),
+            }
+            for item in evidence
+            if isinstance(item, dict)
+        ]
+        evidence_selection = select_json_items(
+            normalized_evidence,
+            max_chars=2_400,
+            query=f"{raw.get('code') or ''} {raw.get('message') or ''}",
+            max_items=4,
+            policy="repair_evidence_json_items_v1",
+        )
         compact_problems.append(
             {
                 key: raw.get(key)
@@ -109,47 +136,70 @@ def _compact_validation(validation: dict[str, Any]) -> dict[str, Any]:
                 if raw.get(key) is not None
             }
             | {
-                "evidence": [
-                    {
-                        "kind": str(item.get("kind") or "evidence"),
-                        "value": str(item.get("value") or "")[:600],
-                    }
-                    for item in evidence[:4]
-                    if isinstance(item, dict)
-                ]
+                "evidence": list(evidence_selection.items),
+                "evidence_selection": dict(evidence_selection.manifest),
             }
         )
+    required_problem_indexes = {
+        index
+        for index, problem in enumerate(compact_problems)
+        if problem.get("blocking") is True
+    }
+    problem_selection = select_json_items(
+        compact_problems,
+        max_chars=16_000,
+        query=" ".join(str(item.get("code") or "") for item in compact_problems),
+        required_indexes=required_problem_indexes,
+        prefer_recent=True,
+        policy="repair_problem_json_items_v1",
+    )
+    selected_problems = list(problem_selection.items)
+    serialized_validation = json.dumps(validation, ensure_ascii=False, sort_keys=True, default=str)
     return {
         "ok": bool(validation.get("ok")),
         "requested_focus": list(validation.get("requested_focus") or []),
         "executed_checks": list(validation.get("executed_checks") or []),
         "skipped_checks": list(validation.get("skipped_checks") or []),
-        "problem_codes": [str(item.get("code") or "") for item in compact_problems],
-        "problems": compact_problems,
+        "problem_codes": [str(item.get("code") or "") for item in selected_problems],
+        "problems": selected_problems,
+        "selection": {
+            **dict(problem_selection.manifest),
+            "source_sha256": sha256_text(serialized_validation),
+            "original_chars": len(serialized_validation),
+        },
     }
 
 
-def _compact_repair_context(text: str, *, max_section_chars: int = 4_000) -> str:
-    """Keep repair facts while preventing large embedded StoryProject sources from duplicating the draft."""
-    if len(text) <= max_section_chars * 5:
-        return text
-    matches = list(re.finditer(r"(?m)^# ([^\r\n]+)\r?$", text))
-    if not matches:
-        return _head_tail(text, max_section_chars * 5)
-    sections: list[str] = []
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        section = text[match.start():end].rstrip()
-        sections.append(_head_tail(section, max_section_chars))
-    return "\n\n".join(sections)
-
-
-def _head_tail(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    head = max(1, int(limit * 0.7))
-    tail = max(1, limit - head)
-    return f"{text[:head].rstrip()}\n\n[...repair context excerpted...]\n\n{text[-tail:].lstrip()}"
+def _compact_repair_context(
+    text: str,
+    *,
+    max_section_chars: int = 4_000,
+    query: str = "",
+) -> str:
+    """Retrieve complete repair-relevant sections, paragraphs, and JSON items."""
+    selection = compact_markdown_context(
+        text,
+        max_chars=max_section_chars * 5,
+        per_section_max_chars=max_section_chars,
+        query=query,
+        required_sections={
+            "Context Digest",
+            "Prompt Context Selection",
+            "Project Profile",
+            "Story State",
+            "Spatial State",
+            "StoryProject Chapter Blueprint",
+            "Requirements",
+            "灏忚鐢熸垚瑙勫垯濂戠害",
+        },
+        excluded_sections={"Memory Index", "Structured Context Manifest"},
+        required_json_keys={
+            "StoryProject Chapter Blueprint": {"chapter_blueprint", "read_set_context_digest"},
+        },
+        prefer_recent=True,
+        policy="repair_markdown_json_retrieval_v1",
+    )
+    return selection.text
 
 
 def _load_prompt() -> str:

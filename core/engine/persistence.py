@@ -701,6 +701,12 @@ def atomic_write_text(path: str | Path, content: str, *, encoding: str = "utf-8"
     _atomic_replace_from_bytes(Path(path), content.encode(encoding))
 
 
+def atomic_create_text(path: str | Path, content: str, *, encoding: str = "utf-8") -> None:
+    """Durably publish text without replacing an existing file."""
+
+    _atomic_create_from_bytes(Path(path), content.encode(encoding))
+
+
 def _rollback_manifest_targets(
     journal_dir: Path,
     manifest: dict[str, Any],

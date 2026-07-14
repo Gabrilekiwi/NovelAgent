@@ -140,7 +140,7 @@ class ReviewRepairLoopTests(unittest.TestCase):
         self.assertEqual(1, calls["validate"])
         self.assertEqual(1, calls["review"])
 
-    def test_warning_gate_triggers_repair_and_requires_pass(self) -> None:
+    def test_warning_gate_is_advisory_and_skips_repair(self) -> None:
         calls = {"repair": 0, "review": 0}
 
         def repair(chapter: str, _validation: dict, _plan: dict) -> str:
@@ -165,33 +165,32 @@ class ReviewRepairLoopTests(unittest.TestCase):
             review=review,
         )
 
-        self.assertTrue(result["attempted"])
+        self.assertFalse(result["attempted"])
         self.assertTrue(result["accepted"])
-        self.assertEqual(2, result["attempt_count"])
-        self.assertEqual(2, calls["repair"])
-        self.assertFalse(result["repair_deltas"][0]["accepted"])
-        self.assertEqual(1, result["repair_deltas"][0]["after_gate_exit_code"])
-        self.assertTrue(result["repair_deltas"][1]["accepted"])
+        self.assertEqual(0, result["attempt_count"])
+        self.assertEqual(0, calls["repair"])
+        self.assertEqual(0, calls["review"])
         self.assertEqual("pass", result["after_gate"]["status"])
 
-    def test_warning_gate_exhaustion_is_not_accepted(self) -> None:
+    def test_independent_gate_exhaustion_is_not_accepted(self) -> None:
         result = run_review_repair_loop(
             chapter_text="original",
             validation=_validation(),
-            before_review={"enabled": True, "status": "warning", "decision": "accept_with_warnings"},
+            before_review={"enabled": True, "status": "needs_revision", "decision": "needs_revision"},
             config=ReviewRepairConfig(enabled=True, max_attempts=2, gate_threshold="warning"),
             repair=lambda chapter, _validation, _plan: chapter + " fixed",
             validate=lambda _chapter: _validation(),
             review=lambda _chapter, _attempt: {
                 "enabled": True,
-                "status": "warning",
-                "decision": "accept_with_warnings",
+                "status": "needs_revision",
+                "decision": "needs_revision",
             },
+            decide=lambda _validation, _review: {"accepted": True, "finding_ids": []},
         )
 
         self.assertFalse(result["accepted"])
         self.assertEqual(2, result["attempt_count"])
-        self.assertEqual("post_repair_review_gate_failed", result["rejected_reason"])
+        self.assertEqual("post_repair_review_blocked", result["rejected_reason"])
         self.assertEqual(1, result["after_gate"]["exit_code"])
 
     def test_initial_review_error_fails_closed_without_repair(self) -> None:

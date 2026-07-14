@@ -712,6 +712,53 @@ class PreflightTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("env:OPENAI_API_KEY", {check["name"] for check in result["checks"] if not check["ok"]})
 
+    def test_preview_fails_closed_when_output_cap_cannot_cover_chinese_target(self) -> None:
+        original = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS")
+        os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = "1200"
+        tmp_path = self._case_dir("short_output_cap")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(
+            json.dumps({"chapter_index": 1, "world_state": {}, "characters": {}, "timeline": []}),
+            encoding="utf-8",
+        )
+
+        try:
+            result = run_preflight(snapshot_path=snapshot_path, dry_run=True)
+        finally:
+            _restore_env("OPENAI_MAX_OUTPUT_TOKENS", original)
+
+        self.assertFalse(result["ok"])
+        check = next(
+            item for item in result["checks"]
+            if item["name"] == "output_token_compatibility:openai"
+        )
+        self.assertFalse(check["ok"])
+        self.assertFalse(check["details"]["full_target_range_compatible"])
+        self.assertEqual("calibrated_estimate", check["details"]["count_mode"])
+        self.assertIn("3,000-4,500", check["error"])
+
+    def test_preview_reports_compatible_default_output_cap(self) -> None:
+        original = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS")
+        os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = ""
+        tmp_path = self._case_dir("compatible_output_cap")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot_path.write_text(
+            json.dumps({"chapter_index": 1, "world_state": {}, "characters": {}, "timeline": []}),
+            encoding="utf-8",
+        )
+
+        try:
+            result = run_preflight(snapshot_path=snapshot_path, dry_run=True)
+        finally:
+            _restore_env("OPENAI_MAX_OUTPUT_TOKENS", original)
+
+        check = next(
+            item for item in result["checks"]
+            if item["name"] == "output_token_compatibility:openai"
+        )
+        self.assertTrue(check["ok"])
+        self.assertTrue(check["details"]["full_target_range_compatible"])
+
     def test_non_dry_run_preflight_checks_openai_dependency(self) -> None:
         original_key = os.environ.get("OPENAI_API_KEY")
         original_find_spec = preflight_module.find_spec

@@ -32,10 +32,25 @@ class ReviewGateTests(unittest.TestCase):
 
     def test_warning_threshold(self) -> None:
         self.assert_gate("warning", "pass", 0)
-        self.assert_gate("warning", "warning", 1)
+        self.assert_gate("warning", "warning", 0)
         self.assert_gate("warning", "needs_revision", 1)
         self.assert_gate("warning", "blocked", 1)
         self.assert_gate("warning", "error", 1)
+
+    def test_quality_decision_cannot_override_raw_review_gate(self) -> None:
+        accepted_review = evaluate_review_gate(
+            review_pipeline={"status": "pass"},
+            quality_decision={"max_severity": "blocking", "accepted": False},
+            threshold="blocked",
+        )
+        blocked_review = evaluate_review_gate(
+            review_pipeline={"status": "blocked"},
+            quality_decision={"max_severity": "info", "accepted": True},
+            threshold="blocked",
+        )
+
+        self.assertEqual("pass", accepted_review["status"])
+        self.assertEqual("fail", blocked_review["status"])
 
     def test_missing_review_pipeline_with_gate_enabled_fails(self) -> None:
         result = evaluate_review_gate(review_pipeline=None, threshold="blocked")

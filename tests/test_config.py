@@ -68,6 +68,19 @@ class ConfigTest(unittest.TestCase):
 
         self.assertEqual(321, config.openai_max_output_tokens)
 
+    def test_openai_max_output_default_covers_full_chapter_target(self) -> None:
+        original_max_tokens = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS")
+        os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = ""
+        try:
+            config = get_config()
+        finally:
+            if original_max_tokens is None:
+                os.environ.pop("OPENAI_MAX_OUTPUT_TOKENS", None)
+            else:
+                os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = original_max_tokens
+
+        self.assertEqual(16000, config.openai_max_output_tokens)
+
     def test_openai_max_retries_defaults_to_zero_and_parses_env(self) -> None:
         original_retries = os.environ.get("OPENAI_MAX_RETRIES")
         os.environ["OPENAI_MAX_RETRIES"] = "4"
@@ -156,7 +169,7 @@ class ConfigTest(unittest.TestCase):
             else:
                 os.environ["CLAUDE_MAX_TOKENS"] = original_max_tokens
 
-        self.assertEqual(8000, config.claude_max_tokens)
+        self.assertEqual(16000, config.claude_max_tokens)
 
     def test_claude_base_url_and_user_agent_parse_env(self) -> None:
         originals = {

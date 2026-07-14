@@ -33,7 +33,8 @@ class ChapterContextsTest(unittest.TestCase):
     def test_story_project_resolves_only_unique_n_minus_one_with_full_hash(self) -> None:
         root = self._story_project("unique_previous")
         previous = root / "正文" / "第001章_开端.md"
-        raw = b"\xef\xbb\xbf" + ("开头。" + "中段。" * 50 + "最新尾声。").encode("utf-8")
+        prose = "START\n\n" + "\n\n".join(f"MIDDLE-{index}" for index in range(20)) + "\n\nLATEST-END"
+        raw = b"\xef\xbb\xbf" + prose.encode("utf-8")
         previous.write_bytes(raw)
 
         context = resolve_story_project_previous_chapter(
@@ -48,16 +49,44 @@ class ChapterContextsTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(raw).hexdigest(), context.sha256)
         self.assertEqual("正文/第001章_开端.md", context.path_ref.relative_path)
         self.assertTrue(context.generation_excerpt["truncated"])
-        self.assertEqual(2, len(context.generation_excerpt["ranges"]))
-        self.assertTrue(context.review_tail["text"].endswith("最新尾声。"))
+        self.assertGreaterEqual(len(context.generation_excerpt["ranges"]), 2)
+        self.assertTrue(context.review_tail["text"].endswith("LATEST-END"))
+        decoded = raw.decode("utf-8-sig")
+        for item in context.generation_excerpt["selected_items"]:
+            start = item["start_char"]
+            end = item["end_char"]
+            self.assertEqual(item["original_chars"], end - start)
+            self.assertEqual(
+                item["sha256"],
+                hashlib.sha256(decoded[start:end].encode("utf-8")).hexdigest(),
+            )
         self.assertTrue(context.to_dict()["committed_verified"])
 
-    def test_first_chapter_allows_no_previous_but_later_chapter_fails_closed(self) -> None:
+    def test_single_oversized_required_paragraph_fails_instead_of_cutting_it(self) -> None:
+        with self.assertRaises(ChapterContextError) as raised:
+            build_attempt_context(
+                chapter_index=2,
+                run_id="oversized-one-paragraph",
+                status="failed",
+                draft_text="X" * 500,
+                max_chars=80,
+            )
+
+        self.assertEqual("context_required_paragraph_exceeds_limit", raised.exception.code)
+
+    def test_empty_prose_authority_allows_first_commit_at_any_requested_index(self) -> None:
         root = self._story_project("missing_previous")
 
         self.assertIsNone(resolve_story_project_previous_chapter(root, 1))
+        self.assertIsNone(resolve_story_project_previous_chapter(root, 11))
+
+    def test_existing_earlier_prose_makes_a_continuity_gap_blocking(self) -> None:
+        root = self._story_project("gapped_previous")
+        (root / "正文" / "第009章_九.md").write_text("已提交的第九章", encoding="utf-8")
+
         with self.assertRaises(ChapterContextError) as raised:
-            resolve_story_project_previous_chapter(root, 2)
+            resolve_story_project_previous_chapter(root, 11, fail_closed=False)
+
         self.assertEqual("previous_chapter_missing", raised.exception.code)
         self.assertEqual("high", raised.exception.risk)
 
@@ -75,14 +104,55 @@ class ChapterContextsTest(unittest.TestCase):
         root = self._story_project("mapper")
         (root / "大纲" / "细纲_第002章.md").write_text("# 二\n核心事件：继续\n- 节拍\n结尾压力：门开", encoding="utf-8")
 
-        with self.assertRaises(ChapterContextError):
-            build_story_project_runtime_context(root, 2, previous_chapter_fail_closed=True)
+        first_context = build_story_project_runtime_context(root, 2, previous_chapter_fail_closed=True)
+        self.assertIsNone(first_context.previous_chapter_context)
 
         (root / "正文" / "第001章_一.md").write_text("唯一上一章", encoding="utf-8")
         context = build_story_project_runtime_context(root, 2, previous_chapter_fail_closed=True)
         self.assertIsNotNone(context.previous_chapter_context)
         self.assertEqual("previous_chapter", context.previous_prose["context_kind"])
         self.assertFalse(any(item["name"] == "previous_prose" for item in context.memory_context_overlay["items"]))
+
+    def test_empty_committed_authority_allows_first_commit_at_chapter_eleven_but_gap_blocks(self) -> None:
+        case = self._case_dir("committed_first_actual")
+        run_dir = case / "runs"
+        chapter_dir = case / "chapters"
+        run_dir.mkdir()
+        chapter_dir.mkdir()
+
+        self.assertIsNone(
+            resolve_committed_previous_chapter_artifact(
+                chapter_index=11,
+                run_dir=run_dir,
+                chapter_artifact_root=chapter_dir,
+            )
+        )
+
+        run = {
+            "id": "chapter_9_committed",
+            "chapter_index": 9,
+            "status": "committed",
+            "committed": True,
+            "repair_attempts": 0,
+        }
+        artifact = save_chapter_artifact(
+            chapter_text="已提交的第九章",
+            run=run,
+            output_dir=chapter_dir,
+        )
+        run["chapter"] = {"artifact": artifact}
+        (run_dir / "chapter_9_committed.json").write_text(
+            json.dumps({"run": run}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(ChapterContextError) as raised:
+            resolve_committed_previous_chapter_artifact(
+                chapter_index=11,
+                run_dir=run_dir,
+                chapter_artifact_root=chapter_dir,
+            )
+        self.assertEqual("committed_previous_chapter_artifact_missing", raised.exception.code)
 
     def test_attempt_and_recovery_contexts_remain_same_chapter_draft_context(self) -> None:
         attempt = build_attempt_context(

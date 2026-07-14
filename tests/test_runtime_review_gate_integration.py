@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from core.engine.executor import AgentExecutor
+from core.quality_decision import build_quality_decision
 from core.review.runtime import RuntimeReviewConfig
 from core.schema import validate_schema
 
@@ -100,6 +101,41 @@ class RuntimeReviewGateIntegrationTests(unittest.TestCase):
 
         saved = json.loads(next((case_dir / "runs").glob("chapter_34_*.json")).read_text(encoding="utf-8"))
         self.assertEqual(result["run"]["review_gate"], saved["run"]["review_gate"])
+
+    def test_gate_failure_cannot_be_overridden_by_accepted_quality_decision(self) -> None:
+        case_dir = self._case_dir("independent_gate")
+        snapshot_path = self._write_snapshot(case_dir)
+        chapter = (REGRESSION_CASE / "chapter.md").read_text(encoding="utf-8")
+        executor = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=case_dir / "missing_memory.json",
+            run_dir=case_dir / "runs",
+            chapter_dir=case_dir / "chapters",
+            dry_run=True,
+            director=_director,
+            generator=lambda input_pack: chapter,
+            polisher=lambda text: text,
+            validator=_passing_validator,
+            analyzer=_analysis,
+            review_config=RuntimeReviewConfig(
+                enabled=True,
+                output_dir=case_dir / "reviews",
+                gate_threshold="blocked",
+            ),
+        )
+        accepted_quality = build_quality_decision(
+            policy="minimal",
+            validation=_passing_validator({}, chapter, {}),
+            chapter_index=34,
+        )
+        executor.quality_coordinator.decide = lambda **_kwargs: accepted_quality
+
+        result = executor.run_once(persist=True)
+
+        self.assertTrue(result["run"]["quality_decision"]["accepted"])
+        self.assertEqual("fail", result["run"]["review_gate"]["status"])
+        self.assertFalse(result["run"]["accepted"])
+        self.assertFalse(result["run"]["committed"])
 
     def test_cli_gate_off_returncode_zero(self) -> None:
         case_dir = self._case_dir("cli_off")

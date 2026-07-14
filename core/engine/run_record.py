@@ -131,6 +131,7 @@ def build_run_record(
     state_update_audit: dict[str, Any] | None = None,
     chapter_pipeline: dict[str, Any] | None = None,
     quality_decision: dict[str, Any] | None = None,
+    accepted: bool | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
     chapter_index = int(decision["chapter_index"])
@@ -140,7 +141,8 @@ def build_run_record(
         validation=validation,
         chapter_index=chapter_index,
     )
-    accepted_value = quality_decision_accepted(final_quality_decision)
+    quality_accepted = quality_decision_accepted(final_quality_decision)
+    accepted_value = quality_accepted if accepted is None else bool(accepted)
     status_value = status or ("committed" if committed else "rejected")
     record = {
         "id": build_run_id(chapter_index, started_at),
