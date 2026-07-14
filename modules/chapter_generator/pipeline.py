@@ -43,11 +43,11 @@ def run_chapter_pipeline(
     plan_input = prompt_contexts.plan.text
     scene_input = prompt_contexts.scene.text
     if blueprint is None:
-        plan = plan_chapter(plan_input, chapter_index=chapter_index, dry_run=dry_run)
+        plan = plan_scenes(plan_input, chapter_index=chapter_index, dry_run=dry_run)
         plan = _limit_plan_scenes(plan, scene_limit)
     else:
         validate_generation_blueprint_contract(blueprint)
-        plan = plan_chapter(
+        plan = plan_scenes(
             plan_input,
             chapter_index=chapter_index,
             dry_run=dry_run,
@@ -115,7 +115,7 @@ def run_chapter_pipeline(
     )
 
 
-def plan_chapter(
+def plan_scenes(
     input_pack: str,
     *,
     chapter_index: int,
@@ -148,6 +148,25 @@ def plan_chapter(
     if not isinstance(plan, dict):
         raise ValueError("Chapter plan response must be a JSON object")
     return _validate_plan(plan)
+
+
+def plan_chapter(
+    input_pack: str,
+    *,
+    chapter_index: int,
+    dry_run: bool = False,
+    chapter_blueprint: dict[str, Any] | None = None,
+    scene_limit: int | None = None,
+) -> dict[str, Any]:
+    """Deprecated compatibility alias for :func:`plan_scenes`."""
+
+    return plan_scenes(
+        input_pack,
+        chapter_index=chapter_index,
+        dry_run=dry_run,
+        chapter_blueprint=chapter_blueprint,
+        scene_limit=scene_limit,
+    )
 
 
 def _request_chapter_plan(input_pack: str, prompt: str) -> str:

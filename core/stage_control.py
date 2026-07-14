@@ -80,6 +80,10 @@ def derive_outline_readiness(
 
 def validate_outline_readiness(value: Any) -> dict[str, Any]:
     decision = _validate_mapping(value, "outline_readiness.schema.json", "OutlineReadiness")
+    _required_text("book_id", decision["book_id"])
+    _chapter("chapter_index", decision["chapter_index"])
+    _validate_authority_mapping(decision["authority"])
+    _sha256("context_digest", decision["context_digest"])
     expected_reasons = []
     for field, code in (
         ("project_identity_matches", "project_identity_mismatch"),
@@ -132,6 +136,15 @@ def build_stage_authorization(
 
 def validate_stage_authorization(value: Any) -> dict[str, Any]:
     authorization = _validate_mapping(value, "stage_authorization.schema.json", "StageAuthorization")
+    _stage(authorization["stage"])
+    for field in ("book_id", "session_id", "plan_id", "provider_profile"):
+        _required_text(field, authorization[field])
+    _chapter("chapter_index", authorization["chapter_index"])
+    _validate_authority_mapping(authorization["authority"])
+    _sha256("input_digest", authorization["input_digest"])
+    _optional_sha256("previous_stage_receipt_hash", authorization["previous_stage_receipt_hash"])
+    _positive_int("max_output_tokens", authorization["max_output_tokens"])
+    _sha256("authorization_hash", authorization["authorization_hash"])
     expected_hash = canonical_json_hash(authorization, exclude_fields=("authorization_hash",))
     if authorization["authorization_hash"] != expected_hash:
         raise StageControlError("stage_authorization_hash_mismatch", "authorization content was modified")
@@ -220,6 +233,21 @@ def build_stage_receipt(
 
 def validate_stage_receipt(value: Any) -> dict[str, Any]:
     receipt = _validate_mapping(value, "stage_receipt.schema.json", "StageReceipt")
+    _stage(receipt["stage"])
+    if receipt["status"] not in _RECEIPT_STATUSES:
+        raise StageControlError("stage_receipt_status_invalid", "unsupported receipt status")
+    for field in ("book_id", "session_id", "plan_id"):
+        _required_text(field, receipt[field])
+    _chapter("chapter_index", receipt["chapter_index"])
+    _validate_authority_mapping(receipt["authority"])
+    for field in (
+        "receipt_hash",
+        "authorization_hash",
+        "input_digest",
+    ):
+        _sha256(field, receipt[field])
+    for field in ("output_digest", "model_call_receipt_hash", "previous_stage_receipt_hash"):
+        _optional_sha256(field, receipt[field])
     expected_hash = canonical_json_hash(receipt, exclude_fields=("receipt_hash",))
     if receipt["receipt_hash"] != expected_hash:
         raise StageControlError("stage_receipt_hash_mismatch", "receipt content was modified")
@@ -318,6 +346,12 @@ def derive_draft_readiness(
 
 def validate_draft_readiness(value: Any) -> dict[str, Any]:
     decision = _validate_mapping(value, "draft_readiness.schema.json", "DraftReadiness")
+    for field in ("book_id", "session_id", "plan_id"):
+        _required_text(field, decision[field])
+    _chapter("chapter_index", decision["chapter_index"])
+    _validate_authority_mapping(decision["authority"])
+    for field in ("context_digest", "outline_hash", "outline_stage_receipt_hash"):
+        _sha256(field, decision[field])
     expected_reasons = []
     for field, code in (
         ("outline_receipt_valid", "outline_stage_receipt_not_succeeded"),
@@ -380,6 +414,12 @@ def _authority(epoch: int, head_event_hash: str | None) -> dict[str, Any]:
         "epoch": epoch,
         "head_event_hash": _optional_sha256("authority_head_event_hash", head_event_hash),
     }
+
+
+def _validate_authority_mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {"epoch", "head_event_hash"}:
+        raise StageControlError("stage_authority_invalid", "authority fields are invalid")
+    return _authority(value["epoch"], value["head_event_hash"])
 
 
 def _stage(value: str) -> str:

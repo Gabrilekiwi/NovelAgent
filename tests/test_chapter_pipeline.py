@@ -11,6 +11,14 @@ import modules.chapter_generator.pipeline as pipeline_module
 
 
 class ChapterPipelineTest(unittest.TestCase):
+    def test_plan_chapter_is_compatibility_alias_for_plan_scenes(self) -> None:
+        expected = pipeline_module.plan_scenes("input pack", chapter_index=7, dry_run=True)
+
+        self.assertEqual(
+            expected,
+            pipeline_module.plan_chapter("input pack", chapter_index=7, dry_run=True),
+        )
+
     def _blueprint(self) -> dict:
         return {
             "chapter_index": 3,

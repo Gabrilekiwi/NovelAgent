@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FileDeliveryProfile",
+  "type": "object",
+  "required": ["schema_version", "profile_id", "root_id", "root_uuid", "relative_directory", "filename_template"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "profile_id": {"type": "string", "minLength": 1},
+    "root_id": {"type": "string", "minLength": 1},
+    "root_uuid": {"type": ["string", "null"], "minLength": 36},
+    "relative_directory": {"type": "string", "minLength": 1},
+    "filename_template": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
