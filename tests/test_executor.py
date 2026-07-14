@@ -142,6 +142,52 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertIsNone(result["run"]["execution_evidence"]["provenance_artifact_ref"])
         self.assertIsNone(result["run"]["execution_evidence"]["model_calls_ref"])
 
+    def test_event_authority_selects_v2_backend_without_fallback(self) -> None:
+        tmp_path = self._case_dir("event_backend")
+        book = self._story_book(tmp_path)
+        executor = AgentExecutor(
+            snapshot_path=tmp_path / "runtime" / "snapshot.json",
+            run_dir=tmp_path / "runtime" / "runs",
+            persistence_dir=tmp_path / "runtime" / "persistence",
+            chapter_dir=tmp_path / "runtime" / "chapters",
+            story_project_context={"story_project_root": str(book)},
+            enable_execution_provenance=False,
+        )
+        executor._last_project_identity = {
+            "book_id": "book-event",
+            "authority": {"mode": "event_v1"},
+        }
+
+        executor._configure_authority_persistence_backend()
+
+        self.assertEqual("v2", executor.persistence_coordinator.backend_id)
+        self.assertEqual(
+            book.resolve(), executor._event_authority_root_map["story_project"]
+        )
+        self.assertTrue((tmp_path / "runtime" / "deliveries").is_dir())
+
+    def test_prior_event_activation_permanently_blocks_legacy_backend(self) -> None:
+        tmp_path = self._case_dir("event_downgrade")
+        book = self._story_book(tmp_path)
+        receipts = book / ".novelagent" / "authority" / "receipts"
+        receipts.mkdir(parents=True)
+        (receipts / "activation.json").write_text(
+            json.dumps({"receipt_type": "authority_activation"}), encoding="utf-8"
+        )
+        executor = AgentExecutor(
+            run_dir=tmp_path / "runtime" / "runs",
+            persistence_dir=tmp_path / "runtime" / "persistence",
+            story_project_context={"story_project_root": str(book)},
+            enable_execution_provenance=False,
+        )
+        executor._last_project_identity = {
+            "book_id": "book-event",
+            "authority": {"mode": "legacy_markdown_v1"},
+        }
+
+        with self.assertRaisesRegex(PersistenceError, "downgrade"):
+            executor._configure_authority_persistence_backend()
+
     def test_persist_updates_snapshot_and_writes_run_record(self) -> None:
         tmp_path = self._case_dir("persist")
         snapshot_path = tmp_path / "snapshot.json"

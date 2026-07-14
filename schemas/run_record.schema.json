@@ -552,18 +552,26 @@
             "checkpoint_id"
           ],
           "properties": {
-            "schema_version": {"type": "string", "enum": ["2.1"]},
+            "schema_version": {"type": "string", "enum": ["2.1", "2.2"]},
+            "reducer_version": {"type": "string", "minLength": 1},
             "status": {"type": "string", "enum": ["prepared", "no_op"]},
             "memory_root": {"type": "string", "minLength": 1},
+            "book_id": {"type": "string", "minLength": 1},
+            "authority_epoch": {"type": "integer", "minimum": 1},
             "previous_revision": {"type": "integer", "minimum": 1},
             "revision": {"type": "integer", "minimum": 1},
+            "previous_head_event_hash": {"type": "string", "minLength": 64},
+            "head_event_hash": {"type": "string", "minLength": 64},
             "projection_hash": {"type": "string", "minLength": 64},
             "patch_id": {"type": "string", "minLength": 1},
             "patch_content_hash": {"type": "string", "minLength": 64},
+            "chapter_body_sha256": {"type": "string", "minLength": 64},
             "batch_id": {"type": ["string", "null"]},
             "batch_hash": {"type": ["string", "null"]},
             "event_count": {"type": "integer", "minimum": 0},
-            "checkpoint_id": {"type": ["string", "null"]}
+            "checkpoint_id": {"type": ["string", "null"]},
+            "snapshot_projection_receipt_hash": {"type": ["string", "null"]},
+            "tracking_projection_receipt_hash": {"type": ["string", "null"]}
           },
           "additionalProperties": false
         }

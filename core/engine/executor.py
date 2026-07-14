@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import inspect
+import os
 import threading
 import uuid
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ from core.model_call_runtime import (
     use_model_call_runtime,
 )
 from core.model_calls import ModelCallStore
+from core.path_refs import path_ref_for
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
 from core.quality_decision import (
@@ -31,10 +33,21 @@ from core.review.index import build_review_index_entry, review_index_path, updat
 from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH, RuntimePaths
-from core.memory_v2 import ensure_memory_v2_storage_layout, prepare_chapter_memory_commit
+from core.memory_v2 import (
+    canonical_memory_to_snapshot,
+    ensure_memory_v2_storage_layout,
+    prepare_chapter_memory_commit,
+    prepare_event_authority_chapter_commit,
+)
 from core.schema import validate_schema
 from core.engine.artifacts import (
     chapter_artifact_metadata,
+    prepare_chapter_artifact,
+    prepare_chapter_pipeline_artifacts,
+    prepare_input_pack_artifact,
+    prepare_review_repair_artifacts,
+    prepare_snapshot_pack_artifact,
+    prepare_story_project_writeback_artifacts,
     save_chapter_artifact,
     save_chapter_pipeline_artifacts,
     save_input_pack_artifact,
@@ -53,6 +66,12 @@ from core.engine.persistence import (
     persistence_run_lock,
 )
 from core.engine.persistence_coordinator import PersistenceCoordinator
+from core.engine.persistence_v2 import (
+    PersistenceV2Target,
+    bind_final_run_record_receipt,
+    verify_publication_receipt,
+)
+from core.engine.root_registry import RootRegistryService
 from core.engine.quality_coordinator import QualityCoordinator
 from core.engine.story_project_context import (
     StoryProjectContextError,
@@ -82,12 +101,15 @@ from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
 from core.state.snapshot import build_state_update_audit, load_snapshot, normalize_snapshot, update_snapshot
 from core.story_project.coverage import build_blueprint_coverage
+from core.story_project.model import CORE_DIRECTORY_NAMES
 from core.story_project.writer import (
     StoryProjectWritebackConfig,
     default_story_project_writeback,
     finalize_story_project_writeback,
     prepare_story_project_writeback,
 )
+from core.story_project.authority import prepare_event_authority_advance
+from core.story_project.identity import project_identity_path, validate_project_identity
 from core.story_project.read_set import declared_read_set_writes
 from core.validator import validate_chapter
 from core.validator.spatial import validate_bridge_preconditions
@@ -193,6 +215,7 @@ class AgentExecutor:
             run_dir=self.run_dir,
             persistence_dir=self.persistence_dir,
         )
+        self._event_authority_root_map: dict[str, Path] | None = None
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
         with self._execution_scope(persist=persist):
@@ -326,6 +349,15 @@ class AgentExecutor:
                     chapter_hint=chapter_hint,
                 )
             self._prepare_project_identity_for_persistence()
+            self._configure_authority_persistence_backend()
+            if self.persistence_coordinator.backend_id == "v2":
+                self._assert_persistence_ready(expected_book_id=self._expected_book_id)
+                return self._run_once_impl(
+                    persist=True,
+                    snapshot_override=snapshot_override,
+                    previous_result=previous_result,
+                    chapter_hint=chapter_hint,
+                )
             with persistence_run_lock(self.run_dir, state_paths=self._persistence_state_paths()):
                 self._assert_persistence_ready(expected_book_id=self._expected_book_id)
                 return self._run_once_impl(
@@ -1612,6 +1644,104 @@ class AgentExecutor:
         self._last_project_identity = prepared.last_project_identity
         self._allow_legacy_snapshot_adoption = prepared.allow_legacy_snapshot_adoption
 
+    def _configure_authority_persistence_backend(self) -> None:
+        identity = self._last_project_identity or {}
+        authority = identity.get("authority") if isinstance(identity.get("authority"), dict) else {}
+        mode = authority.get("mode")
+        story_root = self._configured_story_project_root()
+        if mode == "event_v1":
+            if story_root is None:
+                raise PersistenceError(
+                    "event-authority persistence requires a configured StoryProject root"
+                )
+            root_map = self._build_event_authority_root_map(story_root)
+            self.persistence_coordinator = PersistenceCoordinator(
+                run_dir=self.run_dir,
+                persistence_dir=self.persistence_dir,
+                backend="v2",
+                root_map=root_map,
+            )
+            self._event_authority_root_map = root_map
+            return
+        if story_root is not None and self._event_authority_was_activated(story_root):
+            raise PersistenceError(
+                "event-authority downgrade detected; legacy persistence is permanently disabled"
+            )
+        self.persistence_coordinator = PersistenceCoordinator(
+            run_dir=self.run_dir,
+            persistence_dir=self.persistence_dir,
+            backend="v1",
+        )
+        self._event_authority_root_map = None
+
+    def _configured_story_project_root(self) -> Path | None:
+        configured = self.story_project_context
+        if isinstance(configured, dict) and configured.get("story_project_root"):
+            return Path(str(configured["story_project_root"])).resolve()
+        if self.story_project_context_loader is not None:
+            root = getattr(self.story_project_context_loader, "story_project_root", None)
+            if root is not None:
+                return Path(root).resolve()
+        return None
+
+    def _build_event_authority_root_map(self, story_root: Path) -> dict[str, Path]:
+        runtime_candidates = [self.run_dir.resolve(), self.persistence_dir.resolve()]
+        try:
+            runtime_root = Path(os.path.commonpath([str(path) for path in runtime_candidates]))
+        except ValueError as exc:
+            raise PersistenceError(
+                "event-authority run and persistence directories must share a local runtime root"
+            ) from exc
+        if runtime_root == Path(runtime_root.anchor):
+            raise PersistenceError(
+                "event-authority runtime root is too broad; configure run and persistence siblings"
+            )
+        delivery_root = runtime_root / "deliveries"
+        roots = {
+            "story_project": story_root.resolve(),
+            "runtime": runtime_root.resolve(),
+            "snapshot": self.snapshot_path.parent.resolve(),
+            "chapter_artifacts": self.chapter_dir.resolve(),
+            "delivery_store": delivery_root.resolve(),
+        }
+        for path in roots.values():
+            path.mkdir(parents=True, exist_ok=True)
+        for path in (
+            self.run_dir,
+            self.run_dir / "publication_receipts",
+            self.run_dir / "snapshot_packs",
+            self.run_dir / "input_packs",
+            self.run_dir / "chapter_pipeline",
+            self.run_dir / "review_repairs",
+            self.run_dir / "story_project_writebacks",
+        ):
+            path.mkdir(parents=True, exist_ok=True)
+        memory_root = RuntimePaths.for_story_project(story_root).memory_dir / "v2"
+        ensure_memory_v2_storage_layout(memory_root)
+        (memory_root / "projections").mkdir(parents=True, exist_ok=True)
+        (memory_root / "projections" / "receipts").mkdir(parents=True, exist_ok=True)
+        (memory_root / "projections" / CORE_DIRECTORY_NAMES[3]).mkdir(
+            parents=True, exist_ok=True
+        )
+        return roots
+
+    def _event_authority_was_activated(self, story_root: Path) -> bool:
+        receipts = story_root / ".novelagent" / "authority" / "receipts"
+        if receipts.is_dir():
+            for path in receipts.glob("*.json"):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    # An unreadable authority receipt is itself ambiguous; do
+                    # not allow that ambiguity to select the legacy writer.
+                    return True
+                if isinstance(payload, dict) and payload.get("receipt_type") == "authority_activation":
+                    return True
+        completed = self.persistence_dir / "registry" / "completed"
+        if completed.is_dir() and any(completed.glob("*.json")):
+            return True
+        return False
+
     def _persistence_state_paths(self) -> list[Path]:
         paths = [self.snapshot_path]
         context = self._story_project_context_dict()
@@ -1671,6 +1801,21 @@ class AgentExecutor:
         chapter_pipeline: dict[str, Any] | None,
         review_repair: dict[str, Any] | None,
     ) -> None:
+        if self.persistence_coordinator.backend_id == "v2":
+            self._persist_event_authority_result_v2(
+                result,
+                base_snapshot=base_snapshot,
+                runtime_snapshot=runtime_snapshot,
+                analysis=analysis,
+                validation=validation,
+                workflow_trace=workflow_trace,
+                snapshot_before=snapshot_before,
+                snapshot_pack=snapshot_pack,
+                input_pack=input_pack,
+                chapter_pipeline=chapter_pipeline,
+                review_repair=review_repair,
+            )
+            return
         context = self._story_project_context_dict()
         run = result.get("run") if isinstance(result.get("run"), dict) else None
         if not isinstance(run, dict):
@@ -1939,6 +2084,496 @@ class AgentExecutor:
             return
         self._save_run_record(result)
         transaction.complete_publication()
+
+    def _persist_event_authority_result_v2(
+        self,
+        result: dict[str, Any],
+        *,
+        base_snapshot: dict[str, Any],
+        runtime_snapshot: dict[str, Any],
+        analysis: dict[str, Any],
+        validation: dict[str, Any],
+        workflow_trace: list[dict[str, Any]],
+        snapshot_before: dict[str, Any],
+        snapshot_pack: str,
+        input_pack: str,
+        chapter_pipeline: dict[str, Any] | None,
+        review_repair: dict[str, Any] | None,
+    ) -> None:
+        context = self._story_project_context_dict()
+        run = result.get("run") if isinstance(result.get("run"), dict) else None
+        if not isinstance(context, dict) or not isinstance(run, dict):
+            raise PersistenceError("event-authority persistence requires run and StoryProject context")
+        identity_payload = context.get("project_identity")
+        read_set = context.get("read_set")
+        semantic_audit = context.get("semantic_audit")
+        memory_context = context.get("memory_v2")
+        if not all(
+            isinstance(item, dict)
+            for item in (identity_payload, read_set, semantic_audit, memory_context)
+        ):
+            raise PersistenceError(
+                "event-authority persistence requires identity, read-set, parser audit, and Memory 2.2 context"
+            )
+        identity = validate_project_identity(identity_payload)
+        authority = identity.authority or {}
+        if authority.get("mode") != "event_v1":
+            raise PersistenceError("v2 persistence cannot run without event_v1 authority")
+        root_map = self._event_authority_root_map
+        if not isinstance(root_map, dict):
+            raise PersistenceError("event-authority root map was not selected before generation")
+        story_root = Path(str(context["story_project_root"])).resolve()
+        registry = RootRegistryService(self.persistence_dir).ensure(root_map)
+
+        # Event authority deliberately excludes Markdown semantic state from
+        # the canonical context.  Reuse the legacy writer only to render the
+        # prose target; its strict managed-tracking gate is inapplicable
+        # because every non-prose projection is skipped below and rebuilt from
+        # the immutable Memory 2.2 event stream instead.
+        prose_writeback_context = dict(context)
+        prose_writeback_context["story_state_mode"] = "compatible"
+        plan, story_targets, rendered_targets, prepared_writeback = prepare_story_project_writeback(
+            context=prose_writeback_context,
+            run=run,
+            chapter_text=str(result.get("chapter") or ""),
+            validation=validation,
+            analysis=analysis,
+            config=self.story_project_writeback,
+        )
+        if plan.dry_run or plan.blocked:
+            reasons = ", ".join(plan.blocked_reasons) or "dry-run writeback"
+            raise PersistencePreparationError(
+                f"event-authority StoryProject writeback is not committable: {reasons}"
+            )
+        for target in story_targets:
+            if target.kind != "prose" and target.status == "planned":
+                target.status = "skipped"
+                target.reason = "event_authority_canonical_projection"
+        prose_targets = [target for target in rendered_targets if target.kind == "prose"]
+        if len(prose_targets) != 1:
+            raise PersistencePreparationError(
+                "event-authority chapter commit requires exactly one prose target"
+            )
+
+        chapter_body = str(result.get("chapter") or "")
+        chapter_body_sha256 = hashlib.sha256(chapter_body.encode("utf-8")).hexdigest()
+        memory_root = RuntimePaths.for_story_project(story_root).memory_dir / "v2"
+        ensure_memory_v2_storage_layout(memory_root)
+        quality = run.get("quality_decision") if isinstance(run.get("quality_decision"), dict) else {}
+        memory_commit = prepare_event_authority_chapter_commit(
+            memory_root=memory_root,
+            book_id=identity.book_id,
+            run_id=str(run["id"]),
+            chapter_index=int(run["chapter_index"]),
+            analysis=analysis,
+            chapter_body=chapter_body,
+            chapter_body_sha256=chapter_body_sha256,
+            evidence_spans=_chapter_evidence_spans(chapter_body, analysis),
+            authority_epoch=int(authority["authority_epoch"]),
+            expected_head_event_hash=str(authority["head_event_hash"]),
+            expected_revision=int(memory_context["revision"]),
+            source_project_digest=str(semantic_audit["source_digest"]),
+            context_digest=str(read_set["context_digest"]),
+            quality_state={
+                "accepted": bool(run.get("accepted")),
+                "policy": quality.get("policy"),
+                "decision_id": quality.get("decision_id"),
+            },
+        )
+        if memory_commit.get("status") != "prepared" or not isinstance(memory_commit.get("batch"), dict):
+            raise PersistencePreparationError(
+                "event-authority chapter run did not prepare a new immutable Memory batch"
+            )
+        next_snapshot = canonical_memory_to_snapshot(memory_commit["projection"])
+        memory_updates = build_memory_updates(run, analysis)
+        state_update = build_state_update_audit(
+            snapshot=runtime_snapshot,
+            next_snapshot=next_snapshot,
+            analysis=analysis,
+            memory_updates=memory_updates,
+            applied=True,
+        )
+        result["snapshot"] = next_snapshot
+        result["state_update"] = state_update
+        run["state_update"] = state_update
+        run.setdefault("snapshot", {})["next_chapter_index"] = next_snapshot["chapter_index"]
+        run.setdefault("memory", {})["v2"] = memory_commit["audit"]
+
+        advanced_identity = prepare_event_authority_advance(
+            identity,
+            expected_authority_epoch=int(authority["authority_epoch"]),
+            expected_head_event_hash=str(authority["head_event_hash"]),
+            new_head_event_hash=str(memory_commit["projection"]["head_event_hash"]),
+        )
+        identity_path = project_identity_path(story_root)
+        identity_before = identity_path.read_bytes()
+        identity_content = (
+            json.dumps(
+                advanced_identity.to_dict(),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        identity_bytes = identity_content.encode("utf-8")
+
+        apply_targets: list[PersistenceV2Target] = []
+        for index, rendered in enumerate(prose_targets, start=1):
+            apply_targets.append(
+                PersistenceV2Target(
+                    target_id=f"story-prose-{index:02d}",
+                    kind=rendered.kind,
+                    path_ref=self._event_path_ref(
+                        rendered.path, registry=registry, preferred_root="story_project"
+                    ),
+                    content=rendered.content,
+                    metadata={"story_target_index": rendered.target_index},
+                    expected_before_exists=rendered.expected_before_exists,
+                    expected_before_sha256=rendered.expected_before_sha256,
+                )
+            )
+        for index, target in enumerate(memory_commit["targets"], start=1):
+            apply_targets.append(
+                PersistenceV2Target(
+                    target_id=f"memory-{index:02d}",
+                    kind=str(target["kind"]),
+                    path_ref=self._event_path_ref(Path(target["path"]), registry=registry),
+                    content=str(target["content"]),
+                    metadata={"memory_v2": True},
+                    expected_before_exists=bool(target["expected_before_exists"]),
+                    expected_before_sha256=target.get("expected_before_sha256"),
+                )
+            )
+        apply_targets.append(
+            PersistenceV2Target(
+                target_id="runtime-snapshot",
+                kind="snapshot",
+                path_ref=self._event_path_ref(
+                    self.snapshot_path, registry=registry, preferred_root="snapshot"
+                ),
+                content=json.dumps(next_snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                metadata={"chapter_index": run.get("chapter_index")},
+                expected_before_exists=bool(snapshot_before["exists"]),
+                expected_before_sha256=snapshot_before.get("sha256"),
+            )
+        )
+        apply_targets.append(
+            PersistenceV2Target(
+                target_id="project-identity",
+                kind="project_identity",
+                path_ref=self._event_path_ref(
+                    identity_path, registry=registry, preferred_root="story_project"
+                ),
+                content=identity_content,
+                metadata={"authority_transition": True},
+                expected_before_exists=True,
+                expected_before_sha256=hashlib.sha256(identity_before).hexdigest(),
+            )
+        )
+
+        prose_declarations = declared_read_set_writes(
+            read_set,
+            (
+                (
+                    rendered.path,
+                    hashlib.sha256(rendered.content.encode("utf-8")).hexdigest(),
+                    len(rendered.content.encode("utf-8")),
+                )
+                for rendered in prose_targets
+            ),
+        )
+        identity_declaration = {
+            "relative_path": ".novelagent/project.json",
+            "role": "project_identity",
+            "action": "replace",
+            "after_sha256": hashlib.sha256(identity_bytes).hexdigest(),
+            "after_size": len(identity_bytes),
+            "book_id": identity.book_id,
+            "expected_authority_epoch": int(authority["authority_epoch"]),
+            "expected_head_event_hash": str(authority["head_event_hash"]),
+            "after_authority_epoch": int(advanced_identity.authority["authority_epoch"]),
+            "after_head_event_hash": str(advanced_identity.authority["head_event_hash"]),
+        }
+        declared_writes = [*prose_declarations, identity_declaration]
+
+        receipt_id = f"receipt-{run['id']}"
+        receipt_path = self.run_dir / "publication_receipts" / f"{run['id']}.json"
+        final_path = self.run_dir / f"{run['id']}.json"
+        runtime_uuid = registry["roots"]["runtime"]["root_uuid"]
+        receipt_ref = path_ref_for(
+            receipt_path,
+            root_id="runtime",
+            root=root_map["runtime"],
+            root_uuid=runtime_uuid,
+        )
+        final_ref = path_ref_for(
+            final_path,
+            root_id="runtime",
+            root=root_map["runtime"],
+            root_uuid=runtime_uuid,
+        )
+
+        preliminary = self._event_anticipated_persistence(
+            str(run["id"]),
+            apply_targets,
+            receipt_id=receipt_id,
+            receipt_path=receipt_path,
+        )
+        expected_writeback = finalize_story_project_writeback(
+            plan, story_targets, preliminary
+        ).to_dict()
+        prepared_artifacts = self._prepare_event_publication_artifacts(
+            result,
+            snapshot_pack=snapshot_pack,
+            input_pack=input_pack,
+            chapter_pipeline=chapter_pipeline,
+            validation=validation,
+            workflow_trace=workflow_trace,
+            review_repair=review_repair,
+            writeback_plan=plan.to_dict(),
+            writeback_result=expected_writeback,
+        )
+        artifact_targets = [
+            PersistenceV2Target(
+                target_id=f"artifact-{index:03d}",
+                kind=str(target["kind"]),
+                path_ref=self._event_path_ref(
+                    Path(target["path"]), registry=registry, preferred_root=target.get("root_id")
+                ),
+                content=str(target["content"]),
+                phase="publication",
+                metadata=dict(target.get("metadata") or {}),
+                expected_before_exists=False,
+            )
+            for index, target in enumerate(prepared_artifacts, start=1)
+        ]
+        anticipated = self._event_anticipated_persistence(
+            str(run["id"]),
+            [*apply_targets, *artifact_targets],
+            receipt_id=receipt_id,
+            receipt_path=receipt_path,
+        )
+        self._attach_persistence_payload(result, anticipated)
+        expected_writeback = finalize_story_project_writeback(
+            plan, story_targets, anticipated
+        ).to_dict()
+        expected_writeback["artifacts"] = run["story_project"]["writeback"].get(
+            "artifacts", {}
+        )
+        run["story_project"]["writeback"] = expected_writeback
+
+        bound_result = bind_final_run_record_receipt(
+            result,
+            receipt_id=receipt_id,
+            receipt_path_ref=receipt_ref,
+        )
+        validate_run_result(bound_result)
+        result.clear()
+        result.update(bound_result)
+
+        source_revision_after = {
+            "schema_version": "1.0",
+            "book_id": identity.book_id,
+            "root_uuid": registry["roots"]["story_project"]["root_uuid"],
+            "identity_sha256": identity_declaration["after_sha256"],
+            "authority_epoch": identity_declaration["after_authority_epoch"],
+            "head_event_hash": identity_declaration["after_head_event_hash"],
+        }
+        transaction = self.persistence_coordinator.create_transaction(
+            run_id=str(run["id"]),
+            book_id=identity.book_id,
+            story_project_read_set=read_set,
+            read_set_declared_writes=declared_writes,
+        )
+        transaction.prepare(
+            apply_targets=apply_targets,
+            artifacts=artifact_targets,
+            final_run_record=result,
+            final_run_path_ref=final_ref,
+            receipt_id=receipt_id,
+            receipt_path_ref=receipt_ref,
+            context_digest=str(read_set["context_digest"]),
+            generation_input_context_digest=hashlib.sha256(
+                input_pack.encode("utf-8")
+            ).hexdigest(),
+            story_project_source_revision_after=source_revision_after,
+            candidate_result=result,
+            delivery_jobs=[],
+        )
+        committed = transaction.commit()
+        if not committed.get("committed") or committed.get("state") != "completed":
+            raise PersistenceError(
+                f"event-authority persistence did not produce a PublicationReceipt: {committed}"
+            )
+        verification = verify_publication_receipt(receipt_path, root_map=root_map)
+        if not verification.get("valid") or not verification.get("committed"):
+            raise PersistenceError(
+                "event-authority PublicationReceipt failed durable verification"
+            )
+
+    def _event_path_ref(
+        self,
+        path: Path,
+        *,
+        registry: dict[str, Any],
+        preferred_root: str | None = None,
+    ):
+        root_map = self._event_authority_root_map or {}
+        order = [preferred_root] if preferred_root else []
+        order.extend(
+            root_id
+            for root_id in (
+                "snapshot",
+                "chapter_artifacts",
+                "delivery_store",
+                "runtime",
+                "story_project",
+            )
+            if root_id not in order
+        )
+        for root_id in order:
+            if root_id is None or root_id not in root_map:
+                continue
+            try:
+                return path_ref_for(
+                    path,
+                    root_id=root_id,
+                    root=root_map[root_id],
+                    root_uuid=registry["roots"][root_id]["root_uuid"],
+                )
+            except ValueError:
+                continue
+        raise PersistencePreparationError(f"event-authority target is outside trusted roots: {path}")
+
+    def _event_anticipated_persistence(
+        self,
+        run_id: str,
+        targets: list[PersistenceV2Target],
+        *,
+        receipt_id: str,
+        receipt_path: Path,
+    ) -> dict[str, Any]:
+        journal = self.persistence_dir / "journals" / run_id
+        return {
+            "run_id": run_id,
+            "state": "completed",
+            "committed": True,
+            "partial": False,
+            "journal_path": str(journal),
+            "commit_marker": str(journal / "commit.marker"),
+            "targets": [
+                {
+                    "kind": target.kind,
+                    "path": str(self._event_path_ref_target_path(target)),
+                    "status": "verified",
+                    "metadata": dict(target.metadata),
+                }
+                for target in targets
+            ],
+            "errors": [],
+            "candidate_result_path": str(journal / "candidate_result.json"),
+            "publication": {
+                "status": "receipt_backed",
+                "receipt_id": receipt_id,
+                "receipt_path": str(receipt_path),
+            },
+        }
+
+    def _event_path_ref_target_path(self, target: PersistenceV2Target) -> Path:
+        root_map = self._event_authority_root_map or {}
+        ref = target.path_ref
+        root_id = ref.root_id if hasattr(ref, "root_id") else str(ref["root_id"])
+        relative = ref.relative_path if hasattr(ref, "relative_path") else str(ref["relative_path"])
+        return Path(root_map[root_id]) / Path(relative)
+
+    def _prepare_event_publication_artifacts(
+        self,
+        result: dict[str, Any],
+        *,
+        snapshot_pack: str,
+        input_pack: str,
+        chapter_pipeline: dict[str, Any] | None,
+        validation: dict[str, Any],
+        workflow_trace: list[dict[str, Any]],
+        review_repair: dict[str, Any] | None,
+        writeback_plan: dict[str, Any],
+        writeback_result: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        run = result["run"]
+        prepared: list[tuple[str, dict[str, Any], str]] = []
+        chapter = prepare_chapter_artifact(
+            chapter_text=str(result.get("chapter") or ""),
+            run=run,
+            output_dir=self.chapter_dir,
+        )
+        run["chapter"]["artifact"] = chapter["metadata"]
+        prepared.append(("chapter_artifact", chapter, "chapter_artifacts"))
+
+        snapshot = prepare_snapshot_pack_artifact(
+            snapshot_pack=snapshot_pack,
+            run=run,
+            output_dir=self.run_dir / "snapshot_packs",
+        )
+        run["snapshot_builder"]["artifact"] = snapshot["metadata"]
+        prepared.append(("snapshot_pack", snapshot, "runtime"))
+        input_artifact = prepare_input_pack_artifact(
+            input_pack=input_pack,
+            run=run,
+            output_dir=self.run_dir / "input_packs",
+        )
+        run["input_pack"]["artifact"] = input_artifact["metadata"]
+        prepared.append(("input_pack", input_artifact, "runtime"))
+
+        if isinstance(chapter_pipeline, dict):
+            pipeline = prepare_chapter_pipeline_artifacts(
+                pipeline=chapter_pipeline,
+                validation=validation,
+                repair_deltas=_trace_repair_deltas(workflow_trace),
+                run=run,
+                output_dir=self.run_dir / "chapter_pipeline",
+            )
+            run.setdefault("chapter", {}).setdefault("pipeline", {})[
+                "artifacts"
+            ] = pipeline["metadata"]
+            prepared.append(("chapter_pipeline", pipeline, "runtime"))
+        if isinstance(review_repair, dict) and review_repair.get("attempted"):
+            repair = prepare_review_repair_artifacts(
+                review_repair=review_repair,
+                run=run,
+                output_dir=self.run_dir / "review_repairs",
+            )
+            with_artifacts = dict(review_repair)
+            with_artifacts["artifacts"] = repair["metadata"]
+            public = _review_repair_run_payload(with_artifacts)
+            run["review_repair"] = public
+            result["review_repair"] = public
+            prepared.append(("review_repair", repair, "runtime"))
+
+        writeback = prepare_story_project_writeback_artifacts(
+            plan=writeback_plan,
+            result=writeback_result,
+            run=run,
+            output_dir=self.run_dir / "story_project_writebacks",
+        )
+        writeback_result = dict(writeback_result)
+        writeback_result["artifacts"] = writeback["metadata"]
+        run.setdefault("story_project", {})["writeback"] = writeback_result
+        prepared.append(("story_project_writeback", writeback, "runtime"))
+
+        targets: list[dict[str, Any]] = []
+        for kind, bundle, root_id in prepared:
+            for target in bundle["targets"]:
+                targets.append(
+                    {
+                        "kind": kind,
+                        "path": target["path"],
+                        "content": target["content"],
+                        "root_id": root_id,
+                        "metadata": {},
+                    }
+                )
+        return targets
 
     def _prepare_strict_memory_v2_commit(
         self,
@@ -2217,6 +2852,67 @@ def _unresolved_provider_calls(run_dir: Path) -> list[dict[str, Any]]:
         unresolved,
         key=lambda item: (str(item.get("created_at") or ""), str(item.get("attempt_id") or "")),
     )
+
+
+def _chapter_evidence_spans(
+    chapter_body: str,
+    analysis: dict[str, Any],
+    *,
+    limit: int = 16,
+) -> list[dict[str, Any]]:
+    if not chapter_body:
+        raise PersistencePreparationError(
+            "event-authority memory evidence requires a non-empty chapter body"
+        )
+    candidates: list[str] = []
+
+    def collect(value: Any, depth: int = 0) -> None:
+        if depth > 5 or len(candidates) >= limit * 8:
+            return
+        if isinstance(value, str):
+            text = value.strip()
+            if 2 <= len(text) <= 160:
+                candidates.append(text)
+            return
+        if isinstance(value, dict):
+            for key in sorted(value):
+                collect(value[key], depth + 1)
+            return
+        if isinstance(value, list):
+            for item in value:
+                collect(item, depth + 1)
+
+    collect(analysis)
+    spans: list[dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for text in candidates:
+        start = chapter_body.find(text)
+        if start < 0:
+            continue
+        end = start + len(text)
+        key = (start, end)
+        if key in seen:
+            continue
+        seen.add(key)
+        spans.append({"start": start, "end": end, "quote": chapter_body[start:end]})
+        if len(spans) >= limit:
+            break
+    if not spans:
+        start = next(
+            (index for index, char in enumerate(chapter_body) if not char.isspace()),
+            0,
+        )
+        end = min(len(chapter_body), start + 80)
+        while end > start and chapter_body[end - 1].isspace():
+            end -= 1
+        if end <= start:
+            raise PersistencePreparationError(
+                "event-authority memory evidence could not locate chapter text"
+            )
+        spans.append(
+            {"start": start, "end": end, "quote": chapter_body[start:end]}
+        )
+    return spans
 
 
 def run_once(*, dry_run: bool = False, persist: bool = True, enable_llm_validator: bool = False) -> dict[str, Any]:
