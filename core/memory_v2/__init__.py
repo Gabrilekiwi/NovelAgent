@@ -73,7 +73,11 @@ from core.memory_v2.projection import (
 from core.memory_v2.snapshot_adapter import canonical_memory_to_snapshot, load_canonical_memory_snapshot, rebuild_semantic_snapshot
 from core.memory_v2.storage import load_canonical_memory, save_canonical_memory
 from core.memory_v2.validator import MemoryV2ValidationError, validate_canonical_memory
-from core.memory_v2.runtime import ensure_memory_v2_storage_layout, prepare_chapter_memory_commit
+from core.memory_v2.runtime import (
+    ensure_memory_v2_storage_layout,
+    prepare_chapter_memory_commit,
+    prepare_event_authority_chapter_commit,
+)
 
 __all__ = [
     "MemoryEventValidationError",
@@ -135,6 +139,7 @@ __all__ = [
     "reducer_version_for_batch",
     "ensure_memory_v2_storage_layout",
     "prepare_chapter_memory_commit",
+    "prepare_event_authority_chapter_commit",
     "rebuild_canonical_memory",
     "rebuild_semantic_snapshot",
     "rebuild_memory_projections",
