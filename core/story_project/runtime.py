@@ -12,8 +12,9 @@ from core.story_project.model import StoryProjectRuntimeContext
 from core.story_project.paths import resolve_story_project_root
 from core.story_project.read_set import capture_story_project_read_set
 from core.story_project.validator import validate_story_project
-from core.memory_v2 import load_canonical_memory, memory_projection_hash
+from core.memory_v2 import load_canonical_memory, memory_projection_hash, replay_memory_events
 from core.runtime_paths import RuntimePaths
+from core.story_project.authority import AUTHORITY_MODE_EVENT
 
 
 class StoryProjectSequenceDriftError(ValueError):
@@ -87,22 +88,27 @@ def build_generation_story_project_context(
     if root is None or chapter_index is None:
         raise ValueError("StoryProject generation requires a resolved root and chapter.")
     identity = project_identity or create_ephemeral_project_identity(root)
+    event_authority = _uses_event_authority(identity)
     context = build_story_project_runtime_context(
         root,
         chapter_index,
         snapshot=snapshot,
         memory_context=memory_context,
-        previous_chapter_fail_closed=identity.story_state_mode == "strict",
+        previous_chapter_fail_closed=identity.story_state_mode == "strict" or event_authority,
     )
     semantic_state = parse_story_project_semantic_state(
         root,
         chapter_index,
         project_identity=identity,
     )
-    activation = evaluate_story_state_activation(
-        identity,
-        semantic_state,
-        allow_shadow_downgrade=allow_story_state_shadow_downgrade,
+    activation = (
+        _event_authority_activation(identity)
+        if event_authority
+        else evaluate_story_state_activation(
+            identity,
+            semantic_state,
+            allow_shadow_downgrade=allow_story_state_shadow_downgrade,
+        )
     )
     semantic_audit = {
         **activation,
@@ -115,6 +121,8 @@ def build_generation_story_project_context(
             1 for item in semantic_state["conflicts"] if item.get("blocking")
         ),
         "warning_count": len(semantic_state["parse_warnings"]),
+        "parser_authoritative": False if event_authority else bool(activation["authoritative"]),
+        "canonical_authoritative": event_authority,
     }
     memory_v2 = _load_memory_v2_context(root, identity)
     read_set = capture_story_project_read_set(
@@ -134,7 +142,7 @@ def build_generation_story_project_context(
         project_identity=identity.to_dict(),
         read_set=read_set,
         story_state_mode=str(activation["effective_mode"]),
-        semantic_state=(semantic_state if activation["authoritative"] else None),
+        semantic_state=(semantic_state if activation["authoritative"] and not event_authority else None),
         semantic_audit=semantic_audit,
         memory_v2=memory_v2,
     )
@@ -166,7 +174,10 @@ def build_generation_story_project_context_loader(
 def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, Any]:
     memory_root = RuntimePaths.for_story_project(root).memory_dir / "v2"
     canonical_path = memory_root / "canonical_memory.json"
+    event_authority = _uses_event_authority(identity)
     if not canonical_path.exists():
+        if event_authority:
+            raise ValueError("story_project_event_authority_canonical_missing")
         return {
             "status": "absent",
             "canonical_path": str(canonical_path),
@@ -178,6 +189,22 @@ def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, 
     projection = load_canonical_memory(canonical_path)
     if str(projection["book_id"]) != identity.book_id:
         raise ValueError("story_project_memory_v2_identity_mismatch")
+    replay_report: dict[str, Any] | None = None
+    if event_authority:
+        authority = identity.authority or {}
+        if projection.get("schema_version") != "2.2":
+            raise ValueError("story_project_event_authority_requires_memory_v2_2")
+        if int(projection.get("authority_epoch") or 0) != int(authority["authority_epoch"]):
+            raise ValueError("story_project_event_authority_epoch_mismatch")
+        if projection.get("head_event_hash") != authority.get("head_event_hash"):
+            raise ValueError("story_project_event_authority_head_mismatch")
+        event_store = memory_root / "events"
+        try:
+            replay_report = replay_memory_events(event_store)
+        except (OSError, ValueError) as exc:
+            raise ValueError("story_project_event_authority_replay_failed") from exc
+        if replay_report.get("projection") != projection:
+            raise ValueError("story_project_event_authority_projection_drift")
     return {
         "status": "ready",
         "canonical_path": str(canonical_path),
@@ -185,6 +212,35 @@ def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, 
         "revision": int(projection["revision"]),
         "projection_hash": memory_projection_hash(projection),
         "projection": projection,
+        "authority_epoch": projection.get("authority_epoch"),
+        "head_event_hash": projection.get("head_event_hash"),
+        "reducer_version": (
+            "memory-reducer-2.2" if projection.get("schema_version") == "2.2" else None
+        ),
+        "replay_projection_hash": (
+            replay_report.get("projection_hash") if replay_report is not None else None
+        ),
+    }
+
+
+def _uses_event_authority(identity: ProjectIdentity) -> bool:
+    authority = identity.authority
+    return isinstance(authority, dict) and authority.get("mode") == AUTHORITY_MODE_EVENT
+
+
+def _event_authority_activation(identity: ProjectIdentity) -> dict[str, Any]:
+    authority = identity.authority or {}
+    return {
+        "configured_mode": identity.story_state_mode,
+        "effective_mode": "strict",
+        "authoritative": False,
+        "profile_match": None,
+        "downgraded": False,
+        "ready_for_next_step": True,
+        "blockers": [],
+        "authority_source": "memory_event_v2_2",
+        "authority_epoch": authority.get("authority_epoch"),
+        "head_event_hash": authority.get("head_event_hash"),
     }
 
 

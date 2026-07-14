@@ -195,6 +195,44 @@ class StoryProjectContextService:
     def apply_authority(context: dict[str, Any] | None, snapshot: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(context, dict) or context.get("story_state_mode") != "strict":
             return snapshot
+        identity = context.get("project_identity")
+        authority = identity.get("authority") if isinstance(identity, dict) else None
+        if isinstance(authority, dict) and authority.get("mode") == "event_v1":
+            memory_v2 = context.get("memory_v2")
+            projection = memory_v2.get("projection") if isinstance(memory_v2, dict) else None
+            if not isinstance(projection, dict) or projection.get("schema_version") != "2.2":
+                raise StoryProjectContextError(
+                    "event_authority_projection_missing",
+                    "event-authoritative StoryProject context requires CanonicalMemory 2.2",
+                )
+            if projection.get("book_id") != identity.get("book_id"):
+                raise StoryProjectContextError(
+                    "event_authority_identity_mismatch",
+                    "CanonicalMemory belongs to another StoryProject",
+                )
+            if projection.get("authority_epoch") != authority.get("authority_epoch"):
+                raise StoryProjectContextError(
+                    "event_authority_epoch_mismatch",
+                    "CanonicalMemory authority epoch differs from ProjectIdentity",
+                )
+            if projection.get("head_event_hash") != authority.get("head_event_hash"):
+                raise StoryProjectContextError(
+                    "event_authority_head_mismatch",
+                    "CanonicalMemory head differs from ProjectIdentity",
+                )
+            canonical = canonical_memory_to_snapshot(projection)
+            merged = copy.deepcopy(snapshot)
+            for field, value in canonical.items():
+                merged[field] = copy.deepcopy(value)
+            merged["book_id"] = identity["book_id"]
+            merged["semantic_authority"] = {
+                "source": "memory_event_v2_2",
+                "reducer_version": "memory-reducer-2.2",
+                "authority_epoch": authority["authority_epoch"],
+                "head_event_hash": authority["head_event_hash"],
+                "parser_authoritative": False,
+            }
+            return normalize_snapshot(merged)
         merged = dict(snapshot)
         memory_v2 = context.get("memory_v2")
         projection = memory_v2.get("projection") if isinstance(memory_v2, dict) else None
