@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HistoricalRevisionEvidence",
+  "type": "object",
+  "required": [
+    "schema_version", "transaction_id", "revision_kind", "book_id",
+    "historical_chapter_index", "historical_chapter_relative_path", "historical_chapter_sha256",
+    "revision_source_sha256", "revision_evidence_text_sha256",
+    "revision_evidence_text", "evidence_spans", "evidence_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "transaction_id": {"type": "string", "minLength": 1},
+    "revision_kind": {"type": "string", "enum": ["amend", "import", "retcon"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "historical_chapter_index": {"type": "integer", "minimum": 1},
+    "historical_chapter_relative_path": {"type": "string", "minLength": 1},
+    "historical_chapter_sha256": {"type": "string", "minLength": 64},
+    "revision_source_sha256": {"type": "string", "minLength": 64},
+    "revision_evidence_text_sha256": {"type": "string", "minLength": 64},
+    "revision_evidence_text": {"type": "string", "minLength": 1},
+    "evidence_spans": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "quote"],
+        "properties": {
+          "start": {"type": "integer", "minimum": 0},
+          "end": {"type": "integer", "minimum": 1},
+          "quote": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidence_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

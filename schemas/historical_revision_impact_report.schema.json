@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HistoricalRevisionImpactReport",
+  "type": "object",
+  "required": [
+    "schema_version", "transaction_id", "revision_kind", "book_id",
+    "historical_chapter_index", "historical_chapter_relative_path", "source_hashes", "anchor_batch",
+    "authority_before", "authority_after", "summary", "impact_basis_hash",
+    "batch_hash", "evidence_hash", "invalidation_manifest_hash", "reconciliation", "report_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "transaction_id": {"type": "string", "minLength": 1},
+    "revision_kind": {"type": "string", "enum": ["amend", "import", "retcon"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "historical_chapter_index": {"type": "integer", "minimum": 1},
+    "historical_chapter_relative_path": {"type": "string", "minLength": 1},
+    "source_hashes": {
+      "type": "object",
+      "required": ["historical_chapter_sha256", "revision_source_sha256", "source_project_digest", "context_digest", "dependency_inventory_hash"],
+      "properties": {
+        "historical_chapter_sha256": {"type": "string", "minLength": 64},
+        "revision_source_sha256": {"type": "string", "minLength": 64},
+        "source_project_digest": {"type": "string", "minLength": 64},
+        "context_digest": {"type": "string", "minLength": 64},
+        "dependency_inventory_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "anchor_batch": {
+      "type": "object",
+      "required": [
+        "batch_id", "batch_hash", "first_revision", "last_revision",
+        "evidence_kind", "historical_chapter_sha256",
+        "published_evidence_sha256", "source_record_hash"
+      ],
+      "properties": {
+        "batch_id": {"type": "string", "minLength": 1},
+        "batch_hash": {"type": "string", "minLength": 64},
+        "first_revision": {"type": "integer", "minimum": 1},
+        "last_revision": {"type": "integer", "minimum": 1},
+        "evidence_kind": {"type": "string", "enum": ["chapter_event", "migration_source_snapshot"]},
+        "historical_chapter_sha256": {"type": "string", "minLength": 64},
+        "published_evidence_sha256": {"type": "string", "minLength": 64},
+        "source_record_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "authority_before": {
+      "type": "object",
+      "required": ["authority_epoch", "revision", "head_event_hash"],
+      "properties": {
+        "authority_epoch": {"type": "integer", "minimum": 1},
+        "revision": {"type": "integer", "minimum": 1},
+        "head_event_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "authority_after": {
+      "type": "object",
+      "required": ["authority_epoch", "revision", "head_event_hash"],
+      "properties": {
+        "authority_epoch": {"type": "integer", "minimum": 1},
+        "revision": {"type": "integer", "minimum": 1},
+        "head_event_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["event_count", "outline_count", "session_count", "earliest_invalid_revision", "latest_invalid_revision"],
+      "properties": {
+        "event_count": {"type": "integer", "minimum": 0},
+        "outline_count": {"type": "integer", "minimum": 0},
+        "session_count": {"type": "integer", "minimum": 0},
+        "earliest_invalid_revision": {"type": ["integer", "null"], "minimum": 1},
+        "latest_invalid_revision": {"type": ["integer", "null"], "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "impact_basis_hash": {"type": "string", "minLength": 64},
+    "batch_hash": {"type": "string", "minLength": 64},
+    "evidence_hash": {"type": "string", "minLength": 64},
+    "invalidation_manifest_hash": {"type": "string", "minLength": 64},
+    "reconciliation": {
+      "type": ["object", "null"],
+      "required": ["blocked_transaction_id", "blocked_impact_basis_hash", "resolved_event_batch_ids", "resolved_outline_ids", "resolved_session_ids", "resolved_dependency_inventory_hash", "revision_source_sha256", "reconciliation_hash"],
+      "properties": {
+        "blocked_transaction_id": {"type": "string", "minLength": 1},
+        "blocked_impact_basis_hash": {"type": "string", "minLength": 64},
+        "resolved_event_batch_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "resolved_outline_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "resolved_session_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "resolved_dependency_inventory_hash": {"type": "string", "minLength": 64},
+        "revision_source_sha256": {"type": "string", "minLength": 64},
+        "reconciliation_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "report_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

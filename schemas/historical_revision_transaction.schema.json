@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HistoricalRevisionTransaction",
+  "type": "object",
+  "required": [
+    "schema_version", "transaction_id", "revision_kind", "book_id",
+    "historical_chapter_index", "historical_chapter_relative_path", "reducer_version", "patch_id", "patch_content_hash",
+    "batch_id", "batch_hash", "source_hashes", "authority_before", "authority_after",
+    "identity_before_sha256", "identity_after_sha256", "evidence_hash",
+    "invalidation_manifest_hash", "impact_report_hash", "reconciliation", "target_roles", "transaction_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "transaction_id": {"type": "string", "minLength": 1},
+    "revision_kind": {"type": "string", "enum": ["amend", "import", "retcon"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "historical_chapter_index": {"type": "integer", "minimum": 1},
+    "historical_chapter_relative_path": {"type": "string", "minLength": 1},
+    "reducer_version": {"type": "string", "enum": ["memory-reducer-2.2"]},
+    "patch_id": {"type": "string", "minLength": 1},
+    "patch_content_hash": {"type": "string", "minLength": 64},
+    "batch_id": {"type": "string", "minLength": 1},
+    "batch_hash": {"type": "string", "minLength": 64},
+    "source_hashes": {
+      "type": "object",
+      "required": ["historical_chapter_sha256", "revision_source_sha256", "source_project_digest", "context_digest", "dependency_inventory_hash"],
+      "properties": {
+        "historical_chapter_sha256": {"type": "string", "minLength": 64},
+        "revision_source_sha256": {"type": "string", "minLength": 64},
+        "source_project_digest": {"type": "string", "minLength": 64},
+        "context_digest": {"type": "string", "minLength": 64},
+        "dependency_inventory_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "authority_before": {
+      "type": "object",
+      "required": ["authority_epoch", "revision", "head_event_hash"],
+      "properties": {
+        "authority_epoch": {"type": "integer", "minimum": 1},
+        "revision": {"type": "integer", "minimum": 1},
+        "head_event_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "authority_after": {
+      "type": "object",
+      "required": ["authority_epoch", "revision", "head_event_hash"],
+      "properties": {
+        "authority_epoch": {"type": "integer", "minimum": 1},
+        "revision": {"type": "integer", "minimum": 1},
+        "head_event_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "identity_before_sha256": {"type": "string", "minLength": 64},
+    "identity_after_sha256": {"type": "string", "minLength": 64},
+    "evidence_hash": {"type": "string", "minLength": 64},
+    "invalidation_manifest_hash": {"type": "string", "minLength": 64},
+    "impact_report_hash": {"type": "string", "minLength": 64},
+    "reconciliation": {
+      "type": ["object", "null"],
+      "required": ["blocked_transaction_id", "blocked_impact_basis_hash", "resolved_event_batch_ids", "resolved_outline_ids", "resolved_session_ids", "resolved_dependency_inventory_hash", "revision_source_sha256", "reconciliation_hash"],
+      "properties": {
+        "blocked_transaction_id": {"type": "string", "minLength": 1},
+        "blocked_impact_basis_hash": {"type": "string", "minLength": 64},
+        "resolved_event_batch_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "resolved_outline_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "resolved_session_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "resolved_dependency_inventory_hash": {"type": "string", "minLength": 64},
+        "revision_source_sha256": {"type": "string", "minLength": 64},
+        "reconciliation_hash": {"type": "string", "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "target_roles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "transaction_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

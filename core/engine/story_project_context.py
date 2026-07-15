@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.memory_v2 import canonical_memory_to_snapshot
+from core.memory_v2.history_revision import (
+    HistoricalRevisionError,
+    assert_event_authority_reconciliation_ready,
+)
 from core.runtime_paths import RuntimePaths
 from core.state.snapshot import normalize_snapshot
 from core.story_project.identity import (
@@ -220,6 +224,10 @@ class StoryProjectContextService:
                     "event_authority_head_mismatch",
                     "CanonicalMemory head differs from ProjectIdentity",
                 )
+            try:
+                assert_event_authority_reconciliation_ready(projection)
+            except HistoricalRevisionError as exc:
+                raise StoryProjectContextError(exc.code, str(exc)) from exc
             canonical = canonical_memory_to_snapshot(projection)
             merged = copy.deepcopy(snapshot)
             for field, value in canonical.items():

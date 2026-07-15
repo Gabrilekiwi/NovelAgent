@@ -12,6 +12,7 @@ from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNA
 from core.engine.report import build_run_report
 from core.engine.run_record import load_latest_run_summary
 from core.memory_v2.compile import compile_memory_v2
+from core.memory_v2.history_revision import assert_event_authority_reconciliation_ready
 from core.schema import SchemaValidationError, validate_schema_consistency, validate_schema_keywords
 from core.state.builder import build_snapshot_state_with_audit
 from core.state.memory import load_memory_context
@@ -832,6 +833,11 @@ def _check_story_project_runtime_context(
             project_identity=identity,
             allow_story_state_shadow_downgrade=allow_story_state_shadow_downgrade,
         )
+        payload = context.to_dict() if hasattr(context, "to_dict") else context
+        memory_v2 = payload.get("memory_v2") if isinstance(payload, dict) else None
+        projection = memory_v2.get("projection") if isinstance(memory_v2, dict) else None
+        if isinstance(projection, dict):
+            assert_event_authority_reconciliation_ready(projection)
     except Exception as exc:  # noqa: BLE001 - preflight reports all startup failures.
         checks.append({"name": "story_project_runtime_context", "ok": False, "error": str(exc)})
         return

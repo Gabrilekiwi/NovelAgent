@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from core.memory_v2.canonical import CANONICAL_JSON_ALGORITHM, canonical_json_hash
@@ -253,9 +253,14 @@ def _create_memory_event_batch_v22(
     if any(event.get("reducer_version") != reducer for event in validated_events):
         raise MemoryEventStoreError("Memory 2.2 event reducer_version does not match its batch")
 
-    status = publication_status or (
-        "genesis" if batch_kind == "genesis" else "committed" if batch_kind == "chapter" else "source_sync"
-    )
+    status = publication_status or {
+        "genesis": "genesis",
+        "source_sync": "source_sync",
+        "chapter": "committed",
+        "amend": "amended",
+        "import": "imported",
+        "retcon": "retconned",
+    }.get(batch_kind, "")
     _validate_publication_boundary_v22(batch_kind, status)
     _require_sha256("source_project_digest", source_project_digest)
     _require_sha256("context_digest", context_digest)
@@ -375,6 +380,12 @@ def _validate_memory_event_batch_v22(batch: dict[str, Any]) -> dict[str, Any]:
         _validate_v22_event_precondition_chain(None, events)
 
     _validate_v22_patch_event_alignment(patch, events, batch_kind=batch_kind)
+    if batch_kind in {"amend", "import", "retcon"}:
+        _validate_historical_revision_batch_contract(
+            patch,
+            events,
+            batch_kind=batch_kind,
+        )
     _validate_publication_boundary_v22(batch_kind, str(validated["publication_status"]))
     if validated["canonical_json_algorithm"] != CANONICAL_JSON_ALGORITHM:
         raise MemoryIntegrityError("unsupported canonical JSON algorithm")
@@ -481,6 +492,70 @@ def _require_known_reducer(reducer_version: str) -> None:
         resolve_memory_reducer(reducer_version)
     except MemoryReducerError as exc:
         raise MemoryEventStoreError(str(exc)) from exc
+
+
+def _validate_historical_revision_batch_contract(
+    patch: dict[str, Any],
+    events: list[dict[str, Any]],
+    *,
+    batch_kind: str,
+) -> None:
+    """Prevent generic/older writers from minting unaudited revision batches."""
+
+    source = patch.get("source")
+    metadata = patch.get("metadata")
+    if not isinstance(source, dict) or source.get("kind") != batch_kind:
+        raise MemoryIntegrityError("historical revision patch source kind does not match its batch")
+    source_path = source.get("path")
+    if not isinstance(source_path, str) or not source_path.startswith("history-revision:"):
+        raise MemoryIntegrityError("historical revision patch requires a logical revision source")
+    if not isinstance(metadata, dict) or metadata.get("historical_revision") is not True:
+        raise MemoryIntegrityError("historical revision patch is missing its writer contract")
+    transaction_id = metadata.get("transaction_id")
+    chapter_index = metadata.get("historical_chapter_index")
+    chapter_relative_path = metadata.get("historical_chapter_relative_path")
+    if not isinstance(transaction_id, str) or not _SAFE_ID.fullmatch(transaction_id):
+        raise MemoryIntegrityError("historical revision transaction_id is unsafe")
+    if source_path != f"history-revision:{transaction_id}":
+        raise MemoryIntegrityError("historical revision source does not match transaction_id")
+    if isinstance(chapter_index, bool) or not isinstance(chapter_index, int) or chapter_index < 1:
+        raise MemoryIntegrityError("historical revision chapter index is invalid")
+    if (
+        not isinstance(chapter_relative_path, str)
+        or not chapter_relative_path
+        or PurePosixPath(chapter_relative_path).is_absolute()
+        or ".." in PurePosixPath(chapter_relative_path).parts
+        or PurePosixPath(chapter_relative_path).as_posix() != chapter_relative_path
+    ):
+        raise MemoryIntegrityError("historical revision chapter path is invalid")
+    for field in (
+        "historical_chapter_sha256",
+        "revision_source_sha256",
+        "impact_basis_hash",
+        "dependency_inventory_hash",
+    ):
+        _require_sha256(field, metadata.get(field))
+    binding = {
+        "transaction_id": transaction_id,
+        "revision_kind": batch_kind,
+        "historical_chapter_index": chapter_index,
+        "historical_chapter_relative_path": chapter_relative_path,
+        "historical_chapter_sha256": metadata["historical_chapter_sha256"],
+        "revision_source_sha256": metadata["revision_source_sha256"],
+        "impact_basis_hash": metadata["impact_basis_hash"],
+        "dependency_inventory_hash": metadata["dependency_inventory_hash"],
+    }
+    for operation, event in zip(patch.get("operations", []), events):
+        operation_data = operation.get("data")
+        event_data = event.get("metadata", {}).get("operation_data")
+        if not isinstance(operation_data, dict) or operation_data.get("historical_revision") != binding:
+            raise MemoryIntegrityError("historical revision operation binding is missing or ambiguous")
+        if event_data != operation_data:
+            raise MemoryIntegrityError("historical revision event does not preserve its operation binding")
+        if event.get("source") != {**source, "patch_id": patch["patch_id"]}:
+            raise MemoryIntegrityError("historical revision event source does not match its patch")
+        if event.get("chapter_body_sha256") != metadata["revision_source_sha256"]:
+            raise MemoryIntegrityError("historical revision event evidence hash differs from its source")
 
 
 def write_memory_event_batch(store_dir: str | Path, batch: dict[str, Any]) -> Path:
@@ -1086,6 +1161,9 @@ def _validate_publication_boundary_v22(batch_kind: str, publication_status: str)
         "genesis": "genesis",
         "source_sync": "source_sync",
         "chapter": "committed",
+        "amend": "amended",
+        "import": "imported",
+        "retcon": "retconned",
     }
     required_status = required_by_kind.get(batch_kind)
     if required_status is None:

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HistoricalRevisionDependencyInventory",
+  "type": "object",
+  "required": [
+    "schema_version", "inventory_kind", "book_id", "authority_epoch",
+    "head_event_hash", "historical_chapter_index", "canonical_next_chapter_index",
+    "outline_inventory_complete", "session_inventory_complete",
+    "outline_dependencies", "session_dependencies", "inventory_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "inventory_kind": {"type": "string", "enum": ["complete_downstream_dependencies"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "authority_epoch": {"type": "integer", "minimum": 1},
+    "head_event_hash": {"type": "string", "minLength": 64},
+    "historical_chapter_index": {"type": "integer", "minimum": 1},
+    "canonical_next_chapter_index": {"type": "integer", "minimum": 1},
+    "outline_inventory_complete": {"type": "boolean"},
+    "session_inventory_complete": {"type": "boolean"},
+    "outline_dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["outline_id", "chapter_index", "artifact_sha256", "authority_epoch", "head_event_hash"],
+        "properties": {
+          "outline_id": {"type": "string", "minLength": 1},
+          "chapter_index": {"type": "integer", "minimum": 1},
+          "artifact_sha256": {"type": "string", "minLength": 64},
+          "authority_epoch": {"type": "integer", "minimum": 1},
+          "head_event_hash": {"type": "string", "minLength": 64}
+        },
+        "additionalProperties": false
+      }
+    },
+    "session_dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "session_id", "first_chapter_index", "last_chapter_index",
+          "artifact_sha256", "authority_epoch", "head_event_hash", "status"
+        ],
+        "properties": {
+          "session_id": {"type": "string", "minLength": 1},
+          "first_chapter_index": {"type": "integer", "minimum": 1},
+          "last_chapter_index": {"type": "integer", "minimum": 1},
+          "artifact_sha256": {"type": "string", "minLength": 64},
+          "authority_epoch": {"type": "integer", "minimum": 1},
+          "head_event_hash": {"type": "string", "minLength": 64},
+          "status": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "inventory_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}
