@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RealAutonomyE2EReport",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "redacted",
+    "ok",
+    "generated_at",
+    "gate",
+    "provider",
+    "identity",
+    "counts",
+    "authority",
+    "slo",
+    "chapters",
+    "evidence",
+    "report_hash"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "kind": {"type": "string", "enum": ["real_autonomy_e2e"]},
+    "redacted": {"type": "boolean", "enum": [true]},
+    "ok": {"type": "boolean", "enum": [true]},
+    "generated_at": {"type": "string", "minLength": 1},
+    "gate": {
+      "type": "object",
+      "required": [
+        "requested_chapters",
+        "tier",
+        "source_mode",
+        "strict_validator_enabled",
+        "required_file_delivery_enabled",
+        "notion_writes",
+        "manual_source_edits"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requested_chapters": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "single_chapter",
+            "four_chapter_canary",
+            "ten_chapter_unattended",
+            "long_run_20_plus"
+          ]
+        },
+        "source_mode": {
+          "type": "string",
+          "enum": ["generated_isolated_temporary_story_project"]
+        },
+        "strict_validator_enabled": {"type": "boolean", "enum": [true]},
+        "required_file_delivery_enabled": {"type": "boolean", "enum": [true]},
+        "notion_writes": {"type": "boolean", "enum": [false]},
+        "manual_source_edits": {"type": "integer", "enum": [0]}
+      }
+    },
+    "provider": {
+      "type": "object",
+      "required": ["name", "endpoint_type", "model_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "enum": ["openai"]},
+        "endpoint_type": {"type": "string", "enum": ["official"]},
+        "model_sha256": {"type": "string", "minLength": 64}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "required": ["book_id_sha256", "session_id_sha256", "plan_hash", "input_manifest_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "book_id_sha256": {"type": "string", "minLength": 64},
+        "session_id_sha256": {"type": "string", "minLength": 64},
+        "plan_hash": {"type": "string", "minLength": 64},
+        "input_manifest_hash": {"type": "string", "minLength": 64}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "outlines",
+        "prose_chapters",
+        "event_batches",
+        "publication_receipts",
+        "completion_receipts",
+        "required_file_deliveries"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "outlines": {"type": "integer", "minimum": 1},
+        "prose_chapters": {"type": "integer", "minimum": 1},
+        "event_batches": {"type": "integer", "minimum": 1},
+        "publication_receipts": {"type": "integer", "minimum": 1},
+        "completion_receipts": {"type": "integer", "minimum": 1},
+        "required_file_deliveries": {"type": "integer", "minimum": 1}
+      }
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "initial_head_event_hash",
+        "final_head_event_hash",
+        "final_revision",
+        "committed_chapter_count",
+        "continuous"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "initial_head_event_hash": {"type": "string", "minLength": 64},
+        "final_head_event_hash": {"type": "string", "minLength": 64},
+        "final_revision": {"type": "integer", "minimum": 2},
+        "committed_chapter_count": {"type": "integer", "minimum": 1},
+        "continuous": {"type": "boolean", "enum": [true]}
+      }
+    },
+    "slo": {
+      "type": "object",
+      "required": [
+        "logical_chapter_attempts",
+        "logical_attempts_median_per_chapter",
+        "logical_attempts_median_limit",
+        "logical_model_calls",
+        "provider_physical_attempts",
+        "provider_transport_retries",
+        "provider_retry_rate",
+        "quality_repair_attempts",
+        "first_pass_chapters",
+        "first_pass_rate",
+        "system_failures",
+        "context_budget_errors",
+        "internal_value_errors"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "logical_chapter_attempts": {"type": "integer", "minimum": 1},
+        "logical_attempts_median_per_chapter": {"type": "number", "minimum": 1, "maximum": 2},
+        "logical_attempts_median_limit": {"type": "number", "enum": [2.0]},
+        "logical_model_calls": {"type": "integer", "minimum": 1},
+        "provider_physical_attempts": {"type": "integer", "minimum": 1},
+        "provider_transport_retries": {"type": "integer", "minimum": 0},
+        "provider_retry_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "quality_repair_attempts": {"type": "integer", "minimum": 0},
+        "first_pass_chapters": {"type": "integer", "minimum": 0},
+        "first_pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "system_failures": {"type": "integer", "enum": [0]},
+        "context_budget_errors": {"type": "integer", "enum": [0]},
+        "internal_value_errors": {"type": "integer", "enum": [0]}
+      }
+    },
+    "chapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "chapter_index",
+          "run_id_sha256",
+          "outline_sha256",
+          "prose_sha256",
+          "prose_chars",
+          "event_batch_hash",
+          "authority_head_event_hash",
+          "publication_receipt_hash",
+          "completion_receipt_hash",
+          "delivery_sha256",
+          "model_call_count",
+          "provider_transport_retries",
+          "quality_repair_attempts",
+          "quality_accepted",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "chapter_index": {"type": "integer", "minimum": 1},
+          "run_id_sha256": {"type": "string", "minLength": 64},
+          "outline_sha256": {"type": "string", "minLength": 64},
+          "prose_sha256": {"type": "string", "minLength": 64},
+          "prose_chars": {"type": "integer", "minimum": 3000, "maximum": 4500},
+          "event_batch_hash": {"type": "string", "minLength": 64},
+          "authority_head_event_hash": {"type": "string", "minLength": 64},
+          "publication_receipt_hash": {"type": "string", "minLength": 64},
+          "completion_receipt_hash": {"type": "string", "minLength": 64},
+          "delivery_sha256": {"type": "string", "minLength": 64},
+          "model_call_count": {"type": "integer", "minimum": 1},
+          "provider_transport_retries": {"type": "integer", "minimum": 0},
+          "quality_repair_attempts": {"type": "integer", "minimum": 0},
+          "quality_accepted": {"type": "boolean", "enum": [true]},
+          "status": {"type": "string", "enum": ["committed"]}
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "outline_and_prose_same_publication",
+        "exact_body_hashes",
+        "continuous_event_authority",
+        "publication_receipts_verified",
+        "completion_receipts_contiguous",
+        "required_file_deliveries_read_back",
+        "strict_quality_gate_verified",
+        "no_unreceipted_source_edits",
+        "notion_disabled"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "outline_and_prose_same_publication": {"type": "boolean", "enum": [true]},
+        "exact_body_hashes": {"type": "boolean", "enum": [true]},
+        "continuous_event_authority": {"type": "boolean", "enum": [true]},
+        "publication_receipts_verified": {"type": "boolean", "enum": [true]},
+        "completion_receipts_contiguous": {"type": "boolean", "enum": [true]},
+        "required_file_deliveries_read_back": {"type": "boolean", "enum": [true]},
+        "strict_quality_gate_verified": {"type": "boolean", "enum": [true]},
+        "no_unreceipted_source_edits": {"type": "boolean", "enum": [true]},
+        "notion_disabled": {"type": "boolean", "enum": [true]}
+      }
+    },
+    "report_hash": {"type": "string", "minLength": 64}
+  }
+}
