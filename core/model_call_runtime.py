@@ -146,21 +146,29 @@ class ModelCallRuntimeContext:
 
         A terminal local budget rejection never crossed the provider boundary
         and is therefore not charged. Every succeeded receipt is reserved and
-        settled exactly once in the fresh in-memory tracker.
+        settled exactly once in the fresh in-memory tracker. An Intent without
+        a Receipt crossed the durable provider boundary, so its full output
+        reservation remains charged while the attempt stays uncertain.
         """
 
         hydrated: list[str] = []
-        if not self.store.receipts_dir.is_dir():
+        receipts: dict[str, dict[str, Any]] = {}
+        if self.store.receipts_dir.is_dir():
+            for path in sorted(self.store.receipts_dir.glob("*.json")):
+                receipt = self.store.load_receipt(path.stem)
+                receipts[receipt["attempt_id"]] = receipt
+        if not self.store.intents_dir.is_dir():
             return hydrated
-        for path in sorted(self.store.receipts_dir.glob("*.json")):
-            receipt = self.store.load_receipt(path.stem)
-            if receipt["status"] == "budget_rejected":
+
+        for path in sorted(self.store.intents_dir.glob("*.json")):
+            intent = self.store.load_intent(path.stem)
+            receipt = receipts.get(intent["attempt_id"])
+            if receipt is not None and receipt["status"] == "budget_rejected":
                 continue
-            if receipt["status"] != "succeeded":
+            if receipt is not None and receipt["status"] != "succeeded":
                 raise ModelCallIntegrityError(
                     f"unsupported terminal model receipt status: {receipt['status']}"
                 )
-            intent = self.store.load_intent(receipt["attempt_id"])
             reservation = intent["budget_reservation"]
             self._reserve_tracker(
                 input_tokens=_non_negative_int(
@@ -171,16 +179,17 @@ class ModelCallRuntimeContext:
                     "reserved_output_tokens",
                     reservation.get("reserved_output_tokens"),
                 ),
-                call_id=receipt["call_id"],
-                attempt_id=receipt["attempt_id"],
+                call_id=intent["call_id"],
+                attempt_id=intent["attempt_id"],
             )
-            response = self._response_from_receipt(receipt["attempt_id"])
-            self._record_tracker_response(
-                response,
-                call_id=receipt["call_id"],
-                attempt_id=receipt["attempt_id"],
-            )
-            hydrated.append(receipt["receipt_hash"])
+            if receipt is not None:
+                response = self._response_from_receipt(receipt["attempt_id"])
+                self._record_tracker_response(
+                    response,
+                    call_id=receipt["call_id"],
+                    attempt_id=receipt["attempt_id"],
+                )
+                hydrated.append(receipt["receipt_hash"])
         return hydrated
 
     def execute_attempt(

@@ -385,6 +385,21 @@ class AgentExecutorTest(unittest.TestCase):
 
         evidence = result["run"]["execution_evidence"]
         model_root = tmp_path / "runs" / Path(evidence["model_calls_ref"])
+        provenance = json.loads(
+            (tmp_path / "runs" / Path(evidence["provenance_artifact_ref"])).read_text(
+                encoding="utf-8"
+            )
+        )
+        public_config = {
+            item["name"]: item["value"] for item in provenance["config"]
+        }
+        self.assertEqual(
+            {
+                "openai": provenance["model"]["model"],
+                "anthropic": public_config["configured_models"]["anthropic"],
+            },
+            public_config["configured_models"],
+        )
         intent_path = model_root / "intents" / "executor-generation-a1.json"
         receipt_path = model_root / "receipts" / "executor-generation-a1.json"
         response_path = model_root / "responses" / "executor-generation-a1.txt"

@@ -108,10 +108,17 @@ def polish_chapter(
     endpoint_type = (
         MODEL_ENDPOINT_UNKNOWN if config.claude_base_url else MODEL_ENDPOINT_OFFICIAL
     )
+    if runtime is None:
+        raise ModelCallError(
+            "A durable ModelCallRuntime is required before any physical Anthropic request.",
+            provider="anthropic",
+            stage="claude_polish",
+            model=model,
+            failure_category="durable_evidence_required",
+            retryable=False,
+        )
     resolved_call_id = call_id or (
         runtime.new_call_id(provider="anthropic", stage="claude_polish")
-        if runtime is not None
-        else None
     )
     evidence_request = dict(request_kwargs)
     evidence_request["stream"] = bool(config.claude_stream)
@@ -139,10 +146,7 @@ def polish_chapter(
         if client is None:
             client = Anthropic(**client_kwargs)
             client_holder["client"] = client
-        if runtime is None:
-            return invoke_provider(client)
         physical_attempt += 1
-        assert resolved_call_id is not None
         return runtime.execute_attempt(
             call_id=resolved_call_id,
             attempt_number=physical_attempt,

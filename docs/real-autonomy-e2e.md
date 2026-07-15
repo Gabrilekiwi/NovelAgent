@@ -23,6 +23,10 @@ Execution requires all of the following:
 - the `--confirm-real-provider-calls` flag;
 - the official OpenAI endpoint (custom/compatible base URLs are rejected);
 - 6,000-8,000 maximum output tokens and at most two provider attempts;
+- a clean, committed Git worktree before the first provider Intent;
+- a new `--out` path that does not already exist;
+- an explicit `NOVELAGENT_REAL_AUTONOMY_PROXY_MODE=inherit` or `clear`
+  choice whenever any supported proxy variable is present;
 - no environment setting or command-line flag whose name contains `NOTION`.
 
 The final restriction is intentional: this release cycle permits only local,
@@ -37,6 +41,7 @@ $env:OPENAI_API_KEY = "<operator-provided-key>"
 $env:OPENAI_MODEL = "<trusted-official-model>"
 $env:OPENAI_MAX_OUTPUT_TOKENS = "6000"
 $env:PROVIDER_MAX_ATTEMPTS = "1"
+$env:NOVELAGENT_REAL_AUTONOMY_PROXY_MODE = "clear" # or "inherit" after explicit review
 $env:NOVELAGENT_REAL_AUTONOMY_E2E = "I_ACCEPT_BILLABLE_OPENAI_CALLS:1"
 python -B scripts/real_autonomy_e2e.py --chapters 1 --confirm-real-provider-calls --out .tmp/reports/real-autonomy-1.json
 ```
@@ -45,12 +50,24 @@ Repeat with matching values `4`, `10`, and `20` (or a larger long-run count)
 only after reviewing the expected cost. The sentinel must match `--chapters`
 exactly; it cannot authorize a different run size.
 
+The harness reserves `--out` before creating the isolated project. It never
+overwrites an operator-owned artifact. On an execution or verification failure,
+the isolated project is removed first and the reservation is replaced with a
+content-hashed, redacted failure report. That report contains only allowlisted
+exception types, failure categories, HTTP status when safely available, attempt
+counts, and Intent/Receipt/chapter counts; it never contains provider messages,
+prompts, generated prose, request IDs, credentials, or absolute paths.
+
 ## Release evidence
 
 A successful report is schema-validated and content-hashed. It contains no
 absolute paths, identifiers in plaintext, prompts, chapter prose, provider
 responses, request IDs, or credentials. For every chapter it proves:
 
+- a clean Git commit and stable code-bundle hash shared by preflight and every
+  chapter execution, plus the exact release-harness hash;
+- durable successful OpenAI Intent/Receipt evidence for the official endpoint,
+  with configured and provider-returned model identities stored only as hashes;
 - one immutable outline and one canonical prose file;
 - canonical prose within the 3,000-4,500 non-whitespace character release range;
 - exact prose-byte hashes bound through the Memory 2.2 Event batch;
@@ -67,6 +84,16 @@ attempts, first-pass chapters, and system failures. Median logical chapter
 attempts above two fails the gate. Any `ContextBudgetError`, internal
 `ValueError`, uncertain provider intent, unreceipted source edit, chapter gap,
 or delivery gap fails without producing a successful report.
+
+## Current real-gate status
+
+On 2026-07-15 an explicitly authorized one-chapter attempt entered the normal
+runner/provider path but failed before completing a chapter. The then-current
+harness reduced the exception to `autonomy_execution_failed` and did not retain
+enough redacted diagnostics to prove the exact provider cause. It is therefore
+failure evidence only, not a successful one-chapter report. The corresponding
+four-chapter gate was not started. No Notion call was made. A new exact,
+count-bound authorization is required for any later billable gate.
 
 `tests/test_real_autonomy_e2e.py` exercises the full path with an in-memory
 fake OpenAI SDK. It performs no network call and verifies that Notion entry

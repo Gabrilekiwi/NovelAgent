@@ -326,6 +326,10 @@ class AgentExecutor:
                 )
         config = get_config()
         public_config = {
+            "configured_models": {
+                "openai": config.openai_model,
+                "anthropic": config.claude_model,
+            },
             "openai_max_output_tokens": config.openai_max_output_tokens,
             "claude_max_tokens": config.claude_max_tokens,
             "provider_max_attempts": config.provider_max_attempts,
@@ -504,6 +508,36 @@ class AgentExecutor:
             self._active_story_project_context,
             persist=persist,
         )
+        snapshot_after_context = _capture_file_version(self.snapshot_path)
+        if snapshot_after_context != snapshot_before:
+            context = self._story_project_context_dict() or {}
+            memory_v2 = context.get("memory_v2")
+            cache_status = (
+                memory_v2.get("cache_status")
+                if isinstance(memory_v2, dict)
+                else None
+            )
+            projection = (
+                memory_v2.get("projection")
+                if isinstance(memory_v2, dict)
+                else None
+            )
+            if cache_status != "rebuilt" or not isinstance(projection, dict):
+                raise PersistencePreparationError(
+                    "runtime snapshot changed while StoryProject context was loading"
+                )
+            recovered_snapshot = load_snapshot(self.snapshot_path)
+            if normalize_snapshot(recovered_snapshot) != normalize_snapshot(
+                canonical_memory_to_snapshot(projection)
+            ):
+                raise PersistencePreparationError(
+                    "recovered runtime snapshot differs from immutable event authority"
+                )
+            # The context loader repaired a disposable cache from already
+            # pinned immutable authority.  Adopt that repair as the new CAS
+            # base; subsequent mutations remain protected by expected-before.
+            snapshot_before = snapshot_after_context
+            base_snapshot = recovered_snapshot
         self._require_strict_story_project_writeback(persist=persist)
         base_snapshot, memory_context = self._apply_story_project_context(base_snapshot, memory_context)
         snapshot_pack = build_snapshot_input_pack(base_snapshot, memory_context)

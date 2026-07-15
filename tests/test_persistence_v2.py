@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import unittest
 import uuid
 from datetime import datetime, timezone
@@ -394,6 +395,169 @@ class PersistenceV2Test(unittest.TestCase):
         self.assertEqual("rolled_back", report["transactions"][0]["state"])
         self.assertEqual('{"chapter":1}\n', case["snapshot"].read_text(encoding="utf-8"))
         self.assertTrue((transaction.journal_dir / "failure_receipt.json").exists())
+
+    def test_durability_fault_events_are_ordered_and_repeatable(self) -> None:
+        def trace(name: str) -> list[tuple[str, int, str]]:
+            case = self._case(name)
+            events: list[tuple[str, int, str]] = []
+
+            def capture(event: str, index: int | None, path: Path | None) -> None:
+                if not event.startswith(("before_durability_", "after_durability_")):
+                    return
+                self.assertIsNotNone(index)
+                self.assertIsNotNone(path)
+                events.append(
+                    (
+                        event,
+                        int(index),
+                        Path(path).relative_to(case["base"]).as_posix(),
+                    )
+                )
+
+            transaction, _ = self._prepared(case, fault_injector=capture)
+            self.assertTrue(transaction.commit()["committed"])
+            return events
+
+        first = trace("durability_trace_a")
+        second = trace("durability_trace_b")
+
+        self.assertEqual(first, second)
+        before = [item for item in first if item[0].startswith("before_")]
+        after = [item for item in first if item[0].startswith("after_")]
+        self.assertEqual(list(range(len(before))), [item[1] for item in before])
+        self.assertEqual(len(before), len(after))
+        self.assertEqual(
+            [item[0].replace("before_", "", 1) for item in before],
+            [item[0].replace("after_", "", 1) for item in after],
+        )
+        self.assertEqual(
+            [(item[1], item[2]) for item in before],
+            [(item[1], item[2]) for item in after],
+        )
+        event_names = {item[0] for item in first}
+        self.assertIn("before_durability_file_fsync", event_names)
+        self.assertIn("before_durability_replace_rename", event_names)
+        self.assertIn("before_durability_journal_rename", event_names)
+        self.assertIn(
+            "before_durability_create_rename"
+            if os.name == "nt"
+            else "before_durability_create_link",
+            event_names,
+        )
+
+    def test_apply_rename_fault_before_marker_rolls_back(self) -> None:
+        case = self._case("apply_rename_fault")
+
+        def crash(event: str, _index: int | None, path: Path | None) -> None:
+            if event == "after_durability_replace_rename" and path == case["snapshot"]:
+                raise SimulatedCrash("power loss after apply rename")
+
+        transaction, _ = self._prepared(case, fault_injector=crash)
+        with self.assertRaises(SimulatedCrash):
+            transaction.commit()
+
+        self.assertFalse(transaction.marker_path.exists())
+        self.assertEqual('{"chapter":2}\n', case["snapshot"].read_text(encoding="utf-8"))
+        report = reconcile_pending_persistence_v2(case["transaction_root"])
+        self.assertEqual("rolled_back", report["transactions"][0]["state"])
+        self.assertEqual('{"chapter":1}\n', case["snapshot"].read_text(encoding="utf-8"))
+
+    def test_marker_fsync_fault_rolls_back_but_marker_publish_fault_rolls_forward(self) -> None:
+        before_case = self._case("marker_fsync_fault")
+        before_marker = (
+            before_case["transaction_root"] / "journals" / "run-1" / "commit.marker"
+        )
+
+        def crash_before_publish(
+            event: str,
+            _index: int | None,
+            path: Path | None,
+        ) -> None:
+            if event == "after_durability_file_fsync" and path == before_marker:
+                raise SimulatedCrash("power loss after marker temp-file fsync")
+
+        before_transaction, _ = self._prepared(
+            before_case,
+            fault_injector=crash_before_publish,
+        )
+        with self.assertRaises(SimulatedCrash):
+            before_transaction.commit()
+        self.assertFalse(before_transaction.marker_path.exists())
+        before_report = reconcile_pending_persistence_v2(before_case["transaction_root"])
+        self.assertEqual("rolled_back", before_report["transactions"][0]["state"])
+        self.assertEqual(
+            '{"chapter":1}\n',
+            before_case["snapshot"].read_text(encoding="utf-8"),
+        )
+
+        after_case = self._case("marker_publish_fault")
+        after_marker = (
+            after_case["transaction_root"] / "journals" / "run-1" / "commit.marker"
+        )
+        publish_event = (
+            "after_durability_create_rename"
+            if os.name == "nt"
+            else "after_durability_create_link"
+        )
+
+        def crash_after_publish(
+            event: str,
+            _index: int | None,
+            path: Path | None,
+        ) -> None:
+            if event == publish_event and path == after_marker:
+                raise SimulatedCrash("power loss after marker namespace publication")
+
+        after_transaction, _ = self._prepared(
+            after_case,
+            fault_injector=crash_after_publish,
+        )
+        with self.assertRaises(SimulatedCrash):
+            after_transaction.commit()
+        self.assertTrue(after_transaction.marker_path.exists())
+        after_report = reconcile_pending_persistence_v2(after_case["transaction_root"])
+        self.assertEqual("completed", after_report["transactions"][0]["state"])
+        self.assertTrue(after_report["transactions"][0]["committed"])
+        self.assertEqual(
+            '{"chapter":2}\n',
+            after_case["snapshot"].read_text(encoding="utf-8"),
+        )
+
+    def test_reconcile_exposes_rollback_durability_boundaries(self) -> None:
+        case = self._case("reconcile_durability")
+
+        def crash(event: str, _index: int | None, _path: Path | None) -> None:
+            if event == "after_apply_target":
+                raise SimulatedCrash("power loss before marker")
+
+        transaction, _ = self._prepared(case, fault_injector=crash)
+        with self.assertRaises(SimulatedCrash):
+            transaction.commit()
+
+        recovery_events: list[tuple[str, int | None, Path | None]] = []
+
+        def capture(event: str, index: int | None, path: Path | None) -> None:
+            if event.startswith(("before_durability_", "after_durability_")):
+                recovery_events.append((event, index, path))
+
+        report = reconcile_pending_persistence_v2(
+            case["transaction_root"],
+            fault_injector=capture,
+        )
+
+        self.assertEqual("rolled_back", report["transactions"][0]["state"])
+        self.assertTrue(
+            any(
+                event == "after_durability_replace_rename"
+                and index is not None
+                and path == case["snapshot"]
+                for event, index, path in recovery_events
+            )
+        )
+        self.assertEqual(
+            '{"chapter":1}\n',
+            case["snapshot"].read_text(encoding="utf-8"),
+        )
 
     def test_pending_candidate_corruption_fails_closed(self) -> None:
         case = self._case("candidate")

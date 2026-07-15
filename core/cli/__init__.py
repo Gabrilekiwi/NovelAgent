@@ -6,6 +6,7 @@ from core.cli.config import (
     story_project_writeback_config_from_args,
     validate_story_project_multistep_args,
 )
+from core.cli.root_registry import root_remap_command_requested, run_root_remap_command
 
 __all__ = [
     "apply_notion_shortcuts",
@@ -14,6 +15,8 @@ __all__ = [
     "parse_arguments",
     "positive_int",
     "review_repair_attempts",
+    "root_remap_command_requested",
+    "run_root_remap_command",
     "review_repair_config_from_args",
     "runtime_review_config_from_args",
     "story_project_writeback_config_from_args",

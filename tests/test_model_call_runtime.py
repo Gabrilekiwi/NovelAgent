@@ -225,6 +225,98 @@ class ModelCallRuntimeTest(unittest.TestCase):
         self.assertEqual("budget_rejected", receipt["status"])
         self.assertEqual([], self.store.list_uncertain_calls())
 
+    def test_hydration_restores_succeeded_and_uncertain_budget_without_charging_rejection(self) -> None:
+        writer = ModelCallRuntimeContext(
+            self.store,
+            tracker=RunBudgetTracker(
+                RunBudgetLimits(
+                    max_provider_calls=10,
+                    max_total_input_tokens=100,
+                    max_total_output_tokens=100,
+                    max_elapsed_seconds=30,
+                )
+            ),
+        )
+        writer.execute_attempt(
+            call_id="succeeded",
+            attempt_number=1,
+            provider="openai",
+            model="gpt-test",
+            stage="draft",
+            endpoint_type="official",
+            request={"messages": []},
+            max_output_tokens=10,
+            input_tokens=4,
+            operation=lambda: ModelResponse(
+                "done",
+                usage={"input_tokens": 4, "output_tokens": 3},
+                endpoint_type="official",
+            ),
+        )
+        with self.assertRaises(ProviderCallUncertainError):
+            writer.execute_attempt(
+                call_id="uncertain",
+                attempt_number=1,
+                provider="openai",
+                model="gpt-test",
+                stage="draft",
+                endpoint_type="official",
+                request={"messages": []},
+                max_output_tokens=7,
+                input_tokens=5,
+                operation=lambda: (_ for _ in ()).throw(TimeoutError("unknown")),
+            )
+
+        rejecting = ModelCallRuntimeContext(
+            self.store,
+            tracker=RunBudgetTracker(
+                RunBudgetLimits(
+                    max_provider_calls=1,
+                    max_total_input_tokens=100,
+                    max_total_output_tokens=1,
+                    max_elapsed_seconds=30,
+                )
+            ),
+        )
+        with self.assertRaises(ContextBudgetError):
+            rejecting.execute_attempt(
+                call_id="rejected",
+                attempt_number=1,
+                provider="openai",
+                model="gpt-test",
+                stage="draft",
+                endpoint_type="official",
+                request={"messages": []},
+                max_output_tokens=2,
+                input_tokens=6,
+                operation=lambda: self.fail("provider must not run"),
+            )
+
+        fresh_tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=10,
+                max_total_input_tokens=100,
+                max_total_output_tokens=100,
+                max_elapsed_seconds=30,
+            )
+        )
+        receipt_hashes = ModelCallRuntimeContext(
+            self.store,
+            tracker=fresh_tracker,
+        ).hydrate_tracker_from_store()
+
+        succeeded_receipt = self.store.load_receipt("succeeded-a1")
+        self.assertEqual([succeeded_receipt["receipt_hash"]], receipt_hashes)
+        self.assertEqual(2, fresh_tracker.provider_calls)
+        self.assertEqual(9, fresh_tracker.total_input_tokens)
+        self.assertEqual(3, fresh_tracker.total_output_tokens)
+        self.assertEqual(7, fresh_tracker.reserved_output_tokens)
+        self.assertEqual(
+            ["uncertain-a1"],
+            [item["attempt_id"] for item in self.store.list_uncertain_calls()],
+        )
+        self.assertFalse(self.store.receipt_path("uncertain-a1").exists())
+
     def test_tampered_response_artifact_fails_closed(self) -> None:
         arguments = {
             "call_id": "tamper-call",

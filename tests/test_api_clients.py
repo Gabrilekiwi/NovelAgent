@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
+import uuid
 from unittest.mock import patch
 
 from api.contracts import ModelCallError
 from api.retry import CLAUDE_POLISH, MODEL_READ_GENERATION, RetryPolicy
 from api.claude_client import _extract_message_text, _polish_max_tokens, polish_chapter
 from api.openai_client import _extract_message_content, chat_completion
+from core.model_call_runtime import (
+    ModelCallRuntimeContext,
+    reset_model_call_runtime,
+    set_model_call_runtime,
+)
+from core.model_calls import ModelCallStore
 
 
 class ApiClientTest(unittest.TestCase):
@@ -31,13 +40,79 @@ class ApiClientTest(unittest.TestCase):
         }
         os.environ["ANTHROPIC_AUTH_TOKEN"] = ""
         os.environ["ANTHROPIC_MODEL"] = ""
+        evidence_root = (
+            Path.cwd() / ".tmp" / "test_api_clients" / uuid.uuid4().hex / "model_calls"
+        )
+        self._model_call_runtime = ModelCallRuntimeContext(ModelCallStore(evidence_root))
+        self._model_call_runtime_token = set_model_call_runtime(self._model_call_runtime)
 
     def tearDown(self) -> None:
+        reset_model_call_runtime(self._model_call_runtime_token)
         for name, value in self._claude_alias_env.items():
             if value is None:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+    @contextmanager
+    def _without_model_call_runtime(self):
+        reset_model_call_runtime(self._model_call_runtime_token)
+        try:
+            yield
+        finally:
+            self._model_call_runtime_token = set_model_call_runtime(
+                self._model_call_runtime
+            )
+
+    def test_physical_clients_require_durable_model_call_runtime(self) -> None:
+        originals = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "OPENAI_STREAM": os.environ.get("OPENAI_STREAM"),
+            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY"),
+            "CLAUDE_MODEL": os.environ.get("CLAUDE_MODEL"),
+            "CLAUDE_STREAM": os.environ.get("CLAUDE_STREAM"),
+        }
+        os.environ["OPENAI_API_KEY"] = "test-openai"
+        os.environ["OPENAI_STREAM"] = "false"
+        os.environ["ANTHROPIC_API_KEY"] = "test-anthropic"
+        os.environ["CLAUDE_MODEL"] = "test-claude"
+        os.environ["CLAUDE_STREAM"] = "false"
+
+        class NoOpenAIConstruction:
+            def __init__(self, **_: object) -> None:
+                raise AssertionError("OpenAI client must not be constructed without durable evidence")
+
+        class NoAnthropicConstruction:
+            def __init__(self, **_: object) -> None:
+                raise AssertionError("Anthropic client must not be constructed without durable evidence")
+
+        try:
+            with self._without_model_call_runtime(), patch.dict(
+                sys.modules,
+                {
+                    "openai": SimpleNamespace(OpenAI=NoOpenAIConstruction),
+                    "anthropic": SimpleNamespace(Anthropic=NoAnthropicConstruction),
+                },
+            ):
+                with self.assertRaises(ModelCallError) as openai_error:
+                    chat_completion([{"role": "user", "content": "hello"}])
+                with self.assertRaises(ModelCallError) as anthropic_error:
+                    polish_chapter("chapter text", dry_run=False)
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual(
+            "durable_evidence_required", openai_error.exception.failure_category
+        )
+        self.assertFalse(openai_error.exception.retryable)
+        self.assertEqual(
+            "durable_evidence_required", anthropic_error.exception.failure_category
+        )
+        self.assertFalse(anthropic_error.exception.retryable)
 
     def test_openai_client_requires_api_key(self) -> None:
         original_key = os.environ.get("OPENAI_API_KEY")
@@ -222,11 +297,11 @@ class ApiClientTest(unittest.TestCase):
                     os.environ[name] = value
 
         diagnostic = context.exception.to_dict()
-        self.assertEqual("timeout", diagnostic["failure_category"])
-        self.assertTrue(diagnostic["retryable"])
-        self.assertEqual(3, diagnostic["attempts"])
-        self.assertEqual("max_attempts", diagnostic["retry_stop_reason"])
-        self.assertEqual(3, len(diagnostic["attempt_history"]))
+        self.assertEqual("provider_call_uncertain", diagnostic["failure_category"])
+        self.assertFalse(diagnostic["retryable"])
+        self.assertEqual(1, diagnostic["attempts"])
+        self.assertEqual("non_retryable", diagnostic["retry_stop_reason"])
+        self.assertEqual(1, len(diagnostic["attempt_history"]))
         self.assertIsInstance(diagnostic["elapsed_ms"], int)
 
     def test_openai_partial_stream_is_not_replayed(self) -> None:
@@ -275,7 +350,7 @@ class ApiClientTest(unittest.TestCase):
         self.assertTrue(context.exception.partial_content_received)
         self.assertEqual("partial_content_received", context.exception.retry_stop_reason)
 
-    def test_openai_empty_failed_stream_can_retry(self) -> None:
+    def test_openai_empty_failed_stream_pauses_after_durable_intent(self) -> None:
         calls = 0
 
         class FakeCompletions:
@@ -307,10 +382,11 @@ class ApiClientTest(unittest.TestCase):
         os.environ["OPENAI_STREAM"] = "true"
         try:
             with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
-                output = chat_completion(
-                    [{"role": "user", "content": "hello"}],
-                    retry_policy=self._retry_policy(MODEL_READ_GENERATION),
-                )
+                with self.assertRaises(ModelCallError) as context:
+                    chat_completion(
+                        [{"role": "user", "content": "hello"}],
+                        retry_policy=self._retry_policy(MODEL_READ_GENERATION),
+                    )
         finally:
             for name, value in originals.items():
                 if value is None:
@@ -318,8 +394,12 @@ class ApiClientTest(unittest.TestCase):
                 else:
                     os.environ[name] = value
 
-        self.assertEqual("complete", output)
-        self.assertEqual(2, calls)
+        self.assertEqual(1, calls)
+        diagnostic = context.exception.to_dict()
+        self.assertEqual("provider_call_uncertain", diagnostic["failure_category"])
+        self.assertFalse(diagnostic["retryable"])
+        self.assertFalse(diagnostic.get("partial_content_received", False))
+        self.assertEqual("non_retryable", diagnostic["retry_stop_reason"])
 
     def test_claude_client_requires_api_key(self) -> None:
         original_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -514,11 +594,11 @@ class ApiClientTest(unittest.TestCase):
                     os.environ[name] = value
 
         diagnostic = context.exception.to_dict()
-        self.assertEqual("timeout", diagnostic["failure_category"])
-        self.assertTrue(diagnostic["retryable"])
-        self.assertEqual(3, diagnostic["attempts"])
-        self.assertEqual("max_attempts", diagnostic["retry_stop_reason"])
-        self.assertEqual(3, len(diagnostic["attempt_history"]))
+        self.assertEqual("provider_call_uncertain", diagnostic["failure_category"])
+        self.assertFalse(diagnostic["retryable"])
+        self.assertEqual(1, diagnostic["attempts"])
+        self.assertEqual("non_retryable", diagnostic["retry_stop_reason"])
+        self.assertEqual(1, len(diagnostic["attempt_history"]))
         self.assertIsInstance(diagnostic["elapsed_ms"], int)
 
     def test_claude_partial_stream_is_not_replayed(self) -> None:

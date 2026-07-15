@@ -81,6 +81,10 @@ class CalibratedTokenEstimator:
 
 
 DEFAULT_CALIBRATED_ESTIMATOR = CalibratedTokenEstimator()
+CJK_CHARACTER_OUTPUT_ESTIMATOR = CalibratedTokenEstimator(
+    version="cjk-one-token-per-character-v1",
+    tokens_per_utf8_byte=1 / 3,
+)
 
 
 @dataclass(frozen=True)
@@ -574,6 +578,7 @@ def _positive_env(name: str, default: int) -> int:
 
 __all__ = [
     "CalibratedTokenEstimator",
+    "CJK_CHARACTER_OUTPUT_ESTIMATOR",
     "CONTEXT_BUDGET_SCHEMA_VERSION",
     "ContextBudget",
     "ContextBudgetError",

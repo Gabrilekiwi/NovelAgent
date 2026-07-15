@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BookRunSession",
+  "description": "Read-only status projection rebuilt from durable autonomy evidence; never writable authority.",
+  "type": "object",
+  "required": [
+    "schema_version", "session_id", "book_id", "plan_id", "plan_hash",
+    "arc_plan_id", "arc_plan_hash", "state", "lease_held", "lease_hash",
+    "event_count", "last_event_hash", "requested_chapter_count",
+    "trusted_profiles_current", "completed_count", "completed_chapters",
+    "canonical_next_chapter", "last_completion_receipt_hash",
+    "expected_source_snapshot_hash", "delivery_blocked",
+    "delivery_blocked_chapters", "finalization_required", "root_remap_blocked"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "session_id": {"type": "string", "minLength": 1},
+    "book_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "plan_hash": {"type": "string", "minLength": 64},
+    "arc_plan_id": {"type": "string", "minLength": 1},
+    "arc_plan_hash": {"type": "string", "minLength": 64},
+    "state": {"type": "string", "enum": ["active", "cancelled", "abandoned", "completed"]},
+    "lease_held": {"type": "boolean"},
+    "lease_hash": {"type": ["string", "null"], "minLength": 64},
+    "event_count": {"type": "integer", "minimum": 1},
+    "last_event_hash": {"type": "string", "minLength": 64},
+    "requested_chapter_count": {"type": "integer", "minimum": 1},
+    "trusted_profiles_current": {"type": "boolean"},
+    "completed_count": {"type": "integer", "minimum": 0},
+    "completed_chapters": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+    "canonical_next_chapter": {"type": "integer", "minimum": 1},
+    "last_completion_receipt_hash": {"type": ["string", "null"], "minLength": 64},
+    "expected_source_snapshot_hash": {"type": "string", "minLength": 64},
+    "delivery_blocked": {"type": "boolean"},
+    "delivery_blocked_chapters": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+    "finalization_required": {"type": "boolean"},
+    "root_remap_blocked": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

@@ -23,6 +23,73 @@ class MemoryCacheRecoveryError(ValueError):
     """Raised when disposable Memory 2.2 caches cannot be safely rebuilt."""
 
 
+class MemoryAuthorityMismatchError(MemoryCacheRecoveryError):
+    """Raised when the immutable event authority differs from its pinned identity."""
+
+    def __init__(self, field: str) -> None:
+        self.field = field
+        super().__init__(f"memory cache recovery {field} mismatch")
+
+
+def ensure_event_authority_caches(
+    memory_root: str | Path,
+    *,
+    runtime_root: str | Path | None = None,
+    runtime_snapshot_target: str | Path | None = None,
+    expected_book_id: str | None = None,
+    expected_authority_epoch: int | None = None,
+    expected_head_event_hash: str | None = None,
+) -> dict[str, Any]:
+    """Validate event authority and rebuild disposable caches when necessary.
+
+    Immutable batches and checkpoints are validated before any cache is
+    inspected or replaced.  Identity mismatches therefore remain hard errors;
+    only canonical/projection/runtime-snapshot cache failures are recoverable.
+    """
+
+    if (runtime_root is None) != (runtime_snapshot_target is None):
+        raise MemoryCacheRecoveryError(
+            "runtime_root and runtime_snapshot_target must be provided together"
+        )
+
+    root = Path(memory_root).absolute()
+    authoritative, projection = _validated_event_authority_projection(
+        root,
+        expected_book_id=expected_book_id,
+        expected_authority_epoch=expected_authority_epoch,
+        expected_head_event_hash=expected_head_event_hash,
+    )
+    artifacts = rebuild_memory_projections(projection)
+    recovery_report: dict[str, Any] | None = None
+    try:
+        _verify_cache_bundle(
+            root,
+            projection=projection,
+            artifacts=artifacts,
+            runtime_root=runtime_root,
+            runtime_snapshot_target=runtime_snapshot_target,
+        )
+    except (OSError, ValueError, TypeError, KeyError):
+        # These files are explicitly disposable.  The rebuild performs the
+        # immutable-chain and pinned-identity checks again before publishing,
+        # so a cache failure can never turn authority drift into recovery.
+        recovery_report = rebuild_event_authority_caches(
+            root,
+            runtime_root=runtime_root,
+            runtime_snapshot_target=runtime_snapshot_target,
+            expected_book_id=expected_book_id,
+            expected_authority_epoch=expected_authority_epoch,
+            expected_head_event_hash=expected_head_event_hash,
+        )
+
+    return {
+        "projection": projection,
+        "replay_report": authoritative,
+        "cache_status": "rebuilt" if recovery_report is not None else "current",
+        "recovery_report": recovery_report,
+    }
+
+
 def rebuild_event_authority_caches(
     memory_root: str | Path,
     *,
@@ -47,27 +114,8 @@ def rebuild_event_authority_caches(
         )
 
     root = Path(memory_root).absolute()
-    event_store = root / "events"
-    if not event_store.is_dir():
-        raise MemoryCacheRecoveryError("memory event store is missing")
-
-    # Replay from genesis rather than trusting a checkpoint cache.  A normal
-    # checkpoint-assisted replay is also required to agree when checkpoints
-    # are present, so corrupted acceleration state still fails closed.
-    authoritative = replay_memory_events(event_store, use_checkpoint=False)
-    accelerated = replay_memory_events(event_store)
-    projection = authoritative.get("projection")
-    if not isinstance(projection, dict):
-        raise MemoryCacheRecoveryError("memory event replay produced no canonical projection")
-    if accelerated.get("projection") != projection:
-        raise MemoryCacheRecoveryError("checkpoint replay differs from the immutable event chain")
-    if authoritative.get("schema_version") != "2.2" or projection.get("schema_version") != "2.2":
-        raise MemoryCacheRecoveryError("event-authority cache recovery requires Memory 2.2")
-    if authoritative.get("reducer_version") != CURRENT_REDUCER_VERSION:
-        raise MemoryCacheRecoveryError("memory event chain uses an unsupported reducer")
-
-    _assert_expected_identity(
-        projection,
+    authoritative, projection = _validated_event_authority_projection(
+        root,
         expected_book_id=expected_book_id,
         expected_authority_epoch=expected_authority_epoch,
         expected_head_event_hash=expected_head_event_hash,
@@ -107,7 +155,20 @@ def rebuild_event_authority_caches(
         runtime_path = runtime_resolver.resolve(
             runtime_ref, expected_guard=runtime_guard
         ).path
-        atomic_write_json(runtime_path, artifacts["snapshot"])
+        # A different disposable cache may have triggered this rebuild while
+        # the runtime snapshot is already semantically current.  Preserve its
+        # bytes in that case so readers holding a valid CAS version do not see
+        # a spurious concurrent mutation caused only by JSON formatting.
+        runtime_snapshot_before = None
+        if runtime_path.is_file():
+            try:
+                runtime_snapshot_before = json.loads(
+                    runtime_path.read_text(encoding="utf-8-sig")
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                runtime_snapshot_before = None
+        if runtime_snapshot_before != artifacts["snapshot"]:
+            atomic_write_json(runtime_path, artifacts["snapshot"])
         runtime_snapshot = json.loads(
             runtime_path.read_text(encoding="utf-8-sig")
         )
@@ -285,6 +346,83 @@ def _verify_projection_files(
     )
 
 
+def _verify_cache_bundle(
+    root: Path,
+    *,
+    projection: Mapping[str, Any],
+    artifacts: Mapping[str, Any],
+    runtime_root: str | Path | None,
+    runtime_snapshot_target: str | Path | None,
+) -> None:
+    loaded = load_canonical_memory(root / "canonical_memory.json")
+    if loaded != projection:
+        raise MemoryCacheRecoveryError(
+            "canonical cache differs from immutable event replay"
+        )
+    _verify_projection_files(root, projection=projection, artifacts=artifacts)
+
+    if runtime_root is None or runtime_snapshot_target is None:
+        return
+    runtime_resolver, runtime_ref, runtime_guard = _runtime_snapshot_destination(
+        runtime_root=runtime_root,
+        runtime_snapshot_target=runtime_snapshot_target,
+    )
+    runtime_path = runtime_resolver.resolve(
+        runtime_ref, expected_guard=runtime_guard
+    ).path
+    runtime_snapshot = json.loads(runtime_path.read_text(encoding="utf-8-sig"))
+    if runtime_snapshot != artifacts["snapshot"]:
+        raise MemoryCacheRecoveryError(
+            "runtime snapshot cache differs from canonical renderer"
+        )
+
+
+def _validated_event_authority_projection(
+    root: Path,
+    *,
+    expected_book_id: str | None,
+    expected_authority_epoch: int | None,
+    expected_head_event_hash: str | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    event_store = root / "events"
+    if not event_store.is_dir():
+        raise MemoryCacheRecoveryError("memory event store is missing")
+
+    # Replay from genesis rather than trusting a checkpoint cache.  A normal
+    # checkpoint-assisted replay is also required to agree when checkpoints
+    # are present, so corruption in either immutable history or acceleration
+    # evidence fails closed even when all disposable caches appear healthy.
+    authoritative = replay_memory_events(event_store, use_checkpoint=False)
+    accelerated = replay_memory_events(event_store)
+    projection = authoritative.get("projection")
+    if not isinstance(projection, dict):
+        raise MemoryCacheRecoveryError(
+            "memory event replay produced no canonical projection"
+        )
+    if accelerated.get("projection") != projection:
+        raise MemoryCacheRecoveryError(
+            "checkpoint replay differs from the immutable event chain"
+        )
+    if (
+        authoritative.get("schema_version") != "2.2"
+        or projection.get("schema_version") != "2.2"
+    ):
+        raise MemoryCacheRecoveryError(
+            "event-authority cache recovery requires Memory 2.2"
+        )
+    if authoritative.get("reducer_version") != CURRENT_REDUCER_VERSION:
+        raise MemoryCacheRecoveryError(
+            "memory event chain uses an unsupported reducer"
+        )
+    _assert_expected_identity(
+        projection,
+        expected_book_id=expected_book_id,
+        expected_authority_epoch=expected_authority_epoch,
+        expected_head_event_hash=expected_head_event_hash,
+    )
+    return authoritative, projection
+
+
 def _assert_expected_identity(
     projection: Mapping[str, Any],
     *,
@@ -293,18 +431,20 @@ def _assert_expected_identity(
     expected_head_event_hash: str | None,
 ) -> None:
     if expected_book_id is not None and projection.get("book_id") != expected_book_id:
-        raise MemoryCacheRecoveryError("memory cache recovery book_id mismatch")
+        raise MemoryAuthorityMismatchError("book_id")
     if expected_authority_epoch is not None and projection.get(
         "authority_epoch"
     ) != expected_authority_epoch:
-        raise MemoryCacheRecoveryError("memory cache recovery authority_epoch mismatch")
+        raise MemoryAuthorityMismatchError("authority_epoch")
     if expected_head_event_hash is not None and projection.get(
         "head_event_hash"
     ) != expected_head_event_hash:
-        raise MemoryCacheRecoveryError("memory cache recovery head_event_hash mismatch")
+        raise MemoryAuthorityMismatchError("head_event_hash")
 
 
 __all__ = [
+    "MemoryAuthorityMismatchError",
     "MemoryCacheRecoveryError",
+    "ensure_event_authority_caches",
     "rebuild_event_authority_caches",
 ]

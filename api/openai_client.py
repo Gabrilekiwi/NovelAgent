@@ -88,10 +88,19 @@ def chat_completion(
         if config.openai_base_url
         else MODEL_ENDPOINT_OFFICIAL
     )
+    if runtime is None:
+        raise ModelCallError(
+            "A durable ModelCallRuntime is required before any physical OpenAI request.",
+            provider="openai",
+            stage=stage,
+            model=resolved_model,
+            failure_category="durable_evidence_required",
+            retryable=False,
+        )
     resolved_call_id = call_id or (
-        runtime.new_call_id(provider="openai", stage=stage) if runtime is not None else None
+        runtime.new_call_id(provider="openai", stage=stage)
     )
-    if runtime is not None and int(resolved_max_tokens or 0) <= 0:
+    if int(resolved_max_tokens or 0) <= 0:
         raise ValueError(
             "durable model calls require a positive OpenAI max output token reservation"
         )
@@ -129,10 +138,7 @@ def chat_completion(
         if client is None:
             client = OpenAI(**client_kwargs)
             client_holder["client"] = client
-        if runtime is None:
-            return invoke_provider(client)
         physical_attempt += 1
-        assert resolved_call_id is not None
         return runtime.execute_attempt(
             call_id=resolved_call_id,
             attempt_number=physical_attempt,

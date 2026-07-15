@@ -48,7 +48,6 @@ from core.story_project.read_set import (
     verify_story_project_read_set,
 )
 from core.story_project.paths import resolve_prose
-from core.story_project.migration_v2 import validate_migration_plan
 
 
 HISTORICAL_REVISION_SCHEMA_VERSION = "1.0"
@@ -1698,6 +1697,10 @@ def _historical_anchor(
             "published chapter has neither an immutable chapter event nor a migration source snapshot",
         )
     plan_hash = _require_sha256("migration_baseline.plan_hash", migration.get("plan_hash"))
+    # Keep MigrationPlan validation lazy: importing migration_v2 must remain a
+    # clean, read-only entry point and must not recurse through memory_v2.__init__.
+    from core.story_project.migration_v2 import validate_migration_plan
+
     plans_root = story_root / ".novelagent" / "migration-v2" / "artifacts" / "plans"
     plans: list[dict[str, Any]] = []
     if plans_root.is_dir():

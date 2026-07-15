@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shutil
 import statistics
 import sys
@@ -26,16 +27,22 @@ from core.autonomy.common import (  # noqa: E402
     atomic_write_json,
     canonical_hash,
     load_json_object,
+    sha256_digest,
 )
 from core.autonomy.outline import validate_outline_checkpoint  # noqa: E402
 from core.autonomy.plans import compile_instruction_plan  # noqa: E402
 from core.autonomy.profiles import TrustedProfiles  # noqa: E402
 from core.autonomy.session import AutonomySessionStore  # noqa: E402
-from core.config import get_config  # noqa: E402
+from core.config import PROXY_ENV_NAMES, clear_proxy_env, get_config  # noqa: E402
 from core.context_budget import ContextBudgetError  # noqa: E402
 from core.delivery import DeliveryQueue  # noqa: E402
+from core.engine.persistence import atomic_create_json  # noqa: E402
 from core.engine.persistence_v2 import verify_publication_receipt  # noqa: E402
 from core.engine.safe_paths import RootBinding, SafePathResolver  # noqa: E402
+from core.execution_provenance import (  # noqa: E402
+    capture_execution_provenance,
+    validate_execution_provenance,
+)
 from core.memory_v2 import (  # noqa: E402
     apply_genesis_event,
     canonical_memory_to_snapshot,
@@ -71,12 +78,24 @@ from core.story_project.paths import (  # noqa: E402
 
 OPT_IN_ENV = "NOVELAGENT_REAL_AUTONOMY_E2E"
 OPT_IN_PREFIX = "I_ACCEPT_BILLABLE_OPENAI_CALLS"
+PROXY_MODE_ENV = "NOVELAGENT_REAL_AUTONOMY_PROXY_MODE"
 REPORT_SCHEMA = "real_autonomy_e2e_report.schema.json"
 
 
 class RealAutonomyE2EError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        diagnostics: Mapping[str, Any] | None = None,
+        retain_report: bool = False,
+        cleanup_completed: bool = False,
+    ) -> None:
         self.code = str(code)
+        self.diagnostics = _validate_failure_diagnostics(diagnostics or {})
+        self.retain_report = bool(retain_report)
+        self.cleanup_completed = bool(cleanup_completed)
         super().__init__(f"{self.code}: {message}")
 
 
@@ -99,16 +118,29 @@ def run_real_autonomy_e2e(
     _require_release_authorization(count, confirmed=confirmed)
     _assert_no_notion_configuration()
     _set_release_defaults()
+    proxy_mode = _resolve_release_proxy_mode()
     config = get_config()
     _validate_provider_configuration(config)
+    release_provenance = _capture_clean_release_provenance(
+        config, proxy_mode=proxy_mode
+    )
+    harness_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    report_target = (
+        _reserve_release_report_target(output_path, chapter_count=count)
+        if output_path is not None
+        else None
+    )
 
     parent = Path(work_parent) if work_parent is not None else ROOT / ".tmp" / "rae"
-    parent.mkdir(parents=True, exist_ok=True)
     # Keep the isolated prefix deliberately short: deeply nested immutable
     # receipt filenames must remain below legacy Windows MAX_PATH boundaries.
     isolated_root = parent / f"g{uuid.uuid4().hex[:8]}"
-    isolated_root.mkdir(parents=False)
+    failure: RealAutonomyE2EError | None = None
+    book: Path | None = None
+    paths: RuntimePaths | None = None
     try:
+        parent.mkdir(parents=True, exist_ok=True)
+        isolated_root.mkdir(parents=False)
         book = isolated_root / "b"
         delivery_root = isolated_root / "d"
         delivery_root.mkdir(parents=True)
@@ -164,18 +196,44 @@ def run_real_autonomy_e2e(
             execution = runner.execute_plan(plan)
         except ContextBudgetError as exc:
             raise RealAutonomyE2EError(
-                "context_budget_error", "a ContextBudgetError occurred; the gate is not releasable"
+                "context_budget_error",
+                "a ContextBudgetError occurred; the gate is not releasable",
+                diagnostics=_safe_failure_diagnostics(
+                    exc,
+                    phase="runner_execute",
+                    evidence_counts=_failure_evidence_counts(paths, book),
+                ),
+                retain_report=True,
             ) from exc
         except ValueError as exc:
             raise RealAutonomyE2EError(
-                "internal_value_error", "an internal ValueError occurred; the gate is not releasable"
+                "internal_value_error",
+                "an internal ValueError occurred; the gate is not releasable",
+                diagnostics=_safe_failure_diagnostics(
+                    exc,
+                    phase="runner_execute",
+                    evidence_counts=_failure_evidence_counts(paths, book),
+                ),
+                retain_report=True,
             ) from exc
-        except RealAutonomyE2EError:
+        except RealAutonomyE2EError as exc:
+            exc.retain_report = True
+            exc.diagnostics = _merge_failure_diagnostics(
+                exc.diagnostics,
+                phase="runner_execute",
+                evidence_counts=_failure_evidence_counts(paths, book),
+            )
             raise
         except Exception as exc:
             raise RealAutonomyE2EError(
                 "autonomy_execution_failed",
                 f"the isolated autonomy run failed with {type(exc).__name__}",
+                diagnostics=_safe_failure_diagnostics(
+                    exc,
+                    phase="runner_execute",
+                    evidence_counts=_failure_evidence_counts(paths, book),
+                ),
+                retain_report=True,
             ) from exc
 
         try:
@@ -194,29 +252,99 @@ def run_real_autonomy_e2e(
                 input_manifest_hash=input_manifest_hash,
                 initial_head_event_hash=genesis["events"][-1]["event_hash"],
                 model=config.openai_model,
+                release_provenance=release_provenance,
+                harness_sha256=harness_sha256,
+                proxy_mode=proxy_mode,
             )
-        except RealAutonomyE2EError:
+        except RealAutonomyE2EError as exc:
+            exc.retain_report = True
+            exc.diagnostics = _merge_failure_diagnostics(
+                exc.diagnostics,
+                phase="release_verification",
+                evidence_counts=_failure_evidence_counts(paths, book),
+            )
             raise
         except ContextBudgetError as exc:
             raise RealAutonomyE2EError(
-                "context_budget_error", "verification encountered ContextBudgetError"
+                "context_budget_error",
+                "verification encountered ContextBudgetError",
+                diagnostics=_safe_failure_diagnostics(
+                    exc,
+                    phase="release_verification",
+                    evidence_counts=_failure_evidence_counts(paths, book),
+                ),
+                retain_report=True,
             ) from exc
         except ValueError as exc:
             raise RealAutonomyE2EError(
-                "internal_value_error", "verification encountered an internal ValueError"
+                "internal_value_error",
+                "verification encountered an internal ValueError",
+                diagnostics=_safe_failure_diagnostics(
+                    exc,
+                    phase="release_verification",
+                    evidence_counts=_failure_evidence_counts(paths, book),
+                ),
+                retain_report=True,
             ) from exc
         except Exception as exc:
             raise RealAutonomyE2EError(
                 "release_verification_failed",
                 f"release evidence verification failed with {type(exc).__name__}",
+                diagnostics=_safe_failure_diagnostics(
+                    exc,
+                    phase="release_verification",
+                    evidence_counts=_failure_evidence_counts(paths, book),
+                ),
+                retain_report=True,
             ) from exc
+    except RealAutonomyE2EError as exc:
+        failure = exc
+        raise
+    except Exception as exc:
+        failure = RealAutonomyE2EError(
+            "gate_setup_failed",
+            f"isolated release gate setup failed with {type(exc).__name__}",
+            diagnostics=_safe_failure_diagnostics(
+                exc,
+                phase="gate_setup",
+                evidence_counts=_failure_evidence_counts(paths, book),
+            ),
+            retain_report=True,
+        )
+        raise failure from exc
     finally:
-        _remove_isolated_tree(isolated_root, parent=parent)
+        try:
+            if isolated_root.exists():
+                _remove_isolated_tree(isolated_root, parent=parent)
+        except RealAutonomyE2EError as cleanup_error:
+            cleanup_error.retain_report = True
+            cleanup_error.diagnostics = _merge_failure_diagnostics(
+                cleanup_error.diagnostics,
+                phase="cleanup",
+                evidence_counts={},
+            )
+            if report_target is not None:
+                    _publish_release_failure_report(
+                        report_target,
+                        chapter_count=count,
+                        error=cleanup_error,
+                        proxy_mode=proxy_mode,
+                    )
+            raise
+        else:
+            if failure is not None:
+                failure.cleanup_completed = True
+                if report_target is not None:
+                    _publish_release_failure_report(
+                        report_target,
+                        chapter_count=count,
+                        error=failure,
+                        proxy_mode=proxy_mode,
+                    )
 
-    if output_path is not None:
-        target = Path(output_path).resolve()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(target, report)
+    if report_target is not None:
+        _require_release_report_reservation(report_target, chapter_count=count)
+        atomic_write_json(report_target, report)
     return report
 
 
@@ -282,6 +410,36 @@ def _set_release_defaults() -> None:
     os.environ.setdefault("PROVIDER_RETRY_DEADLINE_SECONDS", "180")
 
 
+def _resolve_release_proxy_mode(
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    env = os.environ if environ is None else environ
+    choice = str(env.get(PROXY_MODE_ENV, "")).strip().lower()
+    if choice not in {"", "direct", "inherit", "clear"}:
+        raise RealAutonomyE2EError(
+            "release_proxy_mode_invalid",
+            f"{PROXY_MODE_ENV} must be direct, inherit, or clear",
+        )
+    configured = any(str(env.get(name, "")).strip() for name in PROXY_ENV_NAMES)
+    if configured and choice not in {"inherit", "clear"}:
+        raise RealAutonomyE2EError(
+            "release_proxy_mode_required",
+            "configured proxy variables require an explicit inherit or clear release choice",
+        )
+    if choice == "clear":
+        if environ is not None:
+            raise RealAutonomyE2EError(
+                "release_proxy_mode_invalid",
+                "proxy clearing is available only for the live process environment",
+            )
+        clear_proxy_env()
+        return "cleared"
+    if configured:
+        return "inherited"
+    return "direct"
+
+
 def _validate_provider_configuration(config: Any) -> None:
     if not config.openai_api_key:
         raise RealAutonomyE2EError("openai_not_configured", "OPENAI_API_KEY is required")
@@ -306,6 +464,87 @@ def _validate_provider_configuration(config: Any) -> None:
         raise RealAutonomyE2EError(
             "provider_limits_invalid",
             "OPENAI_MAX_RETRIES must be unset or zero; release retry policy is PROVIDER_MAX_ATTEMPTS",
+        )
+
+
+def _capture_clean_release_provenance(
+    config: Any,
+    *,
+    proxy_mode: str,
+) -> dict[str, Any]:
+    provenance = capture_execution_provenance(
+        ROOT,
+        provider="openai",
+        model=str(config.openai_model),
+        config={
+            "gate": "real_autonomy_e2e",
+            "max_output_tokens": int(config.openai_max_output_tokens),
+            "provider_max_attempts": int(config.provider_max_attempts),
+            "proxy_mode": proxy_mode,
+        },
+        feature_flags={
+            "official_endpoint": True,
+            "strict_validator": True,
+            "required_file_delivery": True,
+        },
+    ).to_dict()
+    git = provenance["code"]["git"]
+    if git["dirty"] is not False or git["commit"] is None:
+        raise RealAutonomyE2EError(
+            "release_worktree_not_clean",
+            "real release evidence requires a clean Git commit before any provider call",
+        )
+    return provenance
+
+
+def _reserve_release_report_target(
+    output_path: str | Path,
+    *,
+    chapter_count: int,
+) -> Path:
+    target = Path(output_path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    reservation: dict[str, Any] = {
+        "schema_version": "1.0",
+        "kind": "real_autonomy_e2e_report_reservation",
+        "redacted": True,
+        "ok": False,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "requested_chapters": _validate_gate_count(chapter_count),
+        "reservation_hash": "0" * 64,
+    }
+    reservation["reservation_hash"] = canonical_hash(
+        reservation, exclude_fields=("reservation_hash",)
+    )
+    try:
+        atomic_create_json(target, reservation)
+    except OSError as exc:
+        raise RealAutonomyE2EError(
+            "release_report_target_unavailable",
+            "--out must name a new, writable report target",
+        ) from exc
+    return target
+
+
+def _require_release_report_reservation(target: Path, *, chapter_count: int) -> None:
+    try:
+        reservation = load_json_object(target)
+    except (OSError, ValueError) as exc:
+        raise RealAutonomyE2EError(
+            "release_report_reservation_changed",
+            "the pre-provider report reservation is unreadable",
+        ) from exc
+    expected_hash = canonical_hash(
+        reservation, exclude_fields=("reservation_hash",)
+    )
+    if (
+        reservation.get("kind") != "real_autonomy_e2e_report_reservation"
+        or reservation.get("requested_chapters") != chapter_count
+        or reservation.get("reservation_hash") != expected_hash
+    ):
+        raise RealAutonomyE2EError(
+            "release_report_reservation_changed",
+            "the pre-provider report reservation was modified",
         )
 
 
@@ -420,6 +659,9 @@ def _verify_release_run(
     input_manifest_hash: str,
     initial_head_event_hash: str,
     model: str,
+    release_provenance: Mapping[str, Any],
+    harness_sha256: str,
+    proxy_mode: str,
 ) -> dict[str, Any]:
     _require(
         execution.get("stopped_reason") == "completed",
@@ -513,6 +755,9 @@ def _verify_release_run(
     provider_transport_retries = 0
     quality_repairs = 0
     first_pass_chapters = 0
+    execution_provenance_hashes: set[str] = set()
+    execution_code_bundle_hashes: set[str] = set()
+    execution_git_commits: set[str] = set()
 
     for chapter, completion in zip(expected_chapters, completions):
         checkpoint = runner.outlines.load(session_id, chapter)
@@ -680,6 +925,34 @@ def _verify_release_run(
 
         run_wrapper = load_json_object(paths.run_dir / f"{run_ids[chapter]}.json")
         run = run_wrapper["run"]
+        provenance = _load_run_execution_provenance(run, run_dir=paths.run_dir)
+        release_code = release_provenance["code"]
+        provenance_git = provenance["code"]["git"]
+        provenance_config = {
+            str(item["name"]): item["value"] for item in provenance["config"]
+        }
+        provenance_flags = {
+            str(item["name"]): item["enabled"]
+            for item in provenance["feature_flags"]
+        }
+        _require(
+            provenance_git["dirty"] is False
+            and provenance_git["commit"] == release_code["git"]["commit"]
+            and provenance["code"]["bundle_hash"] == release_code["bundle_hash"],
+            "execution_provenance_release_mismatch",
+            "chapter execution provenance is dirty or differs from the pre-provider release identity",
+        )
+        _require(
+            provenance["model"] == {"provider": "openai", "model": model}
+            and isinstance(provenance_config.get("configured_models"), Mapping)
+            and provenance_config["configured_models"].get("openai") == model
+            and provenance_flags.get("llm_validator") is True,
+            "execution_provenance_provider_mismatch",
+            "chapter execution provenance does not bind the release provider, model, and validator",
+        )
+        execution_provenance_hashes.add(str(provenance["provenance_hash"]))
+        execution_code_bundle_hashes.add(str(provenance["code"]["bundle_hash"]))
+        execution_git_commits.add(str(provenance_git["commit"]))
         quality_decision = run["quality_decision"]
         required_strict_policy = resolve_quality_policy("strict").to_dict()
         _require(
@@ -779,6 +1052,15 @@ def _verify_release_run(
         "provider_attempt_accounting_mismatch",
         "provider retry telemetry and durable attempt evidence differ",
     )
+    _require(
+        model_stats["providers"] == {"openai"}
+        and model_stats["receipt_statuses"] == {"succeeded"}
+        and model_stats["endpoint_types"] == {"official"}
+        and len(model_stats["actual_models"]) >= 1
+        and model_stats["receipt_count"] == model_stats["actual_model_count"],
+        "provider_receipt_identity_mismatch",
+        "durable provider receipts do not prove successful official OpenAI calls with an actual model",
+    )
 
     logical_attempt_values = list(attempts_by_chapter.values())
     logical_median = float(statistics.median(logical_attempt_values))
@@ -787,8 +1069,15 @@ def _verify_release_run(
         "logical_attempt_slo_failed",
         "median logical chapter attempts exceeds two",
     )
+    _require(
+        len(execution_provenance_hashes) == 1
+        and len(execution_code_bundle_hashes) == 1
+        and len(execution_git_commits) == 1,
+        "execution_provenance_inconsistent",
+        "chapters were not produced by one stable execution provenance",
+    )
     report = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "kind": "real_autonomy_e2e",
         "redacted": True,
         "ok": True,
@@ -796,6 +1085,7 @@ def _verify_release_run(
         "gate": {
             "requested_chapters": chapter_count,
             "tier": _gate_tier(chapter_count),
+            "proxy_mode": _validate_release_proxy_mode_value(proxy_mode),
             "source_mode": "generated_isolated_temporary_story_project",
             "strict_validator_enabled": True,
             "required_file_delivery_enabled": True,
@@ -806,12 +1096,22 @@ def _verify_release_run(
             "name": "openai",
             "endpoint_type": "official",
             "model_sha256": _identifier_hash(model),
+            "actual_model_hashes": sorted(
+                _identifier_hash(item) for item in model_stats["actual_models"]
+            ),
         },
         "identity": {
             "book_id_sha256": _identifier_hash(str(plan["source_snapshot"]["book_id"])),
             "session_id_sha256": _identifier_hash(session_id),
             "plan_hash": str(plan["plan_hash"]),
             "input_manifest_hash": input_manifest_hash,
+        },
+        "provenance": {
+            "execution_provenance_hash": next(iter(execution_provenance_hashes)),
+            "code_bundle_hash": next(iter(execution_code_bundle_hashes)),
+            "git_commit": next(iter(execution_git_commits)),
+            "git_dirty": False,
+            "harness_sha256": sha256_digest("harness_sha256", harness_sha256),
         },
         "counts": {
             "outlines": chapter_count,
@@ -856,6 +1156,7 @@ def _verify_release_run(
             "strict_quality_gate_verified": True,
             "no_unreceipted_source_edits": True,
             "notion_disabled": True,
+            "execution_provenance_verified": True,
         },
         "report_hash": "0" * 64,
     }
@@ -923,6 +1224,51 @@ def _load_run_records(run_dir: Path) -> list[dict[str, Any]]:
     return records
 
 
+def _load_run_execution_provenance(
+    run: Mapping[str, Any],
+    *,
+    run_dir: Path,
+) -> dict[str, Any]:
+    evidence = run.get("execution_evidence")
+    _require(
+        isinstance(evidence, Mapping),
+        "execution_provenance_missing",
+        "committed run has no execution evidence",
+    )
+    assert isinstance(evidence, Mapping)
+    raw_ref = evidence.get("provenance_artifact_ref")
+    _require(
+        isinstance(raw_ref, str) and bool(raw_ref),
+        "execution_provenance_missing",
+        "committed run has no provenance artifact reference",
+    )
+    logical = PurePosixPath(str(raw_ref))
+    _require(
+        not logical.is_absolute()
+        and ".." not in logical.parts
+        and len(logical.parts) == 3
+        and logical.parts[0] == "executions"
+        and logical.parts[-1] == "provenance.json",
+        "execution_provenance_ref_invalid",
+        "execution provenance reference escaped its controlled run root",
+    )
+    path = run_dir.joinpath(*logical.parts).resolve()
+    try:
+        path.relative_to(run_dir.resolve())
+    except ValueError as exc:
+        raise RealAutonomyE2EError(
+            "execution_provenance_ref_invalid",
+            "execution provenance reference escaped its controlled run root",
+        ) from exc
+    provenance = validate_execution_provenance(load_json_object(path))
+    _require(
+        evidence.get("provenance_hash") == provenance["provenance_hash"],
+        "execution_provenance_hash_mismatch",
+        "run evidence does not bind its execution provenance artifact",
+    )
+    return provenance
+
+
 def _provider_attempt_stats(run: Mapping[str, Any]) -> tuple[int, int]:
     attempts = 0
     retries = 0
@@ -950,6 +1296,20 @@ def _model_call_stats(run_dir: Path) -> dict[str, Any]:
         "receipt_count": len(receipts),
         "logical_call_count": len({item["call_id"] for item in intents}),
         "receipt_hashes": {str(item["receipt_hash"]) for item in receipts},
+        "providers": {str(item["provider"]) for item in intents},
+        "receipt_statuses": {str(item["status"]) for item in receipts},
+        "endpoint_types": {str(item["endpoint_type"]) for item in receipts},
+        "actual_models": {
+            str(item["actual_model"])
+            for item in receipts
+            if isinstance(item.get("actual_model"), str)
+            and bool(str(item["actual_model"]).strip())
+        },
+        "actual_model_count": sum(
+            isinstance(item.get("actual_model"), str)
+            and bool(str(item["actual_model"]).strip())
+            for item in receipts
+        ),
     }
 
 
@@ -1011,6 +1371,12 @@ def _validate_release_report(
     if report["gate"]["tier"] != _gate_tier(requested):
         raise RealAutonomyE2EError(
             "release_report_gate_mismatch", "release tier differs from its requested chapter count"
+        )
+    actual_model_hashes = list(report["provider"]["actual_model_hashes"])
+    if actual_model_hashes != sorted(set(actual_model_hashes)):
+        raise RealAutonomyE2EError(
+            "release_report_provider_mismatch",
+            "actual provider model hashes must be sorted and unique",
         )
     _assert_report_hash_fields(report)
     expected = canonical_hash(report, exclude_fields=("report_hash",))
@@ -1104,6 +1470,256 @@ def _identifier_hash(value: str) -> str:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
+def _safe_failure_diagnostics(
+    error: BaseException,
+    *,
+    phase: str | None = None,
+    evidence_counts: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    """Return an allowlisted, message-free exception-chain summary."""
+
+    chain: list[dict[str, Any]] = []
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending and len(chain) < 12:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        item: dict[str, Any] = {"exception_type": type(current).__name__}
+        for attribute, output_name in (
+            ("code", "error_code"),
+            ("failure_category", "failure_category"),
+            ("retry_stop_reason", "retry_stop_reason"),
+            ("provider", "provider"),
+            ("stage", "stage"),
+        ):
+            value = getattr(current, attribute, None)
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,96}", value):
+                item[output_name] = value
+        status_code = getattr(current, "status_code", None)
+        if (
+            isinstance(status_code, int)
+            and not isinstance(status_code, bool)
+            and 100 <= status_code <= 599
+        ):
+            item["http_status"] = status_code
+        for attribute in ("retryable", "partial_content_received"):
+            value = getattr(current, attribute, None)
+            if isinstance(value, bool):
+                item[attribute] = value
+        attempts = getattr(current, "attempts", None)
+        if isinstance(attempts, int) and not isinstance(attempts, bool) and 0 <= attempts <= 100:
+            item["attempts"] = attempts
+        elapsed_ms = getattr(current, "elapsed_ms", None)
+        if (
+            isinstance(elapsed_ms, int)
+            and not isinstance(elapsed_ms, bool)
+            and 0 <= elapsed_ms <= 86_400_000
+        ):
+            item["elapsed_ms"] = elapsed_ms
+        chain.append(item)
+        for linked in (
+            current.__cause__,
+            current.__context__,
+            getattr(current, "cause", None),
+        ):
+            if isinstance(linked, BaseException) and id(linked) not in seen:
+                pending.append(linked)
+    payload: dict[str, Any] = {"exception_chain": chain}
+    if phase is not None:
+        payload["phase"] = phase
+    payload.update(dict(evidence_counts or {}))
+    return _validate_failure_diagnostics(payload)
+
+
+def _merge_failure_diagnostics(
+    diagnostics: Mapping[str, Any],
+    *,
+    phase: str,
+    evidence_counts: Mapping[str, int],
+) -> dict[str, Any]:
+    merged = dict(diagnostics)
+    merged["phase"] = phase
+    merged.update(dict(evidence_counts))
+    return _validate_failure_diagnostics(merged)
+
+
+def _validate_failure_diagnostics(value: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("failure diagnostics must be an object")
+    allowed_item_keys = {
+        "exception_type",
+        "error_code",
+        "failure_category",
+        "retry_stop_reason",
+        "http_status",
+        "retryable",
+        "partial_content_received",
+        "attempts",
+        "elapsed_ms",
+        "provider",
+        "stage",
+    }
+    allowed_top_keys = {
+        "exception_chain",
+        "phase",
+        "completed_chapters",
+        "intent_count",
+        "receipt_count",
+        "uncertain_intent_count",
+    }
+    raw_chain = value.get("exception_chain", [])
+    if set(value) - allowed_top_keys or not isinstance(raw_chain, list):
+        raise ValueError("failure diagnostics contain unsupported fields")
+    phase = value.get("phase")
+    if phase is not None and phase not in {
+        "gate_setup",
+        "runner_execute",
+        "release_verification",
+        "cleanup",
+    }:
+        raise ValueError("failure diagnostic phase is invalid")
+    counts: dict[str, int] = {}
+    for field in (
+        "completed_chapters",
+        "intent_count",
+        "receipt_count",
+        "uncertain_intent_count",
+    ):
+        if field not in value:
+            continue
+        count = value[field]
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"failure diagnostic {field} is invalid")
+        counts[field] = count
+    chain: list[dict[str, Any]] = []
+    for raw_item in raw_chain[:12]:
+        if not isinstance(raw_item, Mapping) or set(raw_item) - allowed_item_keys:
+            raise ValueError("failure diagnostic entry contains unsupported fields")
+        item = dict(raw_item)
+        exception_type = item.get("exception_type")
+        if not isinstance(exception_type, str) or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]{0,95}", exception_type
+        ):
+            raise ValueError("failure diagnostic exception type is invalid")
+        for field in (
+            "error_code",
+            "failure_category",
+            "retry_stop_reason",
+            "provider",
+            "stage",
+        ):
+            if field in item and (
+                not isinstance(item[field], str)
+                or not re.fullmatch(r"[A-Za-z0-9._-]{1,96}", item[field])
+            ):
+                raise ValueError(f"failure diagnostic {field} is invalid")
+        if "http_status" in item and (
+            isinstance(item["http_status"], bool)
+            or not isinstance(item["http_status"], int)
+            or not 100 <= item["http_status"] <= 599
+        ):
+            raise ValueError("failure diagnostic HTTP status is invalid")
+        if "attempts" in item and (
+            isinstance(item["attempts"], bool)
+            or not isinstance(item["attempts"], int)
+            or not 0 <= item["attempts"] <= 100
+        ):
+            raise ValueError("failure diagnostic attempts is invalid")
+        if "elapsed_ms" in item and (
+            isinstance(item["elapsed_ms"], bool)
+            or not isinstance(item["elapsed_ms"], int)
+            or not 0 <= item["elapsed_ms"] <= 86_400_000
+        ):
+            raise ValueError("failure diagnostic elapsed_ms is invalid")
+        for field in ("retryable", "partial_content_received"):
+            if field in item and not isinstance(item[field], bool):
+                raise ValueError(f"failure diagnostic {field} is invalid")
+        chain.append(item)
+    result: dict[str, Any] = {"exception_chain": chain}
+    if phase is not None:
+        result["phase"] = phase
+    result.update(counts)
+    return result
+
+
+def _failure_evidence_counts(
+    paths: RuntimePaths | None,
+    book: Path | None,
+) -> dict[str, int]:
+    intent_count = 0
+    receipt_count = 0
+    if paths is not None and paths.run_dir.is_dir():
+        intent_count = len(
+            list(paths.run_dir.glob("executions/*/model_calls/intents/*.json"))
+        )
+        receipt_count = len(
+            list(paths.run_dir.glob("executions/*/model_calls/receipts/*.json"))
+        )
+    completed_chapters = 0
+    if book is not None:
+        prose_root = book / CORE_DIRECTORY_NAMES[2]
+        if prose_root.is_dir():
+            completed_chapters = len(
+                [path for path in prose_root.glob("*.md") if path.is_file()]
+            )
+    return {
+        "completed_chapters": completed_chapters,
+        "intent_count": intent_count,
+        "receipt_count": receipt_count,
+        "uncertain_intent_count": max(0, intent_count - receipt_count),
+    }
+
+
+def _build_release_failure_report(
+    *,
+    chapter_count: int,
+    error: RealAutonomyE2EError,
+    proxy_mode: str = "unresolved",
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "schema_version": "1.0",
+        "kind": "real_autonomy_e2e_failure",
+        "redacted": True,
+        "ok": False,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "gate": {
+            "requested_chapters": _validate_gate_count(chapter_count),
+            "tier": _gate_tier(chapter_count),
+            "endpoint_type": "official",
+            "proxy_mode": _validate_release_proxy_mode_value(
+                proxy_mode, allow_unresolved=True
+            ),
+            "notion_writes": False,
+        },
+        "error": error.code,
+        "diagnostics": _validate_failure_diagnostics(error.diagnostics),
+        "cleanup_completed": error.cleanup_completed,
+        "report_hash": "0" * 64,
+    }
+    report["report_hash"] = canonical_hash(report, exclude_fields=("report_hash",))
+    _assert_redacted_report(report, secrets=(os.environ.get("OPENAI_API_KEY", ""),))
+    return report
+
+
+def _publish_release_failure_report(
+    target: Path,
+    *,
+    chapter_count: int,
+    error: RealAutonomyE2EError,
+    proxy_mode: str,
+) -> dict[str, Any]:
+    _require_release_report_reservation(target, chapter_count=chapter_count)
+    report = _build_release_failure_report(
+        chapter_count=chapter_count,
+        error=error,
+        proxy_mode=proxy_mode,
+    )
+    atomic_write_json(target, report)
+    return report
+
+
 def _rate(numerator: int, denominator: int) -> float:
     return round(float(numerator) / float(denominator), 6) if denominator else 0.0
 
@@ -1116,6 +1732,22 @@ def _gate_tier(chapter_count: int) -> str:
     if chapter_count == 10:
         return "ten_chapter_unattended"
     return "long_run_20_plus"
+
+
+def _validate_release_proxy_mode_value(
+    value: Any,
+    *,
+    allow_unresolved: bool = False,
+) -> str:
+    allowed = {"direct", "inherited", "cleared"}
+    if allow_unresolved:
+        allowed.add("unresolved")
+    if not isinstance(value, str) or value not in allowed:
+        raise RealAutonomyE2EError(
+            "release_proxy_mode_invalid",
+            "release proxy mode evidence is invalid",
+        )
+    return value
 
 
 def _require(condition: Any, code: str, message: str) -> None:
@@ -1138,6 +1770,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    args: argparse.Namespace | None = None
     try:
         _assert_no_notion_configuration(argv=raw_argv)
         args = parse_args(raw_argv)
@@ -1147,12 +1780,30 @@ def main(argv: list[str] | None = None) -> int:
             confirmed=args.confirm_real_provider_calls,
         )
     except RealAutonomyE2EError as exc:
+        failure = {
+            "ok": False,
+            "redacted": True,
+            "error": exc.code,
+            "diagnostics": exc.diagnostics,
+        }
+        if args is not None and exc.retain_report:
+            try:
+                candidate = load_json_object(Path(args.out).resolve())
+                if (
+                    candidate.get("kind") == "real_autonomy_e2e_failure"
+                    and candidate.get("error") == exc.code
+                    and candidate.get("report_hash")
+                    == canonical_hash(candidate, exclude_fields=("report_hash",))
+                ):
+                    _assert_redacted_report(
+                        candidate,
+                        secrets=(os.environ.get("OPENAI_API_KEY", ""),),
+                    )
+                    failure = candidate
+            except Exception:
+                failure["failure_report_read"] = "failed"
         print(
-            json.dumps(
-                {"ok": False, "redacted": True, "error": exc.code},
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
+            json.dumps(failure, ensure_ascii=False, sort_keys=True),
             file=sys.stderr,
         )
         return 2

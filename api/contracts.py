@@ -142,6 +142,10 @@ class ModelCallError(RuntimeError):
         self.provider = provider
         self.stage = stage
         self.model = model
+        # Keep the private exception object in memory for trusted diagnostic
+        # code.  Public serialization remains cause-type-only and never emits
+        # provider messages or response bodies.
+        self.cause = cause
         self.cause_type = type(cause).__name__ if cause is not None else None
         self.failure_category = failure_category or classify_model_failure(self.cause_type, message)
         self.retryable = is_retryable_failure(self.failure_category) if retryable is None else bool(retryable)

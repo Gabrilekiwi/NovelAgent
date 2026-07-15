@@ -22,6 +22,8 @@ from core.story_project.paths import (
 
 MIGRATION_PLAN_SCHEMA_VERSION = "2.0"
 MIGRATION_APPROVAL_SCHEMA_VERSION = "2.0"
+MIGRATION_SHADOW_CANDIDATE_SCHEMA_VERSION = "1.0"
+MIGRATION_PREVIEW_SCHEMA_VERSION = "1.0"
 REQUIRED_MIGRATION_DECISIONS = (
     "timeline_elapsed_minutes",
     "chapter_10_character_state",
@@ -33,6 +35,15 @@ REQUIRED_MIGRATION_DECISIONS = (
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$")
+_RUNTIME_SOURCE_DIRECTORIES = (
+    "runs",
+    "persistence",
+    "receipts",
+    "memory",
+    "chapters",
+    "reviews",
+)
+_RUNTIME_SOURCE_FILES = ("snapshot.json", "memory.json")
 _FORBIDDEN_DECISION_KEYS = frozenset(
     {"api_key", "apikey", "authorization", "credential", "credentials", "environment", "password", "secret", "token"}
 )
@@ -71,6 +82,16 @@ def build_migration_plan(
         raise MigrationV2Error("migration_identity_missing", "ProjectIdentity was not captured")
     source_digest = canonical_json_hash(sources)
     conflicts = _source_conflicts(sources)
+    shadow_candidate = _build_shadow_semantic_candidate(
+        root,
+        identity=identity,
+        sources=sources,
+        source_digest=source_digest,
+    )
+    if _capture_sources(root) != sources:
+        raise MigrationPlanStaleError(
+            "StoryProject source bytes or membership changed while building migration preview"
+        )
     summary = {
         "source_count": len(sources),
         "published_prose_count": sum(item["role"] == "published_prose" for item in sources),
@@ -94,6 +115,8 @@ def build_migration_plan(
         "source_digest": source_digest,
         "sources": sources,
         "conflicts": conflicts,
+        "shadow_candidate": shadow_candidate,
+        "shadow_candidate_hash": canonical_json_hash(shadow_candidate),
         "required_decisions": list(REQUIRED_MIGRATION_DECISIONS),
         "evidence_summary": summary,
         "created_at": _required_text("created_at", created_at),
@@ -112,6 +135,25 @@ def validate_migration_plan(value: Any) -> dict[str, Any]:
         raise MigrationV2Error(
             "migration_decision_contract_invalid", "required migration decisions were modified"
         )
+    candidate_present = "shadow_candidate" in plan
+    candidate_hash_present = "shadow_candidate_hash" in plan
+    if candidate_present != candidate_hash_present:
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid",
+            "shadow_candidate and shadow_candidate_hash must be present together",
+        )
+    if candidate_present:
+        candidate = _validate_shadow_semantic_candidate(
+            plan["shadow_candidate"],
+            book_id=plan["book_id"],
+            source_digest=plan["source_digest"],
+        )
+        _sha256("shadow_candidate_hash", plan["shadow_candidate_hash"])
+        if candidate != plan["shadow_candidate"] or canonical_json_hash(candidate) != plan["shadow_candidate_hash"]:
+            raise MigrationV2Error(
+                "migration_shadow_candidate_digest_mismatch",
+                "shadow semantic candidate was modified",
+            )
     sources = plan["sources"]
     if sources != sorted(sources, key=lambda item: item["relative_path"]):
         raise MigrationV2Error("migration_source_order_invalid", "sources must use stable path order")
@@ -189,7 +231,54 @@ def assert_migration_plan_current(
         raise MigrationPlanStaleError("StoryProject source bytes or membership changed")
     if canonical_json_hash(current_sources) != validated["source_digest"]:
         raise MigrationPlanStaleError("StoryProject source digest changed")
+    if "shadow_candidate" in validated:
+        current_candidate = _build_shadow_semantic_candidate(
+            root,
+            identity=identity,
+            sources=current_sources,
+            source_digest=validated["source_digest"],
+        )
+        if _capture_sources(root) != current_sources:
+            raise MigrationPlanStaleError(
+                "StoryProject source bytes or membership changed while checking semantic candidate"
+            )
+        if current_candidate != validated["shadow_candidate"]:
+            raise MigrationPlanStaleError("StoryProject shadow semantic candidate changed")
     return validated
+
+
+def build_migration_preview(
+    story_project_root: str | Path,
+    *,
+    created_at: str,
+) -> dict[str, Any]:
+    """Build a read-only migration preview; never approve, execute, or activate it."""
+
+    plan = build_migration_plan(story_project_root, created_at=created_at)
+    candidate = copy.deepcopy(plan["shadow_candidate"])
+    preview = {
+        "schema_version": MIGRATION_PREVIEW_SCHEMA_VERSION,
+        "mode": "read_only_shadow",
+        "read_only": True,
+        "authoritative": False,
+        "affects_generation": False,
+        "affects_source": False,
+        "approval_created": False,
+        "execution_performed": False,
+        "activation_performed": False,
+        "book_id": plan["book_id"],
+        "plan_id": plan["plan_id"],
+        "plan_hash": plan["plan_hash"],
+        "shadow_candidate_hash": plan["shadow_candidate_hash"],
+        "source_conflicts": copy.deepcopy(plan["conflicts"]),
+        "semantic_conflicts": copy.deepcopy(candidate["conflicts"]),
+        "warnings": copy.deepcopy(candidate["warnings"]),
+        "unsupported": copy.deepcopy(candidate["unsupported"]),
+        "required_user_decisions": copy.deepcopy(candidate["required_user_decisions"]),
+        "plan": plan,
+    }
+    preview["preview_hash"] = canonical_json_hash(preview)
+    return preview
 
 
 def assert_migration_source_snapshot_current(
@@ -295,6 +384,270 @@ def validate_migration_approval(
     return approval
 
 
+def _build_shadow_semantic_candidate(
+    root: Path,
+    *,
+    identity: Any,
+    sources: list[dict[str, Any]],
+    source_digest: str,
+) -> dict[str, Any]:
+    from core.story_project.semantic_parser import (
+        StoryProjectSemanticParseError,
+        parse_story_project_semantic_state,
+    )
+
+    chapter_index, target_basis, outline_source = _shadow_candidate_target(sources)
+    state: dict[str, Any] | None = None
+    if chapter_index is not None and outline_source is not None:
+        try:
+            state = parse_story_project_semantic_state(
+                root,
+                chapter_index,
+                project_identity=identity,
+            )
+        except (StoryProjectSemanticParseError, OSError, UnicodeError, ValueError):
+            state = None
+
+    if state is None:
+        conflicts = [
+            {
+                "id": "migration-semantic-candidate-unavailable",
+                "field_path": "semantic_state",
+                "code": "semantic_candidate_unavailable",
+                "blocking": True,
+                "sources": [outline_source] if outline_source is not None else [],
+                "message": "Frozen sources could not produce a complete semantic candidate.",
+            }
+        ]
+        warnings = [
+            {
+                "code": "semantic_candidate_requires_manual_review",
+                "source_path": outline_source or "大纲",
+                "message": "No semantic values are authoritative until the required user decisions are approved.",
+            }
+        ]
+        unsupported = [
+            {
+                "code": "semantic_candidate_unavailable",
+                "source_paths": [outline_source] if outline_source is not None else [],
+                "authoritative": False,
+            }
+        ]
+    else:
+        conflicts = copy.deepcopy(state["conflicts"])
+        warnings = copy.deepcopy(state["parse_warnings"])
+        unsupported = copy.deepcopy(state["unsupported_excerpts"])
+
+    candidate = {
+        "schema_version": MIGRATION_SHADOW_CANDIDATE_SCHEMA_VERSION,
+        "mode": "shadow",
+        "authoritative": False,
+        "read_only": True,
+        "affects_generation": False,
+        "affects_source": False,
+        "book_id": identity.book_id,
+        "source_digest": source_digest,
+        "chapter_index": chapter_index,
+        "target_basis": target_basis,
+        "outline_source": outline_source,
+        "state": copy.deepcopy(state),
+        "state_hash": canonical_json_hash(state) if state is not None else None,
+        "conflicts": conflicts,
+        "warnings": warnings,
+        "unsupported": unsupported,
+        "required_user_decisions": _required_user_decision_items(state),
+    }
+    return _validate_shadow_semantic_candidate(
+        candidate,
+        book_id=identity.book_id,
+        source_digest=source_digest,
+    )
+
+
+def _shadow_candidate_target(
+    sources: list[dict[str, Any]],
+) -> tuple[int | None, str, str | None]:
+    published = sorted(
+        {
+            int(item["chapter_index"])
+            for item in sources
+            if item["role"] == "published_prose" and item["chapter_index"] is not None
+        }
+    )
+    outlines: dict[int, list[str]] = {}
+    for item in sources:
+        if item["role"] != "chapter_outline" or item["chapter_index"] is None:
+            continue
+        outlines.setdefault(int(item["chapter_index"]), []).append(item["relative_path"])
+
+    if published:
+        next_chapter = max(published) + 1
+        if len(outlines.get(next_chapter, [])) == 1:
+            return next_chapter, "next_unpublished_chapter", outlines[next_chapter][0]
+        latest = max(published)
+        if len(outlines.get(latest, [])) == 1:
+            return latest, "latest_published_chapter_fallback", outlines[latest][0]
+    unique_outline_chapters = sorted(chapter for chapter, paths in outlines.items() if len(paths) == 1)
+    if unique_outline_chapters:
+        chapter = unique_outline_chapters[-1]
+        return chapter, "latest_unique_outline_fallback", outlines[chapter][0]
+    return None, "no_unique_chapter_outline", None
+
+
+def _required_user_decision_items(state: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    prefixes = {
+        "timeline_elapsed_minutes": ("timeline",),
+        "chapter_10_character_state": ("characters", "spatial_state.character_positions"),
+        "open_foreshadowing": ("foreshadowing",),
+        "inventory": ("world_state.inventory",),
+        "lexicon": ("world_state.lexicon",),
+        "corruption": ("world_state.corruption",),
+    }
+    provenance = list((state or {}).get("provenance") or [])
+    items: list[dict[str, Any]] = []
+    for topic in REQUIRED_MIGRATION_DECISIONS:
+        evidence_paths = sorted(
+            {
+                str(item["source_path"])
+                for item in provenance
+                if isinstance(item, Mapping)
+                and isinstance(item.get("source_path"), str)
+                and any(
+                    str(item.get("field_path") or "") == prefix
+                    or str(item.get("field_path") or "").startswith(prefix + ".")
+                    or str(item.get("field_path") or "").startswith(prefix + "[")
+                    for prefix in prefixes[topic]
+                )
+            }
+        )
+        items.append(
+            {
+                "topic": topic,
+                "status": "user_decision_required",
+                "required": True,
+                "candidate_evidence_available": bool(evidence_paths),
+                "evidence_paths": evidence_paths,
+            }
+        )
+    return items
+
+
+def _validate_shadow_semantic_candidate(
+    value: Any,
+    *,
+    book_id: str,
+    source_digest: str,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid", "shadow semantic candidate must be an object"
+        )
+    candidate = copy.deepcopy(dict(value))
+    expected_keys = {
+        "schema_version",
+        "mode",
+        "authoritative",
+        "read_only",
+        "affects_generation",
+        "affects_source",
+        "book_id",
+        "source_digest",
+        "chapter_index",
+        "target_basis",
+        "outline_source",
+        "state",
+        "state_hash",
+        "conflicts",
+        "warnings",
+        "unsupported",
+        "required_user_decisions",
+    }
+    if set(candidate) != expected_keys:
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid", "shadow semantic candidate fields are incomplete"
+        )
+    if candidate["schema_version"] != MIGRATION_SHADOW_CANDIDATE_SCHEMA_VERSION:
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid", "unsupported shadow semantic candidate version"
+        )
+    expected_flags = {
+        "mode": "shadow",
+        "authoritative": False,
+        "read_only": True,
+        "affects_generation": False,
+        "affects_source": False,
+    }
+    if any(candidate[field] != expected for field, expected in expected_flags.items()):
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid", "shadow semantic candidate authority flags changed"
+        )
+    if candidate["book_id"] != book_id or candidate["source_digest"] != source_digest:
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid", "shadow semantic candidate is not bound to frozen inputs"
+        )
+    _sha256("shadow_candidate.source_digest", candidate["source_digest"])
+    chapter_index = candidate["chapter_index"]
+    if chapter_index is not None and (
+        isinstance(chapter_index, bool) or not isinstance(chapter_index, int) or chapter_index < 1
+    ):
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid", "candidate chapter_index must be positive or null"
+        )
+    if candidate["target_basis"] not in {
+        "next_unpublished_chapter",
+        "latest_published_chapter_fallback",
+        "latest_unique_outline_fallback",
+        "no_unique_chapter_outline",
+    }:
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid", "candidate target basis is unsupported"
+        )
+    if candidate["outline_source"] is not None:
+        candidate["outline_source"] = _safe_relative_path(candidate["outline_source"])
+    state = candidate["state"]
+    if state is None:
+        if candidate["state_hash"] is not None:
+            raise MigrationV2Error(
+                "migration_shadow_candidate_invalid", "unavailable candidate cannot have a state hash"
+            )
+    else:
+        from core.story_project.semantic_contracts import validate_story_project_semantic_state
+
+        state = validate_story_project_semantic_state(state)
+        if state["book_id"] != book_id or state["chapter_index"] != chapter_index:
+            raise MigrationV2Error(
+                "migration_shadow_candidate_invalid", "semantic state identity differs from its candidate"
+            )
+        _sha256("shadow_candidate.state_hash", candidate["state_hash"])
+        if canonical_json_hash(state) != candidate["state_hash"]:
+            raise MigrationV2Error(
+                "migration_shadow_candidate_invalid", "semantic state hash differs"
+            )
+        if (
+            candidate["conflicts"] != state["conflicts"]
+            or candidate["warnings"] != state["parse_warnings"]
+            or candidate["unsupported"] != state["unsupported_excerpts"]
+        ):
+            raise MigrationV2Error(
+                "migration_shadow_candidate_invalid", "semantic diagnostics are not derived from state"
+            )
+        candidate["state"] = state
+    for field in ("conflicts", "warnings", "unsupported"):
+        if not isinstance(candidate[field], list):
+            raise MigrationV2Error(
+                "migration_shadow_candidate_invalid", f"candidate {field} must be an array"
+            )
+    expected_decisions = _required_user_decision_items(state)
+    if candidate["required_user_decisions"] != expected_decisions:
+        raise MigrationV2Error(
+            "migration_shadow_candidate_invalid", "required user decisions are not derived"
+        )
+    try:
+        return json.loads(json.dumps(candidate, ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError) as exc:
+        raise MigrationV2Error("migration_shadow_candidate_invalid", str(exc)) from exc
+
+
 def _capture_sources(root: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for directory, role in (
@@ -310,11 +663,15 @@ def _capture_sources(root: Path) -> list[dict[str, Any]]:
         for path in sorted(base.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
             if not path.is_file():
                 continue
+            if path.name == ".gitkeep":
+                continue
             _assert_safe_source_path(path, root)
             resolved_role = role
             chapter: int | None = None
             if role == "published_prose":
                 chapter = prose_chapter_index(path)
+                if chapter is None:
+                    resolved_role = "unclassified_prose"
             elif role == "outline":
                 chapter = outline_chapter_index(path)
                 resolved_role = "chapter_outline" if chapter is not None else "master_outline"
@@ -328,21 +685,43 @@ def _capture_sources(root: Path) -> list[dict[str, Any]]:
     runtime = root / ".novelagent" / "runtime"
     if runtime.is_dir():
         _assert_safe_source_path(runtime, root)
-        for child_name in ("runs", "persistence", "receipts", "memory"):
+        for child_name in _RUNTIME_SOURCE_DIRECTORIES:
             base = runtime / child_name
             if not base.exists():
                 continue
             for path in sorted(base.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-                if not path.is_file():
+                if not path.is_file() or path.name.endswith(".lock"):
                     continue
                 _assert_safe_source_path(path, root)
-                entries.append(_source_entry(root, path, role=f"legacy_{child_name}", chapter_index=None))
+                entries.append(
+                    _source_entry(
+                        root,
+                        path,
+                        role=f"legacy_{child_name}",
+                        chapter_index=None,
+                    )
+                )
+        for child_name in _RUNTIME_SOURCE_FILES:
+            path = runtime / child_name
+            if not path.is_file():
+                continue
+            _assert_safe_source_path(path, root)
+            entries.append(
+                _source_entry(
+                    root,
+                    path,
+                    role="legacy_runtime",
+                    chapter_index=None,
+                )
+            )
     return sorted(entries, key=lambda item: item["relative_path"])
 
 
 def _source_entry(root: Path, path: Path, *, role: str, chapter_index: int | None) -> dict[str, Any]:
     if role == "published_prose":
         evidence_class = "occurred_event"
+    elif role == "unclassified_prose":
+        evidence_class = "unknown"
     elif role == "explicit_setting":
         evidence_class = "static_constraint"
     elif role == "project_identity":
@@ -368,9 +747,11 @@ def _source_classification(relative_path: str) -> tuple[str, str, int | None]:
     if not parts:
         raise MigrationV2Error("migration_source_classification_invalid", relative_path)
     if parts[0] == PROSE_DIR_NAME:
-        role = "published_prose"
         chapter = prose_chapter_index(path)
-        evidence = "occurred_event"
+        if chapter is None:
+            role, evidence = "unclassified_prose", "unknown"
+        else:
+            role, evidence = "published_prose", "occurred_event"
     elif parts[0] == OUTLINE_DIR_NAME:
         chapter = outline_chapter_index(path)
         role = "chapter_outline" if chapter is not None else "master_outline"
@@ -381,13 +762,16 @@ def _source_classification(relative_path: str) -> tuple[str, str, int | None]:
         role, evidence, chapter = "tracking_projection", "unknown", None
     elif relative_path == ".novelagent/project.json":
         role, evidence, chapter = "project_identity", "identity", None
-    elif len(parts) >= 4 and parts[:2] == (".novelagent", "runtime") and parts[2] in {
-        "runs",
-        "persistence",
-        "receipts",
-        "memory",
-    }:
+    elif (
+        len(parts) >= 4
+        and parts[:2] == (".novelagent", "runtime")
+        and parts[2] in _RUNTIME_SOURCE_DIRECTORIES
+    ):
         role, evidence, chapter = f"legacy_{parts[2]}", "legacy_artifact", None
+    elif relative_path in {
+        f".novelagent/runtime/{name}" for name in _RUNTIME_SOURCE_FILES
+    }:
+        role, evidence, chapter = "legacy_runtime", "legacy_artifact", None
     else:
         raise MigrationV2Error(
             "migration_source_classification_invalid", f"unrecognized controlled source: {relative_path}"
@@ -403,6 +787,24 @@ def _source_conflicts(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         by_role_chapter.setdefault((item["role"], chapter), []).append(item["relative_path"])
     conflicts = []
+    for item in sources:
+        if item["role"] != "unclassified_prose":
+            continue
+        relative_path = item["relative_path"]
+        conflicts.append(
+            {
+                "code": "unclassified_chapter_source",
+                "conflict_id": (
+                    "unclassified_chapter_source:"
+                    + hashlib.sha256(relative_path.encode("utf-8")).hexdigest()[:16]
+                ),
+                "role": "published_prose",
+                "chapter_index": None,
+                "paths": [relative_path],
+                "requires_decision": True,
+                "resolution_kind": "exclude_unclassified_source",
+            }
+        )
     for (role, chapter), paths in sorted(by_role_chapter.items()):
         if len(paths) > 1:
             conflicts.append(
@@ -446,9 +848,7 @@ def _validate_decisions(
             raise MigrationV2Error(
                 "migration_conflict_resolution_missing", "all reported conflicts require explicit resolutions"
             )
-        expected_codes = {
-            f"{item['code']}:{item['role']}:{item['chapter_index']}" for item in conflicts
-        }
+        expected_codes = {_conflict_resolution_key(item) for item in conflicts}
         if set(resolutions) != expected_codes or any(
             not isinstance(resolutions[key], str) or not resolutions[key].strip() for key in resolutions
         ):
@@ -456,7 +856,7 @@ def _validate_decisions(
                 "migration_conflict_resolution_invalid", "conflict resolution keys or values are incomplete"
             )
         conflict_paths = {
-            f"{item['code']}:{item['role']}:{item['chapter_index']}": set(item["paths"])
+            _conflict_resolution_key(item): set(item["paths"])
             for item in conflicts
         }
         for key, chosen in resolutions.items():
@@ -489,6 +889,13 @@ def _assert_safe_source_path(path: Path, root: Path) -> None:
         if current == root:
             break
         current = current.parent
+
+
+def _conflict_resolution_key(conflict: Mapping[str, Any]) -> str:
+    explicit = conflict.get("conflict_id")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    return f"{conflict['code']}:{conflict['role']}:{conflict['chapter_index']}"
 
 
 def _is_reparse_point(path: Path) -> bool:
@@ -597,6 +1004,8 @@ def _required_text(label: str, value: Any) -> str:
 __all__ = [
     "MIGRATION_APPROVAL_SCHEMA_VERSION",
     "MIGRATION_PLAN_SCHEMA_VERSION",
+    "MIGRATION_PREVIEW_SCHEMA_VERSION",
+    "MIGRATION_SHADOW_CANDIDATE_SCHEMA_VERSION",
     "REQUIRED_MIGRATION_DECISIONS",
     "MigrationPlanStaleError",
     "MigrationV2Error",
@@ -604,6 +1013,7 @@ __all__ = [
     "assert_migration_source_snapshot_current",
     "build_migration_approval",
     "build_migration_plan",
+    "build_migration_preview",
     "validate_migration_approval",
     "validate_migration_plan",
 ]

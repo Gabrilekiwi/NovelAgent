@@ -26,6 +26,10 @@ TRANSACTION_STATES = {
 TERMINAL_TRANSACTION_STATES = {"completed", "rolled_back", "recovery_required"}
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _FaultInjector = Callable[[str, int | None, Path | None], None]
+_DurabilityHook = Callable[
+    [str, Path, Callable[[], Any]],
+    Any,
+]
 
 
 class PersistenceError(RuntimeError):
@@ -975,7 +979,12 @@ def _write_new_durable_file(path: Path, content: bytes) -> None:
     _atomic_create_from_bytes(path, content)
 
 
-def _atomic_replace_from_bytes(path: Path, content: bytes) -> None:
+def _atomic_replace_from_bytes(
+    path: Path,
+    content: bytes,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # The target name can itself be a 64-character content hash. Repeating it
     # in the temporary name needlessly crosses classic Windows MAX_PATH limits
@@ -986,12 +995,27 @@ def _atomic_replace_from_bytes(path: Path, content: bytes) -> None:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
             handle.flush()
-            os.fsync(handle.fileno())
+            _run_durability_operation(
+                durability_hook,
+                "file_fsync",
+                path,
+                lambda: os.fsync(handle.fileno()),
+            )
         if os.name == "nt":
-            _windows_move_file(tmp_path, path, replace_existing=True)
+            _run_durability_operation(
+                durability_hook,
+                "replace_rename",
+                path,
+                lambda: _windows_move_file(tmp_path, path, replace_existing=True),
+            )
         else:
-            os.replace(tmp_path, path)
-        _fsync_directory(path.parent)
+            _run_durability_operation(
+                durability_hook,
+                "replace_rename",
+                path,
+                lambda: os.replace(tmp_path, path),
+            )
+        _fsync_directory(path.parent, durability_hook=durability_hook)
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -999,7 +1023,12 @@ def _atomic_replace_from_bytes(path: Path, content: bytes) -> None:
             pass
 
 
-def _atomic_create_from_bytes(path: Path, content: bytes) -> None:
+def _atomic_create_from_bytes(
+    path: Path,
+    content: bytes,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     """Durably publish a new file without ever replacing an existing one."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -1010,15 +1039,30 @@ def _atomic_create_from_bytes(path: Path, content: bytes) -> None:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
             handle.flush()
-            os.fsync(handle.fileno())
+            _run_durability_operation(
+                durability_hook,
+                "file_fsync",
+                path,
+                lambda: os.fsync(handle.fileno()),
+            )
         if os.name == "nt":
-            _windows_move_file(tmp_path, path, replace_existing=False)
+            _run_durability_operation(
+                durability_hook,
+                "create_rename",
+                path,
+                lambda: _windows_move_file(tmp_path, path, replace_existing=False),
+            )
         else:
             # Linking a fully durable same-directory file is an atomic,
             # no-clobber publication. Unlike os.replace, it cannot overwrite a
             # marker won by another process between the check and publication.
-            os.link(tmp_path, path)
-        _fsync_directory(path.parent)
+            _run_durability_operation(
+                durability_hook,
+                "create_link",
+                path,
+                lambda: os.link(tmp_path, path),
+            )
+        _fsync_directory(path.parent, durability_hook=durability_hook)
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -1026,7 +1070,11 @@ def _atomic_create_from_bytes(path: Path, content: bytes) -> None:
             pass
 
 
-def _fsync_directory(path: Path) -> None:
+def _fsync_directory(
+    path: Path,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     if os.name == "nt":
         return
     try:
@@ -1034,9 +1082,25 @@ def _fsync_directory(path: Path) -> None:
     except OSError:
         return
     try:
-        os.fsync(descriptor)
+        _run_durability_operation(
+            durability_hook,
+            "directory_fsync",
+            path,
+            lambda: os.fsync(descriptor),
+        )
     finally:
         os.close(descriptor)
+
+
+def _run_durability_operation(
+    durability_hook: _DurabilityHook | None,
+    operation: str,
+    path: Path,
+    action: Callable[[], Any],
+) -> Any:
+    if durability_hook is None:
+        return action()
+    return durability_hook(operation, path, action)
 
 
 def _windows_move_file(source: Path, destination: Path, *, replace_existing: bool) -> None:

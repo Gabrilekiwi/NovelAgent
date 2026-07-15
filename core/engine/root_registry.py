@@ -51,6 +51,7 @@ class RootRegistryService:
 
     def __init__(self, transaction_root: str | Path) -> None:
         self.transaction_root = assert_safe_local_tree(transaction_root)
+        _assert_root_is_narrow(self.transaction_root)
         self.registry_path = self.transaction_root / "root_registry.json"
 
     def ensure(
@@ -311,11 +312,30 @@ def _validate_physical_roots(
         root_id = str(root_id)
         _validate_root_id(root_id)
         path = Path(str(raw_path)).absolute()
+        _assert_root_is_narrow(path)
         # The UUID is irrelevant for this safety pass.
         temporary[root_id] = RootBinding(root_id, str(uuid.uuid4()), path)
         roots[root_id] = path
     SafePathResolver(temporary)
     return roots
+
+
+def _assert_root_is_narrow(path: Path) -> None:
+    """Reject a volume anchor as a writable registry or logical data root.
+
+    The control plane and every registry binding are capability boundaries.
+    Placing either at ``/`` or a Windows drive root would therefore expose an
+    entire filesystem.  More specific existing directories (including a
+    StoryProject that happens to be the current working directory) remain
+    valid.
+    """
+
+    normalized = os.path.normcase(os.path.normpath(str(path)))
+    anchor = os.path.normcase(os.path.normpath(str(Path(path.anchor))))
+    if normalized == anchor:
+        raise RootRegistryError(
+            f"physical root is too broad; filesystem volume roots are forbidden: {path}"
+        )
 
 
 def _new_binding(root_id: str, path: Path) -> dict[str, Any]:

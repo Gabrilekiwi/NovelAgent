@@ -21,7 +21,10 @@ from api.openai_client import chat_completion
 from api.notion_client import query_database_pages
 from api.retry import consume_retry_telemetry, reset_retry_telemetry
 from core.config import get_config
+from core.context_budget import RunBudgetLimits, RunBudgetTracker
 from core.director import ModelDirector, decide_next_step
+from core.model_call_runtime import ModelCallRuntimeContext, use_model_call_runtime
+from core.model_calls import ModelCallStore
 from core.runtime_paths import init_runtime_state
 from core.schema import validate_schema
 from core.state.builder import build_snapshot_state_with_audit
@@ -223,39 +226,47 @@ def main() -> None:
     )
     report["runtime"] = runtime
 
-    for provider in args.providers:
-        try:
-            if provider == "openai":
-                result = _smoke_openai(
-                    work_dir,
-                    max_input_chars=limits["max_input_chars"],
-                    scene_limit=limits["openai_scene_limit"],
-                    retries=limits["retries"],
-                    retry_delay_seconds=limits["retry_delay_seconds"],
-                )
-            elif provider == "claude":
-                result = _smoke_claude(retries=limits["retries"], retry_delay_seconds=limits["retry_delay_seconds"])
-            else:
-                result = _smoke_notion(
-                    write=args.notion_write,
-                    retries=limits["retries"],
-                    retry_delay_seconds=limits["retry_delay_seconds"],
-                )
-        except MissingConfig as exc:
-            result = {
-                "ok": False,
-                "status": "skipped" if args.allow_missing else "failed",
-                "reason": str(exc),
-                "missing_config_groups": exc.groups,
-            }
-            if not args.allow_missing:
+    model_call_runtime = ModelCallRuntimeContext(
+        ModelCallStore(work_dir / "model_calls"),
+        tracker=RunBudgetTracker(RunBudgetLimits()),
+    )
+    with use_model_call_runtime(model_call_runtime):
+        for provider in args.providers:
+            try:
+                if provider == "openai":
+                    result = _smoke_openai(
+                        work_dir,
+                        max_input_chars=limits["max_input_chars"],
+                        scene_limit=limits["openai_scene_limit"],
+                        retries=limits["retries"],
+                        retry_delay_seconds=limits["retry_delay_seconds"],
+                    )
+                elif provider == "claude":
+                    result = _smoke_claude(
+                        retries=limits["retries"],
+                        retry_delay_seconds=limits["retry_delay_seconds"],
+                    )
+                else:
+                    result = _smoke_notion(
+                        write=args.notion_write,
+                        retries=limits["retries"],
+                        retry_delay_seconds=limits["retry_delay_seconds"],
+                    )
+            except MissingConfig as exc:
+                result = {
+                    "ok": False,
+                    "status": "skipped" if args.allow_missing else "failed",
+                    "reason": str(exc),
+                    "missing_config_groups": exc.groups,
+                }
+                if not args.allow_missing:
+                    report["ok"] = False
+            except Exception as exc:  # noqa: BLE001 - provider smoke must preserve diagnostics.
+                result = _provider_failure_result(exc)
                 report["ok"] = False
-        except Exception as exc:  # noqa: BLE001 - provider smoke must preserve diagnostics.
-            result = _provider_failure_result(exc)
-            report["ok"] = False
-        report["providers"][provider] = result
-        if not result.get("ok") and result.get("status") != "skipped":
-            report["ok"] = False
+            report["providers"][provider] = result
+            if not result.get("ok") and result.get("status") != "skipped":
+                report["ok"] = False
 
     report_path = work_dir / "provider_smoke_report.json"
     report["report_path"] = str(report_path)

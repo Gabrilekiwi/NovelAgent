@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from typing import Any
 
 from api.contracts import CHAPTER_CONTRACT, validate_language_output, validate_text_output
@@ -160,6 +161,11 @@ def plan_chapter(
 ) -> dict[str, Any]:
     """Deprecated compatibility alias for :func:`plan_scenes`."""
 
+    warnings.warn(
+        "plan_chapter() is deprecated; use plan_scenes() instead",
+        FutureWarning,
+        stacklevel=2,
+    )
     return plan_scenes(
         input_pack,
         chapter_index=chapter_index,
@@ -635,4 +641,11 @@ def _pipeline_stages(overrides: dict[str, dict[str, Any]] | None = None) -> list
     return stages
 
 
-__all__ = ["PIPELINE_STAGE_NAMES", "generate_scenes", "merge_scenes", "plan_chapter", "run_chapter_pipeline"]
+__all__ = [
+    "PIPELINE_STAGE_NAMES",
+    "generate_scenes",
+    "merge_scenes",
+    "plan_chapter",
+    "plan_scenes",
+    "run_chapter_pipeline",
+]

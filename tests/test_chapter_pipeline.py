@@ -14,10 +14,15 @@ class ChapterPipelineTest(unittest.TestCase):
     def test_plan_chapter_is_compatibility_alias_for_plan_scenes(self) -> None:
         expected = pipeline_module.plan_scenes("input pack", chapter_index=7, dry_run=True)
 
-        self.assertEqual(
-            expected,
-            pipeline_module.plan_chapter("input pack", chapter_index=7, dry_run=True),
-        )
+        with self.assertWarnsRegex(
+            FutureWarning,
+            r"plan_chapter\(\) is deprecated; use plan_scenes\(\) instead",
+        ) as warning:
+            actual = pipeline_module.plan_chapter("input pack", chapter_index=7, dry_run=True)
+
+        self.assertEqual(expected, actual)
+        self.assertEqual(__file__, warning.filename)
+        self.assertIn("plan_scenes", pipeline_module.__all__)
 
     def _blueprint(self) -> dict:
         return {
@@ -131,7 +136,7 @@ class ChapterPipelineTest(unittest.TestCase):
 
         pipeline_module.chat_completion = fail_if_called
         try:
-            plan = pipeline_module.plan_chapter(
+            plan = pipeline_module.plan_scenes(
                 "input pack",
                 chapter_index=3,
                 dry_run=False,
@@ -179,7 +184,7 @@ class ChapterPipelineTest(unittest.TestCase):
 {"goal": "Open the first rift.", "scenes": [{"index": 1, "type": "opening_bridge", "goal": "Begin at the observatory.", "required_beats": ["old observatory", "danger"]}]}
 ```"""
         try:
-            plan = pipeline_module.plan_chapter("input pack", chapter_index=1, dry_run=False)
+            plan = pipeline_module.plan_scenes("input pack", chapter_index=1, dry_run=False)
         finally:
             pipeline_module.chat_completion = original_chat_completion
 
@@ -193,7 +198,7 @@ class ChapterPipelineTest(unittest.TestCase):
             '{"goal": "Enter the mirror waste.", "scenes": [{"index": 1, "goal": "Start from the last state.", "required_beats": ["bridge"]}]}'
         )
         try:
-            plan = pipeline_module.plan_chapter("input pack", chapter_index=1, dry_run=False)
+            plan = pipeline_module.plan_scenes("input pack", chapter_index=1, dry_run=False)
         finally:
             pipeline_module.chat_completion = original_chat_completion
 
@@ -213,7 +218,7 @@ class ChapterPipelineTest(unittest.TestCase):
 
         pipeline_module.chat_completion = completion
         try:
-            plan = pipeline_module.plan_chapter("# Chapter Index\n3\n\ninput pack", chapter_index=3, dry_run=False)
+            plan = pipeline_module.plan_scenes("# Chapter Index\n3\n\ninput pack", chapter_index=3, dry_run=False)
         finally:
             pipeline_module.chat_completion = original_chat_completion
 
@@ -228,7 +233,7 @@ class ChapterPipelineTest(unittest.TestCase):
         pipeline_module.chat_completion = lambda messages, **kwargs: outputs.pop(0)
         try:
             with self.assertRaisesRegex(ValueError, "not valid JSON"):
-                pipeline_module.plan_chapter("input pack", chapter_index=1, dry_run=False)
+                pipeline_module.plan_scenes("input pack", chapter_index=1, dry_run=False)
         finally:
             pipeline_module.chat_completion = original_chat_completion
 

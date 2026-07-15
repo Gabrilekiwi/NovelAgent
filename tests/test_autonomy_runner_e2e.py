@@ -66,7 +66,7 @@ def _profiles(
                     "provider": "openai",
                     "endpoint_type": "official",
                     "model": "unused-dry-model",
-                    "max_output_tokens": 4096,
+                    "max_output_tokens": 6000,
                 }
             ],
             "file_deliveries": [
@@ -162,10 +162,18 @@ def _case(
     chapters: int = 3,
     executor_dry_run: bool = True,
     model_calls: int = 12,
+    existing_outline_filename: str | None = None,
 ):
     book = tmp_path / "book"
     for directory in CORE_DIRECTORY_NAMES:
         (book / directory).mkdir(parents=True)
+    if existing_outline_filename is not None:
+        (book / "大纲" / existing_outline_filename).write_text(
+            "# 第一章\n核心事件：队伍选择一条危险路线。\n"
+            "## 剧情节拍\n- 采用唯一既有细纲。\n"
+            "结尾压力：封锁门开始倒计时。\n",
+            encoding="utf-8",
+        )
     identity = ensure_project_identity(book, book_id="book-autonomy-runner-e2e")
     paths = RuntimePaths.for_story_project(book)
     memory_root = paths.memory_dir / "v2"
@@ -446,6 +454,33 @@ class AutonomyRunnerE2ETest(unittest.TestCase):
         self.assertEqual(1, result["session"]["completed_count"])
         self.assertEqual(1, len(case["executor_requests"]))
         self.assertEqual(1, len(list(case["external"].rglob("*.json"))))
+
+    def test_unique_compatible_outline_variant_is_adopted_without_duplicate(self):
+        variant_name = "细纲_第001章_标题.md"
+        case = _case(
+            _workspace("existing-outline-variant"),
+            chapters=1,
+            existing_outline_filename=variant_name,
+        )
+        result = case["runner"].execute_plan(case["plan"])
+
+        self.assertEqual("completed", result["stopped_reason"])
+        self.assertTrue((case["book"] / "大纲" / variant_name).is_file())
+        self.assertFalse(canonical_outline_path(case["book"], 1).exists())
+        self.assertEqual(
+            [variant_name],
+            sorted(path.name for path in (case["book"] / "大纲").glob("细纲_第001章*.md")),
+        )
+
+    def test_missing_runtime_snapshot_is_recovered_before_persistence_cas(self):
+        case = _case(_workspace("missing-runtime-snapshot"), chapters=1)
+        case["paths"].snapshot_path.unlink()
+
+        result = case["runner"].execute_plan(case["plan"])
+
+        self.assertEqual("completed", result["stopped_reason"])
+        self.assertTrue(case["paths"].snapshot_path.is_file())
+        self.assertEqual(1, result["session"]["completed_count"])
 
     def test_three_chapter_runner_is_receipt_counted_and_exactly_delivered(self):
         _assert_three_chapter_runner_is_receipt_counted_and_exactly_delivered()

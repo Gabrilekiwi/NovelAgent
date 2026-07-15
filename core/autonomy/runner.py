@@ -37,7 +37,7 @@ from core.engine.persistence_v2 import (
 from core.engine.run_record import validate_run_result
 from core.path_refs import resolve_path_ref
 from core.stage_control import derive_outline_readiness
-from core.story_project.paths import canonical_outline_path
+from core.story_project.paths import resolve_outline
 
 
 class AutonomyRunnerError(AutonomyContractError):
@@ -352,9 +352,13 @@ class AutonomyRunner:
                 "autonomy_arc_target_invalid",
                 "canonical next chapter has no unfulfilled RunArc target",
             )
-        canonical_path = canonical_outline_path(
-            self.story_project_root, chapter_index
-        )
+        resolution = resolve_outline(self.story_project_root, chapter_index)
+        if len(resolution.candidates) > 1:
+            raise AutonomyRunnerError(
+                "autonomy_outline_source_ambiguous",
+                "canonical next chapter has multiple compatible outline sources",
+            )
+        canonical_path = resolution.path or resolution.canonical_path
         canonical_before = (
             hashlib.sha256(canonical_path.read_bytes()).hexdigest()
             if canonical_path.is_file()
@@ -370,6 +374,9 @@ class AutonomyRunner:
                     "authority_head_event_hash"
                 ],
                 "provider_profile_hash": provider["profile_hash"],
+                "canonical_relative_path": canonical_path.relative_to(
+                    self.story_project_root
+                ).as_posix(),
                 "canonical_before_sha256": canonical_before,
             }
         )

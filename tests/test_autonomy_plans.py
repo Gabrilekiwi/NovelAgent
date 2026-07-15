@@ -34,7 +34,11 @@ def workspace_case(name: str):
     yield str(path)
 
 
-def trusted_profiles(*, max_chapters: int = 4) -> TrustedProfiles:
+def trusted_profiles(
+    *,
+    max_chapters: int = 4,
+    provider_max_output_tokens: int = 16000,
+) -> TrustedProfiles:
     return TrustedProfiles.from_dict(
         {
             "schema_version": "1.0",
@@ -52,7 +56,7 @@ def trusted_profiles(*, max_chapters: int = 4) -> TrustedProfiles:
                     "provider": "openai",
                     "endpoint_type": "official",
                     "model": "trusted-model",
-                    "max_output_tokens": 16000,
+                    "max_output_tokens": provider_max_output_tokens,
                 }
             ],
             "file_deliveries": [
@@ -171,6 +175,29 @@ class TrustedInstructionPlanTest(unittest.TestCase):
                 source_snapshot=source_snapshot(),
                 created_at=NOW,
             )
+
+    def test_preview_rejects_output_cap_that_cannot_cover_chinese_target(self) -> None:
+        with self.assertRaisesRegex(
+            AutonomyPlanError, "instruction_output_budget_incompatible"
+        ):
+            compile_instruction_plan(
+                "写 1章",
+                trusted_profiles=trusted_profiles(provider_max_output_tokens=4_499),
+                source_snapshot=source_snapshot(),
+                created_at=NOW,
+            )
+
+        legacy_plan = instruction_plan(count=1)
+        legacy_plan["selections"]["provider_model"]["max_output_tokens"] = 4_499
+        legacy_hash = canonical_hash(
+            legacy_plan, exclude_fields=("plan_id", "plan_hash")
+        )
+        legacy_plan["plan_hash"] = legacy_hash
+        legacy_plan["plan_id"] = f"plan_{legacy_hash[:24]}"
+        with self.assertRaisesRegex(
+            AutonomyPlanError, "instruction_output_budget_incompatible"
+        ):
+            validate_instruction_plan(legacy_plan)
 
     def test_plan_hash_profile_and_source_drift_are_detected(self) -> None:
         profiles = trusted_profiles()

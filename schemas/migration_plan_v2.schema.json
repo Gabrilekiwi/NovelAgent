@@ -27,6 +27,8 @@
       }
     },
     "conflicts": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "shadow_candidate": {"type": "object", "additionalProperties": true},
+    "shadow_candidate_hash": {"type": "string", "minLength": 64},
     "required_decisions": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
     "evidence_summary": {"type": "object", "additionalProperties": true},
     "created_at": {"type": "string", "minLength": 1}

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
+import json
 from pathlib import Path
+import subprocess
+import sys
 import unittest
+from unittest.mock import patch
 import uuid
 
+import main as cli
+from core.memory_v2.canonical import canonical_json_hash
 from core.story_project.identity import ensure_project_identity, project_identity_path
 from core.story_project.migration_v2 import (
     MigrationPlanStaleError,
@@ -12,6 +20,7 @@ from core.story_project.migration_v2 import (
     assert_migration_plan_current,
     build_migration_approval,
     build_migration_plan,
+    build_migration_preview,
     validate_migration_approval,
     validate_migration_plan,
 )
@@ -32,6 +41,7 @@ class StoryProjectMigrationV2Test(unittest.TestCase):
         root = self._book(name)
         (root / "正文" / "第001章_开始.md").write_text("第一章发生的事件。", encoding="utf-8")
         (root / "正文" / "第010章_门.md").write_text("第十章门被打开。", encoding="utf-8")
+        (root / "正文" / ".gitkeep").write_bytes(b"\n")
         (root / "设定" / "世界.md").write_text("重力恒定。", encoding="utf-8")
         (root / "大纲" / "总纲.md").write_text("未知的后续方向。", encoding="utf-8")
         (root / "大纲" / "细纲_第010章.md").write_text("第十章细纲。", encoding="utf-8")
@@ -39,7 +49,29 @@ class StoryProjectMigrationV2Test(unittest.TestCase):
         legacy = root / ".novelagent" / "runtime" / "runs" / "legacy-run.json"
         legacy.parent.mkdir(parents=True)
         legacy.write_bytes(b'{"schema_version":"1.0","legacy":true}\r\n')
+        (root / ".novelagent" / "runtime" / "snapshot.json").write_text(
+            '{"chapter_index":11,"legacy":true}\n', encoding="utf-8"
+        )
+        review = root / ".novelagent" / "runtime" / "reviews" / "legacy-review.json"
+        review.parent.mkdir(parents=True)
+        review.write_text('{"status":"legacy"}\n', encoding="utf-8")
         return root
+
+    def test_clean_interpreter_can_import_migration_preview_api(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                "from core.story_project.migration_v2 import build_migration_plan; print(build_migration_plan.__name__)",
+            ],
+            cwd=Path.cwd(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual("build_migration_plan", completed.stdout.strip())
 
     @staticmethod
     def _decisions() -> dict:
@@ -73,19 +105,160 @@ class StoryProjectMigrationV2Test(unittest.TestCase):
             self.assertFalse(Path(source["relative_path"]).is_absolute())
             self.assertNotIn(str(root), source["relative_path"])
         self.assertTrue(all(item["evidence_class"] == "occurred_event" for item in by_role["published_prose"]))
+        self.assertEqual(2, plan["evidence_summary"]["published_prose_count"])
+        self.assertNotIn("正文/.gitkeep", {item["relative_path"] for item in plan["sources"]})
         self.assertTrue(all(item["evidence_class"] == "static_constraint" for item in by_role["explicit_setting"]))
         self.assertTrue(all(item["evidence_class"] == "unknown" for item in by_role["master_outline"]))
         self.assertTrue(all(item["evidence_class"] == "unknown" for item in by_role["tracking_projection"]))
         self.assertEqual("legacy_artifact", by_role["legacy_runs"][0]["evidence_class"])
+        self.assertEqual("legacy_artifact", by_role["legacy_reviews"][0]["evidence_class"])
+        self.assertEqual("legacy_artifact", by_role["legacy_runtime"][0]["evidence_class"])
         self.assertEqual(2, plan["evidence_summary"]["occurred_event_evidence_count"])
         self.assertEqual(1, plan["evidence_summary"]["static_constraint_evidence_count"])
         self.assertEqual(plan, assert_migration_plan_current(plan, root))
+
+    def test_plan_binds_deterministic_shadow_candidate_and_user_decision_topics(self) -> None:
+        root = self._populated_book("shadow_candidate")
+
+        first = build_migration_plan(root, created_at=NOW)
+        second = build_migration_plan(root, created_at=NOW)
+
+        self.assertEqual(first, second)
+        candidate = first["shadow_candidate"]
+        self.assertEqual("shadow", candidate["mode"])
+        self.assertFalse(candidate["authoritative"])
+        self.assertTrue(candidate["read_only"])
+        self.assertIsNotNone(candidate["state"])
+        self.assertEqual(10, candidate["chapter_index"])
+        self.assertEqual("latest_published_chapter_fallback", candidate["target_basis"])
+        self.assertEqual(canonical_json_hash(candidate), first["shadow_candidate_hash"])
+        self.assertEqual(
+            [
+                "timeline_elapsed_minutes",
+                "chapter_10_character_state",
+                "open_foreshadowing",
+                "inventory",
+                "lexicon",
+                "corruption",
+            ],
+            [item["topic"] for item in candidate["required_user_decisions"]],
+        )
+        self.assertTrue(
+            all(item["status"] == "user_decision_required" for item in candidate["required_user_decisions"])
+        )
+
+        tampered = copy.deepcopy(first)
+        tampered["shadow_candidate"]["warnings"].append({"code": "invented"})
+        with self.assertRaises(MigrationV2Error):
+            validate_migration_plan(tampered)
+
+        legacy_v2 = copy.deepcopy(first)
+        legacy_v2.pop("shadow_candidate")
+        legacy_v2.pop("shadow_candidate_hash")
+        legacy_v2["plan_hash"] = canonical_json_hash(legacy_v2, exclude_fields=("plan_hash",))
+        self.assertEqual(legacy_v2, validate_migration_plan(legacy_v2))
+
+    def test_candidate_unavailability_is_reported_instead_of_inventing_state(self) -> None:
+        root = self._populated_book("candidate_unavailable")
+        (root / "大纲" / "细纲_第010章.md").unlink()
+
+        plan = build_migration_plan(root, created_at=NOW)
+        candidate = plan["shadow_candidate"]
+
+        self.assertIsNone(candidate["state"])
+        self.assertEqual("no_unique_chapter_outline", candidate["target_basis"])
+        self.assertEqual("semantic_candidate_unavailable", candidate["conflicts"][0]["code"])
+        self.assertTrue(candidate["warnings"])
+        self.assertTrue(candidate["unsupported"])
+        self.assertTrue(
+            all(not item["candidate_evidence_available"] for item in candidate["required_user_decisions"])
+        )
+
+    def test_preview_is_explicit_and_source_tree_is_byte_identical(self) -> None:
+        root = self._populated_book("read_only_preview")
+        before = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+
+        preview = build_migration_preview(root, created_at=NOW)
+
+        after = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(before, after)
+        self.assertTrue(preview["read_only"])
+        self.assertFalse(preview["authoritative"])
+        self.assertFalse(preview["approval_created"])
+        self.assertFalse(preview["execution_performed"])
+        self.assertFalse(preview["activation_performed"])
+        self.assertIsInstance(preview["source_conflicts"], list)
+        self.assertIsInstance(preview["semantic_conflicts"], list)
+        self.assertIsInstance(preview["warnings"], list)
+        self.assertIsInstance(preview["unsupported"], list)
+        self.assertEqual(6, len(preview["required_user_decisions"]))
+        self.assertEqual(
+            canonical_json_hash(preview, exclude_fields=("preview_hash",)),
+            preview["preview_hash"],
+        )
+
+    def test_normal_cli_preview_is_generation_free_and_read_only(self) -> None:
+        root = self._populated_book("cli_preview")
+        before = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+
+        class FailingExecutor:
+            def __init__(self, **kwargs):
+                raise AssertionError("migration preview must not construct AgentExecutor")
+
+        output = io.StringIO()
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                str(root),
+                "--preview-event-authority-migration",
+                "--migration-preview-created-at",
+                NOW,
+                "--output-json",
+            ],
+        ), patch.object(cli, "AgentExecutor", FailingExecutor), contextlib.redirect_stdout(output), self.assertRaises(
+            SystemExit
+        ) as raised:
+            cli.main()
+
+        self.assertEqual(0, raised.exception.code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("read_only_shadow", payload["mode"])
+        self.assertEqual(NOW, payload["plan"]["created_at"])
+        after = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(before, after)
 
     def test_any_source_membership_or_byte_change_expires_plan(self) -> None:
         root = self._populated_book("stale")
         plan = build_migration_plan(root, created_at=NOW)
 
         (root / "追踪" / "伏笔.md").write_text("人工修改。", encoding="utf-8")
+        with self.assertRaisesRegex(MigrationPlanStaleError, "source bytes"):
+            assert_migration_plan_current(plan, root)
+
+        root = self._populated_book("runtime_snapshot")
+        plan = build_migration_plan(root, created_at=NOW)
+        (root / ".novelagent" / "runtime" / "snapshot.json").write_text(
+            '{"chapter_index":12,"legacy":true}\n', encoding="utf-8"
+        )
         with self.assertRaisesRegex(MigrationPlanStaleError, "source bytes"):
             assert_migration_plan_current(plan, root)
 
@@ -177,6 +350,40 @@ class StoryProjectMigrationV2Test(unittest.TestCase):
         self.assertEqual(decisions["conflict_resolutions"], approval["decisions"]["conflict_resolutions"])
         self.assertEqual(approval, validate_migration_approval(approval, plan=plan))
         self.assertEqual(approval, validate_migration_approval(approval))
+
+    def test_unclassified_prose_requires_explicit_exclusion_resolution(self) -> None:
+        root = self._populated_book("unclassified")
+        unknown = root / "正文" / "旧稿.md"
+        unknown.write_text("无法从文件名判定章节。", encoding="utf-8")
+        plan = build_migration_plan(root, created_at=NOW)
+        conflict = next(
+            item for item in plan["conflicts"]
+            if item["code"] == "unclassified_chapter_source"
+        )
+        self.assertEqual(["正文/旧稿.md"], conflict["paths"])
+        self.assertEqual(2, plan["evidence_summary"]["published_prose_count"])
+
+        with self.assertRaisesRegex(
+            MigrationV2Error, "migration_conflict_resolution_missing"
+        ):
+            build_migration_approval(
+                plan,
+                decisions=self._decisions(),
+                approver_id="operator",
+                approved_at=NOW,
+            )
+
+        decisions = self._decisions()
+        decisions["conflict_resolutions"] = {
+            conflict["conflict_id"]: "正文/旧稿.md"
+        }
+        approval = build_migration_approval(
+            plan,
+            decisions=decisions,
+            approver_id="operator",
+            approved_at=NOW,
+        )
+        self.assertEqual(decisions["conflict_resolutions"], approval["decisions"]["conflict_resolutions"])
 
         invented = self._decisions()
         invented["conflict_resolutions"] = {

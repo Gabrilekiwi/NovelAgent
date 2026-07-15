@@ -12,12 +12,18 @@ import unittest
 import uuid
 from unittest.mock import patch
 
+from core.autonomy.common import canonical_hash
+from core.execution_provenance import build_execution_provenance
 from scripts.real_autonomy_e2e import (
     OPT_IN_ENV,
     OPT_IN_PREFIX,
+    PROXY_MODE_ENV,
     RealAutonomyE2EError,
     _assert_no_notion_configuration,
+    _build_release_failure_report,
     _require_release_authorization,
+    _resolve_release_proxy_mode,
+    _safe_failure_diagnostics,
     _validate_gate_count,
     _validate_provider_configuration,
     _validate_release_report,
@@ -75,7 +81,179 @@ class _FakeOpenAI:
         self.chat = SimpleNamespace(completions=_FakeCompletions(self.calls))
 
 
+class _AuthenticationError(RuntimeError):
+    status_code = 401
+
+
+class _FailingCompletions:
+    def __init__(self, calls: list[dict]) -> None:
+        self.calls = calls
+
+    def create(self, **kwargs):
+        self.calls.append(copy.deepcopy(kwargs))
+        raise _AuthenticationError("provider response body must not survive")
+
+
+class _FailingOpenAI(_FakeOpenAI):
+    calls: list[dict] = []
+
+    def __init__(self, **kwargs) -> None:
+        if kwargs.get("api_key") != "unit-test-openai-key":
+            raise AssertionError("test harness did not pass the explicit credential")
+        if "base_url" in kwargs:
+            raise AssertionError("release harness must use the official endpoint")
+        self.chat = SimpleNamespace(completions=_FailingCompletions(self.calls))
+
+
+def _clean_provenance(*, dirty: bool = False):
+    return build_execution_provenance(
+        code_bundle_hash="a" * 64,
+        code_file_count=1,
+        git_commit="b" * 40,
+        git_dirty=dirty,
+        prompt_hashes={},
+        schema_hashes={},
+        dependency_versions={},
+        provider="openai",
+        model="unit-test-release-model",
+        config={
+            "configured_models": {
+                "openai": "unit-test-release-model",
+                "anthropic": "unit-test-anthropic-model",
+            }
+        },
+        feature_flags={"llm_validator": True},
+        python_version="3.test",
+        python_implementation="CPython",
+    )
+
+
 class RealAutonomyE2ETest(unittest.TestCase):
+    def test_release_proxy_choice_is_explicit_and_fail_closed(self) -> None:
+        self.assertEqual("direct", _resolve_release_proxy_mode(environ={}))
+        with self.assertRaisesRegex(
+            RealAutonomyE2EError, "release_proxy_mode_required"
+        ):
+            _resolve_release_proxy_mode(environ={"HTTPS_PROXY": "proxy.invalid"})
+        self.assertEqual(
+            "inherited",
+            _resolve_release_proxy_mode(
+                environ={
+                    "HTTPS_PROXY": "proxy.invalid",
+                    PROXY_MODE_ENV: "inherit",
+                }
+            ),
+        )
+        with patch.dict(
+            os.environ,
+            {"HTTPS_PROXY": "proxy.invalid", PROXY_MODE_ENV: "clear"},
+            clear=True,
+        ):
+            self.assertEqual("cleared", _resolve_release_proxy_mode())
+            self.assertNotIn("HTTPS_PROXY", os.environ)
+
+    def test_failure_diagnostics_are_message_free_allowlisted_and_hash_bound(self) -> None:
+        class AuthenticationError(RuntimeError):
+            status_code = 401
+
+        class WrappedProviderError(RuntimeError):
+            failure_category = "provider_call_uncertain"
+            retryable = False
+            attempts = 1
+
+        try:
+            try:
+                raise AuthenticationError("secret provider body must not survive")
+            except AuthenticationError as cause:
+                raise WrappedProviderError("secret wrapper body") from cause
+        except WrappedProviderError as error:
+            diagnostics = _safe_failure_diagnostics(error)
+
+        self.assertEqual(
+            ["WrappedProviderError", "AuthenticationError"],
+            [item["exception_type"] for item in diagnostics["exception_chain"]],
+        )
+        self.assertEqual(401, diagnostics["exception_chain"][1]["http_status"])
+        wrapped = RealAutonomyE2EError(
+            "autonomy_execution_failed",
+            "safe summary",
+            diagnostics=diagnostics,
+            retain_report=True,
+        )
+        report = _build_release_failure_report(chapter_count=1, error=wrapped)
+        serialized = json.dumps(report, ensure_ascii=False, sort_keys=True)
+        self.assertNotIn("secret provider body", serialized)
+        self.assertNotIn("secret wrapper body", serialized)
+        self.assertEqual(
+            report["report_hash"],
+            canonical_hash(report, exclude_fields=("report_hash",)),
+        )
+
+    def test_execution_failure_is_redacted_retained_and_cleans_isolation(self) -> None:
+        root = Path.cwd() / ".tmp" / "r" / uuid.uuid4().hex[:8]
+        root.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, root)
+        lock_temp = root.parent / f"{root.name}-locks"
+        lock_temp.mkdir()
+        self.addCleanup(shutil.rmtree, lock_temp)
+        output = root / "failed.json"
+        fake_openai = ModuleType("openai")
+        _FailingOpenAI.calls = []
+        fake_openai.OpenAI = _FailingOpenAI
+        environment = {
+            OPT_IN_ENV: f"{OPT_IN_PREFIX}:1",
+            "OPENAI_API_KEY": "unit-test-openai-key",
+            "OPENAI_BASE_URL": "",
+            "OPENAI_MODEL": "unit-test-release-model",
+            "OPENAI_MAX_OUTPUT_TOKENS": "6000",
+            "OPENAI_TIMEOUT_SECONDS": "30",
+            "OPENAI_MAX_RETRIES": "",
+            "OPENAI_STREAM": "0",
+            "PROVIDER_MAX_ATTEMPTS": "1",
+            "PROVIDER_RETRY_DEADLINE_SECONDS": "30",
+            "NOVELAGENT_SKIP_DOTENV": "1",
+        }
+        with patch.dict(os.environ, environment, clear=True), patch.dict(
+            sys.modules, {"openai": fake_openai}
+        ), patch(
+            "tempfile.tempdir", str(lock_temp)
+        ), patch(
+            "scripts.real_autonomy_e2e.capture_execution_provenance",
+            return_value=_clean_provenance(),
+        ), patch(
+            "core.engine.executor._capture_execution_provenance_cached",
+            return_value=_clean_provenance(),
+        ):
+            with self.assertRaisesRegex(
+                RealAutonomyE2EError, "autonomy_execution_failed"
+            ):
+                run_real_autonomy_e2e(
+                    chapter_count=1,
+                    output_path=output,
+                    confirmed=True,
+                    work_parent=root,
+                )
+
+        retained = json.loads(output.read_text(encoding="utf-8"))
+        self.assertFalse(retained["ok"])
+        self.assertTrue(retained["redacted"])
+        self.assertTrue(retained["cleanup_completed"])
+        self.assertEqual("runner_execute", retained["diagnostics"]["phase"])
+        self.assertEqual("direct", retained["gate"]["proxy_mode"])
+        self.assertEqual(1, retained["diagnostics"]["intent_count"])
+        self.assertEqual(0, retained["diagnostics"]["receipt_count"])
+        self.assertEqual(1, retained["diagnostics"]["uncertain_intent_count"])
+        self.assertIn(
+            401,
+            [
+                item.get("http_status")
+                for item in retained["diagnostics"]["exception_chain"]
+            ],
+        )
+        self.assertNotIn("provider response body", output.read_text(encoding="utf-8"))
+        self.assertGreater(len(_FailingOpenAI.calls), 0)
+        self.assertEqual(["failed.json"], sorted(item.name for item in root.iterdir()))
+
     def test_gate_count_accepts_only_release_tiers(self) -> None:
         for count in (1, 4, 10, 20, 50, 100):
             self.assertEqual(count, _validate_gate_count(count))
@@ -202,10 +380,66 @@ class RealAutonomyE2ETest(unittest.TestCase):
                 SimpleNamespace(**{**safe.__dict__, "openai_base_url": "https://proxy.invalid"})
             )
 
+    def test_dirty_release_and_existing_report_target_fail_before_provider(self) -> None:
+        root = Path.cwd() / ".tmp" / "r" / uuid.uuid4().hex[:8]
+        root.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, root)
+        environment = {
+            OPT_IN_ENV: f"{OPT_IN_PREFIX}:1",
+            "OPENAI_API_KEY": "unit-test-openai-key",
+            "OPENAI_BASE_URL": "",
+            "OPENAI_MODEL": "unit-test-release-model",
+            "OPENAI_MAX_OUTPUT_TOKENS": "6000",
+            "OPENAI_TIMEOUT_SECONDS": "30",
+            "OPENAI_MAX_RETRIES": "",
+            "OPENAI_STREAM": "0",
+            "PROVIDER_MAX_ATTEMPTS": "1",
+            "PROVIDER_RETRY_DEADLINE_SECONDS": "30",
+            "NOVELAGENT_SKIP_DOTENV": "1",
+        }
+        dirty_output = root / "dirty.json"
+        _FakeOpenAI.calls = []
+        with patch.dict(os.environ, environment, clear=True), patch(
+            "scripts.real_autonomy_e2e.capture_execution_provenance",
+            return_value=_clean_provenance(dirty=True),
+        ):
+            with self.assertRaisesRegex(
+                RealAutonomyE2EError, "release_worktree_not_clean"
+            ):
+                run_real_autonomy_e2e(
+                    chapter_count=1,
+                    output_path=dirty_output,
+                    confirmed=True,
+                    work_parent=root,
+                )
+        self.assertFalse(dirty_output.exists())
+        self.assertEqual([], _FakeOpenAI.calls)
+
+        existing = root / "existing.json"
+        existing.write_text("operator-owned", encoding="utf-8")
+        with patch.dict(os.environ, environment, clear=True), patch(
+            "scripts.real_autonomy_e2e.capture_execution_provenance",
+            return_value=_clean_provenance(),
+        ):
+            with self.assertRaisesRegex(
+                RealAutonomyE2EError, "release_report_target_unavailable"
+            ):
+                run_real_autonomy_e2e(
+                    chapter_count=1,
+                    output_path=existing,
+                    confirmed=True,
+                    work_parent=root,
+                )
+        self.assertEqual("operator-owned", existing.read_text(encoding="utf-8"))
+        self.assertEqual([], _FakeOpenAI.calls)
+
     def test_one_chapter_mock_provider_runs_full_gate_without_billing(self) -> None:
         root = Path.cwd() / ".tmp" / "r" / uuid.uuid4().hex[:8]
         root.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, root)
+        lock_temp = root.parent / f"{root.name}-locks"
+        lock_temp.mkdir()
+        self.addCleanup(shutil.rmtree, lock_temp)
         output = root / "redacted-report.json"
         fake_openai = ModuleType("openai")
         _FakeOpenAI.calls = []
@@ -223,7 +457,9 @@ class RealAutonomyE2ETest(unittest.TestCase):
             "PROVIDER_RETRY_DEADLINE_SECONDS": "30",
             "NOVELAGENT_SKIP_DOTENV": "1",
         }
-        with patch.dict(os.environ, environment, clear=False):
+        with patch.dict(os.environ, environment, clear=True), patch(
+            "tempfile.tempdir", str(lock_temp)
+        ):
             for name in list(os.environ):
                 if "NOTION" in name.upper():
                     os.environ.pop(name, None)
@@ -233,7 +469,13 @@ class RealAutonomyE2ETest(unittest.TestCase):
             ) as notion_create, patch(
                 "core.delivery.query_database_pages",
                 side_effect=AssertionError("Notion query must never be called"),
-            ) as notion_query:
+            ) as notion_query, patch(
+                "scripts.real_autonomy_e2e.capture_execution_provenance",
+                return_value=_clean_provenance(),
+            ), patch(
+                "core.engine.executor._capture_execution_provenance_cached",
+                return_value=_clean_provenance(),
+            ):
                 report = run_real_autonomy_e2e(
                     chapter_count=1,
                     output_path=output,
@@ -251,6 +493,12 @@ class RealAutonomyE2ETest(unittest.TestCase):
         self.assertGreater(report["slo"]["logical_model_calls"], 0)
         self.assertEqual(0, report["slo"]["provider_transport_retries"])
         self.assertEqual(0, report["slo"]["system_failures"])
+        self.assertEqual("1.1", report["schema_version"])
+        self.assertEqual("direct", report["gate"]["proxy_mode"])
+        self.assertFalse(report["provenance"]["git_dirty"])
+        self.assertEqual("b" * 40, report["provenance"]["git_commit"])
+        self.assertEqual("a" * 64, report["provenance"]["code_bundle_hash"])
+        self.assertEqual(1, len(report["provider"]["actual_model_hashes"]))
         self.assertGreater(len(_FakeOpenAI.calls), 0)
         self.assertEqual(report, json.loads(output.read_text(encoding="utf-8")))
         self.assertEqual(["redacted-report.json"], sorted(item.name for item in root.iterdir()))

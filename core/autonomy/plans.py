@@ -15,6 +15,10 @@ from core.autonomy.common import (
     validate_mapping,
 )
 from core.autonomy.profiles import TrustedProfiles, TrustedProfilesError
+from core.context_budget import (
+    CJK_CHARACTER_OUTPUT_ESTIMATOR,
+    preview_chinese_output_compatibility,
+)
 
 
 _SELECTOR_KINDS = {
@@ -184,6 +188,16 @@ def validate_instruction_plan(
     count = positive_int("requested_chapter_count", plan["requested_chapter_count"])
     start = positive_int("chapter_start", plan["chapter_start"])
     end = positive_int("chapter_end", plan["chapter_end"])
+    output_compatibility = preview_chinese_output_compatibility(
+        int(plan["selections"]["provider_model"]["max_output_tokens"]),
+        calibrated_estimator=CJK_CHARACTER_OUTPUT_ESTIMATOR,
+    )
+    if not output_compatibility["compatible"]:
+        raise AutonomyPlanError(
+            "instruction_output_budget_incompatible",
+            "trusted provider output cap cannot cover the 3000-4500 Chinese-character target "
+            f"with the calibrated safety margin; shortfall={output_compatibility['shortfall_tokens']} tokens",
+        )
     if start != source["canonical_next_chapter"] or end != start + count - 1:
         raise AutonomyPlanError(
             "instruction_plan_range_invalid", "plan chapters must be one contiguous canonical-next range"

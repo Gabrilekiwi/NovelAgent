@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import sys
 from pathlib import Path
@@ -24,6 +25,10 @@ from core.cli.commands import (
     delivery_adapters_from_args as _delivery_adapters_from_args,
     delivery_command_requested as _delivery_command_requested,
     run_delivery_command as _run_delivery_command,
+)
+from core.cli.root_registry import (
+    root_remap_command_requested as _root_remap_command_requested,
+    run_root_remap_command as _run_root_remap_command,
 )
 from core.cli.config import (
     apply_story_project_runtime_defaults as _apply_story_project_runtime_defaults,
@@ -52,6 +57,8 @@ from core.engine.persistence import (
 from core.engine.persistence_v2 import reconcile_pending_persistence_v2
 from core.engine.preflight import run_preflight
 from core.engine.recovery import RecoveryError, recover_latest_chapter_draft
+from core.engine.root_registry import RootRegistryError
+from core.engine.safe_paths import SafePathError
 from core.engine.report import build_run_report
 from core.engine.run_record import validate_run_result
 from core.runtime_paths import (
@@ -80,6 +87,7 @@ from core.story_project.migration import (
     inspect_story_project_runtime_migration,
     migrate_story_project_runtime,
 )
+from core.story_project.migration_v2 import MigrationV2Error, build_migration_preview
 from core.story_project.runtime import build_generation_story_project_context_loader
 from core.story_project.activation import StoryStateActivationError, activate_story_state
 from core.story_project.semantic_parser import (
@@ -149,6 +157,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Parse StoryProject semantic state, print a read-only shadow diff, and exit without generation.",
     )
     parser.add_argument(
+        "--preview-event-authority-migration",
+        action="store_true",
+        help="Freeze legacy StoryProject inputs and print a read-only event-authority migration preview; never approve, execute, or activate.",
+    )
+    parser.add_argument(
+        "--migration-preview-created-at",
+        default=None,
+        metavar="TIMESTAMP",
+        help="Optional explicit timestamp for a reproducible event-authority migration preview plan.",
+    )
+    parser.add_argument(
         "--activate-story-state",
         action="store_true",
         help="Explicitly activate calibrated strict StoryProject semantic state for this book.",
@@ -201,6 +220,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--persistence-dir",
         default=None,
         help="Directory for local persistence journals. Defaults to <run-dir>/transactions or StoryProject runtime/persistence.",
+    )
+    parser.add_argument(
+        "--remap-roots",
+        action="store_true",
+        help=(
+            "Explicitly update existing logical data-root bindings in a root registry; "
+            "does not move files or relocate the runtime control plane."
+        ),
+    )
+    parser.add_argument(
+        "--remap-root",
+        action="append",
+        nargs=3,
+        default=None,
+        metavar=("ROOT_ID", "ROOT_UUID", "NEW_PATH"),
+        help=(
+            "With --remap-roots, bind one existing logical root UUID to an existing "
+            "new physical directory. Repeat for multiple roots."
+        ),
+    )
+    parser.add_argument(
+        "--expected-root-registry-revision",
+        type=_positive_int,
+        default=None,
+        metavar="REVISION",
+        help="CAS revision required by --remap-roots.",
+    )
+    parser.add_argument(
+        "--expected-root-registry-digest",
+        default=None,
+        metavar="SHA256",
+        help="CAS digest required by --remap-roots.",
     )
     parser.add_argument(
         "--delivery-dir",
@@ -523,9 +574,53 @@ def main() -> None:
         story_runtime_paths = _apply_story_project_runtime_defaults(args)
         delivery_command_requested = _delivery_command_requested(args)
         autonomy_command_requested = _autonomy_command_requested(args)
+        root_remap_command_requested = _root_remap_command_requested(
+            args,
+            delivery_command_requested=delivery_command_requested,
+            autonomy_command_requested=autonomy_command_requested,
+        )
+        _validate_event_authority_migration_preview_args(args)
+        if args.preview_event_authority_migration and (
+            delivery_command_requested
+            or autonomy_command_requested
+            or root_remap_command_requested
+        ):
+            raise ValueError(
+                "--preview-event-authority-migration cannot be combined with delivery, "
+                "autonomy, or root-remap commands"
+            )
     except ValueError as exc:
         print(f"Configuration failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+
+    if root_remap_command_requested:
+        try:
+            result = _run_root_remap_command(args)
+        except (RootRegistryError, SafePathError, OSError, ValueError) as exc:
+            payload = {
+                "ok": False,
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+            }
+            if args.output_json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(f"Root remap failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        raise SystemExit(0)
+
+    if args.preview_event_authority_migration:
+        created_at = args.migration_preview_created_at or datetime.now(timezone.utc).isoformat()
+        try:
+            preview = build_migration_preview(
+                args._resolved_story_project_root,
+                created_at=created_at,
+            )
+        except (MigrationV2Error, OSError, ValueError) as exc:
+            print(f"StoryProject event-authority migration preview failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(json.dumps(preview, ensure_ascii=False, indent=2))
+        raise SystemExit(0)
 
     if autonomy_command_requested:
         try:
@@ -603,6 +698,7 @@ def main() -> None:
         _validate_story_project_multistep_args(args, story_project_writeback)
         _validate_story_project_compat_report_args(args)
         _validate_story_project_shadow_report_args(args)
+        _validate_event_authority_migration_preview_args(args)
         _validate_story_state_activation_args(args)
         _validate_story_project_runtime_migration_args(args)
         _validate_story_project_read_command_identity(args)
@@ -1548,6 +1644,41 @@ def _validate_story_project_shadow_report_args(args: argparse.Namespace) -> None
         raise ValueError("--story-state-shadow-report cannot be combined with StoryProject runtime migration")
 
 
+def _validate_event_authority_migration_preview_args(args: argparse.Namespace) -> None:
+    enabled = bool(getattr(args, "preview_event_authority_migration", False))
+    created_at = getattr(args, "migration_preview_created_at", None)
+    if created_at and not enabled:
+        raise ValueError(
+            "--migration-preview-created-at requires --preview-event-authority-migration"
+        )
+    if not enabled:
+        return
+    if getattr(args, "story_project", None) is None:
+        raise ValueError("--preview-event-authority-migration requires --story-project")
+    incompatible = {
+        "activate_story_state": "--activate-story-state",
+        "check": "--check",
+        "init_runtime": "--init-runtime",
+        "inspect_story_project_runtime_from": "--inspect-story-project-runtime-from",
+        "migrate_story_project_runtime_from": "--migrate-story-project-runtime-from",
+        "reconcile_persistence": "--reconcile-persistence",
+        "recover_latest": "--recover-latest",
+        "report_runs": "--report-runs",
+        "review_dashboard": "--review-dashboard",
+        "review_latest": "--review-latest",
+        "review_list": "--review-list",
+        "story_project_compat_report": "--story-project-compat-report",
+        "story_project_writeback": "--story-project-writeback",
+        "story_project_writeback_dry_run": "--story-project-writeback-dry-run",
+        "story_state_shadow_report": "--story-state-shadow-report",
+    }
+    combined = [label for field, label in incompatible.items() if getattr(args, field, False)]
+    if combined:
+        raise ValueError(
+            "--preview-event-authority-migration cannot be combined with " + ", ".join(combined)
+        )
+
+
 def _validate_story_state_activation_args(args: argparse.Namespace) -> None:
     enabled = bool(getattr(args, "activate_story_state", False))
     report = getattr(args, "story_state_calibration_report", None)
@@ -1560,6 +1691,7 @@ def _validate_story_state_activation_args(args: argparse.Namespace) -> None:
     if enabled and (
         bool(getattr(args, "story_state_shadow_report", False))
         or bool(getattr(args, "story_project_compat_report", False))
+        or bool(getattr(args, "preview_event_authority_migration", False))
         or getattr(args, "inspect_story_project_runtime_from", None)
         or getattr(args, "migrate_story_project_runtime_from", None)
     ):

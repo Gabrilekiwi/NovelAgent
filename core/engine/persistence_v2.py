@@ -52,6 +52,40 @@ PERSISTENCE_V2_STATES = frozenset(
 )
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _FaultInjector = Callable[[str, int | None, Path | None], None]
+_DurabilityHook = Callable[[str, Path, Callable[[], Any]], Any]
+
+
+class _DurabilityFaultController:
+    """Expose physical durability boundaries through the legacy injector API.
+
+    The existing logical event indexes retain their historical meanings.  Each
+    physical fsync/link/rename gets a separate, monotonically increasing
+    operation index; its before/after events share that index.
+    """
+
+    def __init__(self, injector: _FaultInjector | None) -> None:
+        self._injector = injector
+        self._next_sequence = 0
+
+    def run(self, operation: str, path: Path, action: Callable[[], Any]) -> Any:
+        if self._injector is None:
+            return action()
+        sequence = self._next_sequence
+        self._next_sequence += 1
+        _inject(
+            self._injector,
+            f"before_durability_{operation}",
+            sequence,
+            path,
+        )
+        result = action()
+        _inject(
+            self._injector,
+            f"after_durability_{operation}",
+            sequence,
+            path,
+        )
+        return result
 
 
 class PersistenceV2Error(RuntimeError):
@@ -134,6 +168,7 @@ class PersistenceV2Transaction:
         self.registry_root = self.transaction_root / "registry"
         self.pending_entry_path = self.registry_root / "pending" / f"{self.run_id}.json"
         self._fault_injector = fault_injector
+        self._durability_faults = _DurabilityFaultController(fault_injector)
         self.story_project_read_set = (
             copy.deepcopy(dict(story_project_read_set))
             if story_project_read_set is not None
@@ -317,10 +352,16 @@ class PersistenceV2Transaction:
                     zip(prepared_targets, staged_payloads, strict=True)
                 ):
                     content, before = payloads
-                    _write_new_file(self.staging_dir / item["staged_relative_path"], content)
+                    _write_new_file(
+                        self.staging_dir / item["staged_relative_path"],
+                        content,
+                        durability_hook=self._durability_faults.run,
+                    )
                     if item["phase"] == "apply" and item["before_exists"]:
                         _write_new_file(
-                            self.staging_dir / str(item["backup_relative_path"]), before
+                            self.staging_dir / str(item["backup_relative_path"]),
+                            before,
+                            durability_hook=self._durability_faults.run,
                         )
                     _inject(
                         self._fault_injector,
@@ -328,20 +369,33 @@ class PersistenceV2Transaction:
                         index,
                         self.staging_dir / item["staged_relative_path"],
                     )
-                _write_new_file(self.staging_dir / "candidate_result.json", candidate_bytes)
+                _write_new_file(
+                    self.staging_dir / "candidate_result.json",
+                    candidate_bytes,
+                    durability_hook=self._durability_faults.run,
+                )
                 _write_new_file(
                     self.staging_dir / "manifest.json",
                     _json_bytes(validate_persistence_manifest_v2(manifest)),
+                    durability_hook=self._durability_faults.run,
                 )
                 _validate_complete_staged_journal(self.staging_dir, manifest)
-                _fsync_journal_tree(self.staging_dir)
+                _fsync_journal_tree(
+                    self.staging_dir,
+                    durability_hook=self._durability_faults.run,
+                )
                 _inject(
                     self._fault_injector,
                     "before_journal_publish",
                     None,
                     self.journal_dir,
                 )
-                _atomic_publish_journal(self.staging_dir, self.journal_dir, self.transaction_root)
+                _atomic_publish_journal(
+                    self.staging_dir,
+                    self.journal_dir,
+                    self.transaction_root,
+                    durability_hook=self._durability_faults.run,
+                )
                 _inject(
                     self._fault_injector,
                     "after_journal_publish",
@@ -357,8 +411,15 @@ class PersistenceV2Transaction:
                 _assert_internal_path_safe(
                     self.transaction_root, self.pending_entry_path
                 )
-                _write_registry_entry_new(self.pending_entry_path, pending_entry)
-                _fsync_directory(self.pending_entry_path.parent)
+                _write_registry_entry_new(
+                    self.pending_entry_path,
+                    pending_entry,
+                    durability_hook=self._durability_faults.run,
+                )
+                _fsync_directory(
+                    self.pending_entry_path.parent,
+                    durability_hook=self._durability_faults.run,
+                )
                 _inject(
                     self._fault_injector,
                     "after_pending_registry",
@@ -384,7 +445,11 @@ class PersistenceV2Transaction:
                 self._verify_story_project_read_set(phase="pre_apply", manifest=manifest)
                 _validate_pending_candidate(self.journal_dir, manifest)
                 manifest["state"] = "applying"
-                _write_manifest(self.manifest_path, manifest)
+                _write_manifest(
+                    self.manifest_path,
+                    manifest,
+                    durability_hook=self._durability_faults.run,
+                )
                 for index, target in enumerate(_targets(manifest, phase="apply")):
                     path = _resolve_manifest_target(
                         manifest, target, resolver=resolver, enforce_guard=True
@@ -405,11 +470,19 @@ class PersistenceV2Transaction:
                             resolver=resolver,
                             enforce_guard=True,
                         )
-                        _atomic_replace_from_bytes(path, content)
+                        _atomic_replace_from_bytes(
+                            path,
+                            content,
+                            durability_hook=self._durability_faults.run,
+                        )
                     if _path_sha256(path) != target["after_sha256"]:
                         raise PersistenceV2IntegrityError(f"apply target after-hash mismatch: {path}")
                     manifest["progress"][target["target_id"]] = "applied"
-                    _write_manifest(self.manifest_path, manifest)
+                    _write_manifest(
+                        self.manifest_path,
+                        manifest,
+                        durability_hook=self._durability_faults.run,
+                    )
                     _inject(self._fault_injector, "after_apply_target", index, path)
 
                 _verify_apply_targets(manifest, resolver=resolver)
@@ -418,17 +491,29 @@ class PersistenceV2Transaction:
                 self._verify_story_project_read_set(phase="pre_marker", manifest=manifest)
                 _verify_apply_targets(manifest, resolver=resolver)
                 _assert_internal_path_safe(self.transaction_root, self.marker_path)
-                _write_new_file(self.marker_path, _json_bytes(marker))
+                _write_new_file(
+                    self.marker_path,
+                    _json_bytes(marker),
+                    durability_hook=self._durability_faults.run,
+                )
                 _inject(self._fault_injector, "after_commit_marker", None, self.marker_path)
                 manifest["state"] = "commit_marked"
-                _write_manifest(self.manifest_path, manifest)
+                _write_manifest(
+                    self.manifest_path,
+                    manifest,
+                    durability_hook=self._durability_faults.run,
+                )
                 return self._complete_publication_locked()
             except Exception as exc:
                 manifest = _safe_reload_manifest(self.manifest_path, manifest)
                 _append_error(manifest, "commit_failed", exc)
                 def roll_forward() -> dict[str, Any]:
                     manifest["state"] = "commit_marked"
-                    _write_manifest_best_effort(self.manifest_path, manifest)
+                    _write_manifest_best_effort(
+                        self.manifest_path,
+                        manifest,
+                        durability_hook=self._durability_faults.run,
+                    )
                     return _result(manifest, receipt_valid=False)
 
                 return reconcile_marker_transaction(
@@ -441,6 +526,7 @@ class PersistenceV2Transaction:
                         manifest=manifest,
                         pending_entry_path=self.pending_entry_path,
                         resolver=resolver,
+                        durability_hook=self._durability_faults.run,
                     ),
                     on_roll_forward=roll_forward,
                     on_completed=lambda: _result(manifest, receipt_valid=False),
@@ -470,7 +556,11 @@ class PersistenceV2Transaction:
             _verify_marker_against_manifest(marker, manifest)
             _verify_apply_targets(manifest, resolver=resolver)
             manifest["state"] = "publishing"
-            _write_manifest(self.manifest_path, manifest)
+            _write_manifest(
+                self.manifest_path,
+                manifest,
+                durability_hook=self._durability_faults.run,
+            )
             for index, target in enumerate(_targets(manifest, phase="publication")):
                 already_published = (
                     manifest.get("progress", {}).get(target["target_id"]) == "published"
@@ -502,9 +592,14 @@ class PersistenceV2Transaction:
                     resolver=resolver,
                     path_ref=target["path_ref"],
                     path_guard=target.get("path_guard"),
+                    durability_hook=self._durability_faults.run,
                 )
                 manifest["progress"][target["target_id"]] = "published"
-                _write_manifest(self.manifest_path, manifest)
+                _write_manifest(
+                    self.manifest_path,
+                    manifest,
+                    durability_hook=self._durability_faults.run,
+                )
                 _inject(self._fault_injector, "after_publication_target", index, path)
 
             receipt = _build_publication_receipt(manifest, marker)
@@ -534,20 +629,38 @@ class PersistenceV2Transaction:
                     expected_guard=receipt_resolved.guard,
                     allow_guard_extension=True,
                 ).path
-                _write_new_file(receipt_path, _json_bytes(receipt))
+                _write_new_file(
+                    receipt_path,
+                    _json_bytes(receipt),
+                    durability_hook=self._durability_faults.run,
+                )
             _inject(self._fault_injector, "after_publication_receipt", None, receipt_path)
             verification = verify_publication_receipt(receipt, root_map=_root_map_from_manifest(manifest))
             if not verification["valid"]:
                 raise PersistenceV2IntegrityError("Publication Receipt verification failed")
             manifest["state"] = "completed"
-            _write_manifest(self.manifest_path, manifest)
-            _transition_registry(self.transaction_root, manifest, "completed", receipt=receipt)
+            _write_manifest(
+                self.manifest_path,
+                manifest,
+                durability_hook=self._durability_faults.run,
+            )
+            _transition_registry(
+                self.transaction_root,
+                manifest,
+                "completed",
+                receipt=receipt,
+                durability_hook=self._durability_faults.run,
+            )
             return _result(manifest, receipt_valid=True, receipt=receipt)
         except Exception as exc:
             manifest = _safe_reload_manifest(self.manifest_path, manifest)
             manifest["state"] = "commit_marked"
             _append_error(manifest, "publication_failed", exc)
-            _write_manifest_best_effort(self.manifest_path, manifest)
+            _write_manifest_best_effort(
+                self.manifest_path,
+                manifest,
+                durability_hook=self._durability_faults.run,
+            )
             return _result(manifest, receipt_valid=False)
 
     def _prepare_target_records(
@@ -920,7 +1033,11 @@ def committed_from_publication_receipt(
     return _sha256(content) == final_binding["sha256"] and len(content) == final_binding["size"]
 
 
-def _discover_persistence_v2_transactions(root: Path) -> list[dict[str, Any]]:
+def _discover_persistence_v2_transactions(
+    root: Path,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     # A crash while staging is harmless to external state. A complete staged
     # journal is published and then reconciled normally; an incomplete one is
@@ -935,12 +1052,22 @@ def _discover_persistence_v2_transactions(root: Path) -> list[dict[str, Any]]:
             if staging.name != run_id:
                 raise PersistenceV2IntegrityError("staging directory/run id mismatch")
             destination = root / "journals" / run_id
-            _atomic_publish_journal(staging, destination, root)
+            _atomic_publish_journal(
+                staging,
+                destination,
+                root,
+                durability_hook=durability_hook,
+            )
         except Exception as exc:
             run_id = staging.name
             abandoned = root / "abandoned" / f"{run_id}-{_timestamp_id()}"
             try:
-                _atomic_publish_journal(staging, abandoned, root)
+                _atomic_publish_journal(
+                    staging,
+                    abandoned,
+                    root,
+                    durability_hook=durability_hook,
+                )
             except Exception:
                 abandoned = staging
             results.append(
@@ -1000,9 +1127,17 @@ def _discover_persistence_v2_transactions(root: Path) -> list[dict[str, Any]]:
                     state = "recovery_required"
                     manifest["state"] = state
                     _append_error(manifest, "completed_discovery_failed", exc)
-                    _write_manifest(journal / "manifest.json", manifest)
+                    _write_manifest(
+                        journal / "manifest.json",
+                        manifest,
+                        durability_hook=durability_hook,
+                    )
             _transition_registry(
-                root, manifest, state, receipt=receipt if receipt_valid else None
+                root,
+                manifest,
+                state,
+                receipt=receipt if receipt_valid else None,
+                durability_hook=durability_hook,
             )
             results.append(
                 _result(
@@ -1015,6 +1150,7 @@ def _discover_persistence_v2_transactions(root: Path) -> list[dict[str, Any]]:
         _write_registry_entry_new(
             root / "registry" / "pending" / f"{journal.name}.json",
             _pending_registry_entry(manifest),
+            durability_hook=durability_hook,
         )
         known_run_ids.add(journal.name)
     return results
@@ -1024,6 +1160,7 @@ def reconcile_pending_persistence_v2(
     transaction_root: str | Path,
     *,
     expected_book_id: str | None = None,
+    fault_injector: _FaultInjector | None = None,
 ) -> dict[str, Any]:
     root = assert_safe_local_tree(transaction_root)
     if not root.exists():
@@ -1036,12 +1173,18 @@ def reconcile_pending_persistence_v2(
             "recovery_required": [],
         }
     results: list[dict[str, Any]] = []
+    discovery_faults = _DurabilityFaultController(fault_injector)
 
     # Discovery mutates staging/journal/registry state and therefore shares
     # the same global lock as prepare. It must never quarantine a journal that
     # another process is still staging.
     with persistence_run_lock(root):
-        results.extend(_discover_persistence_v2_transactions(root))
+        results.extend(
+            _discover_persistence_v2_transactions(
+                root,
+                durability_hook=discovery_faults.run,
+            )
+        )
 
     pending_dir = root / "registry" / "pending"
     entries = sorted(pending_dir.glob("*.json")) if pending_dir.exists() else []
@@ -1064,7 +1207,9 @@ def reconcile_pending_persistence_v2(
                 run_id=str(manifest["immutable"]["run_id"]),
                 book_id=str(manifest["immutable"]["book_id"]),
                 root_map=_root_map_from_manifest(manifest),
+                fault_injector=fault_injector,
             )
+            transaction._durability_faults = discovery_faults
             resolver = transaction._resolver_for_manifest(
                 manifest, require_same_revision=True
             )
@@ -1086,8 +1231,18 @@ def reconcile_pending_persistence_v2(
                         raise PersistenceV2IntegrityError("existing receipt failed reconciliation validation")
                     _assert_receipt_matches_manifest(receipt, manifest)
                     manifest["state"] = "completed"
-                    _write_manifest(manifest_path, manifest)
-                    _transition_registry(root, manifest, "completed", receipt=receipt)
+                    _write_manifest(
+                        manifest_path,
+                        manifest,
+                        durability_hook=transaction._durability_faults.run,
+                    )
+                    _transition_registry(
+                        root,
+                        manifest,
+                        "completed",
+                        receipt=receipt,
+                        durability_hook=transaction._durability_faults.run,
+                    )
                     return _result(manifest, receipt_valid=True, receipt=receipt)
 
                 def recover_forward() -> dict[str, Any]:
@@ -1105,6 +1260,7 @@ def reconcile_pending_persistence_v2(
                         manifest=manifest,
                         pending_entry_path=entry_path,
                         resolver=resolver,
+                        durability_hook=transaction._durability_faults.run,
                     )
 
                 results.append(
@@ -1121,7 +1277,12 @@ def reconcile_pending_persistence_v2(
             # evidence of corruption and must not mutate the registry state.
             raise
         except Exception as exc:
-            result = _mark_registry_recovery_required(root, entry_path, exc)
+            result = _mark_registry_recovery_required(
+                root,
+                entry_path,
+                exc,
+                durability_hook=discovery_faults.run,
+            )
             results.append(result)
     return {
         "schema_version": PERSISTENCE_V2_SCHEMA_VERSION,
@@ -1457,9 +1618,14 @@ def _rollback_pre_marker(
     manifest: dict[str, Any],
     pending_entry_path: Path,
     resolver: SafePathResolver | None = None,
+    durability_hook: _DurabilityHook | None = None,
 ) -> dict[str, Any]:
     manifest["state"] = "rolling_back"
-    _write_manifest_best_effort(manifest_path, manifest)
+    _write_manifest_best_effort(
+        manifest_path,
+        manifest,
+        durability_hook=durability_hook,
+    )
     failures: list[str] = []
     for target in reversed(_targets(manifest, phase="apply")):
         path: Path | None = None
@@ -1492,7 +1658,11 @@ def _rollback_pre_marker(
                         enforce_guard=True,
                         allow_guard_extension=True,
                     )
-                _atomic_replace_from_bytes(path, content)
+                _atomic_replace_from_bytes(
+                    path,
+                    content,
+                    durability_hook=durability_hook,
+                )
             else:
                 if resolver is not None:
                     _resolve_manifest_target(
@@ -1503,7 +1673,7 @@ def _rollback_pre_marker(
                         allow_guard_extension=True,
                     )
                 path.unlink(missing_ok=False)
-                _fsync_directory(path.parent)
+                _fsync_directory(path.parent, durability_hook=durability_hook)
             if _path_sha256(path) != target.get("before_sha256"):
                 raise PersistenceV2IntegrityError(f"rollback verification failed: {path}")
             manifest["progress"][target["target_id"]] = "rolled_back"
@@ -1514,11 +1684,20 @@ def _rollback_pre_marker(
         manifest["state"] = "recovery_required"
         for error in failures:
             manifest["errors"].append({"code": "rollback_failed", "error": error})
-        _write_manifest_best_effort(manifest_path, manifest)
-        _transition_registry(transaction_root, manifest, "recovery_required")
+        _write_manifest_best_effort(
+            manifest_path,
+            manifest,
+            durability_hook=durability_hook,
+        )
+        _transition_registry(
+            transaction_root,
+            manifest,
+            "recovery_required",
+            durability_hook=durability_hook,
+        )
         return _result(manifest, receipt_valid=False)
     manifest["state"] = "rolled_back"
-    _write_manifest(manifest_path, manifest)
+    _write_manifest(manifest_path, manifest, durability_hook=durability_hook)
     failure_receipt = {
         "schema_version": manifest["schema_version"],
         "book_id": manifest["immutable"]["book_id"],
@@ -1531,8 +1710,17 @@ def _rollback_pre_marker(
     failure_receipt["receipt_hash"] = canonical_json_hash(failure_receipt, exclude_fields=("receipt_hash",))
     path = journal_dir / "failure_receipt.json"
     if not path.exists():
-        _write_new_file(path, _json_bytes(failure_receipt))
-    _transition_registry(transaction_root, manifest, "rolled_back")
+        _write_new_file(
+            path,
+            _json_bytes(failure_receipt),
+            durability_hook=durability_hook,
+        )
+    _transition_registry(
+        transaction_root,
+        manifest,
+        "rolled_back",
+        durability_hook=durability_hook,
+    )
     return _result(manifest, receipt_valid=False)
 
 
@@ -1542,6 +1730,7 @@ def _transition_registry(
     state: str,
     *,
     receipt: dict[str, Any] | None = None,
+    durability_hook: _DurabilityHook | None = None,
 ) -> None:
     immutable = manifest["immutable"]
     entry = {
@@ -1564,8 +1753,16 @@ def _transition_registry(
         "error_count": len(manifest["errors"]),
     }
     destination = transaction_root / "registry" / state / f"{immutable['run_id']}.json"
-    _write_registry_entry_idempotent(destination, entry)
+    _write_registry_entry_idempotent(
+        destination,
+        entry,
+        durability_hook=durability_hook,
+    )
     (transaction_root / "registry" / "pending" / f"{immutable['run_id']}.json").unlink(missing_ok=True)
+    _fsync_directory(
+        transaction_root / "registry" / "pending",
+        durability_hook=durability_hook,
+    )
 
 
 def _pending_registry_entry(manifest: Mapping[str, Any]) -> dict[str, Any]:
@@ -1583,7 +1780,13 @@ def _pending_registry_entry(manifest: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _mark_registry_recovery_required(root: Path, pending_entry_path: Path, exc: Exception) -> dict[str, Any]:
+def _mark_registry_recovery_required(
+    root: Path,
+    pending_entry_path: Path,
+    exc: Exception,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> dict[str, Any]:
     try:
         entry = _load_registry_entry(pending_entry_path)
         run_id = str(entry["run_id"])
@@ -1601,7 +1804,11 @@ def _mark_registry_recovery_required(root: Path, pending_entry_path: Path, exc: 
             manifest = load_persistence_manifest_v2(manifest_path)
             manifest["state"] = "recovery_required"
             _append_error(manifest, "reconcile_failed", exc)
-            _write_manifest(manifest_path, manifest)
+            _write_manifest(
+                manifest_path,
+                manifest,
+                durability_hook=durability_hook,
+            )
             digest = str(manifest["manifest_digest"])
         except Exception:
             pass
@@ -1618,8 +1825,16 @@ def _mark_registry_recovery_required(root: Path, pending_entry_path: Path, exc: 
     }
     destination = root / "registry" / "recovery_required" / f"{run_id}.json"
     try:
-        _write_registry_entry_idempotent(destination, recovery_entry)
+        _write_registry_entry_idempotent(
+            destination,
+            recovery_entry,
+            durability_hook=durability_hook,
+        )
         pending_entry_path.unlink(missing_ok=True)
+        _fsync_directory(
+            pending_entry_path.parent,
+            durability_hook=durability_hook,
+        )
     except Exception:
         pass
     return {
@@ -2271,24 +2486,35 @@ def _validate_complete_staged_journal(
     return manifest
 
 
-def _fsync_journal_tree(journal_dir: Path) -> None:
+def _fsync_journal_tree(
+    journal_dir: Path,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     for relative in ("staged", "backups"):
         directory = journal_dir / relative
         if directory.exists():
-            _fsync_directory(directory)
-    _fsync_directory(journal_dir)
-    _fsync_directory(journal_dir.parent)
+            _fsync_directory(directory, durability_hook=durability_hook)
+    _fsync_directory(journal_dir, durability_hook=durability_hook)
+    _fsync_directory(journal_dir.parent, durability_hook=durability_hook)
 
 
-def _atomic_publish_journal(source: Path, destination: Path, transaction_root: Path) -> None:
+def _atomic_publish_journal(
+    source: Path,
+    destination: Path,
+    transaction_root: Path,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     _assert_internal_path_safe(transaction_root, source)
     destination.parent.mkdir(parents=True, exist_ok=True)
     _assert_internal_path_safe(transaction_root, destination)
     if os.path.lexists(destination):
         raise FileExistsError(f"journal publish target already exists: {destination}")
-    if os.name == "nt":
-        _windows_move_file(source, destination, replace_existing=False)
-    else:
+    def publish() -> None:
+        if os.name == "nt":
+            _windows_move_file(source, destination, replace_existing=False)
+            return
         # Linux renameat2 provides a true directory no-clobber operation. The
         # fallback is still serialized by persistence_run_lock.
         used_renameat2 = False
@@ -2320,7 +2546,12 @@ def _atomic_publish_journal(source: Path, destination: Path, transaction_root: P
             pass
         if not used_renameat2:
             os.rename(source, destination)
-    _fsync_directory(destination.parent)
+
+    if durability_hook is None:
+        publish()
+    else:
+        durability_hook("journal_rename", destination, publish)
+    _fsync_directory(destination.parent, durability_hook=durability_hook)
 
 
 def _assert_internal_path_safe(root: Path, path: Path) -> None:
@@ -2366,6 +2597,7 @@ def _publish_immutable(
     resolver: SafePathResolver | None = None,
     path_ref: Mapping[str, Any] | PathRef | None = None,
     path_guard: Mapping[str, Any] | None = None,
+    durability_hook: _DurabilityHook | None = None,
 ) -> None:
     if path.exists():
         if _path_sha256(path) != expected_hash:
@@ -2377,7 +2609,7 @@ def _publish_immutable(
             expected_guard=path_guard,
             allow_guard_extension=True,
         )
-    _write_new_file(path, content)
+    _write_new_file(path, content, durability_hook=durability_hook)
     if _path_sha256(path) != expected_hash:
         raise PersistenceV2IntegrityError(f"immutable publication verification failed: {path}")
 
@@ -2478,19 +2710,33 @@ def _assert_receipt_matches_manifest(
         )
 
 
-def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
+def _write_manifest(
+    path: Path,
+    manifest: dict[str, Any],
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     manifest["updated_at"] = _utc_now()
     try:
         transaction_root = path.parents[2]
     except IndexError as exc:
         raise PersistenceV2IntegrityError("manifest path is not inside a transaction root") from exc
     _assert_internal_path_safe(transaction_root, path)
-    _atomic_replace_from_bytes(path, _json_bytes(validate_persistence_manifest_v2(manifest)))
+    _atomic_replace_from_bytes(
+        path,
+        _json_bytes(validate_persistence_manifest_v2(manifest)),
+        durability_hook=durability_hook,
+    )
 
 
-def _write_manifest_best_effort(path: Path, manifest: dict[str, Any]) -> None:
+def _write_manifest_best_effort(
+    path: Path,
+    manifest: dict[str, Any],
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     try:
-        _write_manifest(path, manifest)
+        _write_manifest(path, manifest, durability_hook=durability_hook)
     except Exception:
         pass
 
@@ -2514,19 +2760,38 @@ def _load_registry_entry(path: Path) -> dict[str, Any]:
         raise PersistenceV2IntegrityError(str(exc)) from exc
 
 
-def _write_registry_entry_new(path: Path, entry: dict[str, Any]) -> None:
+def _write_registry_entry_new(
+    path: Path,
+    entry: dict[str, Any],
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     validate_schema(entry, "persistence_registry_entry.schema.json")
     _assert_registry_entry_path_safe(path)
-    _write_new_file(path, _json_bytes(entry))
+    _write_new_file(path, _json_bytes(entry), durability_hook=durability_hook)
 
 
-def _replace_registry_entry(path: Path, entry: dict[str, Any]) -> None:
+def _replace_registry_entry(
+    path: Path,
+    entry: dict[str, Any],
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     validate_schema(entry, "persistence_registry_entry.schema.json")
     _assert_registry_entry_path_safe(path)
-    _atomic_replace_from_bytes(path, _json_bytes(entry))
+    _atomic_replace_from_bytes(
+        path,
+        _json_bytes(entry),
+        durability_hook=durability_hook,
+    )
 
 
-def _write_registry_entry_idempotent(path: Path, entry: dict[str, Any]) -> None:
+def _write_registry_entry_idempotent(
+    path: Path,
+    entry: dict[str, Any],
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     validate_schema(entry, "persistence_registry_entry.schema.json")
     _assert_registry_entry_path_safe(path)
     if path.exists():
@@ -2534,7 +2799,7 @@ def _write_registry_entry_idempotent(path: Path, entry: dict[str, Any]) -> None:
         if existing.get("run_id") != entry.get("run_id") or existing.get("manifest_digest") != entry.get("manifest_digest"):
             raise PersistenceV2IntegrityError(f"registry entry collision: {path}")
         return
-    _write_new_file(path, _json_bytes(entry))
+    _write_new_file(path, _json_bytes(entry), durability_hook=durability_hook)
 
 
 def _assert_registry_entry_path_safe(path: Path) -> None:
@@ -2554,9 +2819,14 @@ def _registry_journal_path(root: Path, entry: Mapping[str, Any]) -> Path:
     return _safe_journal_child(root, relative)
 
 
-def _write_new_file(path: Path, content: bytes) -> None:
+def _write_new_file(
+    path: Path,
+    content: bytes,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_create_from_bytes(path, content)
+    _atomic_create_from_bytes(path, content, durability_hook=durability_hook)
 
 
 def _load_json(path: Path) -> dict[str, Any]:

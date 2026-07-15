@@ -11,6 +11,7 @@
     "gate",
     "provider",
     "identity",
+    "provenance",
     "counts",
     "authority",
     "slo",
@@ -20,7 +21,7 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "schema_version": {"type": "string", "enum": ["1.1"]},
     "kind": {"type": "string", "enum": ["real_autonomy_e2e"]},
     "redacted": {"type": "boolean", "enum": [true]},
     "ok": {"type": "boolean", "enum": [true]},
@@ -30,6 +31,7 @@
       "required": [
         "requested_chapters",
         "tier",
+        "proxy_mode",
         "source_mode",
         "strict_validator_enabled",
         "required_file_delivery_enabled",
@@ -51,6 +53,10 @@
             "long_run_20_plus"
           ]
         },
+        "proxy_mode": {
+          "type": "string",
+          "enum": ["direct", "inherited", "cleared"]
+        },
         "source_mode": {
           "type": "string",
           "enum": ["generated_isolated_temporary_story_project"]
@@ -63,12 +69,22 @@
     },
     "provider": {
       "type": "object",
-      "required": ["name", "endpoint_type", "model_sha256"],
+      "required": [
+        "name",
+        "endpoint_type",
+        "model_sha256",
+        "actual_model_hashes"
+      ],
       "additionalProperties": false,
       "properties": {
         "name": {"type": "string", "enum": ["openai"]},
         "endpoint_type": {"type": "string", "enum": ["official"]},
-        "model_sha256": {"type": "string", "minLength": 64}
+        "model_sha256": {"type": "string", "minLength": 64},
+        "actual_model_hashes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 64}
+        }
       }
     },
     "identity": {
@@ -80,6 +96,24 @@
         "session_id_sha256": {"type": "string", "minLength": 64},
         "plan_hash": {"type": "string", "minLength": 64},
         "input_manifest_hash": {"type": "string", "minLength": 64}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "execution_provenance_hash",
+        "code_bundle_hash",
+        "git_commit",
+        "git_dirty",
+        "harness_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "execution_provenance_hash": {"type": "string", "minLength": 64},
+        "code_bundle_hash": {"type": "string", "minLength": 64},
+        "git_commit": {"type": "string", "minLength": 7},
+        "git_dirty": {"type": "boolean", "enum": [false]},
+        "harness_sha256": {"type": "string", "minLength": 64}
       }
     },
     "counts": {
@@ -207,7 +241,8 @@
         "required_file_deliveries_read_back",
         "strict_quality_gate_verified",
         "no_unreceipted_source_edits",
-        "notion_disabled"
+        "notion_disabled",
+        "execution_provenance_verified"
       ],
       "additionalProperties": false,
       "properties": {
@@ -219,7 +254,8 @@
         "required_file_deliveries_read_back": {"type": "boolean", "enum": [true]},
         "strict_quality_gate_verified": {"type": "boolean", "enum": [true]},
         "no_unreceipted_source_edits": {"type": "boolean", "enum": [true]},
-        "notion_disabled": {"type": "boolean", "enum": [true]}
+        "notion_disabled": {"type": "boolean", "enum": [true]},
+        "execution_provenance_verified": {"type": "boolean", "enum": [true]}
       }
     },
     "report_hash": {"type": "string", "minLength": 64}

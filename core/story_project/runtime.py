@@ -12,7 +12,11 @@ from core.story_project.model import StoryProjectRuntimeContext
 from core.story_project.paths import resolve_story_project_root
 from core.story_project.read_set import capture_story_project_read_set
 from core.story_project.validator import validate_story_project
-from core.memory_v2 import load_canonical_memory, memory_projection_hash, replay_memory_events
+from core.memory_v2 import load_canonical_memory, memory_projection_hash
+from core.memory_v2.recovery import (
+    MemoryAuthorityMismatchError,
+    ensure_event_authority_caches,
+)
 from core.runtime_paths import RuntimePaths
 from core.story_project.authority import AUTHORITY_MODE_EVENT
 from core.memory_v2.canonical import canonical_json_hash
@@ -214,12 +218,38 @@ def build_generation_story_project_context_loader(
 
 
 def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, Any]:
-    memory_root = RuntimePaths.for_story_project(root).memory_dir / "v2"
+    runtime_paths = RuntimePaths.for_story_project(root)
+    memory_root = runtime_paths.memory_dir / "v2"
     canonical_path = memory_root / "canonical_memory.json"
     event_authority = _uses_event_authority(identity)
-    if not canonical_path.exists():
-        if event_authority:
-            raise ValueError("story_project_event_authority_canonical_missing")
+    replay_report: dict[str, Any] | None = None
+    cache_status: str | None = None
+    recovery_report: dict[str, Any] | None = None
+    if event_authority:
+        authority = identity.authority or {}
+        try:
+            ensured = ensure_event_authority_caches(
+                memory_root,
+                runtime_root=runtime_paths.runtime_dir,
+                runtime_snapshot_target=runtime_paths.snapshot_path,
+                expected_book_id=identity.book_id,
+                expected_authority_epoch=int(authority["authority_epoch"]),
+                expected_head_event_hash=str(authority["head_event_hash"]),
+            )
+        except MemoryAuthorityMismatchError as exc:
+            mismatch_codes = {
+                "book_id": "story_project_memory_v2_identity_mismatch",
+                "authority_epoch": "story_project_event_authority_epoch_mismatch",
+                "head_event_hash": "story_project_event_authority_head_mismatch",
+            }
+            raise ValueError(mismatch_codes[exc.field]) from exc
+        except (OSError, ValueError) as exc:
+            raise ValueError("story_project_event_authority_replay_failed") from exc
+        projection = ensured["projection"]
+        replay_report = ensured["replay_report"]
+        cache_status = str(ensured["cache_status"])
+        recovery_report = ensured.get("recovery_report")
+    elif not canonical_path.exists():
         return {
             "status": "absent",
             "canonical_path": str(canonical_path),
@@ -228,25 +258,10 @@ def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, 
             "projection_hash": None,
             "projection": None,
         }
-    projection = load_canonical_memory(canonical_path)
+    else:
+        projection = load_canonical_memory(canonical_path)
     if str(projection["book_id"]) != identity.book_id:
         raise ValueError("story_project_memory_v2_identity_mismatch")
-    replay_report: dict[str, Any] | None = None
-    if event_authority:
-        authority = identity.authority or {}
-        if projection.get("schema_version") != "2.2":
-            raise ValueError("story_project_event_authority_requires_memory_v2_2")
-        if int(projection.get("authority_epoch") or 0) != int(authority["authority_epoch"]):
-            raise ValueError("story_project_event_authority_epoch_mismatch")
-        if projection.get("head_event_hash") != authority.get("head_event_hash"):
-            raise ValueError("story_project_event_authority_head_mismatch")
-        event_store = memory_root / "events"
-        try:
-            replay_report = replay_memory_events(event_store)
-        except (OSError, ValueError) as exc:
-            raise ValueError("story_project_event_authority_replay_failed") from exc
-        if replay_report.get("projection") != projection:
-            raise ValueError("story_project_event_authority_projection_drift")
     return {
         "status": "ready",
         "canonical_path": str(canonical_path),
@@ -257,10 +272,18 @@ def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, 
         "authority_epoch": projection.get("authority_epoch"),
         "head_event_hash": projection.get("head_event_hash"),
         "reducer_version": (
-            "memory-reducer-2.2" if projection.get("schema_version") == "2.2" else None
+            replay_report.get("reducer_version")
+            if replay_report is not None
+            else "memory-reducer-2.2" if projection.get("schema_version") == "2.2" else None
         ),
         "replay_projection_hash": (
             replay_report.get("projection_hash") if replay_report is not None else None
+        ),
+        "cache_status": cache_status,
+        "cache_recovery_hash": (
+            recovery_report.get("recovery_hash")
+            if isinstance(recovery_report, dict)
+            else None
         ),
     }
 
