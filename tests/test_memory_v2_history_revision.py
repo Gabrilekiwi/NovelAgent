@@ -671,7 +671,12 @@ class HistoricalRevisionTransactionTest(unittest.TestCase):
         chapter_one = canonical_prose_path(story, 1)
         chapter_ten = canonical_prose_path(story, 10)
         chapter_one.write_text("Chapter one happened.\n", encoding="utf-8")
+        for chapter in range(2, 10):
+            canonical_prose_path(story, chapter).write_text(
+                f"Chapter {chapter} happened.\n", encoding="utf-8"
+            )
         chapter_ten.write_text("Chapter ten opened the gate.\n", encoding="utf-8")
+        (story / "大纲" / "细纲_第010章.md").write_text("# 第十章\n", encoding="utf-8")
         (story / SETTING_DIR_NAME / "world.md").write_text(
             "Gravity is constant.\n", encoding="utf-8"
         )
@@ -696,7 +701,9 @@ class HistoricalRevisionTransactionTest(unittest.TestCase):
                     }
                 ],
                 "inventory": {"hero": {"key": 1, "water": 0}},
-                "lexicon": {"black_tide": {"known_by": ["hero"]}},
+                "lexicon": {
+                    "black_tide": {"definition": "A dangerous black tide", "known_by": ["hero"]}
+                },
                 "corruption": {"hero": 3},
             },
             approver_id="operator-1",

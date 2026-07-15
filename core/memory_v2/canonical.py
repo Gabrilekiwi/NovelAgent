@@ -126,6 +126,7 @@ def _normalized_for_hash(
 
 __all__ = [
     "CANONICAL_JSON_ALGORITHM",
+    "ENVIRONMENT_FIELD_NAMES",
     "CanonicalJSONError",
     "canonical_copy_for_hash",
     "canonical_json_bytes",

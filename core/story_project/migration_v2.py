@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePath
 import re
 from typing import Any, Mapping
 
-from core.memory_v2.canonical import canonical_json_hash
+from core.memory_v2.canonical import ENVIRONMENT_FIELD_NAMES, canonical_json_hash
+from core.memory_v2.versions import CURRENT_REDUCER_VERSION
 from core.schema import SchemaValidationError, validate_schema
 from core.story_project.identity import load_project_identity, project_identity_path
 from core.story_project.mapper import SETTING_DIR_NAME, TRACKING_DIR_NAME
@@ -24,6 +27,12 @@ MIGRATION_PLAN_SCHEMA_VERSION = "2.0"
 MIGRATION_APPROVAL_SCHEMA_VERSION = "2.0"
 MIGRATION_SHADOW_CANDIDATE_SCHEMA_VERSION = "1.0"
 MIGRATION_PREVIEW_SCHEMA_VERSION = "1.0"
+MIGRATION_BASELINE_MAPPER_VERSION = "migration-baseline-1.1"
+MIGRATION_BASELINE_CONTRACT = {
+    "mapper_version": MIGRATION_BASELINE_MAPPER_VERSION,
+    "memory_schema_version": "2.2",
+    "reducer_version": CURRENT_REDUCER_VERSION,
+}
 REQUIRED_MIGRATION_DECISIONS = (
     "timeline_elapsed_minutes",
     "chapter_10_character_state",
@@ -46,7 +55,22 @@ _RUNTIME_SOURCE_DIRECTORIES = (
 )
 _RUNTIME_SOURCE_FILES = ("snapshot.json", "memory.json")
 _FORBIDDEN_DECISION_KEYS = frozenset(
-    {"api_key", "apikey", "authorization", "credential", "credentials", "environment", "password", "secret", "token"}
+    {
+        "absolute_path",
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "credentials",
+        "environment",
+        "file_path",
+        "mtime",
+        "mtime_ns",
+        "password",
+        "secret",
+        "storage_path",
+        "token",
+    }
 )
 
 
@@ -118,6 +142,7 @@ def build_migration_plan(
         "conflicts": conflicts,
         "shadow_candidate": shadow_candidate,
         "shadow_candidate_hash": canonical_json_hash(shadow_candidate),
+        "baseline_contract": copy.deepcopy(MIGRATION_BASELINE_CONTRACT),
         "required_decisions": list(REQUIRED_MIGRATION_DECISIONS),
         "evidence_summary": summary,
         "created_at": _required_text("created_at", created_at),
@@ -135,6 +160,12 @@ def validate_migration_plan(value: Any) -> dict[str, Any]:
     if plan["required_decisions"] != list(REQUIRED_MIGRATION_DECISIONS):
         raise MigrationV2Error(
             "migration_decision_contract_invalid", "required migration decisions were modified"
+        )
+    baseline_contract = plan.get("baseline_contract")
+    if baseline_contract is not None and baseline_contract != MIGRATION_BASELINE_CONTRACT:
+        raise MigrationV2Error(
+            "migration_baseline_contract_unsupported",
+            "MigrationPlan baseline mapper, memory schema, or reducer version is not supported",
         )
     candidate_present = "shadow_candidate" in plan
     candidate_hash_present = "shadow_candidate_hash" in plan
@@ -335,6 +366,7 @@ def build_migration_approval(
     approved_at: str,
 ) -> dict[str, Any]:
     validated_plan = validate_migration_plan(dict(plan))
+    _assert_shadow_candidate_approvable(validated_plan)
     resolved_decisions = _validate_decisions(decisions, conflicts=validated_plan["conflicts"])
     decision_digest = canonical_json_hash(resolved_decisions)
     approval_id = f"approval-{canonical_json_hash({'plan_hash': validated_plan['plan_hash'], 'decision_digest': decision_digest})[:20]}"
@@ -348,7 +380,7 @@ def build_migration_approval(
         "decisions": resolved_decisions,
         "decision_digest": decision_digest,
         "approver_id": _safe_id("approver_id", approver_id),
-        "approved_at": _required_text("approved_at", approved_at),
+        "approved_at": _approval_timestamp(approved_at),
     }
     approval["approval_hash"] = canonical_json_hash(approval)
     return validate_migration_approval(approval, plan=validated_plan)
@@ -363,16 +395,19 @@ def validate_migration_approval(
     _safe_id("approval_id", approval["approval_id"])
     _safe_id("plan_id", approval["plan_id"])
     _safe_id("approver_id", approval["approver_id"])
+    _approval_timestamp(approval["approved_at"])
     for field in ("approval_hash", "plan_hash", "source_digest", "decision_digest"):
         _sha256(field, approval[field])
+    validated_plan = validate_migration_plan(dict(plan)) if plan is not None else None
+    if validated_plan is not None:
+        _assert_shadow_candidate_approvable(validated_plan)
     decisions = _validate_decisions(
         approval["decisions"],
-        conflicts=(validate_migration_plan(dict(plan))["conflicts"] if plan is not None else None),
+        conflicts=(validated_plan["conflicts"] if validated_plan is not None else None),
     )
     if decisions != approval["decisions"] or canonical_json_hash(decisions) != approval["decision_digest"]:
         raise MigrationV2Error("migration_decision_digest_mismatch", "approval decisions were modified")
-    if plan is not None:
-        validated_plan = validate_migration_plan(dict(plan))
+    if validated_plan is not None:
         for field in ("plan_id", "plan_hash", "book_id", "source_digest"):
             if approval[field] != validated_plan[field]:
                 raise MigrationV2Error("migration_approval_plan_mismatch", f"approval {field} differs")
@@ -383,6 +418,96 @@ def validate_migration_approval(
     if approval["approval_hash"] != expected_hash:
         raise MigrationV2Error("migration_approval_hash_mismatch", "MigrationApproval content was modified")
     return approval
+
+
+def _assert_shadow_candidate_approvable(plan: Mapping[str, Any]) -> None:
+    if plan.get("baseline_contract") != MIGRATION_BASELINE_CONTRACT:
+        raise MigrationV2Error(
+            "migration_baseline_contract_unbound",
+            "MigrationApproval requires a plan bound to the current baseline mapper and reducer",
+        )
+    candidate = plan.get("shadow_candidate")
+    if not isinstance(candidate, Mapping) or candidate.get("state") is None:
+        raise MigrationV2Error(
+            "migration_semantic_candidate_unavailable",
+            "MigrationApproval requires a complete frozen shadow semantic candidate",
+        )
+    blocking = [
+        item
+        for item in candidate.get("conflicts", [])
+        if isinstance(item, Mapping) and item.get("blocking") is True
+    ]
+    if blocking:
+        raise MigrationV2Error(
+            "migration_blocking_semantic_conflict",
+            "MigrationApproval cannot resolve blocking semantic conflicts; correct the source and build a new plan",
+        )
+    unresolved_duplicates = [
+        item
+        for item in plan.get("conflicts", [])
+        if isinstance(item, Mapping) and item.get("code") == "duplicate_chapter_source"
+    ]
+    if unresolved_duplicates:
+        raise MigrationV2Error(
+            "migration_duplicate_chapter_source_blocking",
+            "duplicate published prose or chapter outlines must be corrected in the source tree before activation",
+        )
+    state = candidate.get("state")
+    world_state = state.get("world_state") if isinstance(state, Mapping) else None
+    static_candidate = {
+        "settings": (
+            world_state.get("settings") if isinstance(world_state, Mapping) else None
+        ),
+        "locations": (
+            world_state.get("locations") if isinstance(world_state, Mapping) else None
+        ),
+        "constraints": state.get("constraints") if isinstance(state, Mapping) else None,
+    }
+    _assert_hash_bound_static_candidate(static_candidate)
+    published_chapters = sorted(
+        {
+            int(item["chapter_index"])
+            for item in plan.get("sources", [])
+            if isinstance(item, Mapping)
+            and item.get("role") == "published_prose"
+            and item.get("chapter_index") is not None
+        }
+    )
+    if published_chapters and published_chapters != list(
+        range(1, published_chapters[-1] + 1)
+    ):
+        raise MigrationV2Error(
+            "migration_published_chapter_gap",
+            "published prose must form one continuous chapter sequence from chapter 1",
+        )
+    candidate_chapter = candidate.get("chapter_index")
+    if (
+        not published_chapters
+        or isinstance(candidate_chapter, bool)
+        or not isinstance(candidate_chapter, int)
+        or candidate_chapter not in {max(published_chapters), max(published_chapters) + 1}
+    ):
+        raise MigrationV2Error(
+            "migration_semantic_candidate_target_invalid",
+            "MigrationApproval requires a semantic candidate for the latest published or next chapter",
+        )
+
+
+def _assert_hash_bound_static_candidate(
+    value: Any, *, path: str = "shadow_candidate.state"
+) -> None:
+    if isinstance(value, Mapping):
+        for raw_key, child in value.items():
+            key = str(raw_key)
+            if key in ENVIRONMENT_FIELD_NAMES:
+                raise MigrationV2Error(
+                    "migration_static_field_hash_unbound",
+                    f"static semantic field uses a hash-excluded key: {path}.{key}",
+                )
+            _assert_hash_bound_static_candidate(child, path=f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _assert_hash_bound_static_candidate(child, path=f"{path}[{index}]")
 
 
 def _build_shadow_semantic_candidate(
@@ -843,6 +968,7 @@ def _validate_decisions(
             raise MigrationV2Error("migration_decisions_invalid", f"{field} must be an object")
     if not isinstance(decisions["open_foreshadowing"], list):
         raise MigrationV2Error("migration_decisions_invalid", "open_foreshadowing must be an array")
+    _validate_executable_decisions(decisions)
     if conflicts:
         resolutions = decisions.get("conflict_resolutions")
         if not isinstance(resolutions, dict):
@@ -867,6 +993,7 @@ def _validate_decisions(
                     "migration_conflict_resolution_invalid",
                     f"conflict resolution must select a reported source path: {key}",
                 )
+            resolutions[key] = normalized
     elif conflicts is not None and "conflict_resolutions" in decisions and decisions["conflict_resolutions"] not in ({}, None):
         raise MigrationV2Error(
             "migration_conflict_resolution_invalid", "no conflict resolutions are expected for this plan"
@@ -876,6 +1003,180 @@ def _validate_decisions(
         return json.loads(json.dumps(decisions, ensure_ascii=False, allow_nan=False))
     except (TypeError, ValueError) as exc:
         raise MigrationV2Error("migration_decisions_invalid", str(exc)) from exc
+
+
+def _validate_executable_decisions(decisions: dict[str, Any]) -> None:
+    character_positions: dict[str, str] = {}
+    for external_id, raw in decisions["chapter_10_character_state"].items():
+        _require_decision_identifier(
+            f"chapter_10_character_state.{external_id}", external_id
+        )
+        if not isinstance(raw, dict):
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"chapter_10_character_state.{external_id} must be an object",
+            )
+        raw_name = raw.get("name", external_id)
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"chapter_10_character_state.{external_id}.name must be non-empty text",
+            )
+        name = raw_name.strip()
+        if raw.get("status") is not None and not isinstance(raw.get("status"), str):
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"chapter_10_character_state.{external_id}.status must be text",
+            )
+        location = raw.get("location", raw.get("current_location"))
+        state = raw.get("state")
+        if location is None and isinstance(state, dict):
+            location = state.get("current_location")
+        if location is not None and (
+            not isinstance(location, str) or not location.strip()
+        ):
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"chapter_10_character_state.{external_id}.location must be text",
+            )
+        if isinstance(location, str):
+            normalized_location = location.strip()
+            existing = character_positions.get(name)
+            if existing is not None and existing != normalized_location:
+                raise MigrationV2Error(
+                    "migration_decisions_invalid",
+                    f"chapter_10_character_state contains conflicting locations for {name}",
+                )
+            character_positions[name] = normalized_location
+
+    seen_foreshadowing: set[str] = set()
+    for index, raw in enumerate(decisions["open_foreshadowing"]):
+        if isinstance(raw, dict):
+            external_id = (
+                _require_decision_identifier(
+                    f"open_foreshadowing[{index}].id", raw["id"]
+                )
+                if "id" in raw
+                else f"item-{index + 1}"
+            )
+            status = raw.get("status")
+            descriptions = {
+                key: raw.get(key)
+                for key in ("description", "content", "title")
+                if key in raw
+            }
+            if not descriptions or any(
+                not isinstance(item, str) or not item.strip()
+                for item in descriptions.values()
+            ):
+                raise MigrationV2Error(
+                    "migration_decisions_invalid",
+                    f"open_foreshadowing[{index}] text fields must be non-empty strings",
+                )
+        elif isinstance(raw, str) and raw.strip():
+            external_id = f"item-{index + 1}"
+            status = None
+        else:
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"open_foreshadowing[{index}] must be an object or non-empty text",
+            )
+        if external_id in seen_foreshadowing:
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"open_foreshadowing contains a duplicate id: {external_id}",
+            )
+        seen_foreshadowing.add(external_id)
+        if status is not None and not isinstance(status, str):
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"open_foreshadowing[{index}].status must be text",
+            )
+        if status in {"resolved", "abandoned", "cancelled"}:
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"open_foreshadowing[{index}] cannot use terminal status {status}",
+            )
+
+    for owner_id, raw_items in decisions["inventory"].items():
+        _require_decision_identifier(f"inventory.{owner_id}", owner_id)
+        if not isinstance(raw_items, dict):
+            raise MigrationV2Error(
+                "migration_decisions_invalid", f"inventory.{owner_id} must be an object"
+            )
+        for item_id, raw_item in raw_items.items():
+            _require_decision_identifier(
+                f"inventory.{owner_id}.{item_id}", item_id
+            )
+            quantity = raw_item.get("quantity", 1) if isinstance(raw_item, dict) else raw_item
+            if isinstance(raw_item, dict):
+                name = raw_item.get("name", item_id)
+                if not isinstance(name, str) or not name.strip():
+                    raise MigrationV2Error(
+                        "migration_decisions_invalid",
+                        f"inventory.{owner_id}.{item_id}.name must be non-empty text",
+                    )
+                status = raw_item.get("status")
+                if status is not None and not isinstance(status, str):
+                    raise MigrationV2Error(
+                        "migration_decisions_invalid",
+                        f"inventory.{owner_id}.{item_id}.status must be text",
+                    )
+            if (
+                isinstance(quantity, bool)
+                or not isinstance(quantity, (int, float))
+                or not math.isfinite(quantity)
+                or quantity < 0
+            ):
+                raise MigrationV2Error(
+                    "migration_decisions_invalid",
+                    f"inventory.{owner_id}.{item_id}.quantity must be a non-negative number",
+                )
+
+    for term, raw in decisions["lexicon"].items():
+        _require_decision_identifier(f"lexicon.{term}", term)
+        if isinstance(raw, dict):
+            if (
+                not isinstance(raw.get("definition"), str)
+                or not raw["definition"].strip()
+            ):
+                raise MigrationV2Error(
+                    "migration_decisions_invalid",
+                    f"lexicon.{term}.definition must be non-empty text",
+                )
+        elif not isinstance(raw, str) or not raw.strip():
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"lexicon.{term} must provide a non-empty definition",
+            )
+        if isinstance(raw, dict):
+            reserved = {"external_id", "decision_digest"}.intersection(raw)
+            if reserved:
+                raise MigrationV2Error(
+                    "migration_decisions_invalid",
+                    f"lexicon.{term} cannot set reserved fields: {', '.join(sorted(reserved))}",
+                )
+
+    for subject_id, raw in decisions["corruption"].items():
+        _require_decision_identifier(f"corruption.{subject_id}", subject_id)
+        level = raw.get("level") if isinstance(raw, dict) else raw
+        if isinstance(raw, dict) and raw.get("status") is not None and not isinstance(
+            raw.get("status"), str
+        ):
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"corruption.{subject_id}.status must be text",
+            )
+        if (
+            isinstance(level, bool)
+            or not isinstance(level, (int, float))
+            or not math.isfinite(level)
+            or not 0 <= level <= 100
+        ):
+            raise MigrationV2Error(
+                "migration_decisions_invalid",
+                f"corruption.{subject_id}.level must be between 0 and 100",
+            )
 
 
 def _assert_safe_source_path(path: Path, root: Path) -> None:
@@ -907,12 +1208,43 @@ def _is_reparse_point(path: Path) -> bool:
     return bool(attributes & getattr(os.stat_result, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)) if os.name == "nt" else False
 
 
+def _approval_timestamp(value: Any) -> str:
+    text = _required_text("approved_at", value)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MigrationV2Error(
+            "migration_approval_time_invalid",
+            "approved_at must be an ISO-8601 timestamp with an offset",
+        ) from exc
+    if parsed.utcoffset() is None:
+        raise MigrationV2Error(
+            "migration_approval_time_invalid",
+            "approved_at must be an ISO-8601 timestamp with an offset",
+        )
+    return text
+
+
+def _require_decision_identifier(label: str, value: Any) -> str:
+    if not isinstance(value, str) or not value or value.strip() != value:
+        raise MigrationV2Error(
+            "migration_decisions_invalid",
+            f"{label} must be non-empty text without surrounding whitespace",
+        )
+    return value
+
+
 def _assert_safe_decision_value(value: Any, *, path: str = "$", depth: int = 0) -> None:
     if depth > 16:
         raise MigrationV2Error("migration_decisions_invalid", "decision nesting is too deep")
     if isinstance(value, dict):
         for key, child in value.items():
-            normalized = str(key).lower().replace("-", "_")
+            if not isinstance(key, str):
+                raise MigrationV2Error(
+                    "migration_decisions_invalid",
+                    f"decision object keys must be text: {path}",
+                )
+            normalized = key.lower().replace("-", "_")
             if normalized in _FORBIDDEN_DECISION_KEYS or any(
                 token in normalized for token in ("password", "secret", "credential", "api_key")
             ):
@@ -1003,6 +1335,8 @@ def _required_text(label: str, value: Any) -> str:
 
 
 __all__ = [
+    "MIGRATION_BASELINE_CONTRACT",
+    "MIGRATION_BASELINE_MAPPER_VERSION",
     "MIGRATION_APPROVAL_SCHEMA_VERSION",
     "MIGRATION_PLAN_SCHEMA_VERSION",
     "MIGRATION_PREVIEW_SCHEMA_VERSION",

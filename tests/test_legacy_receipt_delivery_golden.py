@@ -186,7 +186,12 @@ class LegacyReceiptDeliveryGoldenTest(unittest.TestCase):
             (book / directory).mkdir(parents=True)
         ensure_project_identity(book, book_id="legacy-book-1")
         canonical_prose_path(book, 1).write_text("Chapter one happened.\n", encoding="utf-8")
+        for chapter in range(2, 10):
+            canonical_prose_path(book, chapter).write_text(
+                f"Chapter {chapter} happened.\n", encoding="utf-8"
+            )
         canonical_prose_path(book, 10).write_text("Chapter ten happened.\n", encoding="utf-8")
+        (book / "大纲" / "细纲_第010章.md").write_text("# 第十章\n", encoding="utf-8")
 
         runtime = book / ".novelagent" / "runtime"
         run_record_path = runtime / "runs" / "legacy-run-1.json"
@@ -249,7 +254,9 @@ class LegacyReceiptDeliveryGoldenTest(unittest.TestCase):
                     }
                 ],
                 "inventory": {"hero": {"key": 1}},
-                "lexicon": {"black_tide": {"known_by": ["hero"]}},
+                "lexicon": {
+                    "black_tide": {"definition": "A dangerous black tide", "known_by": ["hero"]}
+                },
                 "corruption": {"hero": 3},
             },
             approver_id="compatibility-test",

@@ -7,6 +7,7 @@ import shutil
 import unittest
 import uuid
 
+from core.director import ModelDirector
 from core.engine.story_project_context import StoryProjectContextError, StoryProjectContextService
 from core.memory_v2 import (
     apply_genesis_event,
@@ -19,11 +20,13 @@ from core.runtime_paths import RuntimePaths
 from core.story_project.authority import build_authority_activation_receipt
 from core.story_project.identity import ProjectIdentity, validate_project_identity
 from core.story_project.model import CORE_DIRECTORY_NAMES
+from core.story_project.mapper import SETTING_DIR_NAME, TRACKING_DIR_NAME
 from core.story_project.paths import canonical_outline_path
 from core.story_project.runtime import (
     _load_memory_v2_context,
     build_generation_story_project_context,
 )
+from core.state.input_pack import build_input_pack
 
 
 class EventAuthorityRuntimeTest(unittest.TestCase):
@@ -253,6 +256,132 @@ class EventAuthorityRuntimeTest(unittest.TestCase):
         self.assertEqual({}, merged["characters"])
         self.assertEqual("", merged["story_state"]["last_scene_location"])
         self.assertEqual("memory_event_v2_2", merged["semantic_authority"]["source"])
+
+    def test_event_authority_legacy_markdown_is_audit_only_not_prompt_input(self) -> None:
+        root, projection, identity = self._case("legacy_markdown_prompt_isolation")
+        tracking_sentinel = "TRACKING_SENTINEL_MUST_NOT_REACH_MODEL"
+        setting_sentinel = "SETTING_SENTINEL_MUST_NOT_REACH_MODEL"
+        (root / TRACKING_DIR_NAME / "state.md").write_text(
+            tracking_sentinel,
+            encoding="utf-8",
+        )
+        (root / SETTING_DIR_NAME / "world.md").write_text(
+            setting_sentinel,
+            encoding="utf-8",
+        )
+
+        runtime_context = build_generation_story_project_context(
+            story_project=root,
+            chapter=1,
+            project_identity=identity,
+        )
+        context = runtime_context.to_dict()
+
+        self.assertEqual({}, context["tracking_files"])
+        self.assertEqual({}, context["setting_files"])
+        self.assertEqual(
+            ["current_outline"],
+            [item["name"] for item in context["memory_context_overlay"]["items"]],
+        )
+        self.assertEqual("audit_only", context["semantic_audit"]["legacy_markdown_prompt_mode"])
+        self.assertGreater(len(context["read_set"]["entries"]), 0)
+
+        input_pack = build_input_pack(
+            projection,
+            memory_context=context["memory_context_overlay"],
+            story_project_context=context,
+        )
+
+        self.assertNotIn(tracking_sentinel, input_pack)
+        self.assertNotIn(setting_sentinel, input_pack)
+        self.assertNotIn('"tracking_context"', input_pack)
+        self.assertNotIn('"setting_context"', input_pack)
+        self.assertNotIn('"tracking_paths"', input_pack)
+        self.assertNotIn('"setting_paths"', input_pack)
+        self.assertIn("canonical_memory_event_v2_2", input_pack)
+        self.assertIn("enter the old station", input_pack)
+
+        legacy_snapshot_sentinel = "LEGACY_SNAPSHOT_SENTINEL_MUST_NOT_REACH_DIRECTOR"
+        legacy_memory_sentinel = "LEGACY_MEMORY_SENTINEL_MUST_NOT_REACH_DIRECTOR"
+        legacy_run_sentinel = "LEGACY_RUN_SENTINEL_MUST_NOT_REACH_DIRECTOR"
+        merged_snapshot, merged_memory = StoryProjectContextService.apply_context(
+            context,
+            {
+                "book_id": identity.book_id,
+                "chapter_index": 99,
+                "world_state": {"locations": {}},
+                "characters": {},
+                "timeline": [],
+                "legacy_snapshot_sentinel": legacy_snapshot_sentinel,
+                "story_project": {
+                    "tracking_paths": {"legacy.md": "C:/legacy/tracking.md"},
+                    "setting_paths": {"legacy.md": "C:/legacy/setting.md"},
+                },
+            },
+            {
+                "source": "legacy",
+                "status": "ready",
+                "items": [
+                    {
+                        "type": "story_state",
+                        "name": "legacy",
+                        "text": legacy_memory_sentinel,
+                    }
+                ],
+                "source_mappings": [{"index": 0, "source": "legacy"}],
+                "last_run": {"goal": legacy_run_sentinel},
+            },
+            snapshot_path=RuntimePaths.for_story_project(root).snapshot_path,
+            allow_legacy_snapshot_adoption=False,
+        )
+        self.assertNotIn("legacy_snapshot_sentinel", merged_snapshot)
+        self.assertNotIn("story_project", merged_snapshot)
+        self.assertEqual("memory_event_v2_2", merged_snapshot["semantic_authority"]["source"])
+        self.assertEqual(["current_outline"], [item["name"] for item in merged_memory["items"]])
+        self.assertNotIn("last_run", merged_memory)
+
+        isolated_input_pack = build_input_pack(
+            merged_snapshot,
+            memory_context=merged_memory,
+            story_project_context=context,
+        )
+        for sentinel in (
+            tracking_sentinel,
+            setting_sentinel,
+            legacy_snapshot_sentinel,
+            legacy_memory_sentinel,
+            legacy_run_sentinel,
+        ):
+            self.assertNotIn(sentinel, isolated_input_pack)
+
+        seen_messages: list[list[dict[str, str]]] = []
+
+        def completion(messages: list[dict[str, str]]) -> str:
+            seen_messages.append(messages)
+            return json.dumps(
+                {
+                    "chapter_index": 1,
+                    "goal": "advance canonical story",
+                    "actions": ["generate_chapter", "validate"],
+                    "validation_focus": ["continuity"],
+                    "max_repair_attempts": 0,
+                    "notes": [],
+                }
+            )
+
+        ModelDirector(completion=completion)(merged_snapshot, merged_memory)
+        director_prompt = seen_messages[0][1]["content"]
+        for sentinel in (
+            tracking_sentinel,
+            setting_sentinel,
+            legacy_snapshot_sentinel,
+            legacy_memory_sentinel,
+            legacy_run_sentinel,
+        ):
+            self.assertNotIn(sentinel, director_prompt)
+        self.assertNotIn('"tracking_paths"', director_prompt)
+        self.assertNotIn('"setting_paths"', director_prompt)
+        self.assertIn("enter the old station", director_prompt)
 
     def test_context_mapper_rechecks_epoch_and_head(self) -> None:
         _root, projection, identity = self._case("mapper_cas")

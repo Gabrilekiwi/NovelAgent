@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -135,6 +136,9 @@ def build_generation_story_project_context(
             "warning_count": len(context.warnings),
             "parser_authoritative": False,
             "canonical_authoritative": True,
+            "legacy_markdown_prompt_mode": "audit_only",
+            "tracking_prompt_included": False,
+            "setting_prompt_included": False,
         }
     else:
         semantic_state = parse_story_project_semantic_state(
@@ -164,6 +168,15 @@ def build_generation_story_project_context(
             "warning_count": len(semantic_state["parse_warnings"]),
             "parser_authoritative": False if event_authority else bool(activation["authoritative"]),
             "canonical_authoritative": event_authority,
+            **(
+                {
+                    "legacy_markdown_prompt_mode": "audit_only",
+                    "tracking_prompt_included": False,
+                    "setting_prompt_included": False,
+                }
+                if event_authority
+                else {}
+            ),
         }
         read_set = capture_story_project_read_set(
             root,
@@ -174,6 +187,15 @@ def build_generation_story_project_context(
                 "warning"
                 if context.warnings or semantic_state["parse_warnings"] or activation["downgraded"]
                 else "ok"
+            ),
+        )
+    if event_authority:
+        context = replace(
+            context,
+            tracking_files={},
+            setting_files={},
+            memory_context_overlay=_event_authority_memory_overlay(
+                context.memory_context_overlay
             ),
         )
     return replace(
@@ -190,6 +212,41 @@ def build_generation_story_project_context(
         semantic_audit=semantic_audit,
         memory_v2=memory_v2,
     )
+
+
+def _event_authority_memory_overlay(overlay: dict[str, Any]) -> dict[str, Any]:
+    """Keep the current outline, but isolate legacy Markdown state from prompts."""
+
+    raw_items = overlay.get("items") if isinstance(overlay, dict) else None
+    items: list[dict[str, Any]] = []
+    old_to_new: dict[int, int] = {}
+    if isinstance(raw_items, list):
+        for old_index, item in enumerate(raw_items):
+            if not isinstance(item, dict) or item.get("name") != "current_outline":
+                continue
+            old_to_new[old_index] = len(items)
+            items.append(copy.deepcopy(item))
+
+    mappings: list[dict[str, Any]] = []
+    raw_mappings = overlay.get("source_mappings") if isinstance(overlay, dict) else None
+    if isinstance(raw_mappings, list):
+        for mapping in raw_mappings:
+            if not isinstance(mapping, dict):
+                continue
+            old_index = mapping.get("index")
+            if old_index not in old_to_new:
+                continue
+            copied = copy.deepcopy(mapping)
+            copied["index"] = old_to_new[old_index]
+            mappings.append(copied)
+
+    return {
+        "source": "story_project",
+        "status": "ready",
+        "items": items,
+        "source_mappings": mappings,
+        "legacy_markdown_prompt_mode": "audit_only",
+    }
 
 
 def build_generation_story_project_context_loader(

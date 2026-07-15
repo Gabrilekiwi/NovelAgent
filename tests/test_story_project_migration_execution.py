@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -9,8 +10,10 @@ import uuid
 from core.memory_v2 import (
     capture_historical_revision_dependency_inventory,
     load_memory_event_batches,
+    prepare_event_authority_chapter_commit,
     replay_memory_events,
 )
+from core.memory_v2.canonical import canonical_json_hash
 from core.memory_v2.storage import load_canonical_memory
 from core.story_project.history_revision_execution import execute_amend_transaction
 from core.story_project.identity import ensure_project_identity, load_project_identity, project_identity_path
@@ -27,7 +30,7 @@ from core.story_project.migration_v2 import (
     build_migration_plan,
 )
 from core.story_project.model import CORE_DIRECTORY_NAMES
-from core.story_project.paths import canonical_prose_path
+from core.story_project.paths import canonical_outline_path, canonical_prose_path
 from core.story_project.read_set import capture_story_project_read_set
 
 
@@ -47,12 +50,41 @@ class StoryProjectMigrationExecutionTest(unittest.TestCase):
             (root / directory).mkdir(parents=True)
         ensure_project_identity(root, book_id=f"book-{name}")
         canonical_prose_path(root, 1).write_text("Chapter one happened.\n", encoding="utf-8")
+        for chapter in range(2, 10):
+            canonical_prose_path(root, chapter).write_text(
+                f"Chapter {chapter} happened.\n", encoding="utf-8"
+            )
         canonical_prose_path(root, 10).write_text("Chapter ten opened the gate.\n", encoding="utf-8")
-        (root / SETTING_DIR_NAME / "world.md").write_text(
-            "Gravity is constant.\n", encoding="utf-8"
+        canonical_outline_path(root, 10).write_text(
+            "# 第十章\n\n- 核心事件：OUTLINE_ONLY_SENTINEL\n", encoding="utf-8"
         )
-        (root / TRACKING_DIR_NAME / "notes.md").write_text(
-            "Legacy tracking projection.\n", encoding="utf-8"
+        (root / SETTING_DIR_NAME / "world.md").write_text(
+            "# 世界\n\n| 字段 | 值 |\n|---|---|\n| 城门 | 只能由持钥匙者开启 |\n\n"
+            "- 重力必须保持恒定\n",
+            encoding="utf-8",
+        )
+        location = root / SETTING_DIR_NAME / "地点" / "城门.md"
+        location.parent.mkdir(parents=True)
+        location.write_text(
+            "# 城门\n\n| 字段 | 值 |\n|---|---|\n| 状态 | 可通行 |\n",
+            encoding="utf-8",
+        )
+        (root / TRACKING_DIR_NAME / "上下文.md").write_text(
+            "# 当前上下文\n\n- 当前位置：追踪专用地点\n", encoding="utf-8"
+        )
+        (root / TRACKING_DIR_NAME / "角色状态.md").write_text(
+            "# 角色状态\n\n## 追踪英雄\n\n- 位置：追踪专用地点\n- 状态：追踪状态\n",
+            encoding="utf-8",
+        )
+        (root / TRACKING_DIR_NAME / "伏笔.md").write_text(
+            "# 伏笔\n\n| ID | 内容 | 状态 |\n|---|---|---|\n"
+            "| tracker-thread | 追踪投影中的未决线索 | open |\n",
+            encoding="utf-8",
+        )
+        (root / TRACKING_DIR_NAME / "时间线.md").write_text(
+            "# 时间线\n\n| ID | 章节 | 地点 | 事件 |\n|---|---:|---|---|\n"
+            "| tracker-gate | 10 | 追踪专用地点 | 追踪投影声称门被打开 |\n",
+            encoding="utf-8",
         )
         legacy = root / ".novelagent" / "runtime" / "runs" / "legacy.json"
         legacy.parent.mkdir(parents=True)
@@ -70,7 +102,9 @@ class StoryProjectMigrationExecutionTest(unittest.TestCase):
                 {"id": "thread-door", "status": "open", "description": "door remains open"}
             ],
             "inventory": {"hero": {"key": 1, "water": 0}},
-            "lexicon": {"black_tide": {"known_by": ["hero"]}},
+            "lexicon": {
+                "black_tide": {"definition": "A dangerous black tide", "known_by": ["hero"]}
+            },
             "corruption": {"hero": 3},
         }
 
@@ -108,11 +142,76 @@ class StoryProjectMigrationExecutionTest(unittest.TestCase):
         self.assertEqual(["genesis", "source_sync"], [item["publication_status"] for item in batches])
         replay = replay_memory_events(memory_root / "events")
         self.assertEqual(result["head_event_hash"], replay["projection"]["head_event_hash"])
-        self.assertEqual([], replay["projection"]["timeline"])
+        projection = replay["projection"]
+        self.assertEqual([], projection["timeline"])
+        self.assertIn("世界", projection["world"]["settings"])
+        self.assertIn("城门", {item["name"] for item in projection["locations"].values()})
+        self.assertTrue(projection["constraints"])
+        self.assertTrue(all(item["status"] == "active" for item in projection["constraints"]))
+        hero = projection["characters"]["character_hero"]
+        self.assertEqual("gate", hero["state"]["current_location"])
+        self.assertEqual("injured", hero["data"]["approved_fields"]["condition"])
+        self.assertEqual(
+            {"hero": "gate"},
+            projection["current_state"]["spatial_state"]["character_positions"],
+        )
+        self.assertIn("thread_thread-door", projection["foreshadowing"])
+        self.assertEqual("door remains open", projection["open_threads"][0]["title"])
+        serialized_projection = json.dumps(projection, ensure_ascii=False, sort_keys=True)
+        self.assertNotIn("追踪投影声称门被打开", serialized_projection)
+        self.assertNotIn("追踪投影中的未决线索", serialized_projection)
+        self.assertNotIn("追踪专用地点", serialized_projection)
+        self.assertNotIn("追踪英雄", serialized_projection)
+        self.assertNotIn("追踪状态", serialized_projection)
+        self.assertNotIn("OUTLINE_ONLY_SENTINEL", serialized_projection)
         self.assertEqual(11, replay["projection"]["current_state"]["chapter_index"])
         checkpoint = next((memory_root / "events" / "checkpoints").glob("*.json"))
         checkpoint_payload = json.loads(checkpoint.read_text(encoding="utf-8"))
         self.assertEqual(0, checkpoint_payload["committed_chapter_count"])
+        baseline_path = next(
+            (root / ".novelagent" / "migration-v2" / "artifacts" / "baselines").glob(
+                "*.json"
+            )
+        )
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        source_sync = batches[1]
+        operations = source_sync["patch"]["operations"]
+        operations_hash = canonical_json_hash(operations)
+        self.assertEqual(
+            operations_hash, source_sync["patch"]["metadata"]["operations_hash"]
+        )
+        self.assertEqual(operations_hash, baseline["baseline_audit"]["operations_hash"])
+        self.assertEqual(
+            canonical_json_hash(
+                baseline["baseline_audit"], exclude_fields=("audit_hash",)
+            ),
+            baseline["baseline_audit"]["audit_hash"],
+        )
+        self.assertEqual(
+            canonical_json_hash(baseline, exclude_fields=("manifest_hash",)),
+            baseline["manifest_hash"],
+        )
+        serialized_operations = json.dumps(operations, ensure_ascii=False, sort_keys=True)
+        for sentinel in (
+            "追踪投影声称门被打开",
+            "追踪投影中的未决线索",
+            "追踪专用地点",
+            "追踪英雄",
+            "追踪状态",
+            "OUTLINE_ONLY_SENTINEL",
+        ):
+            self.assertNotIn(sentinel, serialized_operations)
+        self.assertEqual(
+            {"static_constraint", "user_approved_decision"},
+            {item["data"]["evidence_class"] for item in operations},
+        )
+        self.assertFalse(baseline["history_policy"]["tracking_projection_imported_as_fact"])
+        self.assertEqual(10, len(baseline["baseline_audit"]["published_prose_import"]))
+        self.assertEqual(1, baseline["baseline_audit"]["excluded_unknown"]["timeline_count"])
+        self.assertEqual(
+            result["record"]["semantic_baseline_hash"],
+            baseline["baseline_audit"]["semantic_baseline_hash"],
+        )
         for relative, content in preserved.items():
             self.assertEqual(content, (root / relative).read_bytes(), relative)
 
@@ -140,6 +239,132 @@ class StoryProjectMigrationExecutionTest(unittest.TestCase):
         self.assertEqual(identity_before, project_identity_path(root).read_bytes())
         self.assertFalse((root / ".novelagent" / "runtime" / "memory" / "v2").exists())
         self.assertFalse((root / ".novelagent" / "migration-v2").exists())
+
+    def test_completed_migration_remains_idempotent_after_legal_chapter(self) -> None:
+        root = self._book("idempotent_after_chapter")
+        plan, approval = self._approved(root)
+        migrated = execute_event_authority_migration(
+            root,
+            plan=plan,
+            approval=approval,
+        )
+        memory_root = root / ".novelagent" / "runtime" / "memory" / "v2"
+        body = "Chapter eleven advances the canonical story."
+        prepared = prepare_event_authority_chapter_commit(
+            memory_root=memory_root,
+            book_id=plan["book_id"],
+            run_id="legal-chapter-11",
+            chapter_index=11,
+            analysis={
+                "summary": "Chapter eleven advances.",
+                "events": [{"text": "The story advances."}],
+                "character_changes": [],
+                "world_changes": [],
+                "new_locations": [],
+                "story_state": {},
+                "spatial_state": {},
+            },
+            chapter_body=body,
+            chapter_body_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            evidence_spans=[{"start": 0, "end": 7, "quote": "Chapter"}],
+            authority_epoch=1,
+            expected_head_event_hash=migrated["head_event_hash"],
+            source_project_digest="a" * 64,
+            context_digest="b" * 64,
+            checkpoint_interval=1,
+        )
+        for target in prepared["targets"]:
+            target["path"].parent.mkdir(parents=True, exist_ok=True)
+            target["path"].write_text(target["content"], encoding="utf-8")
+        identity = load_project_identity(root)
+        identity_payload = identity.to_dict()
+        identity_payload["authority"]["head_event_hash"] = prepared["projection"][
+            "head_event_hash"
+        ]
+        project_identity_path(root).write_text(
+            json.dumps(identity_payload, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+
+        repeated = execute_event_authority_migration(
+            root,
+            plan=plan,
+            approval=approval,
+        )
+
+        self.assertTrue(repeated["idempotent"])
+        self.assertEqual(migrated["head_event_hash"], repeated["baseline_head_event_hash"])
+        self.assertEqual(
+            prepared["projection"]["head_event_hash"],
+            repeated["head_event_hash"],
+        )
+        self.assertEqual(
+            ["genesis", "source_sync", "chapter"],
+            [
+                item["batch_kind"]
+                for item in load_memory_event_batches(memory_root / "events")
+            ],
+        )
+
+        latest_checkpoint = sorted(
+            (memory_root / "events" / "checkpoints").glob("checkpoint_*.json")
+        )[-1]
+        checkpoint_payload = json.loads(
+            latest_checkpoint.read_text(encoding="utf-8-sig")
+        )
+        checkpoint_payload["projection"]["world"]["absolute_path"] = "forged"
+        latest_checkpoint.write_text(
+            json.dumps(checkpoint_payload, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        canonical_path = memory_root / "canonical_memory.json"
+        canonical_payload = json.loads(canonical_path.read_text(encoding="utf-8-sig"))
+        canonical_payload["world"]["absolute_path"] = "forged"
+        canonical_path.write_text(
+            json.dumps(canonical_payload, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(MigrationExecutionError, "migration_baseline_drift"):
+            execute_event_authority_migration(root, plan=plan, approval=approval)
+
+    def test_completed_migration_rechecks_raw_baseline_artifact_bytes(self) -> None:
+        root = self._book("raw_baseline_receipt_binding")
+        plan, approval = self._approved(root)
+        execute_event_authority_migration(root, plan=plan, approval=approval)
+        event_store = root / ".novelagent" / "runtime" / "memory" / "v2" / "events"
+        source_sync = load_memory_event_batches(event_store)[1]
+        source_sync_path = event_store / "batches" / f"{source_sync['batch_id']}.json"
+        payload = json.loads(source_sync_path.read_text(encoding="utf-8-sig"))
+        payload["patch"]["metadata"]["absolute_path"] = "forged"
+        source_sync_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            MigrationExecutionError, "migration_baseline_artifact_drift"
+        ):
+            execute_event_authority_migration(root, plan=plan, approval=approval)
+
+    def test_unbound_legacy_plan_is_rejected_before_any_migration_write(self) -> None:
+        root = self._book("unbound-plan")
+        plan, approval = self._approved(root)
+        identity_before = project_identity_path(root).read_bytes()
+        unbound = copy.deepcopy(plan)
+        unbound.pop("baseline_contract")
+        unbound["plan_hash"] = canonical_json_hash(
+            unbound, exclude_fields=("plan_hash",)
+        )
+
+        with self.assertRaisesRegex(MigrationV2Error, "migration_baseline_contract_unbound"):
+            execute_event_authority_migration(root, plan=unbound, approval=approval)
+
+        self.assertEqual(identity_before, project_identity_path(root).read_bytes())
+        self.assertFalse((root / ".novelagent" / "migration-v2").exists())
+        self.assertFalse((root / ".novelagent" / "runtime" / "memory" / "v2").exists())
 
     def test_source_drift_after_approval_expires_plan_before_bootstrap(self) -> None:
         root = self._book("source-drift")
@@ -208,9 +433,14 @@ class StoryProjectMigrationExecutionTest(unittest.TestCase):
         canonical_prose_path(root, 1).write_text(
             "Chapter one happened.\n", encoding="utf-8"
         )
+        for chapter in range(2, 10):
+            canonical_prose_path(root, chapter).write_text(
+                f"Chapter {chapter} happened.\n", encoding="utf-8"
+            )
         canonical_prose_path(root, 10).write_text(
             "Chapter ten opened the gate.\n", encoding="utf-8"
         )
+        canonical_outline_path(root, 10).write_text("# 第十章\n", encoding="utf-8")
         (root / SETTING_DIR_NAME / "world.md").write_text(
             "Gravity is constant.\n", encoding="utf-8"
         )

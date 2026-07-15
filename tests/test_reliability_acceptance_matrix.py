@@ -709,8 +709,15 @@ class ReliabilityAcceptanceMatrixTest(unittest.TestCase):
         canonical_prose_path(root, 1).write_bytes(
             "第一章发生过。\r\n".encode("utf-8")
         )
+        for chapter in range(2, 10):
+            canonical_prose_path(root, chapter).write_bytes(
+                f"Chapter {chapter} happened.\r\n".encode("utf-8")
+            )
         canonical_prose_path(root, 10).write_bytes(
             "第十章打开了门。\r\n".encode("utf-8")
+        )
+        (root / "大纲" / "细纲_第010章.md").write_bytes(
+            "# 第十章\r\n".encode("utf-8")
         )
         (root / SETTING_DIR_NAME / "世界.md").write_bytes(
             "重力恒定。\r\n".encode("utf-8")
@@ -738,7 +745,9 @@ class ReliabilityAcceptanceMatrixTest(unittest.TestCase):
                 }
             ],
             "inventory": {"hero": {"key": 1}},
-            "lexicon": {"black_tide": {"known_by": ["hero"]}},
+            "lexicon": {
+                "black_tide": {"definition": "A dangerous black tide", "known_by": ["hero"]}
+            },
             "corruption": {"hero": 3},
         }
 

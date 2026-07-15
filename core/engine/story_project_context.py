@@ -169,6 +169,21 @@ class StoryProjectContextService:
                     or (internal_snapshot is not None and snapshot_path.resolve() == internal_snapshot)
                 ),
             )
+        event_authority = bool(
+            identity is not None
+            and isinstance(identity.authority, dict)
+            and identity.authority.get("mode") == "event_v1"
+        )
+        if event_authority:
+            if context.get("story_state_mode") != "strict":
+                raise StoryProjectContextError(
+                    "event_authority_context_mode_invalid",
+                    "event-authority StoryProject context must use strict runtime isolation",
+                )
+            return (
+                StoryProjectContextService.apply_authority(context, snapshot),
+                _event_authority_memory_context(context, identity),
+            )
         merged_snapshot = _deep_merge_dict(snapshot, context.get("snapshot_overlay"))
         if identity is not None:
             merged_snapshot["book_id"] = identity.book_id
@@ -229,18 +244,15 @@ class StoryProjectContextService:
             except HistoricalRevisionError as exc:
                 raise StoryProjectContextError(exc.code, str(exc)) from exc
             canonical = canonical_memory_to_snapshot(projection)
-            merged = copy.deepcopy(snapshot)
-            for field, value in canonical.items():
-                merged[field] = copy.deepcopy(value)
-            merged["book_id"] = identity["book_id"]
-            merged["semantic_authority"] = {
+            canonical["book_id"] = identity["book_id"]
+            canonical["semantic_authority"] = {
                 "source": "memory_event_v2_2",
                 "reducer_version": "memory-reducer-2.2",
                 "authority_epoch": authority["authority_epoch"],
                 "head_event_hash": authority["head_event_hash"],
                 "parser_authoritative": False,
             }
-            return normalize_snapshot(merged)
+            return normalize_snapshot(canonical)
         merged = dict(snapshot)
         memory_v2 = context.get("memory_v2")
         projection = memory_v2.get("projection") if isinstance(memory_v2, dict) else None
@@ -270,7 +282,6 @@ class StoryProjectContextService:
             "provenance": copy.deepcopy(semantic.get("provenance") or []),
         }
         return normalize_snapshot(merged)
-
     @staticmethod
     def require_strict_writeback(
         context: dict[str, Any] | None,
@@ -328,6 +339,50 @@ class StoryProjectContextService:
         if current is not None and not current.ephemeral:
             assert_project_identity(stable, current.book_id, source="StoryProject executor configuration")
         return PreparedStoryProjectIdentity(stable.book_id, stable.to_dict(), allow_legacy)
+
+
+def _event_authority_memory_context(
+    context: dict[str, Any], identity: Any
+) -> dict[str, Any]:
+    """Expose only the current outline; legacy memory and run history are audit-only."""
+
+    overlay = context.get("memory_context_overlay")
+    raw_items = overlay.get("items") if isinstance(overlay, dict) else None
+    items: list[dict[str, Any]] = []
+    old_to_new: dict[int, int] = {}
+    if isinstance(raw_items, list):
+        for old_index, item in enumerate(raw_items):
+            if (
+                not isinstance(item, dict)
+                or item.get("source") != "story_project"
+                or item.get("name") != "current_outline"
+            ):
+                continue
+            old_to_new[old_index] = len(items)
+            items.append(copy.deepcopy(item))
+
+    mappings: list[dict[str, Any]] = []
+    raw_mappings = overlay.get("source_mappings") if isinstance(overlay, dict) else None
+    if isinstance(raw_mappings, list):
+        for mapping in raw_mappings:
+            if not isinstance(mapping, dict) or mapping.get("index") not in old_to_new:
+                continue
+            copied = copy.deepcopy(mapping)
+            copied["index"] = old_to_new[mapping["index"]]
+            mappings.append(copied)
+
+    return {
+        "source": "story_project_event_v1",
+        "status": "ready",
+        "items": items,
+        "source_mappings": mappings,
+        "story_project": {
+            "enabled": True,
+            "chapter_index": context.get("chapter_index"),
+            "book_id": identity.book_id,
+        },
+        "legacy_context_mode": "audit_only",
+    }
 
 
 def _deep_merge_dict(base: dict[str, Any], overlay: Any) -> dict[str, Any]:

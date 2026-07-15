@@ -118,6 +118,7 @@ def _narrative_rules_section(narrative_rules: str | None) -> str:
 def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
     if not isinstance(story_project_context, dict):
         return ""
+    event_authority = _uses_event_authority(story_project_context)
     payload = {
         "chapter_blueprint": story_project_context.get("chapter_blueprint"),
         "read_set_context_digest": (
@@ -132,15 +133,74 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
             for key in ("status", "revision", "projection_hash")
         },
         "tracking_excerpts": _compact_story_sources(
-            story_project_context.get("tracking_files"), excerpt_chars=2000
+            {} if event_authority else story_project_context.get("tracking_files"),
+            excerpt_chars=2000,
         ),
         "setting_excerpts": _compact_story_sources(
-            story_project_context.get("setting_files"), excerpt_chars=1200
+            {} if event_authority else story_project_context.get("setting_files"),
+            excerpt_chars=1200,
         ),
-        "source_paths": story_project_context.get("source_paths"),
-        "source_resolution": story_project_context.get("source_resolution"),
+        "source_paths": _prompt_source_paths(story_project_context, event_authority),
+        "source_resolution": _prompt_source_resolution(
+            story_project_context, event_authority
+        ),
     }
     return "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+
+
+def _uses_event_authority(context: dict[str, Any]) -> bool:
+    identity = context.get("project_identity")
+    authority = identity.get("authority") if isinstance(identity, dict) else None
+    return isinstance(authority, dict) and authority.get("mode") == "event_v1"
+
+
+def _prompt_source_paths(
+    context: dict[str, Any], event_authority: bool
+) -> Any:
+    value = context.get("source_paths")
+    if not event_authority or not isinstance(value, dict):
+        return value
+    return {
+        key: value.get(key)
+        for key in (
+            "story_project_root",
+            "outline_path",
+            "previous_prose_path",
+        )
+    }
+
+
+def _prompt_source_resolution(
+    context: dict[str, Any], event_authority: bool
+) -> Any:
+    value = context.get("source_resolution")
+    if not event_authority:
+        return value
+    entries = value.get("entries") if isinstance(value, dict) else None
+    safe_entries = [
+        entry
+        for entry in (entries if isinstance(entries, list) else [])
+        if isinstance(entry, dict)
+        and entry.get("field") not in {"tracking_context", "setting_context"}
+    ]
+    return {
+        "precedence": [
+            "current_outline_or_user_input",
+            "canonical_memory_event_v2_2",
+            "previous_prose",
+            "model_inference",
+        ],
+        "entries": [
+            {
+                "field": "story_state",
+                "chosen_source": "canonical_memory_event_v2_2",
+                "discarded_sources": ["legacy_markdown"],
+                "reason": "event_authority_precedes_legacy_projections",
+            },
+            *safe_entries,
+        ],
+        "legacy_markdown_prompt_mode": "audit_only",
+    }
 
 
 def _compact_story_sources(value: Any, *, excerpt_chars: int) -> dict[str, Any]:
