@@ -11,6 +11,7 @@ from core.memory_v2.events import (
     MEMORY_EVENT_SCHEMA_VERSION,
     TYPED_MEMORY_EVENT_SCHEMA_VERSION,
     create_memory_event,
+    upcast_memory_event,
     validate_memory_event,
 )
 from core.memory_v2.models import create_empty_canonical_memory, create_empty_typed_canonical_memory
@@ -189,7 +190,7 @@ def validate_memory_event_batch(batch: Any) -> dict[str, Any]:
     if memory_patch_content_hash(patch) != validated["patch_content_hash"]:
         raise MemoryIntegrityError("batch patch content hash mismatch")
 
-    events = [validate_memory_event(event) for event in validated["events"]]
+    events = [upcast_memory_event(event) for event in validated["events"]]
     if any(event.get("schema_version") != MEMORY_EVENT_SCHEMA_VERSION for event in events):
         raise MemoryIntegrityError("Memory 2.1 batch contains a legacy event")
     revisions = [int(event["revision"]) for event in events]
@@ -345,7 +346,7 @@ def _validate_memory_event_batch_v22(batch: dict[str, Any]) -> dict[str, Any]:
     if memory_patch_content_hash(patch) != validated["patch_content_hash"]:
         raise MemoryIntegrityError("batch patch content hash mismatch")
 
-    events = [validate_memory_event(event) for event in validated["events"]]
+    events = [upcast_memory_event(event) for event in validated["events"]]
     if any(event.get("schema_version") != "2.2" or event.get("reducer_version") != reducer for event in events):
         raise MemoryIntegrityError("Memory 2.2 batch contains an event with a mismatched version")
     revisions = [int(event["revision"]) for event in events]

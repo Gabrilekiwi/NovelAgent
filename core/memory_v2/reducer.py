@@ -9,6 +9,7 @@ from core.memory_v2.canonical import canonical_json_hash
 from core.memory_v2.events import (
     TYPED_MEMORY_EVENT_SCHEMA_VERSION,
     create_memory_event,
+    upcast_memory_event,
     validate_memory_event,
 )
 from core.memory_v2.models import TYPED_CANONICAL_MEMORY_SCHEMA_VERSION
@@ -461,7 +462,7 @@ def apply_memory_events(
     if working.get("schema_version") != "2.2":
         raise MemoryReducerError("memory-reducer-2.2 requires CanonicalMemory 2.2")
     for raw_event in events:
-        event = validate_memory_event(raw_event)
+        event = upcast_memory_event(raw_event)
         if event.get("schema_version") != "2.2" or event.get("reducer_version") != version:
             raise MemoryReducerError("event schema/reducer does not match memory-reducer-2.2")
         if int(event["authority_epoch"]) != int(working["authority_epoch"]):

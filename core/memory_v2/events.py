@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -118,6 +119,26 @@ def validate_memory_event(event: Any, *, chapter_body: str | None = None) -> dic
     return validated
 
 
+def upcast_memory_event(
+    event: Any, *, chapter_body: str | None = None
+) -> dict[str, Any]:
+    """Build the deterministic in-memory read view of an immutable event.
+
+    Memory 2.0 predates the tamper-evident ``event_hash`` envelope. Readers
+    upgrade that envelope to 2.1 without rewriting source bytes. The legacy
+    view intentionally stops at 2.1: a reader must not invent the prose
+    evidence, preconditions, or authority binding required by typed 2.2.
+    """
+
+    validated = validate_memory_event(event, chapter_body=chapter_body)
+    if validated.get("schema_version") != LEGACY_MEMORY_EVENT_SCHEMA_VERSION:
+        return validated
+    upgraded = copy.deepcopy(validated)
+    upgraded["schema_version"] = MEMORY_EVENT_SCHEMA_VERSION
+    upgraded["event_hash"] = memory_event_hash(upgraded)
+    return validate_memory_event(upgraded, chapter_body=chapter_body)
+
+
 def create_memory_event_context(
     *,
     chapter_body: str,
@@ -138,7 +159,7 @@ def create_memory_event_context(
 
 
 def verify_memory_event_evidence(event: dict[str, Any], chapter_body: str) -> bool:
-    validate_memory_event(event, chapter_body=chapter_body)
+    upcast_memory_event(event, chapter_body=chapter_body)
     return True
 
 
@@ -285,7 +306,7 @@ def memory_event_hash(event: dict[str, Any]) -> str:
 
 
 def reducer_version_for_event(event: dict[str, Any]) -> str:
-    validated = validate_memory_event(event)
+    validated = upcast_memory_event(event)
     if validated.get("schema_version") in {LEGACY_MEMORY_EVENT_SCHEMA_VERSION, MEMORY_EVENT_SCHEMA_VERSION}:
         return LEGACY_REDUCER_VERSION
     return str(validated["reducer_version"])
@@ -331,7 +352,7 @@ def load_memory_events(path: str | Path) -> list[dict[str, Any]]:
                 raise MemoryEventValidationError(f"{event_path} line {line_number} is not valid JSON") from exc
             if not isinstance(payload, dict):
                 raise MemoryEventValidationError(f"{event_path} line {line_number} must be a JSON object")
-            events.append(validate_memory_event(payload))
+            events.append(upcast_memory_event(payload))
     return events
 
 
@@ -348,6 +369,7 @@ __all__ = [
     "load_memory_events",
     "memory_event_hash",
     "reducer_version_for_event",
+    "upcast_memory_event",
     "verify_memory_event_evidence",
     "validate_memory_event",
 ]

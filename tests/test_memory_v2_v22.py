@@ -30,6 +30,7 @@ from core.memory_v2 import (
     create_memory_patch,
     load_memory_event_batches,
     load_memory_events,
+    memory_event_hash,
     memory_patch_content_hash,
     memory_projection_hash,
     rebuild_canonical_memory,
@@ -104,7 +105,16 @@ class MemoryV22Test(unittest.TestCase):
             + os.linesep
         ).encode("utf-8")
         self.assertEqual(expected20, legacy_path.read_bytes())
-        self.assertEqual([legacy20], load_memory_events(legacy_path))
+        before_read = legacy_path.read_bytes()
+        loaded = load_memory_events(legacy_path)
+        self.assertEqual(before_read, legacy_path.read_bytes())
+        self.assertEqual("2.1", loaded[0]["schema_version"])
+        self.assertEqual(memory_event_hash(loaded[0]), loaded[0]["event_hash"])
+        self.assertEqual(
+            "9171ce099a6408e06153242811148d805f8aa1b6d31e40044fec22d9edfdf611",
+            loaded[0]["event_hash"],
+        )
+        self.assertNotEqual(legacy20, loaded[0])
 
     def test_legacy_batch_checkpoint_and_projection_hashes_are_frozen(self) -> None:
         memory = create_empty_canonical_memory(book_id="b", title="B")

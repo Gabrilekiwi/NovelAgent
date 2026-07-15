@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unittest
 import uuid
 from pathlib import Path
@@ -10,6 +11,8 @@ from core.memory_v2 import (
     append_memory_events,
     create_memory_event,
     load_memory_events,
+    memory_event_hash,
+    upcast_memory_event,
     validate_memory_event,
 )
 
@@ -46,6 +49,13 @@ class MemoryV2EventsTest(unittest.TestCase):
         event.pop("event_hash")
 
         self.assertIs(event, validate_memory_event(event))
+        before = copy.deepcopy(event)
+        first = upcast_memory_event(event)
+        second = upcast_memory_event(event)
+        self.assertEqual(before, event)
+        self.assertEqual(first, second)
+        self.assertEqual("2.1", first["schema_version"])
+        self.assertEqual(memory_event_hash(first), first["event_hash"])
 
     def test_rejects_tampered_21_event(self) -> None:
         event = self._event()
