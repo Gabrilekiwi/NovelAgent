@@ -87,13 +87,14 @@ or delivery gap fails without producing a successful report.
 
 ## Current real-gate status
 
-On 2026-07-15 an explicitly authorized one-chapter attempt entered the normal
-runner/provider path but failed before completing a chapter. The then-current
-harness reduced the exception to `autonomy_execution_failed` and did not retain
-enough redacted diagnostics to prove the exact provider cause. It is therefore
-failure evidence only, not a successful one-chapter report. The corresponding
-four-chapter gate was not started. No Notion call was made. A new exact,
-count-bound authorization is required for any later billable gate.
+On 2026-07-15 the first one-chapter gate of the user's five-chapter authorization
+entered the normal runner/provider path but failed before completing a chapter.
+The then-current harness reduced the exception to `autonomy_execution_failed`
+and did not retain enough redacted diagnostics to prove the exact provider
+cause. It is therefore failure evidence only, not a successful one-chapter
+report. The four-chapter gate was not started, and that old authorization is now
+consumed. No Notion call was made. A new exact, count-bound authorization is
+required for any later billable gate.
 
 `tests/test_real_autonomy_e2e.py` exercises the full path with an in-memory
 fake OpenAI SDK. It performs no network call and verifies that Notion entry

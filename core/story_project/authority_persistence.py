@@ -11,9 +11,11 @@ a logical ``PathRef``.  Adding or remapping a logical root is forbidden while
 ``ea/r/p`` or ``ea/r/x`` contains an entry, and a binding mismatch fails closed
 as recovery-required rather than treating the original transaction as absent.
 
-Root relocation moves no data.  It is an explicit, idle-only control-plane
-operation; the runtime root remains non-remappable without a separate
-persistence control-plane relocation.
+A single-registry root remap moves no data and cannot rebind its own runtime
+control plane.  Whole-StoryProject relocation is instead coordinated after an
+operator-controlled same-volume rename: the project-level remap service locks,
+validates, and forward-rebinds every recognized embedded registry as one
+recoverable operation, with the main registry published last.
 """
 
 import copy
