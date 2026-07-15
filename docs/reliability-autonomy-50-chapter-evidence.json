@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "gate": "50_chapter_deterministic_autonomy_simulation",
+  "classification": "synthetic_deterministic_not_real_provider_or_target_book",
+  "tested_code_commit": "4cf3b45c7bbe89450d2d4babbc4aadbba1e48ff0",
+  "test": "tests.test_autonomy_runner_e2e.AutonomyRunnerE2ETest.test_fifty_chapter_deterministic_acceptance",
+  "invocation": {
+    "environment": {
+      "NOVELAGENT_RUN_50_CHAPTER_SIM": "1"
+    },
+    "command_equivalent": "python -B -m unittest tests.test_autonomy_runner_e2e.AutonomyRunnerE2ETest.test_fifty_chapter_deterministic_acceptance",
+    "trusted_max_wall_seconds": 3600,
+    "executor_dry_run": true,
+    "real_provider_calls": 0,
+    "notion_calls": 0
+  },
+  "result": {
+    "status": "passed",
+    "started_at": "2026-07-15T04:20:59.117997Z",
+    "finished_at": "2026-07-15T04:43:44.560437Z",
+    "duration_seconds": 1365.453,
+    "tests_run": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "unittest_terminal_status": "OK"
+  },
+  "asserted_outcomes": {
+    "stopped_reason": "completed",
+    "completed_count": 50,
+    "executor_request_count": 50,
+    "required_file_delivery_json_count": 50,
+    "first_delivery_chapter": 1,
+    "last_delivery_chapter": 50,
+    "arc_adjustment_count": 49,
+    "arc_adjustment_chapter_range": [2, 50]
+  },
+  "post_run_verification": {
+    "unit_tests": 1194,
+    "unit_test_failures": 0,
+    "unit_test_errors": 0,
+    "unit_test_skipped": 6,
+    "preflight_checks_passed": 21,
+    "preflight_checks_failed": 0,
+    "smoke_v1": "passed"
+  },
+  "capture": {
+    "temporary_result_source": ".tmp/acceptance_50/result.json",
+    "temporary_log_source": ".tmp/acceptance_50/unittest.log",
+    "temporary_workspace": ".tmp/ar/2e73ffb9",
+    "note": "The temporary sources are gitignored; this version-controlled file retains their redacted result summary and binds it to the tested code commit."
+  },
+  "claim_boundary": [
+    "This closes only the synthetic 50-chapter long-run gate.",
+    "It is not real-provider, target-book, token-calibration, or generation-quality evidence.",
+    "It does not satisfy the real 1-, 4-, 10-, or 20-or-more-chapter gates.",
+    "It does not enable autonomy by default.",
+    "No Notion read or write was performed."
+  ]
+}

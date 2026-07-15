@@ -1,10 +1,19 @@
 # Project Progress
 
-Last updated: 2026-07-13
+Last updated: 2026-07-15
+
+Current reliability/autonomy claims are governed by the four-level [Reliability and autonomy capability status](reliability-autonomy-capability-status.md): code exists, main-path integration, default enablement, and real verification. Synthetic verification is recorded separately and never promoted to real evidence. Historical completion notes below do not imply that the new autonomy path is default-enabled or real-verified. See [Real autonomy E2E release gates](real-autonomy-e2e.md) for the separate billable gate.
+
+Current upgrade evidence snapshot:
+
+- **Code/integration:** the Python `RootRegistry` service can explicitly remap an EA-global/StoryProject data root only when no transaction is pending and no session is active. It is not a unified relocation path: the StoryProject-embedded Persistence v2 runtime control plane is not moved, and no `remap-roots` CLI or orchestration workflow exists. `RootRegistry` is the unique mutable EA physical-root mapping, while immutable historical manifests may retain absolute-path snapshots.
+- **Synthetic verification:** a complete 50-chapter deterministic autonomy simulation passed against code commit `4cf3b45` in 1365.453 seconds, with 50 completed chapters, 50 executor requests, 50 required File Delivery JSON artifacts, and 49 linear next-target Arc adjustments. See the [retained evidence report](reliability-autonomy-50-chapter-evidence.json). This closes only the synthetic long-run gate.
+- **Real verification:** the current process has no release-authorized `OPENAI_API_KEY`, no matching count-bound opt-in sentinel, and no retained 1/4/10/20+ report. The real harness disables workspace `.env` loading. No Notion call was made in this upgrade run, and the real-autonomy gate forbids Notion access.
+- **Default enablement:** autonomy and event-authority migration remain explicit/conditional. Neither default autonomous generation nor default end-to-end whole-project movement is claimed.
 
 ## Reliable semantic production status
 
-Commits 1–14 of `docs/reliable-semantic-production-plan.md` are implemented. The current StoryProject default remains shadow. Strict authority now requires a qualified target-book calibration report and explicit activation; the committed synthetic fixtures do not qualify a real target book. Strict execution is fail-closed on pinned profile drift and requires transactional apply writeback for persistent runs.
+The code and local-test scope of commits 1–14 in `docs/reliable-semantic-production-plan.md` is complete. The current StoryProject default remains shadow. Strict authority now requires a qualified target-book calibration report and explicit activation; the committed synthetic fixtures do not qualify a real target book. Strict execution is fail-closed on pinned profile drift and requires transactional apply writeback for persistent runs.
 
 The offline two-chapter strict integration gate proves that chapter N+1 reads chapter N prose, managed semantic projection, and the incremented replayable Memory V2.1 revision. The billable real OpenAI two-chapter gate is present as an explicit opt-in and remains unexecuted unless a redacted real sample, its qualified calibration report, and provider credentials are supplied.
 
@@ -26,7 +35,7 @@ Phase 2, validation layering, is complete. Rule validation remains the required 
 
 Phase 3, generation pipeline split, is complete. Chapter generation is split into `plan_chapter`, `generate_scenes`, `merge_scenes`, `validate`, `repair`, and `commit`. Runtime records and artifacts include the chapter plan, scene drafts, merged chapter, validation report, repair deltas, and scene span metadata.
 
-Phase 4, real provider smoke, is complete. The successful acceptance run used `--no-proxy` because the local proxy environment previously pointed provider SDK traffic at a dead proxy. The real smoke report passed all required checks:
+Phase 4 records a historical v1.5 provider-smoke run. It is not evidence for the current event-authority/autonomy 1/4/10/20+ gates. At the time, the acceptance run used `--no-proxy` because the local proxy environment previously pointed provider SDK traffic at a dead proxy, and its report recorded these checks:
 
 - OpenAI Director
 - OpenAI chapter generation
@@ -72,9 +81,9 @@ Phase 6, v1.5 operational usability, is complete. Problems found during real mul
 - Recovery tooling: explicit latest-draft recovery for failed or rejected runs.
 - Snapshot maintenance: UTF-8 inspection and normalization script for runtime JSON files.
 
-## Latest Verification
+## Earlier baseline verification
 
-The latest verified local gates passed:
+The following result was recorded for the earlier v1.5 baseline. It is not the current reliability/autonomy acceptance result and must not be used as real-autonomy evidence:
 
 ```bash
 python -m pytest -p no:cacheprovider

@@ -4,6 +4,10 @@ Version: 1.5 compatibility baseline with opt-in reliable semantic production
 
 NovelAgent keeps the v1.5-compatible agent loop and adds an opt-in reliable semantic production path for StoryProject: calibrated semantic authority, field provenance, managed tracking projections, Memory V2.1 replay, receipt-backed persistence, durable delivery, and unified provider retry policy.
 
+Reliability/autonomy claims are tracked by four separate levels—code exists, main-path integration, default enablement, and real verification—in the [Reliability and autonomy capability status](docs/reliability-autonomy-capability-status.md). Synthetic evidence is listed separately and is never treated as real-provider evidence. A complete 50-chapter deterministic simulation passed against code commit `4cf3b45` in 1365.453 seconds; the [retained evidence report](docs/reliability-autonomy-50-chapter-evidence.json) closes only the synthetic long-run gate and does not enable autonomy by default. The billable 1/4/10/20+ gate is documented in [Real autonomy E2E release gates](docs/real-autonomy-e2e.md); this process has no release-authorized `OPENAI_API_KEY`, no matching count-bound opt-in sentinel, and no retained report for those gates. Workspace `.env` loading is disabled by that harness. No Notion call was made in this upgrade run.
+
+Project movement is also not a default capability. The Python `RootRegistry` service can explicitly remap an EA-global/StoryProject data root only when it has no pending transaction and no active session. It does not relocate the StoryProject-embedded Persistence v2 runtime control plane, and there is no `remap-roots` CLI or unified relocation workflow. `RootRegistry` is the unique mutable Event Authority physical-root mapping; immutable historical manifests may retain absolute-path snapshots.
+
 Current v1.5 flow:
 
 ```text
@@ -181,3 +185,5 @@ The v1.5 project contract keeps the established directory layout and legacy wrap
 - [Memory Input](docs/memory.md)
 - [Story State Calibration and Strict Activation](docs/story-state-activation.md)
 - [Real StoryProject Two-Chapter E2E](docs/real-storyproject-e2e.md)
+- [Reliability and autonomy capability status](docs/reliability-autonomy-capability-status.md)
+- [Real autonomy E2E release gates](docs/real-autonomy-e2e.md)

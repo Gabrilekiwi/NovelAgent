@@ -24,6 +24,10 @@ Pinned parser/schema/layout drift fails before provider generation. `--allow-sto
 
 The billable two-chapter real OpenAI gate is isolated in `scripts/real_storyproject_e2e.py`, is skipped by default, and emits a schema-checked redacted report. See [Real StoryProject Two-Chapter E2E](real-storyproject-e2e.md).
 
+The newer reliability/autonomy path has a separate claim boundary. See the [Reliability and autonomy capability status](reliability-autonomy-capability-status.md) before treating source or synthetic tests as real release evidence. A complete 50-chapter deterministic simulation passed against code commit `4cf3b45` in 1365.453 seconds; its [retained report](reliability-autonomy-50-chapter-evidence.json) closes only the synthetic long-run gate. The opt-in, billable 1/4/10/20+ harness is documented in [Real autonomy E2E release gates](real-autonomy-e2e.md). The current process has no release-authorized `OPENAI_API_KEY`, no matching count-bound opt-in sentinel, and no retained report for those gates; the harness disables workspace `.env` loading, so autonomy remains opt-in. It rejects every Notion setting and allows only required trusted File Delivery; no Notion call was made in this upgrade run.
+
+Runtime relocation has a narrower boundary than whole-project movement. The Python `RootRegistry` service may explicitly remap an EA-global/StoryProject data root only with no pending transaction and no active session. It does not relocate the embedded Persistence v2 runtime control plane, and there is no `remap-roots` CLI or unified orchestration. `RootRegistry` is the unique mutable EA physical-root mapping, not the only persisted absolute-path record: immutable historical manifests may retain absolute-path snapshots.
+
 Initialize local runtime state from committed examples:
 
 ```bash
@@ -138,7 +142,7 @@ python main.py --story-project auto --chapter 2 --steps 2 --story-project-writeb
 
 StoryProject `--steps > 1` requires real `--story-project-writeback`; it rejects global dry-run, writeback preview, and writeback-disabled combinations. The first explicit `--chapter N` is the starting chapter. Each later step rebuilds StoryProject Context from current files and advances to `N+1` only after a complete transaction. With `--chapter auto`, a rescan that does not equal the expected next chapter stops with `story_project_sequence_drift`. `--continue-on-rejection` consumes an attempt but retries the same chapter; context failure, writeback failure, or a missing next outline always stops before another provider call.
 
-Every persistent accepted run uses a local journal under `<run-dir>/transactions/<run-id>/`. StoryProject prose/tracking targets and Snapshot are committed with before/after hashes and a durable marker before the final chapter artifact and RunRecord are published. Startup reconciles unfinished journals automatically; the explicit recovery-only command is:
+Legacy/local persistence accepted runs use a journal under `<run-dir>/transactions/<run-id>/`. Event-authority runs instead use the project-local Persistence v2.1 control plane behind the Event Authority global recovery barrier. Both paths bind StoryProject prose/tracking targets and Snapshot with before/after hashes and a durable marker before the final chapter artifact and RunRecord are published. Startup reconciles unfinished local journals automatically; the explicit legacy/local recovery-only command is:
 
 ```bash
 python main.py --reconcile-persistence --run-dir .tmp/runtime/runs

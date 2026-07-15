@@ -1,8 +1,12 @@
 # StoryProject v2 Progress
 
+The current reliability/autonomy claim boundary is the four-level [Reliability and autonomy capability status](reliability-autonomy-capability-status.md). Synthetic checks are not real verification: a complete 50-chapter deterministic simulation passed against code commit `4cf3b45` in 1365.453 seconds ([retained report](reliability-autonomy-50-chapter-evidence.json)), but the current process has no release-authorized `OPENAI_API_KEY`, no matching count-bound opt-in sentinel, and no retained 1/4/10/20+ report. The real harness disables workspace `.env` loading. No Notion call was made in this upgrade run, and the synthetic pass does not enable autonomy by default.
+
+Whole-project relocation is not claimed. The Python `RootRegistry` service can explicitly remap an EA-global/StoryProject data root only with no pending transaction and no active session, but it does not move the StoryProject-embedded Persistence v2 runtime control plane. There is no `remap-roots` CLI or unified relocation orchestration. `RootRegistry` is the unique mutable EA physical-root mapping; immutable historical manifests may retain absolute-path snapshots.
+
 ## Phase 6: Reliable semantic production
 
-Status: all 14 reliable semantic production commits implemented.
+Capability status: code exists: yes; main-path integration: conditional on explicit StoryProject strict activation; default enablement: no (shadow remains the default); real verification: no retained target-book report for this claim.
 
 Completed:
 
@@ -13,7 +17,7 @@ Completed:
 - Read-set-bound local persistence, unified quality decisions, Memory V2.1 replay, publication receipts, durable delivery jobs, and unified provider retry profiles.
 - Tamper-evident calibration reports and explicit strict activation pinned to parser/schema/layout versions.
 - Strict authority injection before Director/Validator, fail-closed drift, explicit non-authoritative downgrade, transactional strict writeback, and project-local Memory V2 chapter commits.
-- Offline two-chapter strict E2E plus a bounded, redacted, opt-in real OpenAI two-chapter E2E.
+- Offline two-chapter strict E2E plus code for a bounded, redacted, opt-in real OpenAI two-chapter harness; the harness is not itself real-run evidence.
 
 Not claimed:
 
@@ -29,7 +33,7 @@ Date: 2026-07-09
 
 ## Phase 0: StoryProject compatible baseline
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: conditional on an explicit StoryProject CLI selection; default enablement: no for legacy runs; real verification: no (local tests and smoke only).
 
 Completed:
 
@@ -72,7 +76,7 @@ Test results:
 
 ## Phase 0.1: hardening
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: yes where StoryProject path/storage helpers are used; default enablement: yes within those applicable operations; real verification: no (local tests and smoke only).
 
 Completed:
 
@@ -99,7 +103,7 @@ Test results:
 
 ## Phase 1: StoryProject -> Runtime mapping
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: conditional on StoryProject mode; default enablement: no for legacy runs; real verification: no (local tests and smoke only).
 
 Completed:
 
@@ -144,7 +148,7 @@ Explicitly not done in Phase 1:
 
 ## Phase 1.1: Runtime path normalization
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: yes within StoryProject mapping; default enablement: yes inside explicitly selected StoryProject mode, not globally; real verification: no (local tests and smoke only).
 
 Completed:
 
@@ -171,7 +175,7 @@ Next recommended step:
 
 ## Phase 2: Chapter Blueprint contract and coverage
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: conditional on StoryProject generation; default enablement: yes inside that explicitly selected mode, not globally; real verification: no (local tests and smoke only).
 
 Completed:
 
@@ -236,7 +240,7 @@ Explicitly not done in Phase 2:
 
 ## Phase 2.1: Run record validation coverage retention
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: conditional on StoryProject generation records; default enablement: yes inside that explicitly selected mode, not globally; real verification: no (local regression only).
 
 Completed:
 
@@ -264,7 +268,7 @@ Explicitly not done in Phase 2.1:
 
 ## Phase 3: StoryProject writeback
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: conditional on explicit StoryProject writeback; default enablement: no; real verification: no (local tests and smoke only).
 
 Completed:
 
@@ -327,7 +331,7 @@ Next recommended step:
 
 ## Phase 4: Review Repair Loop
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: conditional on explicit review/repair flags; default enablement: no; real verification: no (local tests and smoke only).
 
 Completed:
 
@@ -396,7 +400,7 @@ Next recommended step:
 
 ## Phase 5: oh-story Enhanced Detection / Compatibility Report
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: conditional on StoryProject preflight/report commands; default enablement: no outside those commands; real verification: no (local tests and smoke only).
 
 Completed:
 
@@ -452,7 +456,7 @@ Next recommended step:
 
 ## Current correctness hardening
 
-Status: implemented.
+Capability status: code exists: yes; main-path integration: yes for the applicable persistence and loop paths; default enablement: yes within those paths, with writeback and review still separately opt-in; real verification: no (local tests only for these hardening claims).
 
 - `accepted` now means Validation, Review, and Gate passed; `committed` means the persistence publication completed. Non-persistent accepted runs use `status="preview"`.
 - StoryProject and Snapshot writes use recoverable journals, before/after hashes, rollback, commit markers, deterministic reconciliation, and cross-process state locks. File Memory writeback is a post-commit idempotent outbox; direct Notion writeback remains outside the local transaction boundary.
