@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from core.engine.workflow import validate_workflow_plan
+from core.memory_v2.canonical import canonical_json_hash
 from core.schema import validate_schema
 from core.quality_decision import build_quality_decision, quality_decision_accepted
 
@@ -618,13 +620,179 @@ def _state_update_audit(
 
 def _analysis_summary(analysis: dict[str, Any]) -> dict[str, Any]:
     validated = validate_schema(analysis, "analysis_result.schema.json")
+    story_state = validated.get("story_state")
+    conflicts = [
+        item.strip()
+        for item in validated.get("conflicts", [])
+        if isinstance(item, str)
+        and item.strip()
+        and _contains_arc_signal(item, _ESCALATION_SIGNALS)
+    ]
+    events = [
+        {"text": item["text"].strip()}
+        for item in validated.get("events", [])
+        if isinstance(item, dict)
+        and isinstance(item.get("text"), str)
+        and item["text"].strip()
+    ]
+    relationship = [
+        {
+            key: item[key].strip()
+            for key in ("name", "status", "current_location", "current_goal", "text")
+            if isinstance(item.get(key), str) and item[key].strip()
+        }
+        for item in validated.get("character_changes", [])
+        if isinstance(item, dict) and _contains_arc_signal(item, _RELATIONSHIP_SIGNALS)
+    ]
+    resource_cost = [
+        {
+            key: item[key].strip()
+            for key in ("type", "text")
+            if isinstance(item.get(key), str) and item[key].strip()
+        }
+        for item in validated.get("world_changes", [])
+        if isinstance(item, dict) and _contains_arc_signal(item, _RESOURCE_COST_SIGNALS)
+    ]
+    resource_cost.extend(
+        {"type": "conflict_signal", "text": item}
+        for item in conflicts
+        if _contains_arc_signal(item, _RESOURCE_COST_SIGNALS)
+    )
+    fulfillment_evidence = {
+        "schema_version": "1.0",
+        "mainline": str(validated.get("summary", "")).strip(),
+        "relationship": relationship,
+        "escalation": {
+            "conflicts": conflicts,
+            "events": events,
+        },
+        "resource_cost": resource_cost,
+        "foreshadowing": [
+            item.strip()
+            for item in (
+                story_state.get("open_threads", [])
+                if isinstance(story_state, dict)
+                else []
+            )
+            if isinstance(item, str) and item.strip()
+        ],
+    }
+    fulfillment_evidence["evidence_hash"] = canonical_json_hash(
+        fulfillment_evidence
+    )
+    fulfillment_evidence = validate_schema(
+        fulfillment_evidence, "arc_fulfillment_evidence.schema.json"
+    )
     return {
         "validation_ok": validated.get("validation_ok"),
         "conflict_count": len(validated.get("conflicts", [])),
         "event_count": len(validated.get("events", [])),
         "world_change_count": len(validated.get("world_changes", [])),
         "summary": validated.get("summary", ""),
+        "fulfillment_evidence": fulfillment_evidence,
     }
+
+
+_RELATIONSHIP_SIGNALS = (
+    "ally",
+    "allied",
+    "allies",
+    "alliance",
+    "betray",
+    "betrayal",
+    "betrayed",
+    "bond",
+    "bonded",
+    "enemy",
+    "enemies",
+    "friend",
+    "friends",
+    "friendship",
+    "hate",
+    "hated",
+    "love",
+    "loved",
+    "relationship",
+    "relationships",
+    "trust",
+    "trusted",
+    "关系",
+    "信任",
+    "背叛",
+    "盟友",
+    "敌人",
+    "朋友",
+    "和解",
+    "决裂",
+)
+
+_RESOURCE_COST_SIGNALS = (
+    "cost",
+    "costly",
+    "costs",
+    "loss",
+    "losses",
+    "lost",
+    "sacrifice",
+    "sacrificed",
+    "spend",
+    "spent",
+    "spending",
+    "代价",
+    "损失",
+    "牺牲",
+    "消耗",
+    "付出",
+)
+
+_ESCALATION_SIGNALS = (
+    "attack",
+    "attacked",
+    "choice",
+    "choose",
+    "chosen",
+    "conflict",
+    "conflicts",
+    "crisis",
+    "danger",
+    "dangerous",
+    "escalate",
+    "escalation",
+    "infected",
+    "infection",
+    "rescue",
+    "rescued",
+    "secret",
+    "threat",
+    "threatened",
+    *_RESOURCE_COST_SIGNALS,
+    "冲突",
+    "危险",
+    "选择",
+    "威胁",
+    "感染",
+    "救援",
+    "秘密",
+)
+
+
+def _contains_arc_signal(value: Any, signals: tuple[str, ...]) -> bool:
+    if isinstance(value, dict):
+        text = " ".join(str(item) for item in value.values())
+    else:
+        text = str(value)
+    normalized = text.casefold()
+    for signal in signals:
+        candidate = signal.casefold()
+        if candidate.isascii():
+            if re.search(
+                rf"(?<![a-z0-9_]){re.escape(candidate)}(?![a-z0-9_])",
+                normalized,
+            ):
+                return True
+        elif candidate in normalized:
+            return True
+    return False
 
 
 def _analysis_items(analysis: dict[str, Any] | None, key: str) -> list[Any]:

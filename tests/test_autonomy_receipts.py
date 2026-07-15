@@ -4,12 +4,14 @@ import copy
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from core.autonomy.common import canonical_hash
+from core.autonomy.common import atomic_append_json, canonical_hash
 from core.autonomy.receipts import (
     AutonomyReceiptError,
     CompletionLedger,
     StageReceiptStore,
+    build_stage_lease_fence,
 )
 from core.stage_control import build_stage_authorization, build_stage_receipt
 from tests.test_autonomy_plans import instruction_plan, source_snapshot, workspace_case
@@ -100,6 +102,62 @@ def verify_publication(value: dict) -> dict:
 
 
 class DurableReceiptTest(unittest.TestCase):
+    def test_markerless_legacy_stage_receipt_remains_readable_but_cannot_be_newly_appended(self) -> None:
+        with workspace_case("legacy_stage_receipt") as temporary:
+            root = Path(temporary)
+            store = StageReceiptStore(root)
+            plan_id = instruction_plan()["plan_id"]
+            lease = store.leases.acquire(
+                book_id="book-autonomy",
+                session_id="session-receipts",
+                plan_id=plan_id,
+                ttl_seconds=3600,
+                at=NOW,
+            )
+            authorization, current = stage_pair(
+                chapter=11, stage="outline", plan_id=plan_id
+            )
+            legacy = dict(current)
+            legacy.pop("recovery_protocol")
+            legacy["receipt_hash"] = canonical_hash(
+                legacy, exclude_fields=("receipt_hash",)
+            )
+
+            with self.assertRaisesRegex(
+                AutonomyReceiptError, "stage_receipt_recovery_protocol_missing"
+            ):
+                store.append(
+                    legacy,
+                    authorization=authorization,
+                    expected_lease_hash=lease["lease_hash"],
+                    at=NOW,
+                )
+
+            directory = store._directory("session-receipts", 11)
+            fence = build_stage_lease_fence(
+                receipt=legacy,
+                authorization=authorization,
+                lease=lease,
+                fenced_at=NOW,
+            )
+            atomic_append_json(
+                directory
+                / "authorizations"
+                / f"{authorization['authorization_hash'][:20]}.json",
+                authorization,
+            )
+            atomic_append_json(
+                directory / "fences" / f"{legacy['receipt_hash'][:20]}.json",
+                fence,
+            )
+            atomic_append_json(
+                directory / f"0001-{legacy['receipt_hash'][:20]}.json",
+                legacy,
+            )
+            self.assertEqual(
+                [legacy], StageReceiptStore(root).load_chain("session-receipts", 11)
+            )
+
     def test_stage_receipts_are_append_only_chained_and_replay_safe(self) -> None:
         with workspace_case("stage_receipts") as temporary:
             root = Path(temporary)
@@ -364,20 +422,35 @@ class DurableReceiptTest(unittest.TestCase):
                 created_at=NOW,
             )
             self.assertEqual(first, replay)
-            self.assertEqual(
-                {
-                    "completed_count": 1,
-                    "completed_chapters": [11],
-                    "canonical_next_chapter": 12,
-                    "last_completion_receipt_hash": first["receipt_hash"],
-                    "expected_source_snapshot_hash": source_snapshot(
-                        chapter=12, digest="a" * 64
-                    )["snapshot_hash"],
-                    "delivery_blocked": True,
-                    "delivery_blocked_chapters": [11],
-                },
-                ledger.summary(),
-            )
+            with patch.object(ledger, "rebuild", wraps=ledger.rebuild) as rebuild:
+                self.assertEqual(
+                    {
+                        "completed_count": 1,
+                        "completed_chapters": [11],
+                        "canonical_next_chapter": 12,
+                        "last_completion_receipt_hash": first["receipt_hash"],
+                        "expected_source_snapshot_hash": source_snapshot(
+                            chapter=12, digest="a" * 64
+                        )["snapshot_hash"],
+                        "delivery_blocked": True,
+                        "delivery_blocked_chapters": [11],
+                    },
+                    ledger.summary(),
+                )
+                self.assertEqual(1, rebuild.call_count)
+
+            with patch.object(
+                stages.leases,
+                "load_history_index",
+                wraps=stages.leases.load_history_index,
+            ) as history_index, patch.object(
+                stages.leases,
+                "load_history",
+                wraps=stages.leases.load_history,
+            ) as single_history:
+                self.assertEqual([first], ledger.rebuild())
+                self.assertEqual(1, history_index.call_count)
+                self.assertEqual(0, single_history.call_count)
 
             skipped = append_successful_stage_chain(
                 stages, lease_hash=lease["lease_hash"], chapter=13

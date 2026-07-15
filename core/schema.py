@@ -38,6 +38,11 @@ EMBEDDED_SCHEMA_CONTRACTS = (
         "path": ("properties", "state_update"),
     },
     {
+        "source": "arc_fulfillment_evidence.schema.json",
+        "embedded_in": "run_record.schema.json",
+        "path": ("properties", "analysis", "properties", "fulfillment_evidence"),
+    },
+    {
         "source": "project_identity.schema.json",
         "embedded_in": "run_record.schema.json",
         "path": ("properties", "story_project", "properties", "project_identity"),

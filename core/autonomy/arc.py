@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from pathlib import Path
-from typing import Any, Mapping
+import re
+from typing import Any, Mapping, Sequence
 
 from core.autonomy.common import (
     AutonomyContractError,
@@ -29,9 +32,207 @@ _GOAL_FIELDS = (
     "foreshadowing",
 )
 
+_GOAL_LABELS = {
+    "mainline": "主线",
+    "relationship": "关系",
+    "escalation": "升级",
+    "resource_cost": "代价",
+    "foreshadowing": "伏笔",
+}
+
+_RELATIONSHIP_SIGNALS = (
+    "ally",
+    "allied",
+    "allies",
+    "alliance",
+    "betray",
+    "betrayal",
+    "betrayed",
+    "bond",
+    "bonded",
+    "enemy",
+    "enemies",
+    "friend",
+    "friends",
+    "friendship",
+    "hate",
+    "hated",
+    "love",
+    "loved",
+    "relationship",
+    "relationships",
+    "trust",
+    "trusted",
+    "关系",
+    "信任",
+    "背叛",
+    "盟友",
+    "敌人",
+    "朋友",
+    "和解",
+    "决裂",
+)
+_RESOURCE_COST_SIGNALS = (
+    "cost",
+    "costly",
+    "costs",
+    "loss",
+    "losses",
+    "lost",
+    "sacrifice",
+    "sacrificed",
+    "spend",
+    "spending",
+    "spent",
+    "代价",
+    "损失",
+    "牺牲",
+    "消耗",
+    "付出",
+)
+_ESCALATION_SIGNALS = (
+    "attack",
+    "attacked",
+    "choice",
+    "choose",
+    "chosen",
+    "conflict",
+    "conflicts",
+    "crisis",
+    "danger",
+    "dangerous",
+    "escalate",
+    "escalation",
+    "infected",
+    "infection",
+    "rescue",
+    "rescued",
+    "secret",
+    "threat",
+    "threatened",
+    *_RESOURCE_COST_SIGNALS,
+    "冲突",
+    "危险",
+    "选择",
+    "威胁",
+    "感染",
+    "救援",
+    "秘密",
+)
+
 
 class ArcPlanError(AutonomyContractError):
     pass
+
+
+def derive_arc_fulfillment(
+    *,
+    chapter_body: str,
+    chapter_body_sha256: str,
+    analysis: Mapping[str, Any],
+) -> dict[str, str]:
+    """Return the evidence-backed actual values for compatibility callers."""
+
+    return derive_arc_fulfillment_assessment(
+        chapter_body=chapter_body,
+        chapter_body_sha256=chapter_body_sha256,
+        analysis=analysis,
+    )["fulfilled"]
+
+
+def derive_arc_fulfillment_assessment(
+    *,
+    chapter_body: str,
+    chapter_body_sha256: str,
+    analysis: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project Receipt-bound analysis evidence into actual values and gaps."""
+
+    if not isinstance(chapter_body, str) or not chapter_body.strip():
+        raise ArcPlanError("arc_fulfillment_evidence_invalid", "chapter prose is required")
+    body_hash = sha256_digest("chapter_body_sha256", chapter_body_sha256)
+    if hashlib.sha256(chapter_body.encode("utf-8")).hexdigest() != body_hash:
+        raise ArcPlanError(
+            "arc_fulfillment_evidence_invalid", "chapter prose hash does not match"
+        )
+    if not isinstance(analysis, Mapping):
+        raise ArcPlanError(
+            "arc_fulfillment_evidence_invalid", "chapter analysis must be an object"
+        )
+    evidence = analysis.get("fulfillment_evidence")
+    if isinstance(evidence, Mapping):
+        validated_evidence = validate_mapping(
+            evidence,
+            "arc_fulfillment_evidence.schema.json",
+            "ArcFulfillmentEvidence",
+        )
+        evidence_payload = dict(validated_evidence)
+        evidence_hash = evidence_payload.pop("evidence_hash")
+        if evidence_hash != canonical_hash(evidence_payload):
+            raise ArcPlanError(
+                "arc_fulfillment_evidence_invalid",
+                "structured fulfillment evidence hash changed",
+            )
+        evidence_values: dict[str, Any] = {
+            field: validated_evidence[field] for field in _GOAL_FIELDS
+        }
+        evidence_root_hash = evidence_hash
+    else:
+        # Historical Final RunRecords retained only summary/counts.  They stay
+        # readable, but missing categories are explicit gaps rather than prose
+        # slices pretending to be structured evidence.
+        conflict_count = int(analysis.get("conflict_count", 0) or 0)
+        event_count = int(analysis.get("event_count", 0) or 0)
+        world_change_count = int(analysis.get("world_change_count", 0) or 0)
+        evidence_values = {
+            "mainline": analysis.get("summary"),
+            "relationship": [],
+            "escalation": (
+                {"conflict_count": conflict_count, "event_count": event_count}
+                if conflict_count or event_count
+                else {}
+            ),
+            "resource_cost": (
+                {"world_change_count": world_change_count}
+                if world_change_count
+                else {}
+            ),
+            "foreshadowing": [],
+        }
+        evidence_root_hash = canonical_hash(
+            {"legacy_analysis_summary": dict(analysis)}
+        )
+    fulfilled: dict[str, str] = {}
+    differences: list[str] = []
+    for field in _GOAL_FIELDS:
+        value = evidence_values[field]
+        present = _arc_evidence_present(
+            field, value, evidence_values=evidence_values
+        )
+        compact = (
+            _compact_value(value)
+            if present
+            else f"未检测到{_GOAL_LABELS[field]}的结构化兑现证据"
+        )
+        if not present:
+            differences.append(field)
+        evidence_hash = canonical_hash(
+            {
+                "field": field,
+                "chapter_body_sha256": body_hash,
+                "fulfillment_evidence_hash": evidence_root_hash,
+                "analysis_evidence": value if present else None,
+            }
+        )
+        fulfilled[field] = (
+            f"{_GOAL_LABELS[field]}{'实际兑现' if present else '证据缺口'}"
+            f"[正文:{body_hash[:12]}/证据:{evidence_hash[:12]}]：{compact}"
+        )
+    return {
+        "fulfilled": _validate_goal("fulfilled", fulfilled),
+        "differences": differences,
+        "fulfillment_evidence_hash": evidence_root_hash,
+    }
 
 
 def build_run_arc_plan(
@@ -67,6 +268,7 @@ def build_run_arc_plan(
                 "fulfilled": None,
                 "differences": [],
                 "completion_receipt_hash": None,
+                "fulfillment_assessment": None,
                 "adjustment_note": None,
             }
         )
@@ -133,14 +335,41 @@ def validate_run_arc_plan(value: Any) -> dict[str, Any]:
         if fulfilled is not None:
             _validate_goal("fulfilled", fulfilled)
             sha256_digest("completion_receipt_hash", target["completion_receipt_hash"])
-            expected_differences = [
-                field for field in _GOAL_FIELDS if fulfilled[field] != target["planned"][field]
-            ]
+            assessment = target.get("fulfillment_assessment")
+            if assessment is not None:
+                validated_assessment = _validate_fulfillment_assessment(assessment)
+                expected_differences = [
+                    field
+                    for field in _GOAL_FIELDS
+                    if field not in validated_assessment["evidenced_fields"]
+                ]
+                if (
+                    validated_assessment["planned_target_hash"] != target["target_hash"]
+                    or validated_assessment["completion_receipt_hash"]
+                    != target["completion_receipt_hash"]
+                ):
+                    raise ArcPlanError(
+                        "arc_fulfillment_assessment_invalid",
+                        "fulfillment assessment is bound to another target or completion",
+                    )
+            else:
+                # Historical Arc revisions compared the human-readable actual
+                # projection with the planned text.  Keep those revisions
+                # readable without pretending that they carry evidence gaps.
+                expected_differences = [
+                    field
+                    for field in _GOAL_FIELDS
+                    if fulfilled[field] != target["planned"][field]
+                ]
             if target["differences"] != expected_differences:
                 raise ArcPlanError(
                     "arc_fulfillment_diff_invalid", "fulfilled differences must be deterministically derived"
                 )
-        elif target["completion_receipt_hash"] is not None or target["differences"]:
+        elif (
+            target["completion_receipt_hash"] is not None
+            or target["differences"]
+            or target.get("fulfillment_assessment") is not None
+        ):
             raise ArcPlanError(
                 "arc_fulfillment_invalid", "unfulfilled target cannot carry completion evidence"
             )
@@ -313,6 +542,8 @@ class ArcPlanStore:
         fulfilled: Mapping[str, Any],
         completion_receipt_hash: str,
         expected_arc_plan_hash: str,
+        differences: Sequence[str] | None = None,
+        fulfillment_evidence_hash: str | None = None,
         recorded_at: str | None = None,
     ) -> dict[str, Any]:
         directory = self._directory(arc_plan_id)
@@ -323,8 +554,34 @@ class ArcPlanStore:
             target = _target_for(current, chapter)
             evidence = sha256_digest("completion_receipt_hash", completion_receipt_hash)
             resolved = _validate_goal("fulfilled", fulfilled)
+            if (differences is None) != (fulfillment_evidence_hash is None):
+                raise ArcPlanError(
+                    "arc_fulfillment_assessment_invalid",
+                    "structured differences and fulfillment evidence hash must be supplied together",
+                )
+            if differences is not None:
+                resolved_differences = _validate_differences(differences)
+                resolved_assessment = _build_fulfillment_assessment(
+                    differences=resolved_differences,
+                    fulfillment_evidence_hash=fulfillment_evidence_hash,
+                    planned_target_hash=target["target_hash"],
+                    completion_receipt_hash=evidence,
+                )
+            else:
+                resolved_differences = [
+                    field
+                    for field in _GOAL_FIELDS
+                    if resolved[field] != target["planned"][field]
+                ]
+                resolved_assessment = None
             if target["fulfilled"] is not None:
-                if target["fulfilled"] == resolved and target["completion_receipt_hash"] == evidence:
+                replay_matches = (
+                    target["fulfilled"] == resolved
+                    and target["completion_receipt_hash"] == evidence
+                    and target.get("fulfillment_assessment") == resolved_assessment
+                    and target["differences"] == resolved_differences
+                )
+                if replay_matches:
                     return current
                 raise ArcPlanError(
                     "arc_target_already_committed", "chapter fulfillment is immutable"
@@ -338,13 +595,52 @@ class ArcPlanStore:
             revised["previous_arc_plan_hash"] = current["arc_plan_hash"]
             revised_target = _target_for(revised, chapter)
             revised_target["fulfilled"] = resolved
-            revised_target["differences"] = [
-                field
-                for field in _GOAL_FIELDS
-                if resolved[field] != revised_target["planned"][field]
-            ]
+            revised_target["differences"] = resolved_differences
             revised_target["completion_receipt_hash"] = evidence
-            revised["updated_at"] = recorded_at or now_utc()
+            revised_target["fulfillment_assessment"] = resolved_assessment
+            differences = list(revised_target["differences"])
+            timestamp = recorded_at or now_utc()
+            if differences:
+                reason = (
+                    f"chapter_{chapter}_actual_fulfillment_adjusted_"
+                    + "_".join(differences)
+                )
+                # Carry the delta into the next uncommitted target only.  That
+                # target becomes the audited input to the following chapter,
+                # so any still-missing fields propagate one chapter at a time.
+                # Rewriting every remaining target here makes each immutable
+                # revision grow quadratically while adding no extra authority.
+                for future_target in revised["targets"]:
+                    future_chapter = int(future_target["chapter_index"])
+                    if future_chapter <= chapter or future_target["fulfilled"] is not None:
+                        continue
+                    before = copy.deepcopy(future_target["planned"])
+                    after = copy.deepcopy(before)
+                    for field in differences:
+                        after[field] = _carry_forward_goal(
+                            field=field,
+                            source_chapter=chapter,
+                            fulfilled_value=resolved[field],
+                            planned_value=before[field],
+                        )
+                    if after != before:
+                        future_target["planned"] = after
+                        future_target["target_hash"] = canonical_hash(
+                            {"chapter_index": future_chapter, "planned": after}
+                        )
+                        future_target["adjustment_note"] = reason
+                        revised["adjustments"].append(
+                            {
+                                "revision": revised["revision"],
+                                "chapter_index": future_chapter,
+                                "before": before,
+                                "after": copy.deepcopy(after),
+                                "reason": reason,
+                                "recorded_at": timestamp,
+                            }
+                        )
+                    break
+            revised["updated_at"] = timestamp
             revised["arc_plan_hash"] = canonical_hash(
                 revised, exclude_fields=("arc_plan_hash",)
             )
@@ -386,9 +682,219 @@ def _validate_goal(label: str, value: Mapping[str, Any]) -> dict[str, str]:
     return {field: required_text(f"{label}.{field}", value[field]) for field in _GOAL_FIELDS}
 
 
+def _compact_text(value: str, *, limit: int = 180) -> str:
+    normalized = " ".join(str(value).split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 1].rstrip() + "…"
+
+
+def _compact_value(value: Any) -> str:
+    if value is None or value == [] or value == {} or value == "":
+        return ""
+    if isinstance(value, str):
+        return _compact_text(value)
+    return _compact_text(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+
+
+def _arc_evidence_present(
+    field: str, value: Any, *, evidence_values: Mapping[str, Any]
+) -> bool:
+    if field == "mainline":
+        escalation = evidence_values.get("escalation")
+        events = escalation.get("events") if isinstance(escalation, Mapping) else None
+        return _meaningful_text(value) and (
+            isinstance(events, Sequence)
+            and not isinstance(events, (str, bytes))
+            and any(
+                isinstance(item, Mapping) and _meaningful_text(item.get("text"))
+                for item in events
+            )
+        )
+    if field == "relationship" and isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes)
+    ):
+        return any(
+            isinstance(item, Mapping)
+            and _contains_signal(item, _RELATIONSHIP_SIGNALS)
+            for item in value
+        )
+    if field == "escalation" and isinstance(value, Mapping):
+        conflicts = value.get("conflicts")
+        return (
+            isinstance(conflicts, Sequence)
+            and not isinstance(conflicts, (str, bytes))
+            and any(
+                _meaningful_text(item)
+                and _contains_signal(item, _ESCALATION_SIGNALS)
+                for item in conflicts
+            )
+        )
+    if field == "resource_cost" and isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes)
+    ):
+        return any(
+            isinstance(item, Mapping)
+            and _contains_signal(item, _RESOURCE_COST_SIGNALS)
+            for item in value
+        )
+    if field == "foreshadowing" and isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes)
+    ):
+        return any(_meaningful_text(item) for item in value)
+    return False
+
+
+def _meaningful_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _contains_signal(value: Any, signals: Sequence[str]) -> bool:
+    if isinstance(value, Mapping):
+        text = " ".join(str(item) for item in value.values())
+    else:
+        text = str(value)
+    normalized = text.casefold()
+    for signal in signals:
+        candidate = signal.casefold()
+        if candidate.isascii():
+            if re.search(
+                rf"(?<![a-z0-9_]){re.escape(candidate)}(?![a-z0-9_])",
+                normalized,
+            ):
+                return True
+        elif candidate in normalized:
+            return True
+    return False
+
+
+def _validate_differences(value: Sequence[str]) -> list[str]:
+    if isinstance(value, (str, bytes)):
+        raise ArcPlanError("arc_fulfillment_differences_invalid", "differences must be a list")
+    supplied = [str(item) for item in value]
+    if len(supplied) != len(set(supplied)) or any(
+        field not in _GOAL_FIELDS for field in supplied
+    ):
+        raise ArcPlanError(
+            "arc_fulfillment_differences_invalid",
+            "differences must contain unique RunArc goal fields",
+        )
+    return [field for field in _GOAL_FIELDS if field in supplied]
+
+
+def _build_fulfillment_assessment(
+    *,
+    differences: Sequence[str],
+    fulfillment_evidence_hash: str | None,
+    planned_target_hash: str,
+    completion_receipt_hash: str,
+) -> dict[str, Any]:
+    resolved_differences = _validate_differences(differences)
+    assessment: dict[str, Any] = {
+        "schema_version": "1.0",
+        "fulfillment_evidence_hash": sha256_digest(
+            "fulfillment_evidence_hash", fulfillment_evidence_hash
+        ),
+        "planned_target_hash": sha256_digest(
+            "planned_target_hash", planned_target_hash
+        ),
+        "completion_receipt_hash": sha256_digest(
+            "completion_receipt_hash", completion_receipt_hash
+        ),
+        "evidenced_fields": [
+            field for field in _GOAL_FIELDS if field not in resolved_differences
+        ],
+    }
+    assessment["assessment_hash"] = canonical_hash(assessment)
+    return _validate_fulfillment_assessment(assessment)
+
+
+def _validate_fulfillment_assessment(value: Any) -> dict[str, Any]:
+    assessment = value
+    # The complete RunArcPlan schema validates shape before this helper is
+    # reached.  Programmatic callers still receive explicit deterministic
+    # checks here rather than relying on incidental KeyError/TypeError paths.
+    if not isinstance(assessment, Mapping) or set(assessment) != {
+        "schema_version",
+        "fulfillment_evidence_hash",
+        "planned_target_hash",
+        "completion_receipt_hash",
+        "evidenced_fields",
+        "assessment_hash",
+    }:
+        raise ArcPlanError(
+            "arc_fulfillment_assessment_invalid",
+            "fulfillment assessment fields are invalid",
+        )
+    if assessment["schema_version"] != "1.0":
+        raise ArcPlanError(
+            "arc_fulfillment_assessment_invalid",
+            "fulfillment assessment version is unsupported",
+        )
+    evidence_hash = sha256_digest(
+        "fulfillment_evidence_hash", assessment["fulfillment_evidence_hash"]
+    )
+    planned_target_hash = sha256_digest(
+        "planned_target_hash", assessment["planned_target_hash"]
+    )
+    completion_receipt_hash = sha256_digest(
+        "completion_receipt_hash", assessment["completion_receipt_hash"]
+    )
+    assessment_hash = sha256_digest(
+        "assessment_hash", assessment["assessment_hash"]
+    )
+    evidenced = assessment["evidenced_fields"]
+    if isinstance(evidenced, (str, bytes)) or not isinstance(evidenced, Sequence):
+        raise ArcPlanError(
+            "arc_fulfillment_assessment_invalid", "evidenced_fields must be a list"
+        )
+    supplied = [str(item) for item in evidenced]
+    canonical_evidenced = [field for field in _GOAL_FIELDS if field in supplied]
+    if (
+        len(supplied) != len(set(supplied))
+        or any(field not in _GOAL_FIELDS for field in supplied)
+        or supplied != canonical_evidenced
+    ):
+        raise ArcPlanError(
+            "arc_fulfillment_assessment_invalid",
+            "evidenced_fields must be unique and canonically ordered",
+        )
+    validated = {
+        "schema_version": "1.0",
+        "fulfillment_evidence_hash": evidence_hash,
+        "planned_target_hash": planned_target_hash,
+        "completion_receipt_hash": completion_receipt_hash,
+        "evidenced_fields": canonical_evidenced,
+        "assessment_hash": assessment_hash,
+    }
+    if assessment_hash != canonical_hash(
+        validated, exclude_fields=("assessment_hash",)
+    ):
+        raise ArcPlanError(
+            "arc_fulfillment_assessment_invalid",
+            "fulfillment assessment hash changed",
+        )
+    return validated
+
+
+def _carry_forward_goal(
+    *, field: str, source_chapter: int, fulfilled_value: str, planned_value: str
+) -> str:
+    return _compact_text(
+        f"承接第{source_chapter}章{_GOAL_LABELS[field]}实际结果："
+        f"{_compact_text(fulfilled_value, limit=96)}；原定目标："
+        f"{_compact_text(planned_value, limit=112)}",
+        limit=240,
+    )
+
+
 __all__ = [
     "ArcPlanError",
     "ArcPlanStore",
     "build_run_arc_plan",
+    "derive_arc_fulfillment",
+    "derive_arc_fulfillment_assessment",
     "validate_run_arc_plan",
 ]

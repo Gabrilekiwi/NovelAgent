@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, TypeVar
 
 from core.autonomy.common import (
     AutonomyContractError,
@@ -15,10 +15,22 @@ from core.autonomy.common import (
     sha256_digest,
     validate_mapping,
 )
+from core.engine.recovery_protocol import (
+    MARKER_RECOVERY_PROTOCOL,
+    RecoveryDecision,
+    RecoveryProtocolError,
+    build_marker_envelope,
+    decide_marker_recovery,
+    reconcile_marker_transaction,
+    validate_marker_envelope,
+)
 
 
 class AutonomyOperationError(AutonomyContractError):
     pass
+
+
+_T = TypeVar("_T")
 
 
 def build_operation_intent(
@@ -66,7 +78,8 @@ def build_operation_intent(
         f"op_{canonical_hash({'operation_key': operation_key, 'attempt': ordinal})[:24]}"
     )
     intent = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
+        "recovery_protocol": MARKER_RECOVERY_PROTOCOL,
         "operation_id": operation_id,
         "operation_key": operation_key,
         "attempt": ordinal,
@@ -83,6 +96,17 @@ def validate_operation_intent(value: Any) -> dict[str, Any]:
     )
     for field in ("operation_id", "session_id", "book_id", "plan_id"):
         safe_id(field, intent[field])
+    if intent["schema_version"] == "1.1":
+        if intent.get("recovery_protocol") != MARKER_RECOVERY_PROTOCOL:
+            raise AutonomyOperationError(
+                "autonomy_operation_recovery_protocol_invalid",
+                "new operation intents must use the shared marker recovery protocol",
+            )
+    elif "recovery_protocol" in intent:
+        raise AutonomyOperationError(
+            "autonomy_operation_recovery_protocol_invalid",
+            "legacy operation intents cannot claim a newer recovery protocol",
+        )
     for field in ("operation_key", "plan_hash", "intent_hash"):
         sha256_digest(field, intent[field])
     sha256_digest("expected_event_hash", intent["expected_event_hash"], optional=True)
@@ -254,6 +278,50 @@ def validate_operation_result(value: Any) -> dict[str, Any]:
     return result
 
 
+def build_operation_commit_marker(
+    intent: Mapping[str, Any], *, evidence_kind: str, evidence_hash: str
+) -> dict[str, Any]:
+    operation = validate_operation_intent(intent)
+    if operation["schema_version"] != "1.1":
+        raise AutonomyOperationError(
+            "autonomy_operation_recovery_protocol_invalid",
+            "legacy operation intents do not write shared commit markers",
+        )
+    if evidence_kind not in {"source_verified", "terminal_preconditions"}:
+        raise AutonomyOperationError(
+            "autonomy_operation_marker_invalid", "unknown operation marker evidence"
+        )
+    return build_marker_envelope(
+        transaction_id=operation["operation_id"],
+        intent_hash=operation["intent_hash"],
+        evidence_kind=evidence_kind,
+        evidence_hash=sha256_digest("evidence_hash", evidence_hash),
+        metadata={"operation_type": operation["operation_type"]},
+    )
+
+
+def validate_operation_commit_marker(value: Any) -> dict[str, Any]:
+    try:
+        marker = validate_marker_envelope(value)
+    except RecoveryProtocolError as exc:
+        raise AutonomyOperationError(
+            "autonomy_operation_marker_invalid", str(exc)
+        ) from exc
+    if marker.get("evidence_kind") not in {
+        "source_verified",
+        "terminal_preconditions",
+    }:
+        raise AutonomyOperationError(
+            "autonomy_operation_marker_invalid", "operation marker evidence kind changed"
+        )
+    metadata = marker.get("metadata")
+    if not isinstance(metadata, Mapping) or set(metadata) != {"operation_type"}:
+        raise AutonomyOperationError(
+            "autonomy_operation_marker_invalid", "operation marker metadata is malformed"
+        )
+    return marker
+
+
 class AutonomyOperationStore:
     """Append-only recovery journal for cross-artifact autonomy transitions."""
 
@@ -326,11 +394,12 @@ class AutonomyOperationStore:
             if (
                 result is not None
                 and result["outcome"] == "rolled_back"
+                and intent["schema_version"] == "1.0"
                 and intent["operation_type"] not in {"execute", "resume"}
             ):
                 raise AutonomyOperationError(
                     "autonomy_operation_result_invalid",
-                    "terminal operation intents cannot be rolled back",
+                    "legacy terminal operation intents cannot be rolled back",
                 )
             intents.append(intent)
         return intents
@@ -352,7 +421,33 @@ class AutonomyOperationStore:
             lease_hash=lease_hash,
             verified_at=verified_at,
         )
-        atomic_append_json(self._directory(intent) / "source-verified.json", marker)
+        directory = self._directory(intent)
+        atomic_append_json(directory / "source-verified.json", marker)
+        operation = validate_operation_intent(intent)
+        if operation["schema_version"] == "1.1":
+            commit_marker = build_operation_commit_marker(
+                operation,
+                evidence_kind="source_verified",
+                evidence_hash=marker["verification_hash"],
+            )
+            atomic_append_json(directory / "commit.marker", commit_marker)
+        return marker
+
+    def mark_terminal_ready(self, intent: Mapping[str, Any]) -> dict[str, Any] | None:
+        operation = validate_operation_intent(intent)
+        if operation["operation_type"] in {"execute", "resume"}:
+            raise AutonomyOperationError(
+                "autonomy_operation_marker_invalid",
+                "source-guarded operations require source verification evidence",
+            )
+        if operation["schema_version"] == "1.0":
+            return None
+        marker = build_operation_commit_marker(
+            operation,
+            evidence_kind="terminal_preconditions",
+            evidence_hash=operation["intent_hash"],
+        )
+        atomic_append_json(self._directory(operation) / "commit.marker", marker)
         return marker
 
     def source_verification(
@@ -360,6 +455,12 @@ class AutonomyOperationStore:
     ) -> dict[str, Any] | None:
         operation = validate_operation_intent(intent)
         path = self._directory(operation) / "source-verified.json"
+        if operation["schema_version"] == "1.1":
+            commit = self.commit_marker(operation)
+            if commit is None:
+                return None
+            if commit["evidence_kind"] != "source_verified":
+                return None
         if not path.is_file():
             return None
         marker = validate_source_verification(load_json_object(path))
@@ -368,7 +469,123 @@ class AutonomyOperationStore:
                 "autonomy_operation_verification_scope_mismatch",
                 "source marker belongs to another operation",
             )
+        if operation["schema_version"] == "1.1" and commit[
+            "evidence_hash"
+        ] != marker["verification_hash"]:
+            raise AutonomyOperationError(
+                "autonomy_operation_marker_evidence_mismatch",
+                "commit marker does not bind the source verification evidence",
+            )
         return marker
+
+    def commit_marker(self, intent: Mapping[str, Any]) -> dict[str, Any] | None:
+        operation = validate_operation_intent(intent)
+        path = self._directory(operation) / "commit.marker"
+        if not path.is_file():
+            return None
+        marker = validate_operation_commit_marker(load_json_object(path))
+        if (
+            marker["transaction_id"] != operation["operation_id"]
+            or marker["intent_hash"] != operation["intent_hash"]
+            or marker["metadata"].get("operation_type")
+            != operation["operation_type"]
+        ):
+            raise AutonomyOperationError(
+                "autonomy_operation_marker_scope_mismatch",
+                "commit marker belongs to another operation intent",
+            )
+        return marker
+
+    def recovery_decision(self, intent: Mapping[str, Any]) -> RecoveryDecision:
+        operation = validate_operation_intent(intent)
+        result = self._load_result(operation)
+        return self._recovery_decision_for(operation, result)
+
+    def _recovery_decision_for(
+        self,
+        operation: Mapping[str, Any],
+        result: Mapping[str, Any] | None,
+    ) -> RecoveryDecision:
+        marker_present = self._marker_present(operation)
+        if result is not None and result["outcome"] == "rolled_back":
+            if marker_present:
+                raise AutonomyOperationError(
+                    "autonomy_operation_result_invalid",
+                    "rolled-back operation unexpectedly has a commit marker",
+                )
+            return RecoveryDecision.ROLL_BACK
+        try:
+            return decide_marker_recovery(
+                marker_present=marker_present,
+                completion_present=result is not None,
+            )
+        except RecoveryProtocolError as exc:
+            raise AutonomyOperationError(
+                "autonomy_operation_result_invalid", str(exc)
+            ) from exc
+
+    def reconcile_pending(
+        self,
+        intent: Mapping[str, Any],
+        *,
+        on_roll_back: Callable[[], _T],
+        on_roll_forward: Callable[[], _T],
+    ) -> _T:
+        operation = validate_operation_intent(intent)
+        if self.result(operation) is not None:
+            raise AutonomyOperationError(
+                "autonomy_operation_not_pending",
+                "only a pending operation can enter recovery",
+            )
+        return reconcile_marker_transaction(
+            marker_present=self._marker_present(operation),
+            completion_present=False,
+            on_roll_back=on_roll_back,
+            on_roll_forward=on_roll_forward,
+            on_completed=lambda: self._reject_pending_completion(),
+        )
+
+    @staticmethod
+    def _reject_pending_completion() -> Any:
+        raise AutonomyOperationError(
+            "autonomy_operation_not_pending",
+            "pending operation unexpectedly entered completed recovery",
+        )
+
+    def _marker_present(self, operation: Mapping[str, Any]) -> bool:
+        if operation["schema_version"] == "1.1":
+            marker = self.commit_marker(operation)
+            marker_present = marker is not None
+            if marker is not None:
+                source_guarded = operation["operation_type"] in {"execute", "resume"}
+                expected_kind = (
+                    "source_verified" if source_guarded else "terminal_preconditions"
+                )
+                expected_evidence = (
+                    None if source_guarded else operation["intent_hash"]
+                )
+                if marker["evidence_kind"] != expected_kind or (
+                    expected_evidence is not None
+                    and marker["evidence_hash"] != expected_evidence
+                ):
+                    raise AutonomyOperationError(
+                        "autonomy_operation_marker_evidence_mismatch",
+                        "commit marker carries the wrong transition evidence",
+                    )
+                if source_guarded and self.source_verification(operation) is None:
+                    raise AutonomyOperationError(
+                        "autonomy_operation_marker_evidence_missing",
+                        "source operation marker has no bound verification evidence",
+                    )
+            return marker_present
+        if operation["operation_type"] in {"execute", "resume"}:
+            marker_present = (
+                self._directory(operation) / "source-verified.json"
+            ).is_file()
+            return marker_present
+        # v1.0 terminal operations mutated immediately after their intent;
+        # retain that historical roll-forward interpretation on read.
+        return True
 
     def finish(
         self,
@@ -379,23 +596,55 @@ class AutonomyOperationStore:
         lease_hash: str | None,
         completed_at: str,
     ) -> dict[str, Any]:
-        result = build_operation_result(
-            intent,
+        operation = validate_operation_intent(intent)
+        candidate = build_operation_result(
+            operation,
             outcome=outcome,
             event_hash=event_hash,
             lease_hash=lease_hash,
             completed_at=completed_at,
         )
+        existing = self.result(operation)
+        if existing is not None:
+            if existing != candidate:
+                raise AutonomyOperationError(
+                    "autonomy_operation_result_conflict",
+                    "completed operation replay produced different result bytes",
+                )
+            return existing
+        decision = self.recovery_decision(operation)
+        if outcome == "completed" and decision is not RecoveryDecision.ROLL_FORWARD:
+            raise AutonomyOperationError(
+                "autonomy_operation_marker_missing",
+                "operation cannot complete before its shared commit marker",
+            )
+        if outcome == "rolled_back" and decision is not RecoveryDecision.ROLL_BACK:
+            raise AutonomyOperationError(
+                "autonomy_operation_rollback_forbidden",
+                "operation cannot roll back after its shared commit marker",
+            )
+        result = candidate
         atomic_append_json(self._directory(intent) / "result.json", result)
         return result
 
     def result(self, intent: Mapping[str, Any]) -> dict[str, Any] | None:
         operation = validate_operation_intent(intent)
+        result = self._load_result(operation)
+        if result is not None and operation["schema_version"] == "1.1":
+            self._recovery_decision_for(operation, result)
+        return result
+
+    def _load_result(
+        self, operation: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
         path = self._directory(operation) / "result.json"
         if not path.is_file():
             return None
         result = validate_operation_result(load_json_object(path))
-        if result["operation_id"] != operation["operation_id"]:
+        if (
+            result["operation_id"] != operation["operation_id"]
+            or result["intent_hash"] != operation["intent_hash"]
+        ):
             raise AutonomyOperationError(
                 "autonomy_operation_result_scope_mismatch",
                 "result belongs to another operation",
@@ -412,8 +661,10 @@ __all__ = [
     "AutonomyOperationStore",
     "build_operation_intent",
     "build_operation_result",
+    "build_operation_commit_marker",
     "build_source_verification",
     "validate_operation_intent",
     "validate_operation_result",
+    "validate_operation_commit_marker",
     "validate_source_verification",
 ]

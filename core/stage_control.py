@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from core.memory_v2.canonical import canonical_json_hash
+from core.engine.recovery_protocol import MARKER_RECOVERY_PROTOCOL
 from core.schema import SchemaValidationError, validate_schema
 
 
@@ -325,6 +326,7 @@ def build_stage_receipt(
         )
     receipt = {
         "schema_version": "1.1",
+        "recovery_protocol": MARKER_RECOVERY_PROTOCOL,
         "authorization_hash": authorized["authorization_hash"],
         "stage": authorized["stage"],
         "status": resolved_status,
@@ -363,6 +365,14 @@ def validate_stage_receipt(value: Any) -> dict[str, Any]:
         raise StageControlError(
             "stage_receipt_version_invalid",
             "StageReceipt 1.1 requires explicit execution evidence fields",
+        )
+    if (
+        "recovery_protocol" in receipt
+        and receipt["recovery_protocol"] != MARKER_RECOVERY_PROTOCOL
+    ):
+        raise StageControlError(
+            "stage_receipt_recovery_protocol_invalid",
+            "StageReceipt recovery protocol is not supported",
         )
     _stage(receipt["stage"])
     if receipt["status"] not in _RECEIPT_STATUSES:

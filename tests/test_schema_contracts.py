@@ -14,6 +14,7 @@ from core.engine.run_record import (
     build_workflow_failed_run_record,
     validate_run_result,
 )
+from core.memory_v2.canonical import canonical_json_hash
 from core.schema import SchemaValidationError, validate_schema, validate_schema_consistency, validate_schema_keywords
 from core.state.snapshot import SnapshotError, validate_snapshot
 from core.validator import validate_chapter
@@ -23,11 +24,19 @@ class SchemaContractTest(unittest.TestCase):
     def test_schema_contracts_match_standalone_schemas(self) -> None:
         checked = validate_schema_consistency()
 
-        self.assertEqual(10, len(checked))
+        self.assertEqual(11, len(checked))
         self.assertIn(
             {
                 "source": str(Path("schemas/director_decision.schema.json")),
                 "mirror": str(Path("core/director/schema.json")),
+            },
+            checked,
+        )
+        self.assertIn(
+            {
+                "source": "arc_fulfillment_evidence.schema.json",
+                "embedded_in": "run_record.schema.json",
+                "path": "properties.analysis.properties.fulfillment_evidence",
             },
             checked,
         )
@@ -808,7 +817,12 @@ class SchemaContractTest(unittest.TestCase):
             analysis={
                 "validation_ok": True,
                 "conflicts": ["danger"],
-                "events": [{"text": "The team had to choose."}],
+                "events": [
+                    {
+                        "text": "The team had to choose.",
+                        "evidence_hash": "nested-analysis-field",
+                    }
+                ],
                 "character_changes": [],
                 "world_changes": [],
                 "new_locations": [],
@@ -859,6 +873,14 @@ class SchemaContractTest(unittest.TestCase):
         self.assertEqual(0, record["validation"]["deterministic_repair_count"])
         self.assertEqual(0, record["validation"]["manual_review_count"])
         self.assertEqual([], record["validation"]["repair_action_counts"])
+        fulfillment_evidence = record["analysis"]["fulfillment_evidence"]
+        self.assertEqual(
+            [{"text": "The team had to choose."}],
+            fulfillment_evidence["escalation"]["events"],
+        )
+        evidence_payload = dict(fulfillment_evidence)
+        evidence_hash = evidence_payload.pop("evidence_hash")
+        self.assertEqual(evidence_hash, canonical_json_hash(evidence_payload))
         self.assertTrue(record["state_update"]["applied"])
         self.assertEqual(1, record["state_update"]["timeline_added"])
         self.assertIs(record, validate_schema(record, "run_record.schema.json"))

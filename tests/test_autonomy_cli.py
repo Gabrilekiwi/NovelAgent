@@ -4,7 +4,7 @@ import argparse
 import copy
 import json
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,6 +34,8 @@ def command_args(**overrides):
         "notion_sync": False,
         "notion_memory": False,
         "memory_writeback": "none",
+        "steps": 1,
+        "_steps_explicit": False,
         "reconcile_deliveries": False,
         "resolve_delivery": None,
         "inspect_delivery": None,
@@ -98,6 +100,47 @@ class AutonomyCliTest(unittest.TestCase):
                     autonomy_root_map="operator-roots.json",
                     dry_run=True,
                 )
+            )
+
+    def test_steps_is_fail_closed_at_storyproject_autonomy_entry(self) -> None:
+        parser = cli.build_parser()
+        parsed = cli.parse_arguments(
+            parser,
+            [
+                "--story-project",
+                "auto",
+                "--trusted-profiles",
+                "profiles.json",
+                "--instruction",
+                "write two chapters",
+                "--steps",
+                "1",
+            ],
+        )
+        self.assertTrue(parsed._steps_explicit)
+        with self.assertRaisesRegex(ValueError, "reject deprecated --steps"):
+            autonomy_command_requested(parsed)
+        with self.assertRaisesRegex(ValueError, "immutable InstructionPlan"):
+            autonomy_command_requested(
+                command_args(
+                    instruction="write two chapters",
+                    trusted_profiles="profiles.json",
+                    steps=2,
+                )
+            )
+
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+            cli.parse_arguments(
+                cli.build_parser(),
+                [
+                    "--story-project",
+                    "auto",
+                    "--trusted-profiles",
+                    "profiles.json",
+                    "--instruction",
+                    "write one chapter",
+                    "--step=1",
+                ],
             )
 
     def test_endpoint_mismatch_fails_before_runner_or_session_intent(self) -> None:

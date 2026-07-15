@@ -21,6 +21,13 @@ from core.autonomy.plans import (
     validate_source_snapshot,
 )
 from core.autonomy.lease import BookLeaseStore, validate_book_lease
+from core.engine.recovery_protocol import (
+    MARKER_RECOVERY_PROTOCOL,
+    RecoveryProtocolError,
+    build_marker_envelope,
+    reconcile_marker_transaction,
+    validate_marker_envelope,
+)
 from core.stage_control import (
     assert_receipt_matches_authorization,
     validate_stage_authorization,
@@ -35,6 +42,13 @@ DeliveryResolutionVerifier = Callable[[Mapping[str, Any]], bool]
 
 class AutonomyReceiptError(AutonomyContractError):
     pass
+
+
+def _raise_stage_marker_state() -> dict[str, Any]:
+    raise AutonomyReceiptError(
+        "stage_receipt_marker_invalid",
+        "a durable stage marker cannot take the pre-marker rollback path",
+    )
 
 
 class StageReceiptStore:
@@ -88,6 +102,11 @@ class StageReceiptStore:
                             "stage_receipt_replay_conflict", "receipt hash replay has different content"
                         )
                     return item
+            if validated.get("recovery_protocol") != MARKER_RECOVERY_PROTOCOL:
+                raise AutonomyReceiptError(
+                    "stage_receipt_recovery_protocol_missing",
+                    "new StageReceipts require marker-backed publication",
+                )
             candidate = [*existing, validated]
             validate_stage_receipt_chain(candidate)
             _validate_autonomy_stage_chain(candidate)
@@ -138,13 +157,47 @@ class StageReceiptStore:
                 authorized,
             )
             atomic_append_json(fence_path, fence)
-            atomic_append_json(path, validated)
-            return validated
+            staged_path = (
+                directory / "staged" / f"{validated['receipt_hash']}.json"
+            )
+            atomic_append_json(staged_path, validated)
+            marker = build_marker_envelope(
+                transaction_id=f"stage_{validated['receipt_hash']}",
+                intent_hash=authorized["authorization_hash"],
+                evidence_kind="stage_receipt",
+                evidence_hash=validated["receipt_hash"],
+                metadata={
+                    "session_id": validated["session_id"],
+                    "chapter_index": validated["chapter_index"],
+                    "sequence": sequence,
+                    "authorization_hash": authorized["authorization_hash"],
+                    "target_name": path.name,
+                },
+            )
+            atomic_append_json(
+                directory
+                / "commit_markers"
+                / f"{validated['receipt_hash']}.json",
+                marker,
+            )
+            return self._publish_stage_marker(
+                directory,
+                marker,
+                expected_session_id=validated["session_id"],
+                expected_chapter_index=validated["chapter_index"],
+            )
 
     def load_chain(self, session_id: str, chapter_index: int) -> list[dict[str, Any]]:
-        directory = self._directory(session_id, chapter_index)
+        expected_session_id = safe_id("session_id", session_id)
+        expected_chapter_index = positive_int("chapter_index", chapter_index)
+        directory = self._directory(expected_session_id, expected_chapter_index)
         if not directory.exists():
             return []
+        marked_receipts = self._reconcile_stage_markers(
+            directory,
+            expected_session_id=expected_session_id,
+            expected_chapter_index=expected_chapter_index,
+        )
         receipts = [
             validate_stage_receipt(load_json_object(path))
             for path in sorted(directory.glob("[0-9][0-9][0-9][0-9]-*.json"))
@@ -159,6 +212,42 @@ class StageReceiptStore:
                     "stage_receipt_sequence_broken", "StageReceipt filenames are not contiguous"
                 )
         for receipt in receipts:
+            _assert_stage_store_scope(
+                receipt,
+                expected_session_id=expected_session_id,
+                expected_chapter_index=expected_chapter_index,
+            )
+            staged_path = directory / "staged" / f"{receipt['receipt_hash']}.json"
+            marker_backed = (
+                receipt.get("recovery_protocol") == MARKER_RECOVERY_PROTOCOL
+            )
+            if marker_backed and receipt["receipt_hash"] not in marked_receipts:
+                raise AutonomyReceiptError(
+                    "stage_receipt_marker_missing",
+                    "completed staged receipt exists without its durable commit marker",
+                )
+            if marker_backed and not staged_path.is_file():
+                raise AutonomyReceiptError(
+                    "stage_receipt_staged_missing",
+                    "marker-backed StageReceipt exists without its staged evidence",
+                )
+            if staged_path.is_file():
+                staged = validate_stage_receipt(load_json_object(staged_path))
+                _assert_stage_store_scope(
+                    staged,
+                    expected_session_id=expected_session_id,
+                    expected_chapter_index=expected_chapter_index,
+                )
+                if staged != receipt:
+                    raise AutonomyReceiptError(
+                        "stage_receipt_staged_mismatch",
+                        "completed StageReceipt differs from its staged evidence",
+                    )
+            if staged_path.is_file() and receipt["receipt_hash"] not in marked_receipts:
+                raise AutonomyReceiptError(
+                    "stage_receipt_marker_missing",
+                    "completed staged receipt exists without its durable commit marker",
+                )
             self.fence_for(receipt)
         return receipts
 
@@ -220,6 +309,150 @@ class StageReceiptStore:
         session_key = canonical_hash({"session_id": safe_id("session_id", session_id)})[:16]
         chapter = positive_int("chapter_index", chapter_index)
         return self.root / "stage_receipts" / session_key / f"chapter-{chapter:06d}"
+
+    def _reconcile_stage_markers(
+        self,
+        directory: Path,
+        *,
+        expected_session_id: str,
+        expected_chapter_index: int,
+    ) -> set[str]:
+        marker_dir = directory / "commit_markers"
+        if not marker_dir.is_dir():
+            return set()
+        markers = []
+        for path in sorted(marker_dir.glob("*.json")):
+            try:
+                marker = validate_marker_envelope(load_json_object(path))
+            except RecoveryProtocolError as exc:
+                raise AutonomyReceiptError(
+                    "stage_receipt_marker_invalid", str(exc)
+                ) from exc
+            if marker["evidence_kind"] != "stage_receipt":
+                raise AutonomyReceiptError(
+                    "stage_receipt_marker_invalid",
+                    "stage marker evidence kind changed",
+                )
+            markers.append(marker)
+        for marker in markers:
+            self._publish_stage_marker(
+                directory,
+                marker,
+                expected_session_id=expected_session_id,
+                expected_chapter_index=expected_chapter_index,
+            )
+        return {str(marker["evidence_hash"]) for marker in markers}
+
+    def _publish_stage_marker(
+        self,
+        directory: Path,
+        marker: Mapping[str, Any],
+        *,
+        expected_session_id: str,
+        expected_chapter_index: int,
+    ) -> dict[str, Any]:
+        try:
+            committed = validate_marker_envelope(marker)
+        except RecoveryProtocolError as exc:
+            raise AutonomyReceiptError(
+                "stage_receipt_marker_invalid", str(exc)
+            ) from exc
+        metadata = committed["metadata"]
+        required = {
+            "session_id",
+            "chapter_index",
+            "sequence",
+            "authorization_hash",
+            "target_name",
+        }
+        if committed["evidence_kind"] != "stage_receipt" or set(metadata) != required:
+            raise AutonomyReceiptError(
+                "stage_receipt_marker_invalid", "stage marker scope is malformed"
+            )
+        if (
+            metadata["session_id"] != expected_session_id
+            or metadata["chapter_index"] != expected_chapter_index
+        ):
+            raise AutonomyReceiptError(
+                "stage_receipt_store_scope_mismatch",
+                "stage marker belongs to another session or chapter",
+            )
+        receipt_hash = sha256_digest("receipt_hash", committed["evidence_hash"])
+        authorization_hash = sha256_digest(
+            "authorization_hash", metadata["authorization_hash"]
+        )
+        if committed["intent_hash"] != authorization_hash:
+            raise AutonomyReceiptError(
+                "stage_receipt_marker_invalid", "stage marker authorization changed"
+            )
+        sequence = positive_int("sequence", metadata["sequence"])
+        expected_name = f"{sequence:04d}-{receipt_hash[:20]}.json"
+        if metadata["target_name"] != expected_name:
+            raise AutonomyReceiptError(
+                "stage_receipt_marker_invalid", "stage marker target path changed"
+            )
+        target = directory / expected_name
+        staged_path = directory / "staged" / f"{receipt_hash}.json"
+        if not staged_path.is_file():
+            raise AutonomyReceiptError(
+                "stage_receipt_staged_missing",
+                "stage marker exists without its staged receipt evidence",
+            )
+        staged = validate_stage_receipt(
+            load_json_object(staged_path)
+        )
+        _assert_stage_store_scope(
+            staged,
+            expected_session_id=expected_session_id,
+            expected_chapter_index=expected_chapter_index,
+        )
+        if (
+            staged["receipt_hash"] != receipt_hash
+            or staged["authorization_hash"] != authorization_hash
+            or staged["session_id"] != metadata["session_id"]
+            or int(staged["chapter_index"]) != int(metadata["chapter_index"])
+        ):
+            raise AutonomyReceiptError(
+                "stage_receipt_marker_mismatch",
+                "stage marker does not bind the staged receipt",
+            )
+
+        def publish() -> dict[str, Any]:
+            atomic_append_json(target, staged)
+            return staged
+
+        def completed() -> dict[str, Any]:
+            existing = validate_stage_receipt(load_json_object(target))
+            if existing != staged:
+                raise AutonomyReceiptError(
+                    "stage_receipt_replay_conflict",
+                    "completed checkpoint has different immutable bytes",
+                )
+            return existing
+
+        return reconcile_marker_transaction(
+            marker_present=True,
+            completion_present=target.is_file(),
+            on_roll_back=_raise_stage_marker_state,
+            on_roll_forward=publish,
+            on_completed=completed,
+        )
+
+
+def _assert_stage_store_scope(
+    value: Mapping[str, Any],
+    *,
+    expected_session_id: str,
+    expected_chapter_index: int,
+) -> None:
+    if (
+        value.get("session_id") != expected_session_id
+        or value.get("chapter_index") != expected_chapter_index
+    ):
+        raise AutonomyReceiptError(
+            "stage_receipt_store_scope_mismatch",
+            "stage recovery evidence belongs to another session or chapter",
+        )
 
 
 def build_stage_lease_fence(
@@ -614,6 +847,8 @@ class CompletionLedger:
         receipt_paths = sorted(
             (directory / "receipts").glob("[0-9][0-9][0-9][0-9][0-9][0-9]-*.json")
         )
+        book_id = self.plan["source_snapshot"]["book_id"]
+        lease_history: dict[str, dict[str, Any]] | None = None
         chain: list[dict[str, Any]] = []
         previous: str | None = None
         expected_chapter = int(self.plan["chapter_start"])
@@ -668,7 +903,17 @@ class CompletionLedger:
                 raise AutonomyReceiptError(
                     "chapter_completion_publication_mismatch", "publication receipt hash changed"
                 )
-            lease = self.leases.load_history(receipt["book_id"], receipt["lease_hash"])
+            if lease_history is None:
+                # Preserve receipt/publication error precedence while still
+                # validating the lease chain only once per complete rebuild.
+                lease_history = self.leases.load_history_index(book_id)
+            lease = lease_history.get(receipt["lease_hash"])
+            if lease is None:
+                # Preserve the established missing-history error contract on
+                # the exceptional path without rescanning for valid receipts.
+                lease = self.leases.load_history(
+                    receipt["book_id"], receipt["lease_hash"]
+                )
             if int(lease["generation"]) != int(receipt["lease_generation"]):
                 raise AutonomyReceiptError(
                     "chapter_completion_lease_fence_invalid",
@@ -724,7 +969,11 @@ class CompletionLedger:
             "completed_chapters": [item["chapter_index"] for item in chain],
             "canonical_next_chapter": next_chapter,
             "last_completion_receipt_hash": chain[-1]["receipt_hash"] if chain else None,
-            "expected_source_snapshot_hash": self.expected_source_snapshot()["snapshot_hash"],
+            "expected_source_snapshot_hash": (
+                chain[-1]["source_snapshot_after"]["snapshot_hash"]
+                if chain
+                else self.plan["source_snapshot"]["snapshot_hash"]
+            ),
             "delivery_blocked": bool(blocked_chapters),
             "delivery_blocked_chapters": blocked_chapters,
         }

@@ -2160,6 +2160,68 @@
         },
         "summary": {
           "type": "string"
+        },
+        "fulfillment_evidence": {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "mainline",
+            "relationship",
+            "escalation",
+            "resource_cost",
+            "foreshadowing",
+            "evidence_hash"
+          ],
+          "properties": {
+            "schema_version": {"type": "string", "enum": ["1.0"]},
+            "mainline": {"type": "string"},
+            "relationship": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {"type": "string", "minLength": 1},
+                  "status": {"type": "string", "minLength": 1},
+                  "current_location": {"type": "string", "minLength": 1},
+                  "current_goal": {"type": "string", "minLength": 1},
+                  "text": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            },
+            "escalation": {
+              "type": "object",
+              "required": ["conflicts", "events"],
+              "properties": {
+                "conflicts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                "events": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["text"],
+                    "properties": {"text": {"type": "string", "minLength": 1}},
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "resource_cost": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "type": {"type": "string", "minLength": 1},
+                  "text": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            },
+            "foreshadowing": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "evidence_hash": {"type": "string", "minLength": 64}
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

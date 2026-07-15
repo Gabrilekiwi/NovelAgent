@@ -120,6 +120,10 @@ from core.story_project.writer import (
     prepare_story_project_writeback,
 )
 from core.story_project.authority import prepare_event_authority_advance
+from core.story_project.authority_persistence import (
+    EventAuthorityWriteOperation,
+    event_authority_write_operation,
+)
 from core.story_project.identity import project_identity_path, validate_project_identity
 from core.story_project.read_set import declared_read_set_writes
 from core.validator import validate_chapter
@@ -252,6 +256,7 @@ class AgentExecutor:
             persistence_dir=self.persistence_dir,
         )
         self._event_authority_root_map: dict[str, Path] | None = None
+        self._event_authority_operation: EventAuthorityWriteOperation | None = None
 
     def run_once(self, *, persist: bool = True) -> dict[str, Any]:
         with self._execution_scope(persist=persist):
@@ -411,26 +416,64 @@ class AgentExecutor:
                     previous_result=previous_result,
                     chapter_hint=chapter_hint,
                 )
-            self._prepare_project_identity_for_persistence()
-            self._configure_authority_persistence_backend()
-            if self.persistence_coordinator.backend_id == "v2":
-                self._assert_persistence_ready(expected_book_id=self._expected_book_id)
-                return self._run_once_impl(
-                    persist=True,
-                    snapshot_override=snapshot_override,
-                    previous_result=previous_result,
-                    chapter_hint=chapter_hint,
-                )
-            with persistence_run_lock(self.run_dir, state_paths=self._persistence_state_paths()):
-                self._assert_persistence_ready(expected_book_id=self._expected_book_id)
-                return self._run_once_impl(
-                    persist=True,
-                    snapshot_override=snapshot_override,
-                    previous_result=previous_result,
-                    chapter_hint=chapter_hint,
-                )
+            story_root = self._configured_story_project_root()
+            if story_root is not None:
+                # The global fence is acquired before ProjectIdentity is read.
+                # Legacy identity creation is allowed only while the same fence
+                # remains held, then the operation is bound to its new book id.
+                with event_authority_write_operation(
+                    story_root,
+                    expected_book_id=None,
+                    writer_kind="chapter",
+                    allow_identity_missing=True,
+                ) as authority_operation:
+                    self._event_authority_operation = authority_operation
+                    return self._invoke_persist_once(
+                        snapshot_override=snapshot_override,
+                        previous_result=previous_result,
+                        chapter_hint=chapter_hint,
+                    )
+            return self._invoke_persist_once(
+                snapshot_override=snapshot_override,
+                previous_result=previous_result,
+                chapter_hint=chapter_hint,
+            )
         finally:
             self._active_story_project_context = None
+            self._event_authority_operation = None
+
+    def _invoke_persist_once(
+        self,
+        *,
+        snapshot_override: dict[str, Any] | None,
+        previous_result: dict[str, Any] | None,
+        chapter_hint: int | None,
+    ) -> dict[str, Any]:
+        self._prepare_project_identity_for_persistence()
+        if (
+            self._event_authority_operation is not None
+            and self._expected_book_id is not None
+        ):
+            self._event_authority_operation.bind_book_id(self._expected_book_id)
+        self._configure_authority_persistence_backend()
+        if self.persistence_coordinator.backend_id == "v2":
+            self._assert_persistence_ready(expected_book_id=self._expected_book_id)
+            return self._run_once_impl(
+                persist=True,
+                snapshot_override=snapshot_override,
+                previous_result=previous_result,
+                chapter_hint=chapter_hint,
+            )
+        with persistence_run_lock(
+            self.run_dir, state_paths=self._persistence_state_paths()
+        ):
+            self._assert_persistence_ready(expected_book_id=self._expected_book_id)
+            return self._run_once_impl(
+                persist=True,
+                snapshot_override=snapshot_override,
+                previous_result=previous_result,
+                chapter_hint=chapter_hint,
+            )
 
     def _run_once_impl(
         self,
@@ -2726,7 +2769,13 @@ class AgentExecutor:
             if delivery_intent is not None
             else []
         )
-        transaction.prepare(
+        authority_operation = self._event_authority_operation
+        if authority_operation is None:
+            raise PersistenceError(
+                "event-authority transaction is outside the StoryProject recovery barrier"
+            )
+        authority_operation.prepare_transaction(
+            transaction,
             apply_targets=apply_targets,
             artifacts=artifact_targets,
             final_run_record=result,
@@ -2741,7 +2790,7 @@ class AgentExecutor:
             candidate_result=result,
             delivery_jobs=delivery_jobs,
         )
-        committed = transaction.commit()
+        committed = authority_operation.commit_transaction(transaction)
         if not committed.get("committed") or committed.get("state") != "completed":
             raise PersistenceError(
                 f"event-authority persistence did not produce a PublicationReceipt: {committed}"

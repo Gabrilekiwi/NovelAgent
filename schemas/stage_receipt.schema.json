@@ -5,6 +5,7 @@
   "required": ["schema_version", "receipt_hash", "authorization_hash", "stage", "status", "book_id", "session_id", "plan_id", "chapter_index", "authority", "input_digest", "output_digest", "model_call_receipt_hash", "previous_stage_receipt_hash", "created_at"],
   "properties": {
     "schema_version": {"type": "string", "enum": ["1.0", "1.1"]},
+    "recovery_protocol": {"type": "string", "enum": ["commit-marker-forward-v1"]},
     "receipt_hash": {"type": "string", "minLength": 64},
     "authorization_hash": {"type": "string", "minLength": 64},
     "stage": {"type": "string", "enum": ["outline", "scene_plan", "draft", "polish", "validator", "repair"]},

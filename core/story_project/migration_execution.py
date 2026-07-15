@@ -10,7 +10,6 @@ import re
 from typing import Any, Callable, Mapping
 import uuid
 
-from core.engine.persistence import persistence_run_lock
 from core.engine.persistence_v2 import (
     PersistenceV2Target,
     PersistenceV2Transaction,
@@ -19,6 +18,7 @@ from core.engine.persistence_v2 import (
     reconcile_pending_persistence_v2,
     verify_publication_receipt,
 )
+from core.story_project.authority_persistence import event_authority_write_operation
 from core.engine.root_registry import RootRegistryService
 from core.memory_v2.canonical import canonical_json_hash
 from core.memory_v2.event_store import (
@@ -106,7 +106,11 @@ def execute_event_authority_migration(
     layout = _migration_layout(root, validated_approval)
     root_map = {"story_project": root, "runtime": root / ".novelagent"}
 
-    with persistence_run_lock(layout["operation_lock"]):
+    with event_authority_write_operation(
+        root,
+        expected_book_id=validated_plan["book_id"],
+        writer_kind="migration",
+    ) as authority_operation:
         recovery = reconcile_pending_persistence_v2(
             layout["transaction_root"], expected_book_id=validated_plan["book_id"]
         )
@@ -246,7 +250,8 @@ def execute_event_authority_migration(
             read_set_declared_writes=[identity_declaration],
         )
         try:
-            transaction.prepare(
+            authority_operation.prepare_transaction(
+                transaction,
                 apply_targets=apply_targets,
                 artifacts=artifacts,
                 final_run_record=final_record,
@@ -259,7 +264,7 @@ def execute_event_authority_migration(
                 candidate_result=final_record,
                 delivery_jobs=[],
             )
-            committed = transaction.commit()
+            committed = authority_operation.commit_transaction(transaction)
         except Exception as exc:
             raise MigrationExecutionError(
                 "migration_bootstrap_failed", f"atomic bootstrap failed: {exc}"

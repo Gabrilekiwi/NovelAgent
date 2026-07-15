@@ -54,6 +54,7 @@ def parse_arguments(
         name: option_was_provided(argv, option)
         for name, option in RUNTIME_PATH_OPTIONS.items()
     }
+    args._steps_explicit = option_was_provided(argv, "--steps")
     return args
 
 

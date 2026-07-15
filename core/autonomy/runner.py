@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from core.autonomy.arc import ArcPlanError
+from core.autonomy.arc import derive_arc_fulfillment_assessment
 from core.autonomy.common import (
     AutonomyContractError,
     canonical_hash,
@@ -30,9 +30,11 @@ from core.delivery import DeliveryQueue, SafeFileDeliveryAdapter, load_delivery_
 from core.engine.safe_paths import RootBinding, assert_safe_local_tree
 from core.engine.delivery_intent_recovery import recover_delivery_jobs_for_receipt
 from core.engine.persistence_v2 import (
+    PersistenceV2IntegrityError,
     validate_publication_receipt,
     verify_publication_receipt,
 )
+from core.engine.run_record import validate_run_result
 from core.path_refs import resolve_path_ref
 from core.stage_control import derive_outline_readiness
 from core.story_project.paths import canonical_outline_path
@@ -131,7 +133,10 @@ class AutonomyRunner:
         self.delivery_worker_id = safe_id(
             "delivery_worker_id", delivery_worker_id
         )
-        self.outlines = OutlineCheckpointStore(self.sessions.root)
+        self.outlines = OutlineCheckpointStore(
+            self.sessions.root,
+            story_project_root=self.story_project_root,
+        )
         self._active_plan: dict[str, Any] | None = None
         verifier = self._delivery_resolved_for_completion
         existing_verifier = self.sessions.delivery_resolution_verifier
@@ -302,7 +307,9 @@ class AutonomyRunner:
                     else "local_committed_delivery_blocked"
                 ),
             )
-            self._record_arc_fulfillment(session_id, completion)
+            self._record_arc_fulfillment(
+                session_id, completion, publication_receipt=receipt
+            )
             runs.append(
                 {
                     "run_id": result["run"]["id"],
@@ -585,7 +592,9 @@ class AutonomyRunner:
                     else "local_committed_delivery_blocked"
                 ),
             )
-            self._record_arc_fulfillment(session_id, completion)
+            self._record_arc_fulfillment(
+                session_id, completion, publication_receipt=receipt
+            )
             recovered.append(chapter)
             if not delivery_ok:
                 break
@@ -696,7 +705,11 @@ class AutonomyRunner:
         return self._file_delivery_runtime_profile
 
     def _record_arc_fulfillment(
-        self, session_id: str, completion: Mapping[str, Any]
+        self,
+        session_id: str,
+        completion: Mapping[str, Any],
+        *,
+        publication_receipt: Mapping[str, Any] | None = None,
     ) -> None:
         status = self.sessions.status(session_id)
         arc = self.sessions.arc_plans.load(status["arc_plan_id"])
@@ -705,21 +718,135 @@ class AutonomyRunner:
             for item in arc["targets"]
             if int(item["chapter_index"]) == int(completion["chapter_index"])
         )
+        if completion.get("planned_target_hash") != target.get("target_hash"):
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid",
+                "completion receipt is bound to another Arc target",
+            )
+        loaded_publication = self.sessions.completion_ledger(
+            session_id
+        ).load_publication(str(completion["publication_receipt_hash"]))
+        try:
+            publication = validate_publication_receipt(loaded_publication)
+            if publication_receipt is not None:
+                supplied_publication = validate_publication_receipt(
+                    dict(publication_receipt)
+                )
+                if supplied_publication != publication:
+                    raise AutonomyRunnerError(
+                        "autonomy_arc_evidence_invalid",
+                        "supplied PublicationReceipt differs from the verified ledger receipt",
+                    )
+        except PersistenceV2IntegrityError as exc:
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid",
+                f"PublicationReceipt integrity validation failed: {exc}",
+            ) from exc
+        if publication.get("receipt_hash") != completion.get("publication_receipt_hash"):
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid",
+                "PublicationReceipt does not match the completion receipt",
+            )
+        if publication.get("book_id") != completion.get("book_id"):
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid",
+                "PublicationReceipt book does not match the completion receipt",
+            )
+        assessment = self._derive_fulfillment_from_publication(
+            publication, completion=completion
+        )
         self.sessions.arc_plans.record_fulfillment(
             arc["arc_plan_id"],
             chapter_index=int(completion["chapter_index"]),
-            fulfilled=copy.deepcopy(target["planned"]),
+            fulfilled=assessment["fulfilled"],
             completion_receipt_hash=completion["receipt_hash"],
             expected_arc_plan_hash=arc["arc_plan_hash"],
+            differences=assessment["differences"],
+            fulfillment_evidence_hash=assessment["fulfillment_evidence_hash"],
+        )
+
+    def _derive_fulfillment_from_publication(
+        self,
+        publication: Mapping[str, Any],
+        *,
+        completion: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        prose_bindings = [
+            item for item in publication.get("apply_targets", []) if item.get("kind") == "prose"
+        ]
+        if len(prose_bindings) != 1:
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_missing",
+                "chapter publication must bind exactly one canonical prose target",
+            )
+        prose_binding = prose_bindings[0]
+        prose_path = resolve_path_ref(
+            prose_binding["path_ref"], self.publication_root_map
+        )
+        prose_bytes = prose_path.read_bytes()
+        prose_hash = hashlib.sha256(prose_bytes).hexdigest()
+        if prose_hash not in {
+            prose_binding.get("sha256"),
+            completion.get("chapter_body_hash"),
+        } or prose_binding.get("sha256") != completion.get("chapter_body_hash"):
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid",
+                "canonical prose bytes do not match completion evidence",
+            )
+        final_binding = publication.get("final_run")
+        if not isinstance(final_binding, Mapping) or not isinstance(
+            final_binding.get("path_ref"), Mapping
+        ):
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_missing",
+                "chapter publication has no immutable Final RunRecord binding",
+            )
+        final_path = resolve_path_ref(
+            final_binding["path_ref"], self.publication_root_map
+        )
+        final_bytes = final_path.read_bytes()
+        if hashlib.sha256(final_bytes).hexdigest() != final_binding.get("sha256"):
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid", "Final RunRecord bytes changed"
+            )
+        final_record = load_json_object(final_path)
+        try:
+            validate_run_result(final_record)
+        except Exception as exc:
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid",
+                f"Final RunRecord validation failed: {type(exc).__name__}: {exc}",
+            ) from exc
+        run_record = final_record.get("run")
+        analysis = run_record.get("analysis") if isinstance(run_record, Mapping) else None
+        if not isinstance(analysis, Mapping):
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_missing",
+                "Final RunRecord has no immutable chapter analysis evidence",
+            )
+        if (
+            run_record.get("id") != publication.get("run_id")
+            or run_record.get("chapter_index") != completion.get("chapter_index")
+        ):
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid",
+                "Final RunRecord scope does not match its publication and completion",
+            )
+        try:
+            chapter_body = prose_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise AutonomyRunnerError(
+                "autonomy_arc_evidence_invalid", "canonical prose is not UTF-8"
+            ) from exc
+        return derive_arc_fulfillment_assessment(
+            chapter_body=chapter_body,
+            chapter_body_sha256=prose_hash,
+            analysis=analysis,
         )
 
     def _reconcile_arc_fulfillment(self, session_id: str) -> None:
         for completion in self.sessions.completion_ledger(session_id).rebuild():
-            try:
-                self._record_arc_fulfillment(session_id, completion)
-            except ArcPlanError as exc:
-                if exc.code != "arc_target_already_committed":
-                    raise
+            self._record_arc_fulfillment(session_id, completion)
 
 
 def bind_delivery_resolution_verifier(

@@ -184,22 +184,35 @@ class AutonomySessionStore:
             if defer_transient and intent["operation_id"] in self._defer_status_recovery_once:
                 self._defer_status_recovery_once.remove(intent["operation_id"])
                 continue
-            marker = self.operations.source_verification(intent)
-            if intent["operation_type"] in {"execute", "resume"}:
-                if marker is None:
-                    recovered.append(
-                        self._rollback_unverified_source_operation(
-                            intent, completed_at=timestamp
+            def roll_back() -> dict[str, Any]:
+                if intent["operation_type"] in {"execute", "resume"}:
+                    return self._rollback_unverified_source_operation(
+                        intent, completed_at=timestamp
+                    )
+                return self._rollback_unverified_terminal_operation(
+                    intent, completed_at=timestamp
+                )
+
+            def roll_forward() -> dict[str, Any]:
+                marker = self.operations.source_verification(intent)
+                if intent["operation_type"] in {"execute", "resume"}:
+                    if marker is None:
+                        raise AutonomyOperationError(
+                            "autonomy_operation_marker_evidence_missing",
+                            "post-marker source operation has no bound verification evidence",
                         )
-                    )
-                elif intent["expected_state"] == "absent":
-                    recovered.append(self._roll_forward_execute(intent, marker=marker))
-                else:
-                    recovered.append(
-                        self._roll_forward_source_transition(intent, marker=marker)
-                    )
-            else:
-                recovered.append(self._roll_forward_terminal_transition(intent))
+                    if intent["expected_state"] == "absent":
+                        return self._roll_forward_execute(intent, marker=marker)
+                    return self._roll_forward_source_transition(intent, marker=marker)
+                return self._roll_forward_terminal_transition(intent)
+
+            recovered.append(
+                self.operations.reconcile_pending(
+                    intent,
+                    on_roll_back=roll_back,
+                    on_roll_forward=roll_forward,
+                )
+            )
         return recovered
 
     def _rollback_unverified_source_operation(
@@ -245,6 +258,36 @@ class AutonomySessionStore:
             outcome="rolled_back",
             event_hash=None,
             lease_hash=current["lease_hash"] if current is not None else None,
+            completed_at=completed_at,
+        )
+
+    def _rollback_unverified_terminal_operation(
+        self, intent: Mapping[str, Any], *, completed_at: str
+    ) -> dict[str, Any]:
+        """Roll back only while every terminal precondition is still unchanged."""
+
+        operation = dict(intent)
+        genesis = self._load_genesis(operation["session_id"])
+        plan = self._load_plan(operation["session_id"])
+        self._assert_operation_scope(operation, genesis=genesis, plan=plan)
+        events = self._load_events(operation["session_id"])
+        if events[-1]["event_hash"] != operation["expected_event_hash"]:
+            raise AutonomyOperationError(
+                "autonomy_operation_side_effect_without_marker",
+                "terminal session event advanced without its commit marker",
+            )
+        current = self.leases._reconcile_fenced(operation["book_id"])
+        current_hash = current["lease_hash"] if current is not None else None
+        if current_hash != operation["expected_lease_hash"]:
+            raise AutonomyOperationError(
+                "autonomy_operation_side_effect_without_marker",
+                "terminal lease changed without its commit marker",
+            )
+        return self.operations.finish(
+            operation,
+            outcome="rolled_back",
+            event_hash=None,
+            lease_hash=current_hash,
             completed_at=completed_at,
         )
 
@@ -442,6 +485,37 @@ class AutonomySessionStore:
             lease_hash=current["lease_hash"] if current is not None else None,
             completed_at=operation["created_at"],
         )
+
+    def _assert_terminal_transition_ready(self, intent: Mapping[str, Any]) -> None:
+        operation = dict(intent)
+        genesis = self._load_genesis(operation["session_id"])
+        plan = self._load_plan(operation["session_id"])
+        self._assert_operation_scope(operation, genesis=genesis, plan=plan)
+        events = self._load_events(operation["session_id"])
+        already_applied = events[-1]["event_type"] == operation["target_event_type"]
+        if operation["operation_type"] == "complete" and not already_applied:
+            completion = self.completion_ledger(operation["session_id"]).summary()
+            if (
+                completion["completed_count"] != plan["requested_chapter_count"]
+                or completion["delivery_blocked"]
+            ):
+                raise AutonomyOperationError(
+                    "autonomy_operation_completion_unproven",
+                    "completion intent no longer has a valid receipt proof",
+                )
+        current = self.leases._reconcile_fenced(operation["book_id"])
+        if (
+            current is not None
+            and current["status"] == "active"
+            and (
+                current["session_id"] != operation["session_id"]
+                or current["plan_id"] != operation["plan_id"]
+            )
+        ):
+            raise AutonomyOperationError(
+                "autonomy_operation_foreign_lease",
+                "terminal transition cannot cross an active foreign writer lease",
+            )
 
     def _recover_expected_event(
         self, intent: Mapping[str, Any], *, genesis: Mapping[str, Any]
@@ -852,6 +926,8 @@ class AutonomySessionStore:
             created_at=timestamp,
         )
         try:
+            self._assert_terminal_transition_ready(intent)
+            self.operations.mark_terminal_ready(intent)
             self._roll_forward_terminal_transition(intent)
         except Exception:
             self._defer_status_recovery_once.add(intent["operation_id"])
@@ -901,6 +977,8 @@ class AutonomySessionStore:
             created_at=timestamp,
         )
         try:
+            self._assert_terminal_transition_ready(intent)
+            self.operations.mark_terminal_ready(intent)
             self._roll_forward_terminal_transition(intent)
         except Exception:
             self._defer_status_recovery_once.add(intent["operation_id"])
@@ -956,6 +1034,8 @@ class AutonomySessionStore:
             created_at=timestamp,
         )
         try:
+            self._assert_terminal_transition_ready(intent)
+            self.operations.mark_terminal_ready(intent)
             self._roll_forward_terminal_transition(intent)
         except Exception:
             self._defer_status_recovery_once.add(intent["operation_id"])

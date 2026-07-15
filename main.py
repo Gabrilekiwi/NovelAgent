@@ -90,7 +90,9 @@ from core.story_project.validator import validate_story_project
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="NovelAgent v1.0 agent loop")
+    parser = argparse.ArgumentParser(
+        description="NovelAgent v1.0 agent loop", allow_abbrev=False
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -352,7 +354,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--steps",
         type=_positive_int,
         default=1,
-        help="Number of agent loop steps to run.",
+        help=(
+            "Deprecated low-level agent-loop compatibility bound. It is not a "
+            "StoryProject autonomy chapter count; autonomy uses its immutable "
+            "InstructionPlan range."
+        ),
     )
     parser.add_argument(
         "--continue-on-rejection",

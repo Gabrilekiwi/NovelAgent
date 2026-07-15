@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import unittest
 import uuid
 
-from core.memory_v2 import load_memory_event_batches, replay_memory_events
+from core.memory_v2 import (
+    capture_historical_revision_dependency_inventory,
+    load_memory_event_batches,
+    replay_memory_events,
+)
+from core.memory_v2.storage import load_canonical_memory
+from core.story_project.history_revision_execution import execute_amend_transaction
 from core.story_project.identity import ensure_project_identity, load_project_identity, project_identity_path
 from core.story_project.authority import AuthorityError, activate_event_authority, project_identity_sha256
 from core.story_project.mapper import SETTING_DIR_NAME, TRACKING_DIR_NAME
@@ -21,6 +28,7 @@ from core.story_project.migration_v2 import (
 )
 from core.story_project.model import CORE_DIRECTORY_NAMES
 from core.story_project.paths import canonical_prose_path
+from core.story_project.read_set import capture_story_project_read_set
 
 
 NOW = "2026-07-14T00:00:00+00:00"
@@ -191,6 +199,112 @@ class StoryProjectMigrationExecutionTest(unittest.TestCase):
         recovered = execute_event_authority_migration(root, plan=plan, approval=approval)
         self.assertTrue(recovered["idempotent"])
         self.assertEqual(interim.authority["head_event_hash"], recovered["head_event_hash"])
+
+    def test_real_history_entry_recovers_marked_migration_then_replays(self) -> None:
+        root = Path.cwd() / ".tmp" / "mh" / uuid.uuid4().hex[:8] / "b"
+        for directory in CORE_DIRECTORY_NAMES:
+            (root / directory).mkdir(parents=True)
+        ensure_project_identity(root, book_id=f"book-mh-{uuid.uuid4().hex[:8]}")
+        canonical_prose_path(root, 1).write_text(
+            "Chapter one happened.\n", encoding="utf-8"
+        )
+        canonical_prose_path(root, 10).write_text(
+            "Chapter ten opened the gate.\n", encoding="utf-8"
+        )
+        (root / SETTING_DIR_NAME / "world.md").write_text(
+            "Gravity is constant.\n", encoding="utf-8"
+        )
+        (root / TRACKING_DIR_NAME / "notes.md").write_text(
+            "Legacy tracking projection.\n", encoding="utf-8"
+        )
+        plan, approval = self._approved(root)
+
+        def fail_after_marker(point: str, _index: int | None, _path: Path | None) -> None:
+            if point == "after_commit_marker":
+                raise OSError("injected after migration marker")
+
+        with self.assertRaisesRegex(MigrationExecutionError, "migration_bootstrap_incomplete"):
+            execute_event_authority_migration(
+                root,
+                plan=plan,
+                approval=approval,
+                fault_injector=fail_after_marker,
+            )
+
+        global_pending = (
+            root / ".novelagent" / "runtime" / "ea" / "r" / "p"
+        )
+        self.assertEqual(1, len(list(global_pending.glob("*.json"))))
+        identity = load_project_identity(root)
+        memory_root = root / ".novelagent" / "runtime" / "memory" / "v2"
+        projection = load_canonical_memory(memory_root / "canonical_memory.json")
+        next_chapter = int(projection["current_state"]["chapter_index"])
+        read_set = capture_story_project_read_set(
+            root,
+            next_chapter,
+            project_identity=identity,
+        )
+        inventory = capture_historical_revision_dependency_inventory(
+            story_project_root=root,
+            book_id=identity.book_id,
+            authority_epoch=int(identity.authority["authority_epoch"]),
+            head_event_hash=projection["head_event_hash"],
+            historical_chapter_index=1,
+            canonical_next_chapter_index=next_chapter,
+        )
+        historical = canonical_prose_path(root, 1)
+        revision_source = root.parent / "r.txt"
+        revision_text = "Official correction: chapter one happened at dusk."
+        revision_source.write_text(revision_text, encoding="utf-8")
+        evidence_start = revision_text.index("chapter one")
+        kwargs = {
+            "memory_root": memory_root,
+            "story_project_root": root,
+            "transaction_id": "mh-001",
+            "historical_chapter_index": 1,
+            "historical_chapter_path": historical,
+            "expected_historical_chapter_sha256": hashlib.sha256(
+                historical.read_bytes()
+            ).hexdigest(),
+            "revision_source_path": revision_source,
+            "expected_revision_source_sha256": hashlib.sha256(
+                revision_source.read_bytes()
+            ).hexdigest(),
+            "evidence_spans": [
+                {
+                    "start_char": evidence_start,
+                    "end_char": evidence_start + len("chapter one"),
+                    "quote": "chapter one",
+                }
+            ],
+            "operations": [
+                {"op": "update_world", "value": {"chapter_1_time": "dusk"}}
+            ],
+            "authority_epoch": int(identity.authority["authority_epoch"]),
+            "expected_head_event_hash": projection["head_event_hash"],
+            "expected_revision": projection["revision"],
+            "source_project_digest": read_set["membership_fingerprint"],
+            "context_digest": read_set["context_digest"],
+            "dependency_inventory": inventory,
+        }
+
+        revised = execute_amend_transaction(**kwargs)
+        self.assertEqual("completed", revised["status"])
+        self.assertEqual([], list(global_pending.glob("*.json")))
+        completed_entries = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (
+                root / ".novelagent" / "runtime" / "ea" / "r" / "c"
+            ).glob("*.json")
+        ]
+        self.assertEqual(
+            {"migration", "history_revision"},
+            {entry["writer_kind"] for entry in completed_entries},
+        )
+
+        replayed = execute_amend_transaction(**kwargs)
+        self.assertEqual("already_committed", replayed["status"])
+        self.assertEqual(revised["head_event_hash"], replayed["head_event_hash"])
 
     def test_non_markdown_source_drift_at_marker_rolls_back_identity(self) -> None:
         root = self._book("marker-drift")

@@ -337,49 +337,74 @@ class BookLeaseStore:
 
         book = safe_id("book_id", book_id)
         expected = sha256_digest("lease_hash", lease_hash)
-        records: dict[str, dict[str, Any]] = {}
-        for path in sorted(self._history_dir(book).glob("*.json")):
-            record = validate_book_lease(load_json_object(path))
-            if record["book_id"] != book:
-                raise BookLeaseError(
-                    "book_lease_history_invalid", "lease history changed book scope"
-                )
-            records[record["lease_hash"]] = record
+        records = self.load_history_index(book)
         current = records.get(expected)
         if current is None:
             raise BookLeaseError(
                 "book_lease_history_missing", "fencing lease generation is not durable"
             )
-        generation = int(current["generation"])
-        cursor = current
-        while cursor["previous_lease_hash"] is not None:
-            predecessor = records.get(cursor["previous_lease_hash"])
-            if predecessor is None or int(predecessor["generation"]) != generation - 1:
-                raise BookLeaseError(
-                    "book_lease_history_invalid", "lease generation chain is broken"
-                )
-            if predecessor["book_id"] != book:
-                raise BookLeaseError(
-                    "book_lease_history_invalid", "lease history changed book scope"
-                )
-            cursor = predecessor
-            generation -= 1
-        if generation != 1:
-            raise BookLeaseError(
-                "book_lease_history_invalid", "lease history does not reach genesis"
-            )
         return current
+
+    def load_history_index(self, book_id: str) -> dict[str, dict[str, Any]]:
+        """Verify the complete durable lease chain once and index it by hash."""
+
+        book = safe_id("book_id", book_id)
+        by_generation: dict[int, dict[str, Any]] = {}
+        for path in sorted(self._history_dir(book).glob("*.json")):
+            record = validate_book_lease(load_json_object(path))
+            if record["book_id"] != book or path.name != _history_name(record):
+                raise BookLeaseError(
+                    "book_lease_history_invalid",
+                    "lease history path or book scope was modified",
+                )
+            generation = int(record["generation"])
+            existing = by_generation.get(generation)
+            if existing is not None and existing["lease_hash"] != record["lease_hash"]:
+                raise BookLeaseError(
+                    "book_lease_history_forked",
+                    f"lease history has multiple generation {generation} records",
+                )
+            by_generation[generation] = record
+        if not by_generation:
+            return {}
+        maximum = max(by_generation)
+        if set(by_generation) != set(range(1, maximum + 1)):
+            raise BookLeaseError(
+                "book_lease_history_invalid", "lease generation history has a gap"
+            )
+        previous: str | None = None
+        records: dict[str, dict[str, Any]] = {}
+        for generation in range(1, maximum + 1):
+            record = by_generation[generation]
+            if record["previous_lease_hash"] != previous:
+                raise BookLeaseError(
+                    "book_lease_history_forked",
+                    "lease generation does not descend from the preceding generation",
+                )
+            records[record["lease_hash"]] = record
+            previous = record["lease_hash"]
+        return records
 
     def assert_descends_from(
         self, book_id: str, *, current_lease_hash: str, ancestor_lease_hash: str
     ) -> None:
         ancestor = sha256_digest("ancestor_lease_hash", ancestor_lease_hash)
-        ancestor_record = self.load_history(book_id, ancestor)
+        records = self.load_history_index(book_id)
+        ancestor_record = records.get(ancestor)
+        if ancestor_record is None:
+            raise BookLeaseError(
+                "book_lease_history_missing", "fencing lease generation is not durable"
+            )
         owner_scope = (
             ancestor_record["session_id"],
             ancestor_record["plan_id"],
         )
-        cursor = self.load_history(book_id, current_lease_hash)
+        current = sha256_digest("current_lease_hash", current_lease_hash)
+        cursor = records.get(current)
+        if cursor is None:
+            raise BookLeaseError(
+                "book_lease_history_missing", "fencing lease generation is not durable"
+            )
         while True:
             if (cursor["session_id"], cursor["plan_id"]) != owner_scope:
                 raise BookLeaseError(
@@ -394,7 +419,12 @@ class BookLeaseStore:
                     "book_lease_fence_not_ancestor",
                     "stage fencing generation is not in the current lease chain",
                 )
-            cursor = self.load_history(book_id, previous)
+            predecessor = records.get(previous)
+            if predecessor is None:
+                raise BookLeaseError(
+                    "book_lease_history_invalid", "lease generation chain is broken"
+                )
+            cursor = predecessor
 
     def _load_optional(self, book_id: str) -> dict[str, Any] | None:
         path = self._current_path(book_id)

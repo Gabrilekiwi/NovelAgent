@@ -32,6 +32,7 @@ from core.engine.safe_paths import (
     SafePathResolver,
     assert_safe_local_tree,
 )
+from core.engine.recovery_protocol import reconcile_marker_transaction
 from core.schema import SchemaValidationError, validate_schema
 
 
@@ -425,17 +426,24 @@ class PersistenceV2Transaction:
             except Exception as exc:
                 manifest = _safe_reload_manifest(self.manifest_path, manifest)
                 _append_error(manifest, "commit_failed", exc)
-                if self.marker_path.exists():
+                def roll_forward() -> dict[str, Any]:
                     manifest["state"] = "commit_marked"
                     _write_manifest_best_effort(self.manifest_path, manifest)
                     return _result(manifest, receipt_valid=False)
-                return _rollback_pre_marker(
-                    transaction_root=self.transaction_root,
-                    journal_dir=self.journal_dir,
-                    manifest_path=self.manifest_path,
-                    manifest=manifest,
-                    pending_entry_path=self.pending_entry_path,
-                    resolver=resolver,
+
+                return reconcile_marker_transaction(
+                    marker_present=self.marker_path.exists(),
+                    completion_present=False,
+                    on_roll_back=lambda: _rollback_pre_marker(
+                        transaction_root=self.transaction_root,
+                        journal_dir=self.journal_dir,
+                        manifest_path=self.manifest_path,
+                        manifest=manifest,
+                        pending_entry_path=self.pending_entry_path,
+                        resolver=resolver,
+                    ),
+                    on_roll_forward=roll_forward,
+                    on_completed=lambda: _result(manifest, receipt_valid=False),
                 )
 
     def complete_publication(self) -> dict[str, Any]:
@@ -1069,7 +1077,7 @@ def reconcile_pending_persistence_v2(
                 receipt_path = resolver.resolve(
                     manifest["immutable"]["publication_receipt"]["path_ref"]
                 ).path
-                if receipt_path.exists():
+                def recover_completed() -> dict[str, Any]:
                     receipt = _load_json(receipt_path)
                     verification = verify_publication_receipt(
                         receipt, root_map=_root_map_from_manifest(manifest)
@@ -1080,23 +1088,32 @@ def reconcile_pending_persistence_v2(
                     manifest["state"] = "completed"
                     _write_manifest(manifest_path, manifest)
                     _transition_registry(root, manifest, "completed", receipt=receipt)
-                    results.append(_result(manifest, receipt_valid=True, receipt=receipt))
-                    continue
-                if marker_path.exists():
+                    return _result(manifest, receipt_valid=True, receipt=receipt)
+
+                def recover_forward() -> dict[str, Any]:
                     marker = load_commit_marker_v2(marker_path)
                     _verify_marker_against_manifest(marker, manifest)
                     _verify_apply_targets(manifest, resolver=resolver)
-                    results.append(transaction._complete_publication_locked())
-                    continue
-                _validate_pending_candidate(journal, manifest)
-                results.append(
-                    _rollback_pre_marker(
+                    return transaction._complete_publication_locked()
+
+                def recover_rollback() -> dict[str, Any]:
+                    _validate_pending_candidate(journal, manifest)
+                    return _rollback_pre_marker(
                         transaction_root=root,
                         journal_dir=journal,
                         manifest_path=manifest_path,
                         manifest=manifest,
                         pending_entry_path=entry_path,
                         resolver=resolver,
+                    )
+
+                results.append(
+                    reconcile_marker_transaction(
+                        marker_present=marker_path.exists(),
+                        completion_present=receipt_path.exists(),
+                        on_roll_back=recover_rollback,
+                        on_roll_forward=recover_forward,
+                        on_completed=recover_completed,
                     )
                 )
         except PersistenceLockError:

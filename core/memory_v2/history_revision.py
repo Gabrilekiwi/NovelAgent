@@ -2541,7 +2541,22 @@ def _validate_historical_relative_path(value: Any) -> str:
 
 
 def _safe_id(value: Any) -> str:
-    if not isinstance(value, str) or not value or not _SAFE_ID.fullmatch(value):
+    reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{index}" for index in range(1, 10)),
+        *(f"LPT{index}" for index in range(1, 10)),
+    }
+    base = value.split(".", 1)[0].upper() if isinstance(value, str) else ""
+    if (
+        not isinstance(value, str)
+        or not value
+        or not _SAFE_ID.fullmatch(value)
+        or value.endswith((".", " "))
+        or base in reserved
+    ):
         raise HistoricalRevisionError("historical_revision_id_invalid", "transaction_id is unsafe")
     return value
 

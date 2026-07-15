@@ -22,6 +22,44 @@ _FORBIDDEN_KEYS = frozenset(
     {"api_key", "apikey", "authorization", "credential", "credentials", "password", "secret", "token"}
 )
 _ALLOWED_TEMPLATE_FIELDS = frozenset({"run_id", "chapter_index"})
+_PATH_FIELD_NAMES = frozenset(
+    {
+        "cwd",
+        "destination",
+        "directory",
+        "dir",
+        "evidence_path",
+        "file",
+        "file_path",
+        "filepath",
+        "location",
+        "original_path_hint",
+        "path",
+        "root",
+        "source",
+        "target",
+        "workspace",
+    }
+)
+_KNOWN_POSIX_ROOTS = frozenset(
+    {
+        "/dev",
+        "/etc",
+        "/home",
+        "/mnt",
+        "/opt",
+        "/private",
+        "/proc",
+        "/root",
+        "/run",
+        "/sys",
+        "/tmp",
+        "/users",
+        "/usr",
+        "/var",
+        "/volumes",
+    }
+)
 
 
 class DeliveryIntentError(RuntimeError):
@@ -347,7 +385,13 @@ def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
         raise DeliveryIntentError("delivery_intent_payload_invalid", str(exc)) from exc
 
 
-def _assert_public_value(value: Any, *, path: str = "$", depth: int = 0) -> None:
+def _assert_public_value(
+    value: Any,
+    *,
+    path: str = "$",
+    depth: int = 0,
+    field_name: str | None = None,
+) -> None:
     if depth > 16:
         raise DeliveryIntentError("delivery_intent_payload_invalid", "payload nesting is too deep")
     if isinstance(value, dict):
@@ -359,15 +403,36 @@ def _assert_public_value(value: Any, *, path: str = "$", depth: int = 0) -> None
                 raise DeliveryIntentError(
                     "delivery_intent_credential_forbidden", f"credential-like field is forbidden: {path}.{key}"
                 )
-            _assert_public_value(child, path=f"{path}.{key}", depth=depth + 1)
+            _assert_public_value(
+                child,
+                path=f"{path}.{key}",
+                depth=depth + 1,
+                field_name=normalized,
+            )
         return
     if isinstance(value, list):
         for index, child in enumerate(value):
-            _assert_public_value(child, path=f"{path}[{index}]", depth=depth + 1)
+            _assert_public_value(
+                child,
+                path=f"{path}[{index}]",
+                depth=depth + 1,
+                field_name=field_name,
+            )
         return
     if isinstance(value, str):
         stripped = value.strip()
-        if re.match(r"^(?:[A-Za-z]:[\\/]|[/\\]{1,2})", stripped):
+        normalized_field = field_name or ""
+        path_field = normalized_field in _PATH_FIELD_NAMES or normalized_field.endswith(
+            ("_path", "_file", "_directory", "_dir", "_root")
+        )
+        lowered = stripped.lower().replace("\\", "/")
+        posix_root = lowered.rstrip("/") in _KNOWN_POSIX_ROOTS or any(
+            lowered.startswith(f"{root}/") for root in _KNOWN_POSIX_ROOTS
+        )
+        windows_absolute = re.match(r"^[A-Za-z]:[\\/]", stripped) is not None
+        unc_absolute = stripped.startswith(("//", "\\\\"))
+        root_relative_path = stripped.startswith(("/", "\\")) and path_field
+        if windows_absolute or unc_absolute or posix_root or root_relative_path:
             raise DeliveryIntentError(
                 "delivery_intent_absolute_path_forbidden", f"absolute path is forbidden: {path}"
             )

@@ -4,7 +4,8 @@
   "type": "object",
   "required": ["schema_version", "operation_id", "operation_key", "attempt", "operation_type", "session_id", "book_id", "plan_id", "plan_hash", "expected_state", "expected_event_hash", "expected_lease_hash", "target_event_type", "reason", "lease_ttl_seconds", "created_at", "intent_hash"],
   "properties": {
-    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "schema_version": {"type": "string", "enum": ["1.0", "1.1"]},
+    "recovery_protocol": {"type": "string", "enum": ["commit-marker-forward-v1"]},
     "operation_id": {"type": "string", "minLength": 1},
     "operation_key": {"type": "string", "minLength": 64},
     "attempt": {"type": "integer", "minimum": 1},

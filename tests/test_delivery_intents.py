@@ -159,12 +159,34 @@ class DeliveryIntentTest(unittest.TestCase):
     def test_intent_rejects_credentials_and_absolute_paths_in_event_batch(self) -> None:
         for batch in (
             {"batch_hash": "a" * 64, "api_key": "hidden", "events": []},
-            {"batch_hash": "a" * 64, "evidence_path": "C:/private/chapter.md", "events": []},
             {"batch_hash": "a" * 64, "token": "hidden", "events": []},
         ):
             with self.subTest(batch=batch):
-                with self.assertRaises(DeliveryIntentError):
+                with self.assertRaisesRegex(
+                    DeliveryIntentError, "delivery_intent_credential_forbidden"
+                ):
                     self._intent(batch=batch)
+
+        for batch in (
+            {"batch_hash": "a" * 64, "evidence_path": "C:/private/chapter.md", "events": []},
+            {"batch_hash": "a" * 64, "evidence_path": r"\\server\private\chapter.md", "events": []},
+            {"batch_hash": "a" * 64, "source": "/home/writer/private/chapter.md", "events": []},
+            {"batch_hash": "a" * 64, "source": "/50/private/chapter.md", "events": []},
+        ):
+            with self.subTest(batch=batch):
+                with self.assertRaisesRegex(
+                    DeliveryIntentError, "delivery_intent_absolute_path_forbidden"
+                ):
+                    self._intent(batch=batch)
+
+    def test_narrative_slash_prefix_is_not_mistaken_for_an_absolute_path(self) -> None:
+        body = "/50号站台的钟声响起，林雪继续向前。"
+        body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+        intent = self._intent(batch=self._batch(body=body), body_hash=body_hash)
+
+        self.assertEqual(body_hash, intent["canonical_payload"]["chapter_body_sha256"])
+        self.assertEqual(intent, validate_delivery_intent(intent))
 
     def test_intent_hash_and_batch_binding_detect_tampering(self) -> None:
         intent = self._intent()

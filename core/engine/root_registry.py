@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -53,8 +53,15 @@ class RootRegistryService:
         self.transaction_root = assert_safe_local_tree(transaction_root)
         self.registry_path = self.transaction_root / "root_registry.json"
 
-    def ensure(self, root_map: Mapping[str, str | Path]) -> dict[str, Any]:
-        roots = _validate_physical_roots(root_map)
+    def ensure(
+        self,
+        root_map: Mapping[str, str | Path],
+        *,
+        require_runtime: bool = True,
+    ) -> dict[str, Any]:
+        roots = _validate_physical_roots(
+            root_map, require_runtime=require_runtime
+        )
         self.transaction_root.mkdir(parents=True, exist_ok=True)
         if self.registry_path.exists():
             registry = load_root_registry(self.registry_path)
@@ -71,7 +78,7 @@ class RootRegistryService:
                 )
             if not missing:
                 return registry
-            _assert_remap_idle(self.transaction_root, active_sessions=())
+            _assert_pending_persistence_idle(self.transaction_root)
             updated = copy.deepcopy(registry)
             for root_id in missing:
                 updated["roots"][root_id] = _new_binding(root_id, roots[root_id])
@@ -81,6 +88,7 @@ class RootRegistryService:
             _atomic_replace_from_bytes(self.registry_path, _json_bytes(validate_root_registry(updated)))
             return updated
 
+        _assert_pending_persistence_idle(self.transaction_root)
         now = _utc_now()
         registry = {
             "schema_version": ROOT_REGISTRY_SCHEMA_VERSION,
@@ -99,7 +107,7 @@ class RootRegistryService:
         except FileExistsError:
             # A concurrent creator won. Its bindings still have to match; do
             # not silently adopt a different physical root.
-            return self.ensure(roots)
+            return self.ensure(roots, require_runtime=require_runtime)
 
     def load(self) -> dict[str, Any]:
         return load_root_registry(self.registry_path)
@@ -131,8 +139,17 @@ class RootRegistryService:
         # Fixed cross-subsystem order: runtime remap fence, then persistence
         # root. Autonomy session transitions take the same outer fence before
         # their own state locks, closing the scan->replace race.
-        with _runtime_remap_fence(runtime_fence):
-            with persistence_run_lock(self.transaction_root):
+        try:
+            with ExitStack() as locks:
+                if _is_event_authority_home(self.transaction_root):
+                    # Event-authority writers own the EA-global lock before the
+                    # dependency fence.  Match that order so remap cannot hold
+                    # the dependency fence while waiting for EA global.
+                    locks.enter_context(persistence_run_lock(self.transaction_root))
+                    locks.enter_context(_runtime_remap_fence(runtime_fence))
+                else:
+                    locks.enter_context(_runtime_remap_fence(runtime_fence))
+                    locks.enter_context(persistence_run_lock(self.transaction_root))
                 _assert_remap_idle(self.transaction_root, active_sessions=active_sessions)
                 registry = self.load()
                 if registry["revision"] != expected_revision:
@@ -164,6 +181,10 @@ class RootRegistryService:
                     _json_bytes(validate_root_registry(updated)),
                 )
                 return updated
+        except PersistenceLockError as exc:
+            raise RootRemapBlockedError(
+                "remap-roots is blocked by an active persistence writer"
+            ) from exc
 
     def remap_roots(
         self,
@@ -310,10 +331,27 @@ def _new_binding(root_id: str, path: Path) -> dict[str, Any]:
 
 
 def _assert_remap_idle(transaction_root: Path, *, active_sessions: Iterable[str]) -> None:
+    _assert_pending_persistence_idle(transaction_root)
     explicit_sessions = [str(item) for item in active_sessions if str(item)]
+    active_or_invalid_sessions = _active_or_invalid_autonomy_sessions(
+        transaction_root.parent / "autonomy"
+    )
+    if explicit_sessions or active_or_invalid_sessions:
+        raise RootRemapBlockedError("remap-roots is blocked by an active session")
+
+
+def _assert_pending_persistence_idle(transaction_root: Path) -> None:
     pending = list((transaction_root / "registry" / "pending").glob("*.json"))
     recovery_required = list(
         (transaction_root / "registry" / "recovery_required").glob("*.json")
+    )
+    # StoryProject-global event-authority entries intentionally live outside
+    # PersistenceV2's local registry.  They bind transaction roots from several
+    # physical locations, so moving one mapping while either state is present
+    # could redirect recovery to an empty tree and falsely abandon a marked run.
+    authority_pending = list((transaction_root / "r" / "p").glob("*.json"))
+    authority_recovery_required = list(
+        (transaction_root / "r" / "x").glob("*.json")
     )
     staging = list((transaction_root / "staging").glob("*"))
     orphan_journals = []
@@ -323,13 +361,15 @@ def _assert_remap_idle(transaction_root: Path, *, active_sessions: Iterable[str]
         for state in ("completed", "rolled_back"):
             terminal_ids.update(path.stem for path in (transaction_root / "registry" / state).glob("*.json"))
         orphan_journals = [path for path in journals.iterdir() if path.is_dir() and path.name not in terminal_ids]
-    if pending or recovery_required or staging or orphan_journals:
+    if (
+        pending
+        or recovery_required
+        or authority_pending
+        or authority_recovery_required
+        or staging
+        or orphan_journals
+    ):
         raise RootRemapBlockedError("remap-roots is blocked by a pending persistence transaction")
-    active_or_invalid_sessions = _active_or_invalid_autonomy_sessions(
-        transaction_root.parent / "autonomy"
-    )
-    if explicit_sessions or active_or_invalid_sessions:
-        raise RootRemapBlockedError("remap-roots is blocked by an active session")
 
 
 def _active_or_invalid_autonomy_sessions(autonomy_root: Path) -> list[str]:
@@ -409,6 +449,10 @@ def _runtime_remap_fence(path: Path):
         raise RootRemapBlockedError(
             "remap-roots is blocked by an autonomy session transition"
         ) from exc
+
+
+def _is_event_authority_home(path: Path) -> bool:
+    return path.name == "ea" and path.parent.name == "runtime" and (path / "r").is_dir()
 
 
 def _registry_digest(payload: Mapping[str, Any]) -> str:

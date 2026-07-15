@@ -51,6 +51,22 @@
           },
           "differences": {"type": "array", "items": {"type": "string", "enum": ["mainline", "relationship", "escalation", "resource_cost", "foreshadowing"]}},
           "completion_receipt_hash": {"type": ["string", "null"], "minLength": 64},
+          "fulfillment_assessment": {
+            "type": ["object", "null"],
+            "required": ["schema_version", "fulfillment_evidence_hash", "planned_target_hash", "completion_receipt_hash", "evidenced_fields", "assessment_hash"],
+            "properties": {
+              "schema_version": {"type": "string", "enum": ["1.0"]},
+              "fulfillment_evidence_hash": {"type": "string", "minLength": 64},
+              "planned_target_hash": {"type": "string", "minLength": 64},
+              "completion_receipt_hash": {"type": "string", "minLength": 64},
+              "evidenced_fields": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["mainline", "relationship", "escalation", "resource_cost", "foreshadowing"]}
+              },
+              "assessment_hash": {"type": "string", "minLength": 64}
+            },
+            "additionalProperties": false
+          },
           "adjustment_note": {"type": ["string", "null"], "minLength": 1}
         },
         "additionalProperties": false

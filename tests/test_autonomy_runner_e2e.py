@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import os
 import unittest
@@ -10,9 +11,10 @@ from unittest.mock import patch
 
 from api.contracts import ModelResponse
 from core.autonomy.cli import _story_source_digest
+from core.autonomy.arc import ArcPlanError, build_run_arc_plan
 from core.autonomy.plans import build_source_snapshot, compile_instruction_plan
 from core.autonomy.profiles import TrustedProfiles
-from core.autonomy.runner import AutonomyRunner
+from core.autonomy.runner import AutonomyRunner, AutonomyRunnerError
 from core.autonomy.session import AutonomySessionStore
 from core.context_budget import ContextBudgetError, RunBudgetLimits
 from core.delivery import DeliveryQueue, FileDeliveryAdapter, delivery_outcome
@@ -27,7 +29,9 @@ from core.memory_v2 import (
     save_canonical_memory,
     write_memory_event_batch,
 )
+from core.memory_v2.canonical import canonical_json_hash
 from core.model_call_runtime import current_model_call_runtime
+from core.path_refs import resolve_path_ref
 from core.runtime_paths import RuntimePaths
 from core.schema import validate_schema
 from core.story_project.authority import activate_event_authority, project_identity_sha256
@@ -336,9 +340,60 @@ def _assert_three_chapter_runner_is_receipt_counted_and_exactly_delivered():
         assert verification["valid"] and verification["committed"]
         kinds = {item["kind"] for item in publication["artifacts"]}
         assert {"autonomy_outline_evidence", "autonomy_stage_evidence"} <= kinds
+        final_record = json.loads(
+            resolve_path_ref(
+                publication["final_run"]["path_ref"], case["roots"]
+            ).read_text(encoding="utf-8")
+        )
+        fulfillment_evidence = final_record["run"]["analysis"]["fulfillment_evidence"]
+        evidence_payload = dict(fulfillment_evidence)
+        evidence_hash = evidence_payload.pop("evidence_hash")
+        assert evidence_hash == canonical_json_hash(evidence_payload)
 
     replay = replay_memory_events(case["paths"].memory_dir / "v2" / "events")
     assert replay["committed_chapter_count"] == 3
+
+    session_id = result["session"]["session_id"]
+    initial_arc = build_run_arc_plan(
+        case["plan"], session_id=session_id, created_at="2026-07-14T00:00:00+00:00"
+    )
+    arc = case["sessions"].arc_plans.load(result["session"]["arc_plan_id"])
+    assert arc["targets"][0]["planned"] == initial_arc["targets"][0]["planned"]
+    assert arc["targets"][2]["planned"] != initial_arc["targets"][2]["planned"]
+    assert all(target["fulfilled"] != target["planned"] for target in arc["targets"])
+    assert all(
+        target["differences"] == ["relationship", "escalation", "resource_cost"]
+        for target in arc["targets"]
+    )
+    assert all(
+        target["fulfillment_assessment"]["evidenced_fields"]
+        == ["mainline", "foreshadowing"]
+        for target in arc["targets"]
+    )
+    for target, initial_target in zip(arc["targets"][1:], initial_arc["targets"][1:]):
+        changed = {
+            field
+            for field in target["planned"]
+            if target["planned"][field] != initial_target["planned"][field]
+        }
+        assert changed == {"relationship", "escalation", "resource_cost"}
+    assert [item["chapter_index"] for item in arc["adjustments"]] == [2, 3]
+    assert len({item["revision"] for item in arc["adjustments"]}) == 2
+    assert all(item["chapter_index"] > 1 for item in arc["adjustments"])
+    assert all(
+        {
+            field
+            for field in item["before"]
+            if item["before"][field] != item["after"][field]
+        }
+        == {"relationship", "escalation", "resource_cost"}
+        for item in arc["adjustments"]
+    )
+
+    immutable_targets = copy.deepcopy(arc["targets"])
+    replayed = case["runner"].execute_plan(case["plan"])
+    assert replayed["stopped_reason"] == "completed"
+    assert case["sessions"].arc_plans.load(arc["arc_plan_id"])["targets"] == immutable_targets
 
 
 class _FailOnceAdapter:
@@ -399,6 +454,78 @@ class AutonomyRunnerE2ETest(unittest.TestCase):
         self,
     ):
         _assert_required_delivery_failure_blocks_then_resume_succeeds_before_next_chapter()
+
+    def test_fulfillment_recovers_from_committed_prose_after_checkpoint_crash(self):
+        class AbruptCrash(BaseException):
+            pass
+
+        case = _case(_workspace("arc-fulfillment-recovery"), chapters=1)
+        original = case["runner"]._record_arc_fulfillment
+        fired = {"value": False}
+
+        def crash_once(*args, **kwargs):
+            if not fired["value"]:
+                fired["value"] = True
+                raise AbruptCrash("after completion before arc fulfillment")
+            return original(*args, **kwargs)
+
+        with patch.object(
+            case["runner"], "_record_arc_fulfillment", side_effect=crash_once
+        ):
+            with self.assertRaises(AbruptCrash):
+                case["runner"].execute_plan(case["plan"])
+
+        session_id = case["sessions"].resolve_session_id("latest")
+        resumed = case["runner"].resume(session_id)
+        self.assertEqual("completed", resumed["stopped_reason"])
+        arc = case["sessions"].arc_plans.load(resumed["session"]["arc_plan_id"])
+        target = arc["targets"][0]
+        self.assertEqual(
+            ["relationship", "escalation", "resource_cost"],
+            target["differences"],
+        )
+        self.assertEqual(
+            ["mainline", "foreshadowing"],
+            target["fulfillment_assessment"]["evidenced_fields"],
+        )
+        self.assertEqual(64, len(target["fulfillment_assessment"]["fulfillment_evidence_hash"]))
+        self.assertIn("正文:", target["fulfilled"]["mainline"])
+        self.assertEqual(1, len(case["executor_requests"]))
+
+    def test_arc_recovery_rejects_receipt_scope_or_existing_target_conflict(self):
+        case = _case(_workspace("arc-evidence-binding"), chapters=1)
+        result = case["runner"].execute_plan(case["plan"])
+        session_id = result["session"]["session_id"]
+        ledger = case["sessions"].completion_ledger(session_id)
+        completion = ledger.rebuild()[0]
+        publication = ledger.load_publication(completion["publication_receipt_hash"])
+
+        wrong_target = dict(completion)
+        wrong_target["planned_target_hash"] = "0" * 64
+        with self.assertRaisesRegex(
+            AutonomyRunnerError, "completion receipt is bound to another Arc target"
+        ):
+            case["runner"]._record_arc_fulfillment(
+                session_id, wrong_target, publication_receipt=publication
+            )
+
+        wrong_publication = copy.deepcopy(publication)
+        wrong_publication["unhashed_extra"] = "must not be trusted"
+        with self.assertRaisesRegex(
+            AutonomyRunnerError, "PublicationReceipt integrity validation failed"
+        ):
+            case["runner"]._record_arc_fulfillment(
+                session_id, completion, publication_receipt=wrong_publication
+            )
+
+        with patch.object(
+            case["sessions"].arc_plans,
+            "record_fulfillment",
+            side_effect=ArcPlanError(
+                "arc_target_already_committed", "injected immutable conflict"
+            ),
+        ), self.assertRaisesRegex(ArcPlanError, "injected immutable conflict"):
+            case["runner"]._reconcile_arc_fulfillment(session_id)
 
     def test_external_root_overlap_is_rejected_before_session_or_provider(self):
         case = _case(_workspace("overlap"), chapters=1)
@@ -593,3 +720,9 @@ class AutonomyRunnerE2ETest(unittest.TestCase):
         self.assertEqual(50, result["session"]["completed_count"])
         self.assertEqual(50, len(case["executor_requests"]))
         self.assertEqual(50, len(list(case["external"].rglob("*.json"))))
+        arc = case["sessions"].arc_plans.load(result["session"]["arc_plan_id"])
+        self.assertEqual(49, len(arc["adjustments"]))
+        self.assertEqual(
+            list(range(2, 51)),
+            [item["chapter_index"] for item in arc["adjustments"]],
+        )

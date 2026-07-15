@@ -11,6 +11,7 @@
   ],
   "properties": {
     "schema_version": {"type": "string", "enum": ["1.0"]},
+    "recovery_protocol": {"type": "string", "enum": ["commit-marker-forward-v1"]},
     "checkpoint_id": {"type": "string", "minLength": 1},
     "checkpoint_hash": {"type": "string", "minLength": 64},
     "book_id": {"type": "string", "minLength": 1},

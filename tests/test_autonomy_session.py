@@ -6,7 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import core.autonomy.operations as operations_module
+import core.autonomy.session as session_module
+
 from core.autonomy.lease import BookLeaseError
+from core.autonomy.operations import AutonomyOperationError
 from core.autonomy.plans import AutonomyPlanError, compile_instruction_plan
 from core.autonomy.session import AutonomySessionError, AutonomySessionStore
 from core.engine.persistence import PersistenceLockError, persistence_run_lock
@@ -100,6 +104,64 @@ class AutonomySessionStoreTest(unittest.TestCase):
                     started["session_id"],
                     source_snapshot_loader=lambda: source_snapshot(),
                     at=T3,
+                )
+
+    def test_terminal_side_effect_without_marker_cannot_be_rolled_back(self) -> None:
+        class AbruptCrash(BaseException):
+            pass
+
+        for fault_point in ("event", "result"):
+            with self.subTest(fault_point=fault_point), workspace_case(
+                f"terminal_marker_loss_{fault_point}"
+            ) as temporary:
+                root = Path(temporary)
+                store = AutonomySessionStore(
+                    root, trusted_profiles=trusted_profiles()
+                )
+                started = store.execute_plan(
+                    self._plan(),
+                    source_snapshot_loader=lambda: source_snapshot(),
+                    at=T0,
+                )
+
+                if fault_point == "event":
+                    original = session_module.atomic_append_json
+
+                    def injected(path, payload):
+                        result = original(path, payload)
+                        if payload.get("event_type") == "cancelled":
+                            raise AbruptCrash("after terminal event")
+                        return result
+
+                    target = "core.autonomy.session.atomic_append_json"
+                else:
+                    original = operations_module.atomic_append_json
+
+                    def injected(path, payload):
+                        if Path(path).name == "result.json":
+                            raise AbruptCrash("before terminal result")
+                        return original(path, payload)
+
+                    target = "core.autonomy.operations.atomic_append_json"
+
+                with patch(target, side_effect=injected), self.assertRaises(AbruptCrash):
+                    store.cancel(started["session_id"], at=T1)
+
+                intent = next(
+                    item
+                    for item in store.operations.pending()
+                    if item["operation_type"] == "cancel"
+                )
+                marker = root / "operations" / intent["operation_id"] / "commit.marker"
+                self.assertTrue(marker.is_file())
+                marker.unlink()
+                with self.assertRaisesRegex(
+                    AutonomyOperationError,
+                    "autonomy_operation_side_effect_without_marker",
+                ):
+                    store.reconcile_orphans(at=T1)
+                self.assertEqual(
+                    "cancelled", store._load_events(started["session_id"])[-1]["event_type"]
                 )
 
     def test_source_drift_blocks_execute_and_resume(self) -> None:

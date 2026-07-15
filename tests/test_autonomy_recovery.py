@@ -7,10 +7,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.autonomy.arc import ArcPlanStore, build_run_arc_plan
-from core.autonomy.operations import AutonomyOperationError
-from core.autonomy.receipts import StageReceiptStore
+from core.autonomy.outline import OutlineCheckpointError, OutlineCheckpointStore
+from core.autonomy.common import atomic_append_json, canonical_hash, load_json_object
+from core.autonomy.operations import (
+    AutonomyOperationError,
+    AutonomyOperationStore,
+    build_operation_intent,
+)
+from core.autonomy.receipts import AutonomyReceiptError, StageReceiptStore
 from core.autonomy.session import AutonomySessionStore
 from core.engine.root_registry import RootRegistryService, RootRemapBlockedError
+from core.engine.recovery_protocol import RecoveryDecision
 from tests.test_autonomy_plans import (
     instruction_plan,
     source_snapshot,
@@ -23,6 +30,7 @@ from tests.test_autonomy_receipts import (
     stage_pair,
     verify_publication,
 )
+from tests.test_autonomy_outline import _checkpoint
 
 
 T0 = "2026-07-14T00:00:00+00:00"
@@ -62,6 +70,119 @@ def _fault_json_call(
 class AutonomyRecoveryTest(unittest.TestCase):
     def _execute_plan(self) -> dict:
         return instruction_plan(count=1)
+
+    def test_legacy_v1_terminal_intent_keeps_historical_roll_forward_semantics(self) -> None:
+        with workspace_case("legacy_terminal_recovery") as temporary:
+            root = Path(temporary)
+            intent = build_operation_intent(
+                operation_type="cancel",
+                session_id="session-legacy",
+                book_id="book-autonomy",
+                plan_id="plan-legacy",
+                plan_hash="1" * 64,
+                expected_state="active",
+                expected_event_hash="2" * 64,
+                expected_lease_hash="3" * 64,
+                target_event_type="cancelled",
+                reason="legacy",
+                lease_ttl_seconds=None,
+                attempt=1,
+                created_at=T0,
+            )
+            legacy = dict(intent)
+            legacy["schema_version"] = "1.0"
+            legacy.pop("recovery_protocol")
+            legacy["intent_hash"] = canonical_hash(
+                legacy, exclude_fields=("intent_hash",)
+            )
+            directory = root / "operations" / legacy["operation_id"]
+            atomic_append_json(directory / "intent.json", legacy)
+            operations = AutonomyOperationStore(root)
+            loaded = operations.list_intents()[0]
+            self.assertEqual(
+                RecoveryDecision.ROLL_FORWARD,
+                operations.recovery_decision(loaded),
+            )
+            self.assertEqual(
+                "forward",
+                operations.reconcile_pending(
+                    loaded,
+                    on_roll_back=lambda: "rollback",
+                    on_roll_forward=lambda: "forward",
+                ),
+            )
+
+    def test_v11_completed_result_requires_its_commit_marker(self) -> None:
+        with workspace_case("completed_result_missing_marker") as temporary:
+            operations = AutonomyOperationStore(Path(temporary))
+            intent = operations.begin(
+                operation_type="cancel",
+                session_id="session-marker-required",
+                book_id="book-autonomy",
+                plan_id="plan-marker-required",
+                plan_hash="1" * 64,
+                expected_state="active",
+                expected_event_hash="2" * 64,
+                expected_lease_hash="3" * 64,
+                target_event_type="cancelled",
+                reason="operator request",
+                lease_ttl_seconds=None,
+                created_at=T0,
+            )
+            operations.mark_terminal_ready(intent)
+            operations.finish(
+                intent,
+                outcome="completed",
+                event_hash="4" * 64,
+                lease_hash="3" * 64,
+                completed_at=T1,
+            )
+            (operations._directory(intent) / "commit.marker").unlink()
+
+            with self.assertRaisesRegex(
+                AutonomyOperationError, "completion exists without.*commit marker"
+            ):
+                operations.result(intent)
+            with self.assertRaisesRegex(
+                AutonomyOperationError, "completion exists without.*commit marker"
+            ):
+                operations.list_intents()
+
+    def test_v11_rolled_back_result_rejects_a_late_commit_marker(self) -> None:
+        with workspace_case("rolled_back_result_with_marker") as temporary:
+            operations = AutonomyOperationStore(Path(temporary))
+            intent = operations.begin(
+                operation_type="execute",
+                session_id="session-rollback-marker",
+                book_id="book-autonomy",
+                plan_id="plan-rollback-marker",
+                plan_hash="1" * 64,
+                expected_state="absent",
+                expected_event_hash=None,
+                expected_lease_hash=None,
+                target_event_type="started",
+                reason=None,
+                lease_ttl_seconds=300,
+                created_at=T0,
+            )
+            operations.finish(
+                intent,
+                outcome="rolled_back",
+                event_hash=None,
+                lease_hash=None,
+                completed_at=T1,
+            )
+            operations.mark_source_verified(
+                intent,
+                source_snapshot_hash="5" * 64,
+                lease_hash="6" * 64,
+                verified_at=T1,
+            )
+
+            with self.assertRaisesRegex(
+                AutonomyOperationError, "rolled-back operation unexpectedly has a commit marker"
+            ):
+                operations.result(intent)
 
     def test_execute_recovers_every_cross_file_publication_window(self) -> None:
         windows = (
@@ -181,6 +302,127 @@ class AutonomyRecoveryTest(unittest.TestCase):
             )
             self.assertEqual(3, replay["event_count"])
             self.assertFalse(recovered.operations.pending())
+
+    def test_terminal_session_uses_shared_marker_before_mutation(self) -> None:
+        with workspace_case("terminal_marker_windows") as temporary:
+            root = Path(temporary)
+            store = AutonomySessionStore(root, trusted_profiles=trusted_profiles())
+            started = store.execute_plan(
+                self._execute_plan(),
+                source_snapshot_loader=lambda: source_snapshot(),
+                at=T0,
+            )
+            with patch.object(
+                store.operations,
+                "mark_terminal_ready",
+                side_effect=SimulatedProcessCrash("before terminal marker"),
+            ):
+                with self.assertRaises(SimulatedProcessCrash):
+                    store.cancel(started["session_id"], at=T1)
+
+            pre_marker = AutonomySessionStore(
+                root, trusted_profiles=trusted_profiles()
+            )
+            status = pre_marker.status(started["session_id"], at=T1)
+            self.assertEqual("active", status["state"])
+            self.assertEqual(1, status["event_count"])
+            self.assertFalse(pre_marker.operations.pending())
+
+            original = pre_marker.operations.mark_terminal_ready
+
+            def crash_after_marker(*args, **kwargs):
+                original(*args, **kwargs)
+                raise SimulatedProcessCrash("after terminal marker")
+
+            with patch.object(
+                pre_marker.operations,
+                "mark_terminal_ready",
+                side_effect=crash_after_marker,
+            ):
+                with self.assertRaises(SimulatedProcessCrash):
+                    pre_marker.cancel(started["session_id"], at=T1)
+
+            post_marker = AutonomySessionStore(
+                root, trusted_profiles=trusted_profiles()
+            )
+            recovered = post_marker.status(started["session_id"], at=T1)
+            self.assertEqual("cancelled", recovered["state"])
+            self.assertEqual(2, recovered["event_count"])
+            self.assertFalse(post_marker.operations.pending())
+
+    def test_outline_checkpoint_rolls_back_before_and_forward_after_marker(self) -> None:
+        with workspace_case("outline_marker_windows") as temporary:
+            root = Path(temporary)
+            candidate = _checkpoint()
+            store = OutlineCheckpointStore(root)
+            with _fault_json_call(
+                "core.autonomy.outline.atomic_append_json",
+                predicate=lambda path, payload: Path(path).parent.name == "staged",
+                after_write=True,
+            ):
+                with self.assertRaises(SimulatedProcessCrash):
+                    store.create(candidate)
+            self.assertIsNone(OutlineCheckpointStore(root).load("session-outline", 4))
+
+            with _fault_json_call(
+                "core.autonomy.outline.atomic_append_json",
+                predicate=lambda path, payload: Path(path).parent.name
+                == "commit_markers",
+                after_write=True,
+            ):
+                with self.assertRaises(SimulatedProcessCrash):
+                    store.create(candidate)
+            restarted = OutlineCheckpointStore(root)
+            self.assertEqual(candidate, restarted.load("session-outline", 4))
+            self.assertEqual(candidate, OutlineCheckpointStore(root).load("session-outline", 4))
+            source_directory = (
+                root
+                / "outline_checkpoints"
+                / "session-outline"
+                / "chapter-000004"
+            )
+            marker = next(
+                (source_directory / "commit_markers").glob("*.json")
+            )
+            staged = next((source_directory / "staged").glob("*.json"))
+            for other_session, other_chapter in (
+                ("session-other", 4),
+                ("session-outline", 5),
+            ):
+                other_directory = (
+                    root
+                    / "outline_checkpoints"
+                    / other_session
+                    / f"chapter-{other_chapter:06d}"
+                )
+                atomic_append_json(
+                    other_directory / "commit_markers" / marker.name,
+                    load_json_object(marker),
+                )
+                atomic_append_json(
+                    other_directory / "staged" / staged.name,
+                    load_json_object(staged),
+                )
+                with self.subTest(
+                    other_session=other_session, other_chapter=other_chapter
+                ):
+                    with self.assertRaisesRegex(
+                        OutlineCheckpointError,
+                        "outline_checkpoint_store_scope_mismatch",
+                    ):
+                        OutlineCheckpointStore(root).load(
+                            other_session, other_chapter
+                        )
+            marker.unlink()
+            with self.assertRaisesRegex(
+                OutlineCheckpointError, "completed staged checkpoint.*without.*commit marker"
+            ):
+                OutlineCheckpointStore(root).load("session-outline", 4)
+            staged.unlink()
+            with self.assertRaisesRegex(
+                OutlineCheckpointError, "completed staged checkpoint.*without.*commit marker"
+            ):
+                OutlineCheckpointStore(root).load("session-outline", 4)
 
     def test_tampered_recovery_marker_fails_closed_on_open(self) -> None:
         with workspace_case("recover_tampered_marker") as temporary:
@@ -340,6 +582,98 @@ class AutonomyRecoveryTest(unittest.TestCase):
             )
             self.assertEqual(receipt, replay)
             self.assertEqual(1, len(store.load_chain("session-receipts", 11)))
+
+    def test_stage_checkpoint_uses_shared_marker_for_restart_recovery(self) -> None:
+        with workspace_case("recover_stage_shared_marker") as temporary:
+            root = Path(temporary)
+            store = StageReceiptStore(root)
+            plan = self._execute_plan()
+            lease = store.leases.acquire(
+                book_id="book-autonomy",
+                session_id="session-receipts",
+                plan_id=plan["plan_id"],
+                ttl_seconds=3600,
+                at=T0,
+            )
+            authorization, receipt = stage_pair(
+                chapter=11, stage="outline", plan_id=plan["plan_id"]
+            )
+            with _fault_json_call(
+                "core.autonomy.receipts.atomic_append_json",
+                predicate=lambda path, payload: Path(path).parent.name == "staged",
+                after_write=True,
+            ):
+                with self.assertRaises(SimulatedProcessCrash):
+                    store.append(
+                        receipt,
+                        authorization=authorization,
+                        expected_lease_hash=lease["lease_hash"],
+                        at=T0,
+                    )
+            self.assertEqual(
+                [], StageReceiptStore(root).load_chain("session-receipts", 11)
+            )
+
+            with _fault_json_call(
+                "core.autonomy.receipts.atomic_append_json",
+                predicate=lambda path, payload: Path(path).parent.name
+                == "commit_markers",
+                after_write=True,
+            ):
+                with self.assertRaises(SimulatedProcessCrash):
+                    store.append(
+                        receipt,
+                        authorization=authorization,
+                        expected_lease_hash=lease["lease_hash"],
+                        at=T1,
+                    )
+            recovered = StageReceiptStore(root).load_chain("session-receipts", 11)
+            self.assertEqual([receipt], recovered)
+            self.assertEqual(
+                recovered,
+                StageReceiptStore(root).load_chain("session-receipts", 11),
+            )
+            marker = next(
+                (root / "stage_receipts").glob("*/chapter-000011/commit_markers/*.json")
+            )
+            staged = next(
+                (root / "stage_receipts").glob(
+                    "*/chapter-000011/staged/*.json"
+                )
+            )
+            for other_session, other_chapter in (
+                ("session-other", 11),
+                ("session-receipts", 12),
+            ):
+                other_directory = store._directory(other_session, other_chapter)
+                atomic_append_json(
+                    other_directory / "commit_markers" / marker.name,
+                    load_json_object(marker),
+                )
+                atomic_append_json(
+                    other_directory / "staged" / staged.name,
+                    load_json_object(staged),
+                )
+                with self.subTest(
+                    other_session=other_session, other_chapter=other_chapter
+                ):
+                    with self.assertRaisesRegex(
+                        AutonomyReceiptError,
+                        "stage_receipt_store_scope_mismatch",
+                    ):
+                        StageReceiptStore(root).load_chain(
+                            other_session, other_chapter
+                        )
+            marker.unlink()
+            with self.assertRaisesRegex(
+                AutonomyReceiptError, "completed staged receipt.*without.*commit marker"
+            ):
+                StageReceiptStore(root).load_chain("session-receipts", 11)
+            staged.unlink()
+            with self.assertRaisesRegex(
+                AutonomyReceiptError, "completed staged receipt.*without.*commit marker"
+            ):
+                StageReceiptStore(root).load_chain("session-receipts", 11)
 
     def test_root_remap_scanner_blocks_active_and_allows_terminal_session(self) -> None:
         with workspace_case("recover_remap_scanner") as temporary:

@@ -105,6 +105,13 @@ def autonomy_command_requested(args: argparse.Namespace) -> bool:
         )
     if getattr(args, "story_project", None) is None:
         raise ValueError("autonomy commands require an explicit --story-project locator")
+    if bool(getattr(args, "_steps_explicit", False)) or int(
+        getattr(args, "steps", 1)
+    ) != 1:
+        raise ValueError(
+            "autonomy commands reject deprecated --steps; chapter count is bound "
+            "only by the immutable InstructionPlan"
+        )
     profile_bound = commands[0][0] in {"instruction", "execute_plan", "resume_session"}
     if profile_bound and not getattr(args, "trusted_profiles", None):
         raise ValueError(

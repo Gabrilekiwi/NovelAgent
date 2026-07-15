@@ -4,6 +4,7 @@ import unittest
 import uuid
 from pathlib import Path
 
+from core.autonomy.common import atomic_append_json, atomic_replace_json, canonical_hash
 from core.autonomy.outline import (
     OutlineCheckpointError,
     OutlineCheckpointStore,
@@ -80,6 +81,40 @@ class OutlineCheckpointStoreTest(unittest.TestCase):
                 _checkpoint(source="8", epoch=3, head="9", text="# Too late\n"),
                 chapter_committed=True,
             )
+
+    def test_markerless_legacy_checkpoint_remains_readable_but_cannot_be_newly_created(self):
+        root = self._root()
+        store = OutlineCheckpointStore(root)
+        legacy = dict(_checkpoint())
+        legacy.pop("recovery_protocol")
+        legacy["checkpoint_hash"] = canonical_hash(
+            legacy, exclude_fields=("checkpoint_hash",)
+        )
+
+        with self.assertRaisesRegex(
+            OutlineCheckpointError, "outline_checkpoint_recovery_protocol_missing"
+        ):
+            store.create(legacy)
+
+        directory = (
+            root
+            / "outline_checkpoints"
+            / legacy["session_id"]
+            / f"chapter-{legacy['chapter_index']:06d}"
+        )
+        atomic_append_json(
+            directory / "revisions" / f"{legacy['checkpoint_id']}.json",
+            legacy,
+        )
+        atomic_replace_json(
+            directory / "latest.json",
+            {
+                "schema_version": "1.0",
+                "checkpoint_id": legacy["checkpoint_id"],
+                "checkpoint_hash": legacy["checkpoint_hash"],
+            },
+        )
+        self.assertEqual(legacy, OutlineCheckpointStore(root).load("session-outline", 4))
 
 
 if __name__ == "__main__":
