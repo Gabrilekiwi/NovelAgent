@@ -3,7 +3,12 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Iterable, Mapping
+import re
+import uuid
+
+from core.delivery_intents import validate_file_delivery_profile
 
 from core.autonomy.common import (
     AutonomyContractError,
@@ -109,6 +114,39 @@ class TrustedProfiles:
             )
         return expected
 
+    def file_delivery_runtime_profile(
+        self, profile_id: str | None = None, *, book_id: str
+    ) -> dict[str, Any]:
+        """Resolve a trusted relative template into the File Delivery contract.
+
+        The returned value contains no physical path.  Operator-owned root
+        mapping remains a separate runtime capability.
+        """
+
+        profile = self.get("file_deliveries", profile_id)
+        template = str(profile["path_template"]).replace("\\", "/")
+        template = template.replace("{book_id}", safe_id("book_id", book_id))
+        path = PurePosixPath(template)
+        directory = str(path.parent)
+        filename = path.name
+        if directory in {"", "."}:
+            directory = "exports"
+        if any(token in directory for token in ("{run_id}", "{chapter_index}")):
+            raise TrustedProfilesError(
+                "trusted_delivery_template_unsafe",
+                "run/chapter placeholders must be in the export filename",
+            )
+        return validate_file_delivery_profile(
+            {
+                "schema_version": "1.0",
+                "profile_id": profile["profile_id"],
+                "root_id": f"external:{profile['profile_id']}",
+                "root_uuid": profile["root_uuid"],
+                "relative_directory": directory,
+                "filename_template": filename,
+            }
+        )
+
 
 def _validate_profiles(value: Mapping[str, Any]) -> dict[str, Any]:
     _reject_sensitive_fields(value)
@@ -137,7 +175,13 @@ def _validate_profiles(value: Mapping[str, Any]) -> dict[str, Any]:
         safe_id("book_id", profile["book_id"])
         safe_id("root_uuid", profile["root_uuid"])
     for profile in payload["provider_models"]:
+        profile.setdefault("endpoint_type", "official")
         required_text("provider", profile["provider"])
+        if profile["endpoint_type"] not in {"official", "openai_compatible"}:
+            raise TrustedProfilesError(
+                "trusted_provider_endpoint_invalid",
+                "provider endpoint_type must be official or openai_compatible",
+            )
         required_text("model", profile["model"])
         positive_int("max_output_tokens", profile["max_output_tokens"])
     for profile in payload["file_deliveries"]:
@@ -146,7 +190,36 @@ def _validate_profiles(value: Mapping[str, Any]) -> dict[str, Any]:
                 "trusted_delivery_external_forbidden", "only File Delivery profiles are allowed"
             )
         safe_id("root_uuid", profile["root_uuid"])
-        template = required_text("path_template", profile["path_template"])
+        try:
+            parsed_uuid = uuid.UUID(str(profile["root_uuid"]))
+        except ValueError as exc:
+            raise TrustedProfilesError(
+                "trusted_delivery_root_uuid_invalid",
+                "File Delivery root_uuid must be a canonical UUID",
+            ) from exc
+        if str(parsed_uuid) != profile["root_uuid"]:
+            raise TrustedProfilesError(
+                "trusted_delivery_root_uuid_invalid",
+                "File Delivery root_uuid must be lowercase canonical UUID text",
+            )
+        template = required_text("path_template", profile["path_template"]).replace("\\", "/")
+        pure = PurePosixPath(template)
+        if (
+            pure.is_absolute()
+            or any(part in {"", ".", ".."} for part in pure.parts)
+            or str(pure) != template
+            or pure.suffix.lower() != ".json"
+        ):
+            raise TrustedProfilesError(
+                "trusted_delivery_template_unsafe",
+                "File Delivery template must be a safe relative JSON path",
+            )
+        fields = set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", template))
+        if not fields.issubset({"book_id", "run_id", "chapter_index"}):
+            raise TrustedProfilesError(
+                "trusted_delivery_template_unsafe",
+                "File Delivery template contains an unsupported placeholder",
+            )
         if "{run_id}" not in template or "{chapter_index}" not in template:
             raise TrustedProfilesError(
                 "trusted_delivery_template_unsafe",
@@ -165,6 +238,12 @@ def _validate_profiles(value: Mapping[str, Any]) -> dict[str, Any]:
             "max_wall_seconds",
         ):
             positive_int(field, profile[field])
+    for profile in payload["quality_policies"]:
+        if int(profile["minimum_score"]) != 0:
+            raise TrustedProfilesError(
+                "trusted_quality_score_unsupported",
+                "v1 quality profiles use severity policy only; minimum_score must be 0",
+            )
     return payload
 
 

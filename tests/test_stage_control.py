@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import unittest
+
+from core.memory_v2.canonical import canonical_json_bytes
 
 from core.stage_control import (
     StageControlError,
@@ -259,6 +263,52 @@ class StageControlTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(StageControlError, "stage_receipt_chapter_changed"):
             validate_stage_receipt_chain([first, next_chapter])
+
+    def test_legacy_v1_golden_bytes_and_hashes_remain_unchanged(self) -> None:
+        authorization_bytes = (
+            b'{"authority":{"epoch":3,"head_event_hash":"2222222222222222222222222222222222222222222222222222222222222222"},'
+            b'"authorization_hash":"21a2f93992b20e7cf0874d7e7ea75b9bcd14b972e9dca15f339266eae2d28e97",'
+            b'"book_id":"book-golden","chapter_index":7,"input_digest":"1111111111111111111111111111111111111111111111111111111111111111",'
+            b'"issued_at":"2026-01-02T03:04:05+00:00","max_output_tokens":4096,"plan_id":"plan-golden",'
+            b'"previous_stage_receipt_hash":null,"provider_profile":"golden-provider","schema_version":"1.0",'
+            b'"session_id":"session-golden","stage":"draft"}'
+        )
+        receipt_bytes = (
+            b'{"authority":{"epoch":3,"head_event_hash":"2222222222222222222222222222222222222222222222222222222222222222"},'
+            b'"authorization_hash":"21a2f93992b20e7cf0874d7e7ea75b9bcd14b972e9dca15f339266eae2d28e97",'
+            b'"book_id":"book-golden","chapter_index":7,"created_at":"2026-01-02T03:05:06+00:00",'
+            b'"input_digest":"1111111111111111111111111111111111111111111111111111111111111111",'
+            b'"model_call_receipt_hash":"4444444444444444444444444444444444444444444444444444444444444444",'
+            b'"output_digest":"3333333333333333333333333333333333333333333333333333333333333333",'
+            b'"plan_id":"plan-golden","previous_stage_receipt_hash":null,'
+            b'"receipt_hash":"c024eeeb462eaf813f2837f074f08476d96e4ec7c695bda80a2b746158547bb0",'
+            b'"schema_version":"1.0","session_id":"session-golden","stage":"draft","status":"succeeded"}'
+        )
+        authorization = validate_stage_authorization(json.loads(authorization_bytes))
+        receipt = validate_stage_receipt(json.loads(receipt_bytes))
+        self.assertEqual(
+            authorization_bytes,
+            canonical_json_bytes(authorization, exclude_environment_fields=False),
+        )
+        self.assertEqual(
+            receipt_bytes,
+            canonical_json_bytes(receipt, exclude_environment_fields=False),
+        )
+        self.assertEqual(
+            "3b0553b4b8e6980c7a9ab66de948252ac50f077d23373c8ddab2af11c365c6b7",
+            hashlib.sha256(authorization_bytes).hexdigest(),
+        )
+        self.assertEqual(
+            "f82ccd9b1b611aa6e325b7ef0e842c25ccd74c2b174a6bd0fcd66655bc2f08ea",
+            hashlib.sha256(receipt_bytes).hexdigest(),
+        )
+
+        malformed_v11 = dict(authorization)
+        malformed_v11["schema_version"] = "1.1"
+        with self.assertRaisesRegex(
+            StageControlError, "stage_authorization_version_invalid"
+        ):
+            validate_stage_authorization(malformed_v11)
 
 
 if __name__ == "__main__":

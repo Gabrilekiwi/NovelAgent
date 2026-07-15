@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomyChapterEvidence",
+  "type": "object",
+  "required": ["schema_version", "evidence_hash", "book_id", "session_id", "plan_id", "arc_plan_id", "chapter_index", "planned_target_hash", "outline_checkpoint_hash", "outline_hash", "outline_readiness", "draft_readiness", "stage_authorizations", "stage_receipts", "final_stage_receipt_hash", "chapter_body_sha256"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "evidence_hash": {"type": "string", "minLength": 64},
+    "book_id": {"type": "string", "minLength": 1},
+    "session_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "arc_plan_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "planned_target_hash": {"type": "string", "minLength": 64},
+    "outline_checkpoint_hash": {"type": "string", "minLength": 64},
+    "outline_hash": {"type": "string", "minLength": 64},
+    "outline_readiness": {"type": "object"},
+    "draft_readiness": {"type": "object"},
+    "stage_authorizations": {"type": "array", "minItems": 5, "items": {"type": "object"}},
+    "stage_receipts": {"type": "array", "minItems": 5, "items": {"type": "object"}},
+    "final_stage_receipt_hash": {"type": "string", "minLength": 64},
+    "chapter_body_sha256": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

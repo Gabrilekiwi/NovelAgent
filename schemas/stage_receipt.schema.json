@@ -4,7 +4,7 @@
   "type": "object",
   "required": ["schema_version", "receipt_hash", "authorization_hash", "stage", "status", "book_id", "session_id", "plan_id", "chapter_index", "authority", "input_digest", "output_digest", "model_call_receipt_hash", "previous_stage_receipt_hash", "created_at"],
   "properties": {
-    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "schema_version": {"type": "string", "enum": ["1.0", "1.1"]},
     "receipt_hash": {"type": "string", "minLength": 64},
     "authorization_hash": {"type": "string", "minLength": 64},
     "stage": {"type": "string", "enum": ["outline", "scene_plan", "draft", "polish", "validator", "repair"]},
@@ -24,7 +24,13 @@
     },
     "input_digest": {"type": "string", "minLength": 64},
     "output_digest": {"type": ["string", "null"], "minLength": 64},
+    "execution_kind": {"type": "string", "enum": ["model", "deterministic"]},
+    "execution_evidence_hash": {"type": ["string", "null"], "minLength": 64},
     "model_call_receipt_hash": {"type": ["string", "null"], "minLength": 64},
+    "model_call_receipt_hashes": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 64}
+    },
     "previous_stage_receipt_hash": {"type": ["string", "null"], "minLength": 64},
     "created_at": {"type": "string", "minLength": 1}
   },

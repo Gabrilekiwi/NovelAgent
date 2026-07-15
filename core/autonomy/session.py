@@ -23,7 +23,12 @@ from core.autonomy.lease import BookLeaseError, BookLeaseStore
 from core.autonomy.operations import AutonomyOperationError, AutonomyOperationStore
 from core.autonomy.plans import validate_instruction_plan, validate_source_snapshot
 from core.autonomy.profiles import TrustedProfiles
-from core.autonomy.receipts import CompletionLedger, PublicationVerifier, StageReceiptStore
+from core.autonomy.receipts import (
+    CompletionLedger,
+    DeliveryResolutionVerifier,
+    PublicationVerifier,
+    StageReceiptStore,
+)
 
 
 _TERMINAL_STATES = frozenset({"abandoned", "completed"})
@@ -131,6 +136,7 @@ class AutonomySessionStore:
         trusted_profiles: TrustedProfiles | None = None,
         publication_verifier: PublicationVerifier | None = None,
         publication_root_map: Mapping[str, str | Path] | None = None,
+        delivery_resolution_verifier: DeliveryResolutionVerifier | None = None,
         reconcile_on_open: bool = True,
     ) -> None:
         self.root = Path(root)
@@ -144,6 +150,7 @@ class AutonomySessionStore:
         self.publication_root_map = (
             dict(publication_root_map) if publication_root_map is not None else None
         )
+        self.delivery_resolution_verifier = delivery_resolution_verifier
         # Normal runtime opening is a recovery boundary. Read-only inspectors
         # that already own the shared remap fence explicitly opt out to avoid
         # attempting to acquire the non-reentrant Windows lock twice.
@@ -496,6 +503,7 @@ class AutonomySessionStore:
         *,
         source_snapshot_loader: Callable[[], Mapping[str, Any]],
         lease_ttl_seconds: int = 300,
+        recover_committed_boundary: Callable[[str], None] | None = None,
         at: str | None = None,
     ) -> dict[str, Any]:
         with state_lock(self.root.parent / ".root-remap-fence"):
@@ -503,6 +511,7 @@ class AutonomySessionStore:
                 instruction_plan,
                 source_snapshot_loader=source_snapshot_loader,
                 lease_ttl_seconds=lease_ttl_seconds,
+                recover_committed_boundary=recover_committed_boundary,
                 at=at,
             )
 
@@ -512,6 +521,7 @@ class AutonomySessionStore:
         *,
         source_snapshot_loader: Callable[[], Mapping[str, Any]],
         lease_ttl_seconds: int,
+        recover_committed_boundary: Callable[[str], None] | None,
         at: str | None,
     ) -> dict[str, Any]:
         self._reconcile_orphans_fenced(at=at)
@@ -563,6 +573,8 @@ class AutonomySessionStore:
                     at=timestamp,
                 )
                 try:
+                    if recover_committed_boundary is not None:
+                        recover_committed_boundary(session_id)
                     current_source = validate_source_snapshot(source_loader())
                     expected_source = self.completion_ledger(
                         session_id
@@ -716,6 +728,7 @@ class AutonomySessionStore:
         *,
         source_snapshot_loader: Callable[[], Mapping[str, Any]],
         lease_ttl_seconds: int = 300,
+        recover_committed_boundary: Callable[[str], None] | None = None,
         at: str | None = None,
     ) -> dict[str, Any]:
         with state_lock(self.root.parent / ".root-remap-fence"):
@@ -723,6 +736,7 @@ class AutonomySessionStore:
                 session_id,
                 source_snapshot_loader=source_snapshot_loader,
                 lease_ttl_seconds=lease_ttl_seconds,
+                recover_committed_boundary=recover_committed_boundary,
                 at=at,
             )
 
@@ -732,6 +746,7 @@ class AutonomySessionStore:
         *,
         source_snapshot_loader: Callable[[], Mapping[str, Any]],
         lease_ttl_seconds: int,
+        recover_committed_boundary: Callable[[str], None] | None,
         at: str | None,
     ) -> dict[str, Any]:
         self._reconcile_orphans_fenced(at=at)
@@ -768,6 +783,8 @@ class AutonomySessionStore:
             at=timestamp,
         )
         try:
+            if recover_committed_boundary is not None:
+                recover_committed_boundary(resolved)
             current_source = validate_source_snapshot(
                 _validate_source_snapshot_loader(source_snapshot_loader)()
             )
@@ -1031,6 +1048,8 @@ class AutonomySessionStore:
             kwargs["publication_verifier"] = self.publication_verifier
         if self.publication_root_map is not None:
             kwargs["publication_root_map"] = self.publication_root_map
+        if self.delivery_resolution_verifier is not None:
+            kwargs["delivery_resolution_verifier"] = self.delivery_resolution_verifier
         return CompletionLedger(
             self.root,
             instruction_plan=self._load_plan(resolved),
@@ -1045,10 +1064,19 @@ class AutonomySessionStore:
 
         return self._load_plan(self.resolve_session_id(session_id))
 
+    def session_started_at(self, session_id: str | None = None) -> str:
+        resolved = self.resolve_session_id(session_id)
+        events = self._load_events(resolved)
+        return str(events[0]["recorded_at"])
+
     def resolve_session_id(self, session_id: str | None) -> str:
         if session_id not in (None, "", "latest"):
             return safe_id("session_id", session_id)
-        latest = load_json_object(self.root / "sessions" / "latest.json")
+        latest_path = self.root / "sessions" / "latest.json"
+        if not latest_path.is_file():
+            latest = self._rebuild_latest_pointer()
+        else:
+            latest = load_json_object(latest_path)
         resolved = safe_id("session_id", latest.get("session_id"))
         genesis = self._load_genesis(resolved)
         if latest.get("genesis_hash") != genesis["genesis_hash"]:
@@ -1056,6 +1084,71 @@ class AutonomySessionStore:
                 "autonomy_latest_session_invalid", "latest session pointer was modified"
             )
         return resolved
+
+    def _rebuild_latest_pointer(self) -> dict[str, Any]:
+        """Rebuild the mutable latest cache from fully verified session facts."""
+
+        sessions_root = self.root / "sessions"
+        candidates: list[tuple[str, str, str, dict[str, Any]]] = []
+        for directory in sorted(
+            (item for item in sessions_root.iterdir() if item.is_dir()),
+            key=lambda item: item.name,
+        ) if sessions_root.is_dir() else []:
+            session_id = safe_id("session_id", directory.name)
+            genesis = self._load_genesis(session_id)
+            if genesis["session_id"] != session_id:
+                raise AutonomySessionError(
+                    "autonomy_latest_session_invalid",
+                    "session directory name does not match immutable genesis",
+                )
+            plan = self._load_plan(session_id)
+            if (
+                plan["plan_hash"] != genesis["plan_hash"]
+                or plan["plan_id"] != genesis["plan_id"]
+                or plan["source_snapshot"] != genesis["source_snapshot"]
+            ):
+                raise AutonomySessionError(
+                    "autonomy_latest_session_invalid",
+                    "session plan does not match immutable genesis",
+                )
+            events = self._load_events(session_id)
+            if events[0]["event_type"] != "started":
+                raise AutonomySessionError(
+                    "autonomy_latest_session_invalid",
+                    "session event chain does not begin with started",
+                )
+            index = load_json_object(self._plan_index_path(genesis["plan_hash"]))
+            expected_index = {
+                "schema_version": "1.0",
+                "plan_hash": genesis["plan_hash"],
+                "session_id": session_id,
+                "genesis_hash": genesis["genesis_hash"],
+            }
+            if index != expected_index:
+                raise AutonomySessionError(
+                    "autonomy_latest_session_invalid",
+                    "session plan index does not match immutable genesis",
+                )
+            pointer = {
+                "schema_version": "1.0",
+                "session_id": session_id,
+                "genesis_hash": genesis["genesis_hash"],
+            }
+            candidates.append(
+                (
+                    str(events[0]["recorded_at"]),
+                    str(genesis["created_at"]),
+                    session_id,
+                    pointer,
+                )
+            )
+        if not candidates:
+            raise AutonomySessionError(
+                "autonomy_latest_session_missing", "no durable autonomy session exists"
+            )
+        latest = max(candidates, key=lambda item: item[:3])[3]
+        atomic_replace_json(sessions_root / "latest.json", latest)
+        return latest
 
     def _append_event(
         self,

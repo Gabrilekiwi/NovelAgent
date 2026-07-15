@@ -30,6 +30,7 @@ from core.stage_control import (
 
 
 PublicationVerifier = Callable[[Any], Mapping[str, Any]]
+DeliveryResolutionVerifier = Callable[[Mapping[str, Any]], bool]
 
 
 class AutonomyReceiptError(AutonomyContractError):
@@ -188,6 +189,23 @@ class StageReceiptStore:
             )
         self.leases.load_history(validated["book_id"], fence["lease_hash"])
         return fence
+
+    def authorization_for(self, receipt: Mapping[str, Any]) -> dict[str, Any]:
+        """Load the immutable authorization bound to a stored receipt."""
+
+        validated = validate_stage_receipt(dict(receipt))
+        directory = self._directory(
+            validated["session_id"], int(validated["chapter_index"])
+        )
+        authorization = validate_stage_authorization(
+            load_json_object(
+                directory
+                / "authorizations"
+                / f"{validated['authorization_hash'][:20]}.json"
+            )
+        )
+        assert_receipt_matches_authorization(validated, authorization)
+        return authorization
 
     def contains(self, receipt: Mapping[str, Any]) -> bool:
         validated = validate_stage_receipt(dict(receipt))
@@ -397,6 +415,7 @@ class CompletionLedger:
         stage_receipts: StageReceiptStore,
         publication_verifier: PublicationVerifier | None = None,
         publication_root_map: Mapping[str, str | Path] | None = None,
+        delivery_resolution_verifier: DeliveryResolutionVerifier | None = None,
     ) -> None:
         self.root = Path(root)
         self.plan = validate_instruction_plan(instruction_plan)
@@ -413,6 +432,7 @@ class CompletionLedger:
             )
         else:
             self.publication_verifier = _unconfigured_publication_verifier
+        self.delivery_resolution_verifier = delivery_resolution_verifier
 
     def append(
         self,
@@ -470,12 +490,33 @@ class CompletionLedger:
                     "chapter_completion_stage_stale",
                     "only the current StageReceipt chain head can complete a chapter",
                 )
-            if final_stage["stage"] != "validator" or final_stage[
+            if final_stage["stage"] != "validator":
+                raise AutonomyReceiptError(
+                    "chapter_completion_stage_not_final",
+                    "completion requires a successful validator stage",
+                )
+            if final_stage["schema_version"] == "1.0" and final_stage[
                 "model_call_receipt_hash"
             ] is None:
                 raise AutonomyReceiptError(
                     "chapter_completion_stage_not_final",
-                    "completion requires a successful validator with model receipt evidence",
+                    "legacy validator completion requires its original model receipt evidence",
+                )
+            if final_stage["schema_version"] == "1.1" and final_stage[
+                "execution_kind"
+            ] == "model" and not final_stage["model_call_receipt_hashes"]:
+                raise AutonomyReceiptError(
+                    "chapter_completion_stage_not_final",
+                    "model validator completion requires durable ModelCallReceipt evidence",
+                )
+            if final_stage["schema_version"] == "1.1" and final_stage[
+                "execution_kind"
+            ] == "deterministic" and final_stage[
+                "execution_evidence_hash"
+            ] is None:
+                raise AutonomyReceiptError(
+                    "chapter_completion_stage_not_final",
+                    "deterministic validator completion requires reproducible execution evidence",
                 )
             stage_fence = self.stage_receipts.fence_for(final_stage)
             lease = self.leases._assert_held_fenced(
@@ -639,14 +680,45 @@ class CompletionLedger:
             expected_chapter += 1
         return chain
 
+    def load_publication(self, publication_receipt_hash: str) -> dict[str, Any]:
+        """Load and durably verify a publication bound into this ledger."""
+
+        digest = sha256_digest(
+            "publication_receipt_hash", publication_receipt_hash
+        )
+        publication = _verified_publication(
+            load_json_object(
+                self._directory()
+                / "publications"
+                / f"{digest[:20]}.json"
+            ),
+            verifier=self.publication_verifier,
+        )
+        if publication.get("receipt_hash") != digest:
+            raise AutonomyReceiptError(
+                "chapter_completion_publication_mismatch",
+                "publication receipt hash changed",
+            )
+        return dict(publication)
+
     def summary(self) -> dict[str, Any]:
         chain = self.rebuild()
         next_chapter = int(self.plan["chapter_start"]) + len(chain)
-        blocked_chapters = [
-            item["chapter_index"]
-            for item in chain
-            if item["status"] == "local_committed_delivery_blocked"
-        ]
+        blocked_chapters = []
+        for item in chain:
+            if item["status"] != "local_committed_delivery_blocked":
+                continue
+            resolved = False
+            if self.delivery_resolution_verifier is not None:
+                try:
+                    resolved = bool(self.delivery_resolution_verifier(copy.deepcopy(item)))
+                except Exception as exc:
+                    raise AutonomyReceiptError(
+                        "chapter_completion_delivery_resolution_invalid",
+                        f"delivery resolution evidence could not be verified: {type(exc).__name__}: {exc}",
+                    ) from exc
+            if not resolved:
+                blocked_chapters.append(item["chapter_index"])
         return {
             "completed_count": len(chain),
             "completed_chapters": [item["chapter_index"] for item in chain],

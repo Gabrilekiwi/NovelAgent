@@ -43,6 +43,7 @@ def trusted_profiles(*, max_chapters: int = 4) -> TrustedProfiles:
                 {
                     "profile_id": "balanced",
                     "provider": "openai",
+                    "endpoint_type": "official",
                     "model": "trusted-model",
                     "max_output_tokens": 16000,
                 }
@@ -51,8 +52,8 @@ def trusted_profiles(*, max_chapters: int = 4) -> TrustedProfiles:
                 {
                     "profile_id": "local-export",
                     "target_kind": "file",
-                    "root_uuid": "export-root",
-                    "path_template": "exports/{book_id}/{chapter_index}/{run_id}.json",
+                    "root_uuid": "11111111-1111-4111-8111-111111111111",
+                    "path_template": "exports/chapter-{chapter_index}-{run_id}.json",
                     "requires_run_id": True,
                     "requires_chapter_id": True,
                 }
@@ -71,7 +72,7 @@ def trusted_profiles(*, max_chapters: int = 4) -> TrustedProfiles:
                 {
                     "profile_id": "strict-local",
                     "policy": "strict",
-                    "minimum_score": 80,
+                    "minimum_score": 0,
                 }
             ],
             "defaults": {

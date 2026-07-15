@@ -14,14 +14,14 @@ from api.contracts import ModelCallError, ModelOutputError
 from api.retry import consume_retry_telemetry, reset_retry_telemetry
 from core.chapter_contexts import ChapterContextError, resolve_committed_previous_chapter_artifact
 from core.config import get_config
-from core.context_budget import RunBudgetLimits, RunBudgetTracker
+from core.context_budget import ContextBudgetError, RunBudgetLimits, RunBudgetTracker
 from core.execution_provenance import ExecutionProvenance, capture_execution_provenance
 from core.model_call_runtime import (
     ModelCallRuntimeContext,
     ProviderCallUncertainError,
     use_model_call_runtime,
 )
-from core.model_calls import ModelCallStore
+from core.model_calls import ModelCallStore, load_model_call_receipt
 from core.path_refs import path_ref_for
 from core.delivery import DeliveryQueue
 from core.delivery_intents import (
@@ -179,6 +179,7 @@ class AgentExecutor:
         run_budget_limits: RunBudgetLimits | None = None,
         file_delivery_profile: Mapping[str, Any] | None = None,
         delivery_queue: DeliveryQueue | None = None,
+        autonomy_run_context: Any | None = None,
     ) -> None:
         self.snapshot_path = Path(snapshot_path)
         self.memory_path = Path(memory_path) if memory_path else None
@@ -235,6 +236,11 @@ class AgentExecutor:
                 "event-authority file delivery requires a trusted external root_uuid"
             )
         self.delivery_queue = delivery_queue
+        self.autonomy_run_context = autonomy_run_context
+        if self.autonomy_run_context is not None:
+            self.autonomy_run_context.assert_executor_budget_limits(
+                self.run_budget_limits
+            )
         self._execution_scope_depth = 0
         self._execution_evidence: dict[str, Any] | None = None
         self._run_budget_tracker: RunBudgetTracker | None = None
@@ -281,6 +287,10 @@ class AgentExecutor:
                 if isinstance(model_calls_ref, str) and model_calls_ref
                 else None
             )
+            if self.autonomy_run_context is not None:
+                self.autonomy_run_context.hydrate_budget_tracker(
+                    self._run_budget_tracker
+                )
             if self._model_call_runtime is None:
                 yield
             else:
@@ -332,13 +342,36 @@ class AgentExecutor:
             feature_flags=feature_flags,
         )
         payload = validate_schema(provenance.to_dict(), "execution_provenance.schema.json")
-        execution_id = f"execution_{uuid.uuid4().hex}"
+        if self.autonomy_run_context is not None:
+            session_id = str(self.autonomy_run_context.session_id)
+            chapter_index = int(self.autonomy_run_context.chapter_index)
+            stable_identity = hashlib.sha256(
+                f"{session_id}:{chapter_index}".encode("utf-8")
+            ).hexdigest()[:40]
+            execution_id = f"execution_autonomy_{stable_identity}"
+        else:
+            execution_id = f"execution_{uuid.uuid4().hex}"
         provenance_ref: str | None = None
         model_calls_ref: str | None = None
         if persist_evidence:
             provenance_ref = f"executions/{execution_id}/provenance.json"
             model_calls_ref = f"executions/{execution_id}/model_calls"
-            atomic_create_json(self.run_dir / Path(provenance_ref), payload)
+            provenance_path = self.run_dir / Path(provenance_ref)
+            try:
+                atomic_create_json(provenance_path, payload)
+            except OSError as exc:
+                if not provenance_path.is_file():
+                    raise
+                try:
+                    existing = json.loads(provenance_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError) as read_exc:
+                    raise PersistencePreparationError(
+                        "stable autonomy execution provenance is unreadable"
+                    ) from read_exc
+                if existing != payload:
+                    raise PersistencePreparationError(
+                        "stable autonomy execution provenance changed across retry"
+                    ) from exc
         return {
             "execution_id": execution_id,
             "provenance_hash": provenance.provenance_hash,
@@ -435,6 +468,22 @@ class AgentExecutor:
         snapshot = self._apply_story_project_authority(state_result["snapshot"])
         snapshot_audit = state_result["audit"]
         memory_context["snapshot_builder_audit"] = snapshot_audit
+        if self.autonomy_run_context is not None:
+            if _director_mode(self.director) == "model":
+                raise PersistencePreparationError(
+                    "autonomy execution does not permit an unreceipted model Director stage"
+                )
+            context = self._story_project_context_dict() or {}
+            identity = context.get("project_identity")
+            authority = identity.get("authority") if isinstance(identity, dict) else None
+            if not isinstance(authority, dict):
+                raise PersistencePreparationError(
+                    "autonomy execution requires event-authority StoryProject context"
+                )
+            self.autonomy_run_context.validate_executor_scope(
+                chapter_index=int(context.get("chapter_index") or 0),
+                authority=authority,
+            )
         decision_started_at = utc_now()
         reset_retry_telemetry()
         try:
@@ -967,6 +1016,73 @@ class AgentExecutor:
             return self.generator(input_pack)
         return generate_chapter(input_pack, dry_run=self.dry_run)
 
+    def _execute_autonomy_stage(
+        self,
+        *,
+        stage: str,
+        input_value: Any,
+        operation: Callable[[], Any],
+        default_model: bool,
+    ) -> Any:
+        context = self.autonomy_run_context
+        if context is None:
+            return operation()
+        execution_kind = context.execution_kind(
+            stage, default_model=bool(default_model)
+        )
+        token = context.before_stage(
+            stage=stage,
+            input_value=input_value,
+            execution_kind=execution_kind,
+        )
+        if token.cached_output is not None:
+            output = token.cached_output
+            context.after_stage(
+                token,
+                output_value=output,
+                model_call_receipt_hashes=token.cached_model_call_receipt_hashes,
+            )
+            return output
+        runtime = self._model_call_runtime
+        try:
+            if runtime is None:
+                output = operation()
+                operation_receipt_hashes: list[str] = []
+            else:
+                with runtime.bind_operation(token.operation_key) as call_scope:
+                    output = operation()
+                    operation_receipt_hashes = list(call_scope.receipt_hashes)
+        except ProviderCallUncertainError:
+            context.failed_stage(token, status="provider_call_uncertain")
+            raise
+        except ContextBudgetError:
+            context.failed_stage(token, status="budget_rejected")
+            raise
+        if execution_kind == "deterministic" and operation_receipt_hashes:
+            raise PersistencePreparationError(
+                "deterministic autonomy stage performed an unbound model call"
+            )
+        context.after_stage(
+            token,
+            output_value=output,
+            model_call_receipt_hashes=(
+                operation_receipt_hashes if execution_kind == "model" else ()
+            ),
+        )
+        return output
+
+    def _model_call_receipt_hashes(self) -> list[str]:
+        runtime = self._model_call_runtime
+        if runtime is None:
+            return []
+        directory = runtime.store.receipts_dir
+        if not directory.is_dir():
+            return []
+        return [
+            str(load_model_call_receipt(path)["receipt_hash"])
+            for path in sorted(directory.glob("*.json"))
+        ]
+
     def _polish(self, chapter: str) -> str:
         if self.polisher:
             return self.polisher(chapter)
@@ -1111,6 +1227,40 @@ class AgentExecutor:
         return state["chapter"], state["validation"], state["repair_attempts"], trace, state.get("chapter_pipeline")
 
     def _handle_generate(self, state: dict[str, Any], input_pack: str, snapshot: dict[str, Any]) -> None:
+        if self.autonomy_run_context is not None:
+            scene_receipt = self.autonomy_run_context.ensure_scene_plan(input_pack)
+
+            def generate() -> dict[str, Any]:
+                if self.generator:
+                    return {"chapter": self._generate(input_pack), "pipeline": None}
+                pipeline = run_chapter_pipeline(
+                    input_pack,
+                    chapter_index=int(state.get("chapter_index") or 1),
+                    dry_run=self.dry_run,
+                    scene_limit=self.scene_limit,
+                    language=project_language(snapshot),
+                    chapter_blueprint=self._story_project_chapter_blueprint(),
+                )
+                return {
+                    "chapter": str(pipeline["merged_chapter"]),
+                    "pipeline": pipeline,
+                }
+
+            generated = self._execute_autonomy_stage(
+                stage="draft",
+                input_value={
+                    "input_pack_sha256": hashlib.sha256(
+                        input_pack.encode("utf-8")
+                    ).hexdigest(),
+                    "scene_plan_receipt_hash": scene_receipt["receipt_hash"],
+                },
+                operation=generate,
+                default_model=not self.dry_run,
+            )
+            state["chapter"] = str(generated["chapter"])
+            state["chapter_pipeline"] = generated.get("pipeline")
+            state["validation"] = None
+            return
         if self.generator:
             state["chapter"] = self._generate(input_pack)
             state["chapter_pipeline"] = None
@@ -1145,7 +1295,15 @@ class AgentExecutor:
 
     def _handle_polish(self, state: dict[str, Any]) -> None:
         chapter = _require_chapter(state)
-        state["chapter"] = self._polish(chapter)
+        if self.autonomy_run_context is not None:
+            state["chapter"] = self._execute_autonomy_stage(
+                stage="polish",
+                input_value={"chapter_sha256": hashlib.sha256(chapter.encode("utf-8")).hexdigest()},
+                operation=lambda: self._polish(chapter),
+                default_model=not self.dry_run,
+            )
+        else:
+            state["chapter"] = self._polish(chapter)
         state["validation"] = None
 
     def _handle_validate(
@@ -1155,18 +1313,34 @@ class AgentExecutor:
         decision: dict[str, Any],
     ) -> None:
         chapter = _require_chapter(state)
-        if self.validator is validate_chapter:
-            pipeline = state.get("chapter_pipeline") if isinstance(state.get("chapter_pipeline"), dict) else {}
-            state["validation"] = validate_chapter(
-                snapshot,
-                chapter,
-                decision,
-                enable_llm=self.enable_llm_validator,
-                chapter_blueprint=self._story_project_chapter_blueprint(),
-                blueprint_coverage=pipeline.get("blueprint_coverage") if isinstance(pipeline, dict) else None,
+        if self.autonomy_run_context is not None:
+            self.autonomy_run_context.ensure_polish(chapter)
+
+        def run_validation() -> dict[str, Any]:
+            if self.validator is validate_chapter:
+                pipeline = state.get("chapter_pipeline") if isinstance(state.get("chapter_pipeline"), dict) else {}
+                return validate_chapter(
+                    snapshot,
+                    chapter,
+                    decision,
+                    enable_llm=self.enable_llm_validator,
+                    chapter_blueprint=self._story_project_chapter_blueprint(),
+                    blueprint_coverage=pipeline.get("blueprint_coverage") if isinstance(pipeline, dict) else None,
+                )
+            return self.validator(snapshot, chapter, decision)
+
+        if self.autonomy_run_context is not None:
+            state["validation"] = self._execute_autonomy_stage(
+                stage="validator",
+                input_value={
+                    "chapter_sha256": hashlib.sha256(chapter.encode("utf-8")).hexdigest(),
+                    "decision": decision,
+                },
+                operation=run_validation,
+                default_model=bool(self.enable_llm_validator),
             )
         else:
-            state["validation"] = self.validator(snapshot, chapter, decision)
+            state["validation"] = run_validation()
 
     def _handle_repair_if_needed(
         self,
@@ -1202,7 +1376,7 @@ class AgentExecutor:
                 attempt=attempt,
                 recovery_context=recovery_context,
             )
-            state["chapter"] = self._repair(
+            repair_operation = lambda: self._repair(
                 state["chapter"],
                 state["validation"],
                 input_pack,
@@ -1211,6 +1385,21 @@ class AgentExecutor:
                 project_language(snapshot),
                 _repair_context_for_snapshot(snapshot),
             )
+            if self.autonomy_run_context is not None:
+                state["chapter"] = self._execute_autonomy_stage(
+                    stage="repair",
+                    input_value={
+                        "chapter_sha256": hashlib.sha256(
+                            state["chapter"].encode("utf-8")
+                        ).hexdigest(),
+                        "validation": state["validation"],
+                        "repair_plan": state["repair_plan"],
+                    },
+                    operation=repair_operation,
+                    default_model=not self.dry_run,
+                )
+            else:
+                state["chapter"] = repair_operation()
             self._handle_validate(state, snapshot, decision)
             state["repair_attempts"] += 1
             state["repair_deltas"].append(
@@ -1699,6 +1888,10 @@ class AgentExecutor:
                     queue=self.delivery_queue,
                 )
             return
+        if self.autonomy_run_context is not None:
+            raise PersistenceError(
+                "durable autonomy requires event-authority persistence v2"
+            )
         if self.file_delivery_profile is not None:
             raise PersistenceError(
                 "required file delivery requires event-authority persistence v2"
@@ -1759,6 +1952,7 @@ class AgentExecutor:
             self.run_dir / "review_repairs",
             self.run_dir / "story_project_writebacks",
             self.run_dir / "delivery_intents",
+            self.run_dir / "autonomy_evidence",
         ):
             path.mkdir(parents=True, exist_ok=True)
         memory_root = RuntimePaths.for_story_project(story_root).memory_dir / "v2"
@@ -2200,8 +2394,13 @@ class AgentExecutor:
                 "event-authority chapter commit requires exactly one prose target"
             )
 
-        chapter_body = str(result.get("chapter") or "")
+        # Canonical chapter evidence is always computed from the exact UTF-8
+        # bytes rendered to StoryProject, including the writer's terminal
+        # newline normalization.  Raw model text is not a publication byte
+        # contract.
+        chapter_body = str(prose_targets[0].content)
         chapter_body_sha256 = hashlib.sha256(chapter_body.encode("utf-8")).hexdigest()
+        result["chapter"] = chapter_body
         memory_root = RuntimePaths.for_story_project(story_root).memory_dir / "v2"
         ensure_memory_v2_storage_layout(memory_root)
         quality = run.get("quality_decision") if isinstance(run.get("quality_decision"), dict) else {}
@@ -2276,6 +2475,52 @@ class AgentExecutor:
         identity_bytes = identity_content.encode("utf-8")
 
         apply_targets: list[PersistenceV2Target] = []
+        autonomy_outline_declarations: list[dict[str, Any]] = []
+        if self.autonomy_run_context is not None:
+            checkpoint = self.autonomy_run_context.checkpoint
+            relative_outline = Path(str(checkpoint["canonical_relative_path"]))
+            outline_path = (story_root / relative_outline).resolve(strict=False)
+            try:
+                outline_path.relative_to(story_root)
+            except ValueError as exc:
+                raise PersistencePreparationError(
+                    "autonomy outline checkpoint escapes StoryProject"
+                ) from exc
+            before_hash = checkpoint.get("canonical_before_sha256")
+            if before_hash is None:
+                outline_content = str(checkpoint["outline_text"])
+                if not outline_content.endswith("\n"):
+                    outline_content += "\n"
+                outline_bytes = outline_content.encode("utf-8")
+                apply_targets.append(
+                    PersistenceV2Target(
+                        target_id="story-outline-01",
+                        kind="outline",
+                        path_ref=self._event_path_ref(
+                            outline_path,
+                            registry=registry,
+                            preferred_root="story_project",
+                        ),
+                        content=outline_content,
+                        metadata={
+                            "autonomy": True,
+                            "checkpoint_hash": checkpoint["checkpoint_hash"],
+                            "outline_hash": hashlib.sha256(outline_bytes).hexdigest(),
+                        },
+                        expected_before_exists=False,
+                    )
+                )
+                autonomy_outline_declarations = declared_read_set_writes(
+                    read_set,
+                    ((outline_path, hashlib.sha256(outline_bytes).hexdigest(), len(outline_bytes)),),
+                )
+            else:
+                if not outline_path.is_file() or hashlib.sha256(
+                    outline_path.read_bytes()
+                ).hexdigest() != before_hash:
+                    raise PersistencePreparationError(
+                        "canonical outline changed after the autonomy checkpoint"
+                    )
         for index, rendered in enumerate(prose_targets, start=1):
             apply_targets.append(
                 PersistenceV2Target(
@@ -2352,7 +2597,11 @@ class AgentExecutor:
             "after_authority_epoch": int(advanced_identity.authority["authority_epoch"]),
             "after_head_event_hash": str(advanced_identity.authority["head_event_hash"]),
         }
-        declared_writes = [*prose_declarations, identity_declaration]
+        declared_writes = [
+            *autonomy_outline_declarations,
+            *prose_declarations,
+            identity_declaration,
+        ]
 
         receipt_id = f"receipt-{run['id']}"
         receipt_path = self.run_dir / "publication_receipts" / f"{run['id']}.json"
@@ -2411,6 +2660,14 @@ class AgentExecutor:
                         "policy": delivery_intent["policy"],
                     },
                 }
+            )
+        if self.autonomy_run_context is not None:
+            prepared_artifacts.extend(
+                self.autonomy_run_context.publication_artifacts(
+                    run_id=str(run["id"]),
+                    output_root=self.run_dir / "autonomy_evidence",
+                    chapter_body_sha256=chapter_body_sha256,
+                )
             )
         artifact_targets = [
             PersistenceV2Target(

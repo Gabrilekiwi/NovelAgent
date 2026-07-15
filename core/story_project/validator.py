@@ -23,6 +23,7 @@ def validate_story_project(
     chapter: str | int | None = "auto",
     workspace_root: str | Path | None = None,
     allow_existing_prose: bool = False,
+    allow_missing_outline: bool = False,
 ) -> StoryProjectValidationResult:
     root_resolution = resolve_story_project_root(story_project, workspace_root=workspace_root)
     problems: list[ValidationProblem] = []
@@ -94,7 +95,7 @@ def validate_story_project(
                         path=story_project_root / "大纲",
                     )
                 )
-            elif not outline_resolution.found:
+            elif not outline_resolution.found and not allow_missing_outline:
                 problems.append(
                     ValidationProblem(
                         code="outline_chapter_missing",

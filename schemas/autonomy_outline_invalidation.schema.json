@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomyOutlineInvalidation",
+  "type": "object",
+  "required": ["schema_version", "invalidation_hash", "session_id", "chapter_index", "invalidated_checkpoint_hash", "replacement_checkpoint_hash", "reason", "recorded_at"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "invalidation_hash": {"type": "string", "minLength": 64},
+    "session_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "invalidated_checkpoint_hash": {"type": "string", "minLength": 64},
+    "replacement_checkpoint_hash": {"type": "string", "minLength": 64},
+    "reason": {"type": "string", "enum": ["authority_or_context_changed"]},
+    "recorded_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

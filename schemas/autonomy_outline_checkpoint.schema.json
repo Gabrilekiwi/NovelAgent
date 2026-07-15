@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutonomyOutlineCheckpoint",
+  "type": "object",
+  "required": [
+    "schema_version", "checkpoint_id", "checkpoint_hash", "book_id", "session_id",
+    "plan_id", "arc_plan_id", "chapter_index", "planned_target_hash",
+    "source_snapshot_hash", "authority", "outline_input_digest", "provider_profile",
+    "execution_kind", "outline_text", "outline_hash", "canonical_relative_path",
+    "canonical_before_sha256", "created_at"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "checkpoint_id": {"type": "string", "minLength": 1},
+    "checkpoint_hash": {"type": "string", "minLength": 64},
+    "book_id": {"type": "string", "minLength": 1},
+    "session_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "arc_plan_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "planned_target_hash": {"type": "string", "minLength": 64},
+    "source_snapshot_hash": {"type": "string", "minLength": 64},
+    "authority": {
+      "type": "object",
+      "required": ["epoch", "head_event_hash"],
+      "properties": {
+        "epoch": {"type": "integer", "minimum": 0},
+        "head_event_hash": {"type": ["string", "null"], "minLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "outline_input_digest": {"type": "string", "minLength": 64},
+    "provider_profile": {"type": "string", "minLength": 1},
+    "execution_kind": {"type": "string", "enum": ["model", "deterministic"]},
+    "outline_text": {"type": "string", "minLength": 1},
+    "outline_hash": {"type": "string", "minLength": 64},
+    "canonical_relative_path": {"type": "string", "minLength": 1},
+    "canonical_before_sha256": {"type": ["string", "null"], "minLength": 64},
+    "created_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

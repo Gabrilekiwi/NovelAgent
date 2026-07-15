@@ -15,7 +15,7 @@ from core.story_project.model import (
     SourceResolutionEntry,
     StoryProjectRuntimeContext,
 )
-from core.story_project.paths import resolve_outline, resolve_prose
+from core.story_project.paths import canonical_outline_path, resolve_outline, resolve_prose
 
 
 SETTING_DIR_NAME = "设定"
@@ -41,25 +41,37 @@ def build_story_project_runtime_context(
     memory_context: dict[str, Any] | None = None,
     max_file_chars: int = DEFAULT_MAX_FILE_CHARS,
     previous_chapter_fail_closed: bool = False,
+    outline_override: dict[str, Any] | None = None,
 ) -> StoryProjectRuntimeContext:
     root = Path(story_project_root)
     warnings: list[str] = []
     missing_fields: list[str] = []
 
     outline_resolution = resolve_outline(root, chapter_index)
-    if outline_resolution.path is None:
-        raise FileNotFoundError(f"No unique outline file matched chapter {chapter_index}.")
-    outline_file = _read_context_file(
-        outline_resolution.path,
-        root=root,
-        max_chars=max_file_chars,
-        warnings=warnings,
-        include_full_text=True,
-    )
+    if outline_override is None:
+        if outline_resolution.path is None:
+            raise FileNotFoundError(f"No unique outline file matched chapter {chapter_index}.")
+        outline_path = outline_resolution.path
+        outline_file = _read_context_file(
+            outline_path,
+            root=root,
+            max_chars=max_file_chars,
+            warnings=warnings,
+            include_full_text=True,
+        )
+    else:
+        outline_path = canonical_outline_path(root, chapter_index)
+        outline_file = _virtual_outline_file(
+            outline_override,
+            path=outline_path,
+            root=root,
+            max_chars=max_file_chars,
+            warnings=warnings,
+        )
     outline_parse_text = str(outline_file.pop("_full_text"))
     chapter_blueprint = _build_chapter_blueprint(
         chapter_index=chapter_index,
-        outline_path=outline_resolution.path,
+        outline_path=outline_path,
         outline_text=outline_parse_text,
     )
     missing_fields.extend(chapter_blueprint.missing_fields)
@@ -82,7 +94,7 @@ def build_story_project_runtime_context(
 
     source_paths = SourcePathSet(
         story_project_root=root,
-        outline_path=outline_resolution.path,
+        outline_path=outline_path,
         previous_prose_path=Path(previous_prose["path"]) if previous_prose and previous_prose.get("path") else None,
         tracking_paths={name: Path(file_data["path"]) for name, file_data in tracking_files.items()},
         setting_paths={name: Path(file_data["path"]) for name, file_data in setting_files.items()},
@@ -125,6 +137,45 @@ def build_story_project_runtime_context(
         warnings=tuple(warnings),
         missing_fields=tuple(dict.fromkeys(missing_fields)),
     )
+
+
+def _virtual_outline_file(
+    override: dict[str, Any],
+    *,
+    path: Path,
+    root: Path,
+    max_chars: int,
+    warnings: list[str],
+) -> dict[str, Any]:
+    if not isinstance(override, dict):
+        raise ValueError("outline_override must be an immutable checkpoint object")
+    text = override.get("outline_text")
+    expected_hash = override.get("outline_hash")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("outline_override.outline_text is required")
+    raw = text.encode("utf-8")
+    actual_hash = hashlib.sha256(raw).hexdigest()
+    if expected_hash != actual_hash:
+        raise ValueError("outline_override hash does not match its text")
+    excerpt = _prompt_excerpt(text, max_chars=max_chars)
+    if excerpt["truncated"]:
+        warnings.append(
+            f"truncated_file: {_relative_path(path, root)} exceeded {max_chars} chars"
+        )
+    return {
+        "path": str(path),
+        "relative_path": _relative_path(path, root),
+        "text": excerpt["text"],
+        "chars": len(text),
+        "excerpt_chars": len(excerpt["text"]),
+        "excerpt_ranges": excerpt["ranges"],
+        "selection": excerpt["selection"],
+        "sha256": actual_hash,
+        "truncated": excerpt["truncated"],
+        "_full_text": text,
+        "source_kind": "autonomy_outline_checkpoint",
+        "checkpoint_hash": override.get("checkpoint_hash"),
+    }
 
 
 def _read_previous_chapter_context(

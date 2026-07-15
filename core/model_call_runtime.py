@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from contextlib import contextmanager
@@ -55,6 +56,15 @@ class ProviderCallUncertainError(ModelCallEvidenceError):
 
 
 @dataclass
+class ModelCallOperationScope:
+    """Stable logical-call namespace for one autonomy stage operation."""
+
+    operation_key: str
+    ordinal: int = 0
+    receipt_hashes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ModelCallRuntimeContext:
     """Runtime-only bridge from providers to an append-only ModelCallStore.
 
@@ -70,12 +80,49 @@ class ModelCallRuntimeContext:
     clock: Callable[[], datetime] = field(
         default=lambda: datetime.now(timezone.utc)
     )
+    _operation_scope: ModelCallOperationScope | None = field(
+        default=None, init=False, repr=False
+    )
+
+    @contextmanager
+    def bind_operation(
+        self, operation_key: str
+    ) -> Iterator[ModelCallOperationScope]:
+        """Bind logical call IDs to a durable stage operation key.
+
+        A restarted stage begins its ordinal at one again, producing the same
+        call IDs and therefore replaying already-published response receipts.
+        """
+
+        key = str(operation_key)
+        if not re.fullmatch(r"[0-9a-f]{64}", key):
+            raise ModelCallEvidenceError(
+                "model-call operation_key must be a lowercase SHA-256 digest"
+            )
+        if self._operation_scope is not None:
+            raise ModelCallEvidenceError("nested model-call operation scopes are forbidden")
+        scope = ModelCallOperationScope(operation_key=key)
+        self._operation_scope = scope
+        try:
+            yield scope
+        finally:
+            self._operation_scope = None
 
     def new_call_id(self, *, provider: str, stage: str) -> str:
         prefix = _safe_label(f"{provider}-{stage}")[:80]
-        suffix = _safe_label(str(self.id_factory()))[:64]
         if not prefix:
             prefix = "model-call"
+        scope = self._operation_scope
+        if scope is not None:
+            scope.ordinal += 1
+            suffix = hashlib.sha256(
+                (
+                    f"{scope.operation_key}:{scope.ordinal}:"
+                    f"{provider}:{stage}"
+                ).encode("utf-8")
+            ).hexdigest()[:40]
+            return f"{prefix}-{scope.ordinal:03d}-{suffix}"[:180].rstrip("._-")
+        suffix = _safe_label(str(self.id_factory()))[:64]
         if not suffix:
             suffix = uuid.uuid4().hex
         return f"{prefix}-{suffix}"[:180].rstrip("._-")
@@ -93,6 +140,48 @@ class ModelCallRuntimeContext:
         return len(
             canonical_json_bytes(request, exclude_environment_fields=False)
         )
+
+    def hydrate_tracker_from_store(self) -> list[str]:
+        """Rebuild charged budget usage from immutable attempt evidence.
+
+        A terminal local budget rejection never crossed the provider boundary
+        and is therefore not charged. Every succeeded receipt is reserved and
+        settled exactly once in the fresh in-memory tracker.
+        """
+
+        hydrated: list[str] = []
+        if not self.store.receipts_dir.is_dir():
+            return hydrated
+        for path in sorted(self.store.receipts_dir.glob("*.json")):
+            receipt = self.store.load_receipt(path.stem)
+            if receipt["status"] == "budget_rejected":
+                continue
+            if receipt["status"] != "succeeded":
+                raise ModelCallIntegrityError(
+                    f"unsupported terminal model receipt status: {receipt['status']}"
+                )
+            intent = self.store.load_intent(receipt["attempt_id"])
+            reservation = intent["budget_reservation"]
+            self._reserve_tracker(
+                input_tokens=_non_negative_int(
+                    "reserved_input_tokens",
+                    reservation.get("reserved_input_tokens"),
+                ),
+                max_output_tokens=_non_negative_int(
+                    "reserved_output_tokens",
+                    reservation.get("reserved_output_tokens"),
+                ),
+                call_id=receipt["call_id"],
+                attempt_id=receipt["attempt_id"],
+            )
+            response = self._response_from_receipt(receipt["attempt_id"])
+            self._record_tracker_response(
+                response,
+                call_id=receipt["call_id"],
+                attempt_id=receipt["attempt_id"],
+            )
+            hydrated.append(receipt["receipt_hash"])
+        return hydrated
 
     def execute_attempt(
         self,
@@ -247,6 +336,7 @@ class ModelCallRuntimeContext:
             ) from exc
 
         self._record_tracker_response(response, call_id=call_id, attempt_id=attempt_id)
+        self._record_operation_receipt(receipt["receipt_hash"])
         return response
 
     def _require_expected_intent(
@@ -311,7 +401,7 @@ class ModelCallRuntimeContext:
             raise ModelCallIntegrityError(
                 f"cannot replay model receipt with status {receipt['status']}"
             )
-        return ModelResponse(
+        response = ModelResponse(
             text,
             usage=receipt["usage"],
             finish_reason=receipt["finish_reason"],
@@ -319,6 +409,16 @@ class ModelCallRuntimeContext:
             actual_model=receipt["actual_model"],
             endpoint_type=receipt["endpoint_type"],
         )
+        self._record_operation_receipt(receipt["receipt_hash"])
+        return response
+
+    def _record_operation_receipt(self, receipt_hash: str) -> None:
+        scope = self._operation_scope
+        if scope is None:
+            return
+        digest = str(receipt_hash)
+        if digest not in scope.receipt_hashes:
+            scope.receipt_hashes.append(digest)
 
     def _reserve_tracker(
         self,
@@ -433,6 +533,7 @@ def _non_negative_int(name: str, value: Any) -> int:
 
 
 __all__ = [
+    "ModelCallOperationScope",
     "ModelCallRuntimeContext",
     "ProviderCallUncertainError",
     "current_model_call_runtime",

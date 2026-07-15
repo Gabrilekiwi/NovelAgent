@@ -15,6 +15,8 @@ from core.story_project.validator import validate_story_project
 from core.memory_v2 import load_canonical_memory, memory_projection_hash, replay_memory_events
 from core.runtime_paths import RuntimePaths
 from core.story_project.authority import AUTHORITY_MODE_EVENT
+from core.memory_v2.canonical import canonical_json_hash
+from core.story_project.semantic_parser import SEMANTIC_PARSER_VERSION
 
 
 class StoryProjectSequenceDriftError(ValueError):
@@ -38,6 +40,7 @@ class GenerationStoryProjectContextLoader:
     project_identity: ProjectIdentity
     overwrite: bool = False
     allow_story_state_shadow_downgrade: bool = False
+    outline_override: dict[str, Any] | None = None
 
     def __call__(
         self,
@@ -55,6 +58,7 @@ class GenerationStoryProjectContextLoader:
             overwrite=self.overwrite,
             project_identity=self.project_identity,
             allow_story_state_shadow_downgrade=self.allow_story_state_shadow_downgrade,
+            outline_override=self.outline_override,
         )
         if hint is not None and context.chapter_index != hint:
             raise StoryProjectSequenceDriftError(
@@ -73,11 +77,13 @@ def build_generation_story_project_context(
     overwrite: bool = False,
     project_identity: ProjectIdentity | None = None,
     allow_story_state_shadow_downgrade: bool = False,
+    outline_override: dict[str, Any] | None = None,
 ) -> StoryProjectRuntimeContext:
     validation = validate_story_project(
         story_project=story_project,
         chapter=chapter,
         allow_existing_prose=overwrite,
+        allow_missing_outline=outline_override is not None,
     )
     if not validation.ok:
         blocking = [problem.message for problem in validation.problems if problem.blocking]
@@ -95,54 +101,88 @@ def build_generation_story_project_context(
         snapshot=snapshot,
         memory_context=memory_context,
         previous_chapter_fail_closed=identity.story_state_mode == "strict" or event_authority,
+        outline_override=outline_override,
     )
-    semantic_state = parse_story_project_semantic_state(
-        root,
-        chapter_index,
-        project_identity=identity,
-    )
-    activation = (
-        _event_authority_activation(identity)
-        if event_authority
-        else evaluate_story_state_activation(
-            identity,
-            semantic_state,
-            allow_shadow_downgrade=allow_story_state_shadow_downgrade,
-        )
-    )
-    semantic_audit = {
-        **activation,
-        "parser_version": semantic_state["parser_version"],
-        "semantic_schema_version": semantic_state["schema_version"],
-        "layout_profile_version": semantic_state["layout_profile_version"],
-        "source_digest": semantic_state["source_digest"],
-        "provenance_count": len(semantic_state["provenance"]),
-        "blocking_conflict_count": sum(
-            1 for item in semantic_state["conflicts"] if item.get("blocking")
-        ),
-        "warning_count": len(semantic_state["parse_warnings"]),
-        "parser_authoritative": False if event_authority else bool(activation["authoritative"]),
-        "canonical_authoritative": event_authority,
-    }
     memory_v2 = _load_memory_v2_context(root, identity)
-    read_set = capture_story_project_read_set(
-        root,
-        chapter_index,
-        project_identity=identity,
-        parser_version=str(semantic_state["parser_version"]),
-        parse_status=(
-            "warning"
-            if context.warnings or semantic_state["parse_warnings"] or activation["downgraded"]
-            else "ok"
-        ),
-    )
+    if event_authority and outline_override is not None:
+        activation = _event_authority_activation(identity)
+        read_set = capture_story_project_read_set(
+            root,
+            chapter_index,
+            project_identity=identity,
+            parser_version=SEMANTIC_PARSER_VERSION,
+            parse_status="warning" if context.warnings else "ok",
+        )
+        semantic_state = None
+        semantic_audit = {
+            **activation,
+            "parser_version": SEMANTIC_PARSER_VERSION,
+            "semantic_schema_version": "event-outline-1.0",
+            "layout_profile_version": "autonomy-checkpoint-1.0",
+            "source_digest": canonical_json_hash(
+                {
+                    "story_project_context_digest": read_set["context_digest"],
+                    "outline_checkpoint_hash": outline_override.get("checkpoint_hash"),
+                    "outline_hash": outline_override.get("outline_hash"),
+                }
+            ),
+            "provenance_count": 1,
+            "blocking_conflict_count": 0,
+            "warning_count": len(context.warnings),
+            "parser_authoritative": False,
+            "canonical_authoritative": True,
+        }
+    else:
+        semantic_state = parse_story_project_semantic_state(
+            root,
+            chapter_index,
+            project_identity=identity,
+        )
+        activation = (
+            _event_authority_activation(identity)
+            if event_authority
+            else evaluate_story_state_activation(
+                identity,
+                semantic_state,
+                allow_shadow_downgrade=allow_story_state_shadow_downgrade,
+            )
+        )
+        semantic_audit = {
+            **activation,
+            "parser_version": semantic_state["parser_version"],
+            "semantic_schema_version": semantic_state["schema_version"],
+            "layout_profile_version": semantic_state["layout_profile_version"],
+            "source_digest": semantic_state["source_digest"],
+            "provenance_count": len(semantic_state["provenance"]),
+            "blocking_conflict_count": sum(
+                1 for item in semantic_state["conflicts"] if item.get("blocking")
+            ),
+            "warning_count": len(semantic_state["parse_warnings"]),
+            "parser_authoritative": False if event_authority else bool(activation["authoritative"]),
+            "canonical_authoritative": event_authority,
+        }
+        read_set = capture_story_project_read_set(
+            root,
+            chapter_index,
+            project_identity=identity,
+            parser_version=str(semantic_state["parser_version"]),
+            parse_status=(
+                "warning"
+                if context.warnings or semantic_state["parse_warnings"] or activation["downgraded"]
+                else "ok"
+            ),
+        )
     return replace(
         context,
         chapter_resolution=chapter_resolution,
         project_identity=identity.to_dict(),
         read_set=read_set,
         story_state_mode=str(activation["effective_mode"]),
-        semantic_state=(semantic_state if activation["authoritative"] and not event_authority else None),
+        semantic_state=(
+            semantic_state
+            if semantic_state is not None and activation["authoritative"] and not event_authority
+            else None
+        ),
         semantic_audit=semantic_audit,
         memory_v2=memory_v2,
     )
@@ -156,6 +196,7 @@ def build_generation_story_project_context_loader(
     workspace_root: str | Path | None = None,
     project_identity: ProjectIdentity | None = None,
     allow_story_state_shadow_downgrade: bool = False,
+    outline_override: dict[str, Any] | None = None,
 ) -> GenerationStoryProjectContextLoader:
     resolution = resolve_story_project_root(story_project, workspace_root=workspace_root)
     if not resolution.ok or resolution.root is None:
@@ -168,6 +209,7 @@ def build_generation_story_project_context_loader(
         project_identity=identity,
         overwrite=bool(overwrite),
         allow_story_state_shadow_downgrade=bool(allow_story_state_shadow_downgrade),
+        outline_override=outline_override,
     )
 
 

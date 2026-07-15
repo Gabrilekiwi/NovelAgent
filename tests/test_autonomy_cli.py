@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import unittest
 from contextlib import redirect_stdout
@@ -8,6 +9,7 @@ from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from unittest.mock import Mock
 
 import main as cli
 from core.autonomy.cli import autonomy_command_requested, run_autonomy_command
@@ -23,6 +25,9 @@ def command_args(**overrides):
         "cancel_session": None,
         "abandon_session": None,
         "trusted_profiles": None,
+        "autonomy_root_map": None,
+        "dry_run": False,
+        "persist_dry_run": False,
         "story_project": "auto",
         "_resolved_story_project_root": Path.cwd(),
         "run_dir": ".tmp/runtime/runs",
@@ -84,6 +89,98 @@ class AutonomyCliTest(unittest.TestCase):
                 )
             )
 
+    def test_dry_execution_requires_explicit_persistence_consent(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires explicit --persist-dry-run"):
+            autonomy_command_requested(
+                command_args(
+                    execute_plan="plan.json",
+                    trusted_profiles="profiles.json",
+                    autonomy_root_map="operator-roots.json",
+                    dry_run=True,
+                )
+            )
+
+    def test_endpoint_mismatch_fails_before_runner_or_session_intent(self) -> None:
+        with workspace_case("cli-endpoint") as temporary:
+            root = Path(temporary)
+            profile_path = root / "profiles.json"
+            profile_path.write_text(
+                json.dumps(trusted_profiles().payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            runtime = SimpleNamespace(runtime_dir=root / "runtime")
+            preview_args = command_args(
+                instruction="write 1 chapter",
+                trusted_profiles=str(profile_path),
+            )
+            with patch(
+                "core.autonomy.cli._capture_source_snapshot_from_args",
+                return_value=source_snapshot(),
+            ):
+                preview = run_autonomy_command(
+                    preview_args, story_runtime_paths=runtime
+                )
+
+            execute_args = command_args(
+                execute_plan=preview["artifact"]["path"],
+                trusted_profiles=str(profile_path),
+                autonomy_root_map=str(root / "operator-roots.json"),
+            )
+            configured = SimpleNamespace(
+                openai_model="trusted-model",
+                openai_max_output_tokens=16000,
+                openai_base_url="https://compatible.invalid/v1",
+            )
+            with patch(
+                "core.autonomy.cli.get_config", return_value=configured
+            ), patch("core.autonomy.cli._build_autonomy_runner") as build_runner:
+                with self.assertRaisesRegex(
+                    Exception, "autonomy_provider_endpoint_mismatch"
+                ):
+                    run_autonomy_command(
+                        execute_args, story_runtime_paths=runtime
+                    )
+            build_runner.assert_not_called()
+            session_root = runtime.runtime_dir / "sessions"
+            self.assertEqual(
+                [], list(session_root.glob("session_*")) if session_root.exists() else []
+            )
+
+    def test_unsupported_provider_preview_writes_no_plan_or_session(self) -> None:
+        with workspace_case("cli-provider") as temporary:
+            root = Path(temporary)
+            payload = copy.deepcopy(trusted_profiles().payload)
+            payload["provider_models"][0]["provider"] = "anthropic"
+            payload["provider_models"][0]["model"] = "trusted-anthropic-model"
+            profile_path = root / "profiles.json"
+            profile_path.write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+            runtime = SimpleNamespace(runtime_dir=root / "runtime")
+            args = command_args(
+                instruction="write 1 chapter",
+                trusted_profiles=str(profile_path),
+            )
+            with patch(
+                "core.autonomy.cli._capture_source_snapshot_from_args",
+                return_value=source_snapshot(),
+            ):
+                with self.assertRaisesRegex(
+                    Exception, "autonomy_provider_unsupported"
+                ):
+                    run_autonomy_command(args, story_runtime_paths=runtime)
+            self.assertEqual(
+                [],
+                list((runtime.runtime_dir / "plans").glob("*.json"))
+                if (runtime.runtime_dir / "plans").exists()
+                else [],
+            )
+            self.assertEqual(
+                [],
+                list((runtime.runtime_dir / "sessions").glob("session_*"))
+                if (runtime.runtime_dir / "sessions").exists()
+                else [],
+            )
     def test_all_session_commands_require_explicit_story_project_locator(self) -> None:
         for command in (
             "session_status",
@@ -142,7 +239,7 @@ class AutonomyCliTest(unittest.TestCase):
                     autonomy_command_requested(command_args(**{attribute: value}))
                 )
 
-    def test_preview_then_execute_reuses_same_durable_session(self) -> None:
+    def test_preview_then_execute_delegates_to_real_runner_path(self) -> None:
         with workspace_case("cli") as temporary:
             root = Path(temporary)
             profile_path = root / "profiles.json"
@@ -165,18 +262,29 @@ class AutonomyCliTest(unittest.TestCase):
             plan_path = preview["artifact"]["path"]
 
             execute_args = command_args(
-                execute_plan=plan_path, trusted_profiles=str(profile_path)
+                execute_plan=plan_path,
+                trusted_profiles=str(profile_path),
+                autonomy_root_map=str(root / "operator-roots.json"),
+                dry_run=True,
+                persist_dry_run=True,
             )
+            runner = Mock()
+            runner.execute_plan.return_value = {
+                "stopped_reason": "completed",
+                "session": {"session_id": "session-from-runner"},
+                "runs": [],
+            }
             with patch(
                 "core.autonomy.cli._capture_source_snapshot_from_args",
                 return_value=source_snapshot(),
-            ):
+            ), patch("core.autonomy.cli._build_autonomy_runner", return_value=runner):
                 first = run_autonomy_command(execute_args, story_runtime_paths=runtime)
                 replay = run_autonomy_command(execute_args, story_runtime_paths=runtime)
             self.assertEqual(
                 first["session"]["session_id"], replay["session"]["session_id"]
             )
-            self.assertEqual(1, replay["session"]["event_count"])
+            self.assertTrue(first["ok"])
+            self.assertEqual(2, runner.execute_plan.call_count)
 
     def test_main_autonomy_command_exits_before_agent_executor(self) -> None:
         argv = [

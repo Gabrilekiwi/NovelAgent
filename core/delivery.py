@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Mapping, Protocol
 from api.notion_client import create_database_page, query_database_pages
 from api.retry import retry_telemetry_snapshot
 from core.engine.persistence import _atomic_create_from_bytes, _atomic_replace_from_bytes, persistence_run_lock
+from core.engine.safe_paths import RootBinding, SafePathResolver
 from core.memory_v2.canonical import canonical_json_hash
 from core.path_refs import resolve_path_ref, validate_path_ref
 from core.reliable_semantic_contracts import DELIVERY_STATES
@@ -561,6 +562,62 @@ class FileDeliveryAdapter:
             code="file_exported",
             message="File export created and verified",
             remote_refs={"path_ref": job["target"]["path_ref"], "sha256": expected_hash},
+        )
+
+
+class SafeFileDeliveryAdapter:
+    """File Delivery adapter with UUID binding and reparse/TOCTOU guards."""
+
+    def __init__(self, *, binding: RootBinding) -> None:
+        self.resolver = SafePathResolver({binding.root_id: binding})
+
+    def deliver(self, job: Mapping[str, Any], context: DeliveryAttemptContext) -> Mapping[str, Any]:
+        del context
+        path_ref = job["target"]["path_ref"]
+        resolved = self.resolver.resolve(path_ref)
+        path = resolved.path
+        encoding = str(job["payload"].get("encoding") or "utf-8")
+        content = str(job["payload"]["content"]).encode(encoding)
+        expected_hash = hashlib.sha256(content).hexdigest()
+        if path.exists():
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+                return delivery_outcome(
+                    "conflict",
+                    code="file_payload_conflict",
+                    message="File export path already exists with different content",
+                    remote_refs={"path_ref": resolved.path_ref.to_dict()},
+                )
+            return delivery_outcome(
+                "succeeded",
+                code="file_already_present",
+                message="File export already contains the expected bytes",
+                remote_refs={"path_ref": resolved.path_ref.to_dict(), "sha256": expected_hash},
+            )
+        try:
+            prepared = self.resolver.ensure_parent(
+                path_ref, expected_guard=resolved.guard
+            )
+            # Revalidate every parent identity immediately before the create.
+            final = self.resolver.resolve(
+                path_ref, expected_guard=prepared.guard
+            )
+            _atomic_create_from_bytes(final.path, content)
+            readback = self.resolver.resolve(
+                path_ref, expected_guard=final.guard
+            )
+        except Exception as exc:
+            return delivery_outcome(
+                "retryable_failed",
+                code="file_export_failed",
+                message=f"{type(exc).__name__}: {exc}",
+            )
+        if hashlib.sha256(readback.path.read_bytes()).hexdigest() != expected_hash:
+            return delivery_outcome("conflict", code="file_readback_mismatch", message="File readback hash differs")
+        return delivery_outcome(
+            "succeeded",
+            code="file_exported",
+            message="File export created and verified",
+            remote_refs={"path_ref": readback.path_ref.to_dict(), "sha256": expected_hash},
         )
 
 
@@ -1117,6 +1174,7 @@ __all__ = [
     "DeliveryLeaseError",
     "DeliveryQueue",
     "FileDeliveryAdapter",
+    "SafeFileDeliveryAdapter",
     "NotionDeliveryAdapter",
     "default_notion_property_map",
     "delivery_operation_id",

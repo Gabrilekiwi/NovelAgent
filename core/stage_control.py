@@ -12,6 +12,42 @@ _STAGES = frozenset({"outline", "scene_plan", "draft", "polish", "validator", "r
 _RECEIPT_STATUSES = frozenset(
     {"succeeded", "failed", "provider_call_uncertain", "budget_rejected", "cancelled"}
 )
+_LEGACY_AUTHORIZATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "authorization_hash",
+        "stage",
+        "book_id",
+        "session_id",
+        "plan_id",
+        "chapter_index",
+        "authority",
+        "input_digest",
+        "previous_stage_receipt_hash",
+        "provider_profile",
+        "max_output_tokens",
+        "issued_at",
+    }
+)
+_LEGACY_RECEIPT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "receipt_hash",
+        "authorization_hash",
+        "stage",
+        "status",
+        "book_id",
+        "session_id",
+        "plan_id",
+        "chapter_index",
+        "authority",
+        "input_digest",
+        "output_digest",
+        "model_call_receipt_hash",
+        "previous_stage_receipt_hash",
+        "created_at",
+    }
+)
 
 
 class StageControlError(RuntimeError):
@@ -112,10 +148,11 @@ def build_stage_authorization(
     previous_stage_receipt_hash: str | None,
     provider_profile: str,
     max_output_tokens: int,
+    execution_kind: str = "model",
     issued_at: str | None = None,
 ) -> dict[str, Any]:
     authorization = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "stage": _stage(stage),
         "book_id": _required_text("book_id", book_id),
         "session_id": _required_text("session_id", session_id),
@@ -128,6 +165,7 @@ def build_stage_authorization(
         ),
         "provider_profile": _required_text("provider_profile", provider_profile),
         "max_output_tokens": _positive_int("max_output_tokens", max_output_tokens),
+        "execution_kind": _execution_kind(execution_kind),
         "issued_at": issued_at or _now(),
     }
     authorization["authorization_hash"] = canonical_json_hash(authorization)
@@ -136,6 +174,17 @@ def build_stage_authorization(
 
 def validate_stage_authorization(value: Any) -> dict[str, Any]:
     authorization = _validate_mapping(value, "stage_authorization.schema.json", "StageAuthorization")
+    version = str(authorization["schema_version"])
+    if version == "1.0" and frozenset(authorization) != _LEGACY_AUTHORIZATION_FIELDS:
+        raise StageControlError(
+            "stage_authorization_version_invalid",
+            "legacy StageAuthorization bytes cannot contain 1.1 execution fields",
+        )
+    if version == "1.1" and "execution_kind" not in authorization:
+        raise StageControlError(
+            "stage_authorization_version_invalid",
+            "StageAuthorization 1.1 requires execution_kind",
+        )
     _stage(authorization["stage"])
     for field in ("book_id", "session_id", "plan_id", "provider_profile"):
         _required_text(field, authorization[field])
@@ -144,6 +193,8 @@ def validate_stage_authorization(value: Any) -> dict[str, Any]:
     _sha256("input_digest", authorization["input_digest"])
     _optional_sha256("previous_stage_receipt_hash", authorization["previous_stage_receipt_hash"])
     _positive_int("max_output_tokens", authorization["max_output_tokens"])
+    if version == "1.1":
+        _execution_kind(authorization["execution_kind"])
     _sha256("authorization_hash", authorization["authorization_hash"])
     expected_hash = canonical_json_hash(authorization, exclude_fields=("authorization_hash",))
     if authorization["authorization_hash"] != expected_hash:
@@ -165,6 +216,7 @@ def assert_stage_authorized(
     previous_stage_receipt_hash: str | None,
     provider_profile: str,
     requested_max_output_tokens: int,
+    execution_kind: str | None = None,
 ) -> dict[str, Any]:
     validated = validate_stage_authorization(dict(authorization))
     expected = {
@@ -180,6 +232,15 @@ def assert_stage_authorized(
         ),
         "provider_profile": _required_text("provider_profile", provider_profile),
     }
+    if validated["schema_version"] == "1.1":
+        expected["execution_kind"] = _execution_kind(
+            validated["execution_kind"] if execution_kind is None else execution_kind
+        )
+    elif execution_kind not in (None, "model"):
+        raise StageControlError(
+            "stage_authorization_drift",
+            "legacy authorization cannot be reinterpreted as deterministic execution",
+        )
     for field, actual in expected.items():
         if validated[field] != actual:
             raise StageControlError("stage_authorization_drift", f"{field} changed after authorization")
@@ -198,9 +259,16 @@ def build_stage_receipt(
     status: str,
     output_digest: str | None,
     model_call_receipt_hash: str | None,
+    model_call_receipt_hashes: Sequence[str] | None = None,
+    execution_evidence_hash: str | None = None,
     created_at: str | None = None,
 ) -> dict[str, Any]:
     authorized = validate_stage_authorization(dict(authorization))
+    if authorized["schema_version"] != "1.1":
+        raise StageControlError(
+            "stage_receipt_builder_version_invalid",
+            "new StageReceipts require a StageAuthorization 1.1",
+        )
     resolved_status = str(status)
     if resolved_status not in _RECEIPT_STATUSES:
         raise StageControlError("stage_receipt_status_invalid", f"unsupported status: {resolved_status}")
@@ -209,8 +277,54 @@ def build_stage_receipt(
         raise StageControlError("stage_receipt_output_missing", "a successful stage requires an output digest")
     if resolved_status != "succeeded" and resolved_output is not None:
         raise StageControlError("stage_receipt_failed_output_present", "an unsuccessful stage cannot publish output")
+    execution_kind = _execution_kind(authorized["execution_kind"])
+    receipt_hashes = [
+        _sha256("model_call_receipt_hash", item)
+        for item in (model_call_receipt_hashes or ())
+    ]
+    if len(receipt_hashes) != len(set(receipt_hashes)):
+        raise StageControlError(
+            "stage_receipt_model_evidence_duplicate",
+            "model call receipt evidence must not contain duplicates",
+        )
+    primary_model_receipt = _optional_sha256(
+        "model_call_receipt_hash", model_call_receipt_hash
+    )
+    if primary_model_receipt is not None and primary_model_receipt not in receipt_hashes:
+        receipt_hashes.append(primary_model_receipt)
+    evidence_hash = _optional_sha256(
+        "execution_evidence_hash", execution_evidence_hash
+    )
+    if evidence_hash is None and execution_kind == "model" and receipt_hashes:
+        evidence_hash = canonical_json_hash(
+            {
+                "execution_kind": "model",
+                "model_call_receipt_hashes": receipt_hashes,
+            }
+        )
+    if resolved_status == "succeeded":
+        if execution_kind == "model" and not receipt_hashes:
+            raise StageControlError(
+                "stage_receipt_model_evidence_missing",
+                "a successful model stage requires durable ModelCallReceipt evidence",
+            )
+        if execution_kind == "deterministic" and receipt_hashes:
+            raise StageControlError(
+                "stage_receipt_deterministic_model_evidence",
+                "a deterministic stage cannot claim model call receipts",
+            )
+        if evidence_hash is None:
+            raise StageControlError(
+                "stage_receipt_execution_evidence_missing",
+                "a successful stage requires execution evidence",
+            )
+    elif receipt_hashes or evidence_hash is not None:
+        raise StageControlError(
+            "stage_receipt_failed_evidence_present",
+            "an unsuccessful stage cannot publish success evidence",
+        )
     receipt = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "authorization_hash": authorized["authorization_hash"],
         "stage": authorized["stage"],
         "status": resolved_status,
@@ -221,9 +335,10 @@ def build_stage_receipt(
         "authority": copy.deepcopy(authorized["authority"]),
         "input_digest": authorized["input_digest"],
         "output_digest": resolved_output,
-        "model_call_receipt_hash": _optional_sha256(
-            "model_call_receipt_hash", model_call_receipt_hash
-        ),
+        "execution_kind": execution_kind,
+        "execution_evidence_hash": evidence_hash,
+        "model_call_receipt_hash": primary_model_receipt,
+        "model_call_receipt_hashes": receipt_hashes,
         "previous_stage_receipt_hash": authorized["previous_stage_receipt_hash"],
         "created_at": created_at or _now(),
     }
@@ -233,6 +348,22 @@ def build_stage_receipt(
 
 def validate_stage_receipt(value: Any) -> dict[str, Any]:
     receipt = _validate_mapping(value, "stage_receipt.schema.json", "StageReceipt")
+    version = str(receipt["schema_version"])
+    if version == "1.0" and frozenset(receipt) != _LEGACY_RECEIPT_FIELDS:
+        raise StageControlError(
+            "stage_receipt_version_invalid",
+            "legacy StageReceipt bytes cannot contain 1.1 execution fields",
+        )
+    required_v11 = {
+        "execution_kind",
+        "execution_evidence_hash",
+        "model_call_receipt_hashes",
+    }
+    if version == "1.1" and not required_v11.issubset(receipt):
+        raise StageControlError(
+            "stage_receipt_version_invalid",
+            "StageReceipt 1.1 requires explicit execution evidence fields",
+        )
     _stage(receipt["stage"])
     if receipt["status"] not in _RECEIPT_STATUSES:
         raise StageControlError("stage_receipt_status_invalid", "unsupported receipt status")
@@ -248,6 +379,18 @@ def validate_stage_receipt(value: Any) -> dict[str, Any]:
         _sha256(field, receipt[field])
     for field in ("output_digest", "model_call_receipt_hash", "previous_stage_receipt_hash"):
         _optional_sha256(field, receipt[field])
+    hashes: list[str] = []
+    if version == "1.1":
+        _optional_sha256("execution_evidence_hash", receipt["execution_evidence_hash"])
+        _execution_kind(receipt["execution_kind"])
+        hashes = receipt["model_call_receipt_hashes"]
+        if not isinstance(hashes, list) or len(hashes) != len(set(hashes)):
+            raise StageControlError(
+                "stage_receipt_model_evidence_invalid",
+                "model_call_receipt_hashes must be a unique list",
+            )
+        for item in hashes:
+            _sha256("model_call_receipt_hashes", item)
     expected_hash = canonical_json_hash(receipt, exclude_fields=("receipt_hash",))
     if receipt["receipt_hash"] != expected_hash:
         raise StageControlError("stage_receipt_hash_mismatch", "receipt content was modified")
@@ -257,6 +400,29 @@ def validate_stage_receipt(value: Any) -> dict[str, Any]:
             "stage_receipt_output_status_mismatch",
             "only a successful stage may carry an output digest",
         )
+    if version == "1.1" and succeeded != (receipt["execution_evidence_hash"] is not None):
+        raise StageControlError(
+            "stage_receipt_execution_evidence_status_mismatch",
+            "only a successful stage may carry execution evidence",
+        )
+    if version == "1.1" and receipt["execution_kind"] == "model":
+        if succeeded and not hashes:
+            raise StageControlError(
+                "stage_receipt_model_evidence_missing",
+                "a successful model stage requires ModelCallReceipt evidence",
+            )
+        if receipt["model_call_receipt_hash"] is not None and receipt[
+            "model_call_receipt_hash"
+        ] not in hashes:
+            raise StageControlError(
+                "stage_receipt_model_evidence_invalid",
+                "primary ModelCallReceipt is not in the receipt evidence list",
+            )
+    elif version == "1.1" and (hashes or receipt["model_call_receipt_hash"] is not None):
+        raise StageControlError(
+            "stage_receipt_deterministic_model_evidence",
+            "deterministic stage evidence cannot claim model receipts",
+        )
     return receipt
 
 
@@ -265,6 +431,11 @@ def assert_receipt_matches_authorization(
 ) -> None:
     validated_receipt = validate_stage_receipt(dict(receipt))
     validated_authorization = validate_stage_authorization(dict(authorization))
+    if validated_receipt["schema_version"] != validated_authorization["schema_version"]:
+        raise StageControlError(
+            "stage_receipt_authorization_mismatch",
+            "receipt and authorization contract versions differ",
+        )
     if validated_receipt["authorization_hash"] != validated_authorization["authorization_hash"]:
         raise StageControlError("stage_receipt_authorization_mismatch", "receipt belongs to another authorization")
     for field in (
@@ -281,6 +452,13 @@ def assert_receipt_matches_authorization(
             raise StageControlError(
                 "stage_receipt_authorization_mismatch", f"receipt {field} is not authorized"
             )
+    if validated_receipt["schema_version"] == "1.1" and validated_receipt[
+        "execution_kind"
+    ] != validated_authorization["execution_kind"]:
+        raise StageControlError(
+            "stage_receipt_authorization_mismatch",
+            "receipt execution_kind is not authorized",
+        )
 
 
 def derive_draft_readiness(
@@ -426,6 +604,15 @@ def _stage(value: str) -> str:
     resolved = str(value)
     if resolved not in _STAGES:
         raise StageControlError("stage_invalid", f"unsupported stage: {resolved}")
+    return resolved
+
+
+def _execution_kind(value: Any) -> str:
+    resolved = str(value)
+    if resolved not in {"model", "deterministic"}:
+        raise StageControlError(
+            "stage_execution_kind_invalid", f"unsupported execution kind: {resolved}"
+        )
     return resolved
 
 

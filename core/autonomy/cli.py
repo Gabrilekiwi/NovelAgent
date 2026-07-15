@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
 from core.autonomy.common import AutonomyContractError, canonical_hash, load_json_object
 from core.autonomy.plans import build_source_snapshot, compile_instruction_plan
 from core.autonomy.profiles import TrustedProfiles
+from core.autonomy.runner import AutonomyRunner
 from core.autonomy.session import AutonomySessionStore
+from core.config import get_config
+from core.delivery import DeliveryQueue
+from core.engine.executor import AgentExecutor
+from core.story_project.writer import StoryProjectWritebackConfig
 from core.story_project.identity import load_project_identity
 from core.story_project.paths import infer_next_chapter
+from core.story_project.runtime import build_generation_story_project_context_loader
 
 
 _INCOMPATIBLE_TOP_LEVEL_COMMANDS = (
@@ -55,6 +62,15 @@ def add_autonomy_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="PATH",
         help="Trusted StoryProject, provider/model, File Delivery, budget, and quality profiles.",
     )
+    parser.add_argument(
+        "--autonomy-root-map",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Operator-owned JSON mapping trusted File Delivery root UUIDs to physical "
+            "directories. Required only for execution/resume; never enters the plan."
+        ),
+    )
     for option, help_text in (
         ("session-status", "Inspect a durable autonomy session without generating."),
         ("resume-session", "Resume a cancelled durable autonomy session."),
@@ -94,6 +110,20 @@ def autonomy_command_requested(args: argparse.Namespace) -> bool:
         raise ValueError(
             "--instruction, --execute-plan, and --resume-session require --trusted-profiles PATH"
         )
+    if commands[0][0] in {"execute_plan", "resume_session"} and not getattr(
+        args, "autonomy_root_map", None
+    ):
+        raise ValueError(
+            "--execute-plan and --resume-session require --autonomy-root-map PATH"
+        )
+    if (
+        commands[0][0] in {"execute_plan", "resume_session"}
+        and bool(getattr(args, "dry_run", False))
+        and not bool(getattr(args, "persist_dry_run", False))
+    ):
+        raise ValueError(
+            "autonomy --dry-run uses synthetic prose and requires explicit --persist-dry-run"
+        )
     forbidden = (
         bool(getattr(args, "notion_sync", False)),
         bool(getattr(args, "notion_memory", False)),
@@ -131,6 +161,7 @@ def run_autonomy_command(
         plan = compile_instruction_plan(
             str(value), trusted_profiles=profiles, source_snapshot=source
         )
+        _assert_supported_cli_provider(plan)
         artifact = sessions.save_preview(plan)
         return {
             "ok": True,
@@ -142,16 +173,24 @@ def run_autonomy_command(
     if command == "execute_plan":
         assert profiles is not None
         plan = load_json_object(value)
+        _assert_cli_execution_environment(args, plan)
         story_profile_id = str(
             (plan.get("selections") or {}).get("story_project", {}).get("profile_id") or ""
         )
-        status = sessions.execute_plan(
-            plan,
-            source_snapshot_loader=lambda: _capture_source_snapshot_from_args(
-                args, profiles=profiles, story_profile_id=story_profile_id
-            ),
+        runner = _build_autonomy_runner(
+            args,
+            story_runtime_paths=story_runtime_paths,
+            sessions=sessions,
+            profiles=profiles,
+            story_profile_id=story_profile_id,
         )
-        return {"ok": True, "command": "execute_plan", "session": status}
+        execution = runner.execute_plan(plan)
+        return {
+            "ok": execution["stopped_reason"] == "completed",
+            "command": "execute_plan",
+            "session": execution["session"],
+            "execution": execution,
+        }
     if command == "session_status":
         return {
             "ok": True,
@@ -161,16 +200,21 @@ def run_autonomy_command(
     if command == "resume_session":
         assert profiles is not None
         plan = sessions.load_instruction_plan(str(value))
+        _assert_cli_execution_environment(args, plan)
         story_profile_id = plan["selections"]["story_project"]["profile_id"]
+        runner = _build_autonomy_runner(
+            args,
+            story_runtime_paths=story_runtime_paths,
+            sessions=sessions,
+            profiles=profiles,
+            story_profile_id=story_profile_id,
+        )
+        execution = runner.resume(str(value))
         return {
-            "ok": True,
+            "ok": execution["stopped_reason"] == "completed",
             "command": "resume_session",
-            "session": sessions.resume(
-                str(value),
-                source_snapshot_loader=lambda: _capture_source_snapshot_from_args(
-                    args, profiles=profiles, story_profile_id=story_profile_id
-                ),
-            ),
+            "session": execution["session"],
+            "execution": execution,
         }
     if command == "cancel_session":
         return {
@@ -219,7 +263,6 @@ def _publication_root_map(
         return None
     roots = story_runtime_paths.root_map(story_root)
     roots["runtime"] = Path(story_runtime_paths.runtime_dir).resolve()
-    roots["persistence"] = Path(story_runtime_paths.persistence_dir).resolve()
     return roots
 
 
@@ -278,6 +321,181 @@ def _story_source_digest(root: Path, identity: Mapping[str, Any]) -> str:
             }
         )
     return canonical_hash({"project_identity": dict(identity), "markdown_files": files})
+
+
+def _build_autonomy_runner(
+    args: argparse.Namespace,
+    *,
+    story_runtime_paths: Any | None,
+    sessions: AutonomySessionStore,
+    profiles: TrustedProfiles,
+    story_profile_id: str,
+) -> AutonomyRunner:
+    if story_runtime_paths is None:
+        raise AutonomyContractError(
+            "autonomy_runtime_missing", "StoryProject runtime paths are required"
+        )
+    story_root = Path(args._resolved_story_project_root).resolve()
+    publication_roots = _publication_root_map(args, story_runtime_paths)
+    if publication_roots is None:
+        raise AutonomyContractError(
+            "autonomy_publication_roots_missing",
+            "event publication roots are required for autonomy execution",
+        )
+    operator_roots = _load_operator_root_map(args.autonomy_root_map)
+    queue = DeliveryQueue(story_runtime_paths.delivery_dir)
+
+    def source_loader() -> dict[str, Any]:
+        return _capture_source_snapshot_from_args(
+            args, profiles=profiles, story_profile_id=story_profile_id
+        )
+
+    def executor_factory(request):
+        identity = load_project_identity(story_root)
+        if identity is None or identity.ephemeral:
+            raise AutonomyContractError(
+                "autonomy_story_project_identity_missing",
+                "durable autonomy requires an existing ProjectIdentity",
+            )
+        provider = request.provider_profile
+        quality = request.quality_profile
+        dry_run = bool(getattr(args, "dry_run", False))
+        if not dry_run:
+            config = get_config()
+            if config.openai_model != provider["model"]:
+                raise AutonomyContractError(
+                    "autonomy_provider_model_mismatch",
+                    "configured OpenAI model differs from the trusted profile",
+                )
+            if int(config.openai_max_output_tokens) > int(
+                provider["max_output_tokens"]
+            ):
+                raise AutonomyContractError(
+                    "autonomy_provider_budget_mismatch",
+                    "configured provider output limit exceeds the trusted profile",
+                )
+            actual_endpoint = (
+                "openai_compatible" if config.openai_base_url else "official"
+            )
+            if actual_endpoint != provider["endpoint_type"]:
+                raise AutonomyContractError(
+                    "autonomy_provider_endpoint_mismatch",
+                    "configured endpoint type differs from the trusted profile",
+                )
+        enable_llm_validator = not dry_run and quality["policy"] == "strict"
+        loader = build_generation_story_project_context_loader(
+            story_project=story_root,
+            chapter=request.chapter_index,
+            project_identity=identity,
+            outline_override=request.outline_checkpoint,
+        )
+        return AgentExecutor(
+            snapshot_path=story_runtime_paths.snapshot_path,
+            memory_path=story_runtime_paths.memory_dir / "unused_legacy_memory.json",
+            memory_source="file",
+            run_dir=story_runtime_paths.run_dir,
+            chapter_dir=story_runtime_paths.chapter_dir,
+            persistence_dir=story_runtime_paths.persistence_dir,
+            dry_run=dry_run,
+            enable_llm_validator=enable_llm_validator,
+            use_run_history=False,
+            memory_loader=lambda: {},
+            polisher=lambda chapter: chapter,
+            story_project_context_loader=loader,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy=str(quality["policy"]),
+            enable_execution_provenance=True,
+            run_budget_limits=request.runtime_context.expected_run_budget_limits(),
+            file_delivery_profile=request.file_delivery_profile,
+            delivery_queue=queue,
+            autonomy_run_context=request.runtime_context,
+        )
+
+    return AutonomyRunner(
+        sessions=sessions,
+        source_snapshot_loader=source_loader,
+        executor_factory=executor_factory,
+        story_project_root=story_root,
+        run_dir=story_runtime_paths.run_dir,
+        persistence_dir=story_runtime_paths.persistence_dir,
+        publication_root_map=publication_roots,
+        delivery_queue=queue,
+        operator_delivery_roots=operator_roots,
+        deterministic_stages=("polish",),
+    )
+
+
+def _load_operator_root_map(path: str | Path) -> dict[str, Path]:
+    payload = load_json_object(path)
+    if set(payload) != {"schema_version", "roots"} or payload.get(
+        "schema_version"
+    ) != "1.0" or not isinstance(payload.get("roots"), Mapping):
+        raise AutonomyContractError(
+            "autonomy_operator_root_map_invalid",
+            "operator root map must be a v1.0 object containing roots",
+        )
+    result: dict[str, Path] = {}
+    for raw_uuid, raw_path in payload["roots"].items():
+        root_uuid = str(raw_uuid)
+        try:
+            parsed = uuid.UUID(root_uuid)
+        except ValueError as exc:
+            raise AutonomyContractError(
+                "autonomy_operator_root_map_invalid",
+                "operator root map keys must be canonical UUIDs",
+            ) from exc
+        if str(parsed) != root_uuid or not isinstance(raw_path, str) or not raw_path:
+            raise AutonomyContractError(
+                "autonomy_operator_root_map_invalid",
+                "operator root binding is malformed",
+            )
+        result[root_uuid] = Path(raw_path).resolve()
+    if not result:
+        raise AutonomyContractError(
+            "autonomy_operator_root_map_invalid", "operator root map is empty"
+        )
+    return result
+
+
+def _assert_supported_cli_provider(plan: Mapping[str, Any]) -> None:
+    provider = (plan.get("selections") or {}).get("provider_model") or {}
+    if provider.get("provider") != "openai":
+        raise AutonomyContractError(
+            "autonomy_provider_unsupported",
+            "current chapter generation runtime supports trusted OpenAI profiles only",
+        )
+
+
+def _assert_cli_execution_environment(
+    args: argparse.Namespace, plan: Mapping[str, Any]
+) -> None:
+    _assert_supported_cli_provider(plan)
+    dry_run = bool(getattr(args, "dry_run", False))
+    if dry_run and not bool(getattr(args, "persist_dry_run", False)):
+        raise AutonomyContractError(
+            "autonomy_dry_run_persistence_unapproved",
+            "synthetic autonomy prose requires explicit --persist-dry-run",
+        )
+    if dry_run:
+        return
+    provider = plan["selections"]["provider_model"]
+    config = get_config()
+    if config.openai_model != provider["model"]:
+        raise AutonomyContractError(
+            "autonomy_provider_model_mismatch",
+            "configured OpenAI model differs from the trusted profile",
+        )
+    if int(config.openai_max_output_tokens) > int(provider["max_output_tokens"]):
+        raise AutonomyContractError(
+            "autonomy_provider_budget_mismatch",
+            "configured provider output limit exceeds the trusted profile",
+        )
+    actual_endpoint = "openai_compatible" if config.openai_base_url else "official"
+    if actual_endpoint != provider["endpoint_type"]:
+        raise AutonomyContractError(
+            "autonomy_provider_endpoint_mismatch",
+            "configured endpoint type differs from the trusted profile",
+        )
 
 
 __all__ = [

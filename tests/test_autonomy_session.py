@@ -207,6 +207,32 @@ class AutonomySessionStoreTest(unittest.TestCase):
             ):
                 store.status(started["session_id"], at=T1)
 
+    def test_missing_latest_pointer_rebuilds_from_verified_session_chain(self) -> None:
+        with workspace_case("session_latest_rebuild") as temporary:
+            root = Path(temporary)
+            store = AutonomySessionStore(root, trusted_profiles=trusted_profiles())
+            started = store.execute_plan(
+                self._plan(), source_snapshot_loader=lambda: source_snapshot(), at=T0
+            )
+            latest = root / "sessions" / "latest.json"
+            latest.unlink()
+
+            rebuilt = store.status(None, at=T1)
+            self.assertEqual(started["session_id"], rebuilt["session_id"])
+            self.assertTrue(latest.is_file())
+            pointer = json.loads(latest.read_text(encoding="utf-8"))
+            self.assertEqual(started["session_id"], pointer["session_id"])
+
+            latest.unlink()
+            index_path = next((root / "plan_sessions").glob("*.json"))
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            index["genesis_hash"] = "0" * 64
+            index_path.write_text(json.dumps(index), encoding="utf-8")
+            with self.assertRaisesRegex(
+                AutonomySessionError, "autonomy_latest_session_invalid"
+            ):
+                store.status(None, at=T1)
+
     def test_resume_accepts_only_source_evolution_proven_by_completion_chain(self) -> None:
         with workspace_case("session_completion_resume") as temporary:
             store = AutonomySessionStore(

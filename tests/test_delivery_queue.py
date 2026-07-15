@@ -13,6 +13,7 @@ from core.delivery import (
     DeliveryQueue,
     FileDeliveryAdapter,
     NotionDeliveryAdapter,
+    SafeFileDeliveryAdapter,
     default_notion_property_map,
     delivery_outcome,
     delivery_outcome_from_legacy,
@@ -21,6 +22,7 @@ from core.delivery import (
     validate_notion_delivery_schema,
 )
 from core.engine.persistence import atomic_write_json
+from core.engine.safe_paths import RootBinding
 from core.path_refs import path_ref_for
 
 
@@ -142,6 +144,50 @@ class DeliveryQueueTest(unittest.TestCase):
         self.assertNotIn("chapter\\n", serialized)
         self.assertNotIn("api_key", serialized)
         self.assertEqual(self._receipt_hash(), receipt["publication_receipt_hash"])
+
+    def test_safe_file_delivery_rejects_mismatched_operator_root_uuid(self) -> None:
+        case = self._case("safe-root-uuid")
+        queue = DeliveryQueue(case["queue_root"])
+        root_id = "external:required-export"
+        expected_uuid = "11111111-1111-4111-8111-111111111111"
+        wrong_uuid = "22222222-2222-4222-8222-222222222222"
+        target_path = case["export"] / "chapter.md"
+        queue.enqueue(
+            job_id="safe-job",
+            book_id="book-1",
+            run_id="run-1",
+            publication_receipt_hash=self._receipt_hash(),
+            target_type="file",
+            target={
+                "path_ref": path_ref_for(
+                    target_path,
+                    root_id=root_id,
+                    root=case["export"],
+                    root_uuid=wrong_uuid,
+                ).to_dict()
+            },
+            payload={"content": "chapter\n", "encoding": "utf-8"},
+        )
+
+        result = queue.attempt(
+            "safe-job",
+            worker_id="worker-1",
+            adapter=SafeFileDeliveryAdapter(
+                binding=RootBinding(
+                    root_id=root_id,
+                    root_uuid=expected_uuid,
+                    path=case["export"],
+                )
+            ),
+        )
+
+        self.assertEqual("retryable_failed", result["state"])
+        self.assertFalse(target_path.exists())
+        receipt_path = next(
+            (case["queue_root"] / "attempts" / "safe-job").glob("*.json")
+        )
+        receipt = load_delivery_attempt_receipt(receipt_path)
+        self.assertIn("PathRef root UUID mismatch", receipt["outcome"]["message"])
 
     def test_enqueue_is_idempotent_and_payload_change_conflicts(self) -> None:
         case = self._case("enqueue")
