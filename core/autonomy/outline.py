@@ -47,6 +47,7 @@ def render_arc_outline(chapter_index: int, planned: Mapping[str, Any]) -> str:
     }
     return (
         f"# 第{chapter}章自主细纲\n\n"
+        "## 故事叙事意图与跨章阶段\n\n"
         f"核心事件: {fields['mainline']}\n\n"
         "## 必写节拍\n\n"
         f"- {fields['relationship']}\n"

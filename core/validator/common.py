@@ -29,6 +29,12 @@ PROBLEM_METADATA = {
         "repair_action": "rewrite_inactive_character_action",
         "repair_hint": "Rewrite the action as absence, memory, consequence, or another character's reaction.",
     },
+    "character_voice_gender_conflict": {
+        "severity": "critical",
+        "blocking": True,
+        "repair_action": "manual_review",
+        "repair_hint": "Reconcile the named speaker's voice description with the canonical character fact.",
+    },
     "no_known_location": {
         "severity": "medium",
         "blocking": True,
@@ -118,6 +124,7 @@ PROBLEM_METADATA = {
 PROBLEM_PARAMETER_FIELDS = {
     "chapter_index_mismatch": ("expected", "actual"),
     "inactive_character_action": ("character",),
+    "character_voice_gender_conflict": ("character", "expected", "actual", "fact_id"),
     "no_known_location": ("suggested_term",),
     "character_unknown_location": ("character", "location"),
     "character_location_not_mentioned": ("character", "location"),

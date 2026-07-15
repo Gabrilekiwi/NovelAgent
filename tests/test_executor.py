@@ -8,7 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api.contracts import ModelCallError, ModelOutputError, ModelResponse
+from core.chapter_contexts import ChapterContextError
 from core.director import DirectorDecisionError
+from core.engine.artifacts import save_chapter_artifact
 from core.engine.executor import AgentExecutor, LoopExecutionError
 from core.execution_provenance import validate_execution_provenance
 from core.model_call_runtime import ProviderCallUncertainError, current_model_call_runtime
@@ -339,6 +341,60 @@ class AgentExecutorTest(unittest.TestCase):
         for scene_artifact in pipeline_artifacts["scene_drafts"]:
             self.assertTrue(Path(scene_artifact["path"]).exists())
             self.assertIn("Merged Span", Path(scene_artifact["path"]).read_text(encoding="utf-8"))
+
+    def test_existing_committed_artifact_authority_gap_or_tamper_fails_closed(self) -> None:
+        for case_name, committed_chapter, tamper in (
+            ("gap", 2, False),
+            ("tampered", 3, True),
+        ):
+            with self.subTest(case=case_name):
+                case_dir = self._case_dir(f"previous_artifact_{case_name}")
+                snapshot_path = case_dir / "snapshot.json"
+                self._write_snapshot(snapshot_path)
+                snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                snapshot["chapter_index"] = 4
+                snapshot_path.write_text(
+                    json.dumps(snapshot, ensure_ascii=False), encoding="utf-8"
+                )
+                run_dir = case_dir / "runs"
+                chapter_dir = case_dir / "chapters"
+                run_dir.mkdir()
+                chapter_dir.mkdir()
+                committed_run = {
+                    "id": f"chapter_{committed_chapter}_committed",
+                    "chapter_index": committed_chapter,
+                    "status": "committed",
+                    "committed": True,
+                    "repair_attempts": 0,
+                }
+                artifact = save_chapter_artifact(
+                    chapter_text=f"committed chapter {committed_chapter}",
+                    run=committed_run,
+                    output_dir=chapter_dir,
+                )
+                committed_run["chapter"] = {"artifact": artifact}
+                (run_dir / f"chapter_{committed_chapter}_committed.json").write_text(
+                    json.dumps({"run": committed_run}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                if tamper:
+                    Path(artifact["path"]).write_text("tampered", encoding="utf-8")
+
+                with self.assertRaises(ChapterContextError) as raised:
+                    AgentExecutor(
+                        snapshot_path=snapshot_path,
+                        memory_path=case_dir / "missing-memory.json",
+                        run_dir=run_dir,
+                        chapter_dir=chapter_dir,
+                        dry_run=True,
+                        use_run_history=False,
+                        memory_loader=lambda: {},
+                    ).run_once(persist=False)
+
+                self.assertEqual(
+                    "committed_previous_chapter_artifact_missing",
+                    raised.exception.code,
+                )
 
     def test_executor_injects_shared_model_call_store_and_budget_before_provider(self) -> None:
         tmp_path = self._case_dir("model_call_evidence")

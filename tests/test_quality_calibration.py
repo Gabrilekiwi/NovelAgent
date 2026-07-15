@@ -5,25 +5,35 @@ import hashlib
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from core.quality.calibration import (
     ACCEPTANCE_CRITERIA,
     FIXTURE_SOURCE,
+    RAW_FIXTURE_SOURCE,
+    RAW_LABEL_SOURCE,
     FixtureIntegrityError,
     QualityCalibrationError,
     build_quality_calibration_report,
+    build_raw_quality_calibration_report,
     calibrate_blocking_policy,
+    calibrate_raw_blocking_policy,
     detect_quality_sample,
+    detect_raw_quality_sample,
     evaluate_holdout,
+    evaluate_raw_holdout,
     fixture_sha256,
     load_quality_calibration_fixture,
+    load_raw_quality_calibration_fixture,
     split_quality_calibration_samples,
     validate_quality_calibration_fixture,
+    validate_raw_quality_calibration_fixture,
 )
 from core.schema import validate_schema, validate_schema_keywords
 
 
 FIXTURE_PATH = Path("tests/fixtures/quality_calibration/synthetic_acceptance_v1.json")
+RAW_FIXTURE_PATH = Path("tests/fixtures/quality_calibration/synthetic_raw_production_v1.json")
 SCHEMA_PATH = Path("schemas/quality_calibration_report.schema.json")
 
 
@@ -181,6 +191,156 @@ class QualityCalibrationTest(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first["report_sha256"], _unsigned_sha256(first, "report_sha256"))
+
+
+class RawProductionQualityCalibrationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.fixture = load_raw_quality_calibration_fixture(RAW_FIXTURE_PATH)
+        self.calibration, self.holdout = split_quality_calibration_samples(
+            self.fixture["samples"]
+        )
+
+    def test_frozen_recipe_expands_to_raw_inputs_with_isolated_40_24_split(self) -> None:
+        self.assertEqual(RAW_FIXTURE_SOURCE, self.fixture["source"])
+        self.assertEqual(64, len(self.fixture["samples"]))
+        self.assertEqual(40, len(self.calibration))
+        self.assertEqual(24, len(self.holdout))
+        self.assertTrue(
+            all(sample["label_source"] == RAW_LABEL_SOURCE for sample in self.fixture["samples"])
+        )
+        self.assertFalse(
+            {sample["sample_id"] for sample in self.calibration}
+            & {sample["sample_id"] for sample in self.holdout}
+        )
+        for sample in self.fixture["samples"]:
+            self.assertEqual(
+                {"snapshot", "chapter_text", "decision"},
+                set(sample["input"]),
+            )
+            serialized_input = json.dumps(sample["input"], ensure_ascii=False)
+            self.assertNotIn('"expected"', serialized_input)
+            self.assertNotIn('"severity"', serialized_input)
+            self.assertNotIn('"blocking"', serialized_input)
+            self.assertNotIn('"signals"', serialized_input)
+
+    def test_calibration_and_holdout_use_independent_frozen_template_prose(self) -> None:
+        raw = json.loads(RAW_FIXTURE_PATH.read_text(encoding="utf-8"))
+        templates = raw["recipe"]["templates"]
+        groups = raw["recipe"]["groups"]
+        calibration_template_ids = {
+            group["template_id"]
+            for group in groups
+            if group["split"] == "calibration_set"
+        }
+        holdout_template_ids = {
+            group["template_id"]
+            for group in groups
+            if group["split"] == "holdout_set"
+        }
+
+        self.assertFalse(calibration_template_ids & holdout_template_ids)
+        self.assertFalse(
+            {templates[template_id] for template_id in calibration_template_ids}
+            & {templates[template_id] for template_id in holdout_template_ids}
+        )
+
+    def test_raw_report_uses_production_path_and_passes_original_holdout_metrics(self) -> None:
+        report = build_raw_quality_calibration_report(self.fixture)
+
+        self.assertTrue(report["passed"])
+        self.assertEqual("high", report["policy"]["blocking_threshold"])
+        self.assertEqual("calibration_set", report["policy"]["threshold_source"])
+        self.assertEqual(1.0, report["holdout_metrics"]["blocking_precision"])
+        self.assertEqual(1.0, report["holdout_metrics"]["critical_high_recall"])
+        self.assertEqual(0.0, report["holdout_metrics"]["clean_false_block_rate"])
+        self.assertTrue(report["gender_contradiction"]["passed"])
+        self.assertEqual(8, len(report["gender_contradiction"]["case_ids"]))
+
+        conflict = next(
+            sample
+            for sample in self.holdout
+            if sample["expected"]["issue_type"] == "character_voice_gender_conflict"
+        )
+        prediction = detect_raw_quality_sample(conflict, blocking_threshold="high")
+        self.assertTrue(prediction["predicted_blocking"])
+        self.assertEqual("validate_chapter", prediction["production_path"]["validator"])
+        self.assertEqual(
+            "build_quality_decision",
+            prediction["production_path"]["quality_decision"],
+        )
+        self.assertFalse(prediction["production_path"]["validation_ok"])
+        self.assertFalse(prediction["production_path"]["quality_decision_accepted"])
+
+    def test_holdout_labels_cannot_tune_raw_threshold(self) -> None:
+        baseline = calibrate_raw_blocking_policy(
+            self.calibration,
+            fixture_id=self.fixture["fixture_id"],
+        )
+        changed_holdout = copy.deepcopy(self.holdout)
+        for sample in changed_holdout:
+            sample["expected"]["issue_type"] = "holdout_label_changed_after_freeze"
+            sample["expected"]["direction"] = "none"
+        after_holdout_change = calibrate_raw_blocking_policy(
+            self.calibration,
+            fixture_id=self.fixture["fixture_id"],
+        )
+
+        self.assertEqual(baseline, after_holdout_change)
+        with self.assertRaisesRegex(QualityCalibrationError, "accepts only calibration_set"):
+            calibrate_raw_blocking_policy(
+                self.calibration + tuple(changed_holdout[:1]),
+                fixture_id=self.fixture["fixture_id"],
+            )
+
+    def test_detector_does_not_read_expected_label(self) -> None:
+        sample = copy.deepcopy(self.holdout[0])
+        baseline = detect_raw_quality_sample(sample, blocking_threshold="high")
+        sample["expected"]["issue_type"] = "independent_label_changed"
+        sample["expected"]["direction"] = "none"
+        after_label_change = detect_raw_quality_sample(sample, blocking_threshold="high")
+
+        self.assertEqual(baseline, after_label_change)
+
+    def test_quality_decision_acceptance_is_a_required_blocking_gate(self) -> None:
+        conflict = next(
+            sample
+            for sample in self.holdout
+            if sample["expected"]["issue_type"] == "character_voice_gender_conflict"
+        )
+        baseline = detect_raw_quality_sample(conflict, blocking_threshold="high")
+        self.assertTrue(baseline["predicted_blocking"])
+
+        forced_acceptance = {
+            "accepted": True,
+            "decision_digest": "0" * 64,
+        }
+        with patch(
+            "core.quality.calibration.build_quality_decision",
+            return_value=forced_acceptance,
+        ):
+            gated = detect_raw_quality_sample(conflict, blocking_threshold="high")
+
+        self.assertEqual("critical", gated["predicted_severity"])
+        self.assertFalse(gated["predicted_blocking"])
+        self.assertTrue(gated["production_path"]["quality_decision_accepted"])
+
+    def test_raw_holdout_rejects_calibration_contamination(self) -> None:
+        policy = calibrate_raw_blocking_policy(
+            self.calibration,
+            fixture_id=self.fixture["fixture_id"],
+        )
+        with self.assertRaisesRegex(QualityCalibrationError, "accepts only holdout_set"):
+            evaluate_raw_holdout(
+                policy=policy,
+                calibration_samples=self.calibration,
+                holdout_samples=self.holdout + (self.calibration[0],),
+            )
+
+    def test_raw_recipe_tampering_is_rejected(self) -> None:
+        raw = json.loads(RAW_FIXTURE_PATH.read_text(encoding="utf-8"))
+        raw["recipe"]["templates"]["female_bound"] += "被篡改"
+        with self.assertRaisesRegex(FixtureIntegrityError, "fixture_sha256 mismatch"):
+            validate_raw_quality_calibration_fixture(raw)
 
 
 def _unsigned_sha256(value: dict, digest_field: str) -> str:

@@ -12,7 +12,16 @@ from unittest.mock import patch
 from unittest.mock import Mock
 
 import main as cli
-from core.autonomy.cli import autonomy_command_requested, run_autonomy_command
+from core.autonomy.cli import (
+    _build_autonomy_runner,
+    autonomy_command_requested,
+    run_autonomy_command,
+)
+from core.autonomy.runner import AutonomyExecutionRequest
+from core.autonomy.session import AutonomySessionStore
+from core.context_budget import RunBudgetLimits
+from core.runtime_paths import RuntimePaths
+from core.story_project.identity import ensure_project_identity
 from tests.test_autonomy_plans import source_snapshot, trusted_profiles, workspace_case
 
 
@@ -45,6 +54,70 @@ def command_args(**overrides):
 
 
 class AutonomyCliTest(unittest.TestCase):
+    def test_strict_autonomy_executor_has_independent_warning_review_gate(self) -> None:
+        with workspace_case("cli-strict-review-gate") as temporary:
+            root = Path(temporary)
+            book = root / "book"
+            book.mkdir()
+            ensure_project_identity(book, book_id="book-autonomy")
+            paths = RuntimePaths.for_story_project(book)
+            paths.runtime_dir.mkdir(parents=True)
+            external = root / "external"
+            external.mkdir()
+            root_map_path = root / "operator-roots.json"
+            root_map_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "roots": {
+                            "11111111-1111-4111-8111-111111111111": str(external)
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            profiles = trusted_profiles()
+            sessions = AutonomySessionStore(
+                paths.runtime_dir / "autonomy",
+                trusted_profiles=profiles,
+                publication_root_map=paths.root_map(book),
+            )
+            args = command_args(
+                _resolved_story_project_root=book,
+                autonomy_root_map=str(root_map_path),
+                dry_run=True,
+            )
+            runtime_context = Mock()
+            runtime_context.expected_run_budget_limits.return_value = RunBudgetLimits()
+            request = AutonomyExecutionRequest(
+                session_id="session-strict-review",
+                chapter_index=11,
+                source_snapshot=source_snapshot(),
+                outline_checkpoint={},
+                runtime_context=runtime_context,
+                provider_profile=profiles.public_snapshot("provider_models"),
+                budget_profile=profiles.public_snapshot("budgets"),
+                quality_profile=profiles.public_snapshot("quality_policies"),
+                file_delivery_profile=profiles.file_delivery_runtime_profile(
+                    book_id="book-autonomy"
+                ),
+            )
+
+            with patch("core.autonomy.cli.AgentExecutor") as executor_class:
+                runner = _build_autonomy_runner(
+                    args,
+                    story_runtime_paths=paths,
+                    sessions=sessions,
+                    profiles=profiles,
+                    story_profile_id="active-book",
+                )
+                runner.executor_factory(request)
+
+            review_config = executor_class.call_args.kwargs["review_config"]
+            self.assertTrue(review_config.enabled)
+            self.assertEqual(paths.review_dir, review_config.output_dir)
+            self.assertEqual("warning", review_config.gate_threshold)
+
     def test_parser_accepts_preview_execute_and_session_commands(self) -> None:
         parser = cli.build_parser()
         preview = parser.parse_args(

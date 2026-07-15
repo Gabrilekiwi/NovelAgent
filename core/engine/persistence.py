@@ -4,12 +4,15 @@ import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
+
+from core.engine.safe_paths import FILE_ATTRIBUTE_REPARSE_POINT, assert_safe_local_tree
 
 
 TRANSACTION_SCHEMA_VERSION = 1
@@ -49,9 +52,18 @@ def persistence_run_lock(
     run_dir: str | Path,
     *,
     state_paths: Iterable[str | Path] = (),
+    require_existing_root: bool = False,
+    require_existing_lock: bool = False,
 ):
-    root = Path(run_dir).resolve()
-    root.mkdir(parents=True, exist_ok=True)
+    if require_existing_lock:
+        require_existing_root = True
+    if require_existing_root:
+        root = assert_safe_local_tree(run_dir)
+        root_identity = _existing_lock_root_identity(root)
+    else:
+        root = Path(run_dir).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        root_identity = None
     lock_paths = {root / ".persistence.lock"}
     shared_lock_root = Path(tempfile.gettempdir()) / "novelagent-state-locks"
     for state_path in state_paths:
@@ -62,17 +74,52 @@ def persistence_run_lock(
     ordered = sorted(lock_paths, key=lambda item: os.path.normcase(str(item)))
     with ExitStack() as stack:
         for path in ordered:
-            stack.enter_context(_exclusive_file_lock(path))
+            stack.enter_context(
+                _exclusive_file_lock(
+                    path,
+                    require_existing=(
+                        require_existing_lock and path == root / ".persistence.lock"
+                    ),
+                )
+            )
+        if root_identity is not None and _existing_lock_root_identity(root) != root_identity:
+            raise PersistenceLockError(
+                f"persistence lock root identity changed while locking: {root}"
+            )
         yield tuple(ordered)
 
 
 @contextmanager
-def _exclusive_file_lock(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = path.open("a+b")
+def _exclusive_file_lock(path: Path, *, require_existing: bool = False):
+    if require_existing:
+        expected_identity = _existing_lock_file_identity(path)
+        try:
+            handle = path.open("r+b")
+        except OSError as exc:
+            raise PersistenceLockError(
+                f"required persistence lock is unavailable: {path}"
+            ) from exc
+        actual = os.fstat(handle.fileno())
+        actual_identity = (
+            int(actual.st_dev),
+            int(actual.st_ino),
+            int(stat.S_IFMT(actual.st_mode)),
+        )
+        if actual_identity != expected_identity:
+            handle.close()
+            raise PersistenceLockError(
+                f"persistence lock identity changed while opening: {path}"
+            )
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+b")
     try:
         handle.seek(0, os.SEEK_END)
         if handle.tell() == 0:
+            if require_existing:
+                raise PersistenceLockError(
+                    f"required persistence lock is not armed: {path}"
+                )
             handle.write(b"\0")
             handle.flush()
             os.fsync(handle.fileno())
@@ -105,6 +152,37 @@ def _exclusive_file_lock(path: Path):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     finally:
         handle.close()
+
+
+def _existing_lock_root_identity(path: Path) -> tuple[int, int, int]:
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise PersistenceLockError(f"required persistence lock root is missing: {path}") from exc
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        raise PersistenceLockError(
+            f"required persistence lock root is unsafe: {path}"
+        )
+    return int(info.st_dev), int(info.st_ino), int(stat.S_IFMT(info.st_mode))
+
+
+def _existing_lock_file_identity(path: Path) -> tuple[int, int, int]:
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise PersistenceLockError(f"required persistence lock is missing: {path}") from exc
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT
+        or info.st_size < 1
+    ):
+        raise PersistenceLockError(f"required persistence lock is unsafe: {path}")
+    return int(info.st_dev), int(info.st_ino), int(stat.S_IFMT(info.st_mode))
 
 
 @dataclass(frozen=True)

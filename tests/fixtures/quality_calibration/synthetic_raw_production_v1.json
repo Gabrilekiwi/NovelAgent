@@ -1,0 +1,210 @@
+{
+  "schema_version": "2.0",
+  "fixture_id": "quality-calibration-synthetic-raw-production-v1",
+  "source": "synthetic_raw_production_v1",
+  "description": "Frozen synthetic recipe expanded into raw snapshots and prose. Labels are recipe-side oracle labels, never validator inputs; this is not human-labelled, target-book, or real-LLM accuracy evidence.",
+  "fixture_sha256": "69ae0721305163c4ad8194bb9c77d0f3f04df4d91974df712e07a6e856c3aeb6",
+  "recipe": {
+    "recipe_version": "named-voice-continuity-v1",
+    "templates": {
+      "female_bound": "{name}按住门闩后开口回答，走廊里响起清晰的女声：“先检查回执。”记录号{variant}。",
+      "male_bound": "{name}按住门闩后开口回答，走廊里响起清晰的男声：“先检查回执。”记录号{variant}。",
+      "chapter_mismatch": "Chapter 11\n{name}检查门闩并核对封存记录。记录号{variant}。",
+      "inactive_action": "{name} said the sealed receipt remained intact before the next choice. Case {variant}.",
+      "isolated_female": "广播员的女声从墙内传来，{name}只抬手关掉喇叭，没有开口。记录号{variant}。",
+      "isolated_male": "广播员的男声从墙内传来，{name}只抬手关掉喇叭，没有开口。记录号{variant}。",
+      "pronoun_female": "{name}守在门外。她听见广播里传来清晰的女声，却确认那是值班员。{name}始终没有开口。记录号{variant}。",
+      "pronoun_male": "{name}守在门外。他听见广播里传来清晰的男声，却确认那是值班员。{name}始终没有开口。记录号{variant}。",
+      "hold_female_bound": "核对完封条后，{name}开口警告众人别碰控制台，监听器辨出这是女声：“退到黄线后。”样本{variant}。",
+      "hold_male_bound": "核对完封条后，{name}开口警告众人别碰控制台，监听器辨出这是男声：“退到黄线后。”样本{variant}。",
+      "hold_chapter_mismatch": "Chapter 10 — Audit\n{name}重新清点封条并登记交接人。样本{variant}。",
+      "hold_inactive_action": "{name} shouted that the checkpoint was clear while the sealed log stayed closed. Holdout {variant}.",
+      "hold_isolated_female": "门外扩音器播放一段陌生女声。{name}立即切断接收器，全程没有说话。样本{variant}。",
+      "hold_isolated_male": "门外扩音器播放一段陌生男声。{name}立即切断接收器，全程没有说话。样本{variant}。",
+      "hold_pronoun_female": "{name}留在隔离门旁。她从值班录音中听到女声，并在日志里注明说话者是广播员。{name}没有发声。样本{variant}。",
+      "hold_pronoun_male": "{name}留在隔离门旁。他从值班录音中听到男声，并在日志里注明说话者是广播员。{name}没有发声。样本{variant}。"
+    },
+    "groups": [
+      {
+        "group_id": "cal-male-to-female",
+        "split": "calibration_set",
+        "count": 8,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "female_bound",
+        "expected": {"severity": "critical", "blocking": true, "issue_type": "character_voice_gender_conflict", "direction": "male_to_female"}
+      },
+      {
+        "group_id": "cal-female-to-male",
+        "split": "calibration_set",
+        "count": 8,
+        "snapshot_voice_gender": "female",
+        "character_status": "active",
+        "template_id": "male_bound",
+        "expected": {"severity": "critical", "blocking": true, "issue_type": "character_voice_gender_conflict", "direction": "female_to_male"}
+      },
+      {
+        "group_id": "cal-chapter-mismatch",
+        "split": "calibration_set",
+        "count": 4,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "chapter_mismatch",
+        "expected": {"severity": "high", "blocking": true, "issue_type": "chapter_index_mismatch", "direction": "none"}
+      },
+      {
+        "group_id": "cal-inactive-action",
+        "split": "calibration_set",
+        "count": 4,
+        "snapshot_voice_gender": "female",
+        "character_status": "dead",
+        "template_id": "inactive_action",
+        "expected": {"severity": "high", "blocking": true, "issue_type": "inactive_character_action", "direction": "none"}
+      },
+      {
+        "group_id": "cal-male-match",
+        "split": "calibration_set",
+        "count": 3,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "male_bound",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "cal-female-match",
+        "split": "calibration_set",
+        "count": 3,
+        "snapshot_voice_gender": "female",
+        "character_status": "active",
+        "template_id": "female_bound",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "cal-isolated-female",
+        "split": "calibration_set",
+        "count": 3,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "isolated_female",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "cal-isolated-male",
+        "split": "calibration_set",
+        "count": 3,
+        "snapshot_voice_gender": "female",
+        "character_status": "active",
+        "template_id": "isolated_male",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "cal-pronoun-female",
+        "split": "calibration_set",
+        "count": 2,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "pronoun_female",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "cal-pronoun-male",
+        "split": "calibration_set",
+        "count": 2,
+        "snapshot_voice_gender": "female",
+        "character_status": "active",
+        "template_id": "pronoun_male",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "hold-male-to-female",
+        "split": "holdout_set",
+        "count": 4,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "hold_female_bound",
+        "expected": {"severity": "critical", "blocking": true, "issue_type": "character_voice_gender_conflict", "direction": "male_to_female"}
+      },
+      {
+        "group_id": "hold-female-to-male",
+        "split": "holdout_set",
+        "count": 4,
+        "snapshot_voice_gender": "female",
+        "character_status": "active",
+        "template_id": "hold_male_bound",
+        "expected": {"severity": "critical", "blocking": true, "issue_type": "character_voice_gender_conflict", "direction": "female_to_male"}
+      },
+      {
+        "group_id": "hold-chapter-mismatch",
+        "split": "holdout_set",
+        "count": 2,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "hold_chapter_mismatch",
+        "expected": {"severity": "high", "blocking": true, "issue_type": "chapter_index_mismatch", "direction": "none"}
+      },
+      {
+        "group_id": "hold-inactive-action",
+        "split": "holdout_set",
+        "count": 2,
+        "snapshot_voice_gender": "female",
+        "character_status": "dead",
+        "template_id": "hold_inactive_action",
+        "expected": {"severity": "high", "blocking": true, "issue_type": "inactive_character_action", "direction": "none"}
+      },
+      {
+        "group_id": "hold-male-match",
+        "split": "holdout_set",
+        "count": 2,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "hold_male_bound",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "hold-female-match",
+        "split": "holdout_set",
+        "count": 2,
+        "snapshot_voice_gender": "female",
+        "character_status": "active",
+        "template_id": "hold_female_bound",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "hold-isolated-female",
+        "split": "holdout_set",
+        "count": 2,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "hold_isolated_female",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "hold-isolated-male",
+        "split": "holdout_set",
+        "count": 2,
+        "snapshot_voice_gender": "female",
+        "character_status": "active",
+        "template_id": "hold_isolated_male",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "hold-pronoun-female",
+        "split": "holdout_set",
+        "count": 2,
+        "snapshot_voice_gender": "male",
+        "character_status": "active",
+        "template_id": "hold_pronoun_female",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      },
+      {
+        "group_id": "hold-pronoun-male",
+        "split": "holdout_set",
+        "count": 2,
+        "snapshot_voice_gender": "female",
+        "character_status": "active",
+        "template_id": "hold_pronoun_male",
+        "expected": {"severity": "clean", "blocking": false, "issue_type": "none", "direction": "none"}
+      }
+    ]
+  }
+}

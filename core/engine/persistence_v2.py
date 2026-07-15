@@ -451,25 +451,31 @@ class PersistenceV2Transaction:
                     durability_hook=self._durability_faults.run,
                 )
                 for index, target in enumerate(_targets(manifest, phase="apply")):
-                    path = _resolve_manifest_target(
-                        manifest, target, resolver=resolver, enforce_guard=True
+                    resolved_target = resolver.resolve(
+                        target["path_ref"],
+                        expected_guard=target.get("path_guard"),
                     )
+                    path = resolved_target.path
                     _inject(self._fault_injector, "before_apply_target", index, path)
-                    path = _resolve_manifest_target(
-                        manifest, target, resolver=resolver, enforce_guard=True
+                    resolved_target = resolver.resolve(
+                        target["path_ref"],
+                        expected_guard=resolved_target.guard,
                     )
+                    path = resolved_target.path
                     _assert_before_image(path, target)
                     content = _load_staged_content(self.journal_dir, target)
                     if _path_sha256(path) != target["after_sha256"]:
-                        resolver.ensure_parent(
-                            target["path_ref"], expected_guard=target.get("path_guard")
+                        resolved_target = resolver.ensure_parent(
+                            target["path_ref"],
+                            expected_guard=resolved_target.guard,
+                            durability_hook=self._durability_faults.run,
                         )
-                        _resolve_manifest_target(
-                            manifest,
-                            target,
-                            resolver=resolver,
-                            enforce_guard=True,
+                        resolved_target = resolver.resolve(
+                            target["path_ref"],
+                            expected_guard=resolved_target.guard,
                         )
+                        path = resolved_target.path
+                        _assert_before_image(path, target)
                         _atomic_replace_from_bytes(
                             path,
                             content,
@@ -565,33 +571,41 @@ class PersistenceV2Transaction:
                 already_published = (
                     manifest.get("progress", {}).get(target["target_id"]) == "published"
                 )
-                path = _resolve_manifest_target(
-                    manifest,
-                    target,
-                    resolver=resolver,
-                    enforce_guard=True,
-                    allow_guard_extension=already_published,
+                # A crash may have created some safe parent directories (or
+                # the immutable target itself) before its progress update was
+                # durable.  Accept only lineage extensions beneath the exact
+                # prepare-time guard, then bind the current lineage before any
+                # retry.  Changed identities in the guarded prefix still fail.
+                resolved_target = resolver.resolve(
+                    target["path_ref"],
+                    expected_guard=target.get("path_guard"),
+                    allow_guard_extension=True,
                 )
+                path = resolved_target.path
                 content = _load_staged_content(self.journal_dir, target)
                 _inject(self._fault_injector, "before_publication_target", index, path)
-                path = _resolve_manifest_target(
-                    manifest,
-                    target,
-                    resolver=resolver,
-                    enforce_guard=True,
-                    allow_guard_extension=already_published,
-                )
                 if not already_published:
-                    resolver.ensure_parent(
-                        target["path_ref"], expected_guard=target.get("path_guard")
+                    resolved_target = resolver.ensure_parent(
+                        target["path_ref"],
+                        expected_guard=resolved_target.guard,
+                        durability_hook=self._durability_faults.run,
                     )
+                path = resolver.resolve(
+                    target["path_ref"],
+                    expected_guard=resolved_target.guard,
+                    allow_guard_extension=True,
+                ).path
                 _publish_immutable(
                     path,
                     content,
                     str(target["after_sha256"]),
                     resolver=resolver,
                     path_ref=target["path_ref"],
-                    path_guard=target.get("path_guard"),
+                    # Revalidate the complete lineage observed immediately
+                    # after parent creation/recovery, not only the shorter
+                    # prepare-time prefix.  This preserves crash recovery
+                    # while still detecting a newly-created parent swap.
+                    path_guard=resolved_target.guard,
                     durability_hook=self._durability_faults.run,
                 )
                 manifest["progress"][target["target_id"]] = "published"
@@ -603,13 +617,15 @@ class PersistenceV2Transaction:
                 _inject(self._fault_injector, "after_publication_target", index, path)
 
             receipt = _build_publication_receipt(manifest, marker)
-            unguarded_receipt_path = resolver.resolve(receipt["receipt_path_ref"]).path
             receipt_resolved = resolver.resolve(
                 receipt["receipt_path_ref"],
                 expected_guard=manifest["immutable"]["publication_receipt"].get(
                     "path_guard"
                 ),
-                allow_guard_extension=unguarded_receipt_path.exists(),
+                # As with publication targets, a crashed prior attempt may
+                # have durably created the receipts directory without the
+                # receipt file or its manifest progress.
+                allow_guard_extension=True,
             )
             receipt_path = receipt_resolved.path
             _inject(self._fault_injector, "before_publication_receipt", None, receipt_path)
@@ -621,13 +637,14 @@ class PersistenceV2Transaction:
                 _assert_receipt_matches_manifest(existing, manifest)
                 receipt = existing
             else:
-                resolver.ensure_parent(
-                    receipt["receipt_path_ref"], expected_guard=receipt_resolved.guard
+                receipt_resolved = resolver.ensure_parent(
+                    receipt["receipt_path_ref"],
+                    expected_guard=receipt_resolved.guard,
+                    durability_hook=self._durability_faults.run,
                 )
                 receipt_path = resolver.resolve(
                     receipt["receipt_path_ref"],
                     expected_guard=receipt_resolved.guard,
-                    allow_guard_extension=True,
                 ).path
                 _write_new_file(
                     receipt_path,
@@ -701,10 +718,6 @@ class PersistenceV2Transaction:
             before = path.read_bytes() if before_exists else b""
             before_hash = _sha256(before) if before_exists else None
             if target.phase == "apply":
-                if not path.parent.is_dir():
-                    raise PersistenceV2PreparationError(
-                        f"apply target parent directory does not exist: {path.parent}"
-                    )
                 _verify_expected_before(target, path, before_exists, before_hash)
             elif before_exists and before_hash != after_hash:
                 raise PersistenceV2PreparationError(f"immutable publication target already exists with different bytes: {path}")
@@ -1635,7 +1648,11 @@ def _rollback_pre_marker(
                 target,
                 resolver=resolver,
                 enforce_guard=manifest.get("schema_version") == "2.1",
-                allow_guard_extension=_target_guard_extension_allowed(manifest, target),
+                # A failed create may have durably made safe parent
+                # directories before the marker.  Only extend the missing
+                # prepare-time suffix; every observed prefix identity remains
+                # bound by the original guard.
+                allow_guard_extension=True,
             )
             actual = _path_sha256(path)
             if actual == target.get("before_sha256"):

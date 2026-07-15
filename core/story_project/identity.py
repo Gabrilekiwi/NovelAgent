@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import Any, Callable
 import json
 import uuid
 
-from core.engine.persistence import atomic_create_json
+from core.engine.persistence import atomic_create_json, persistence_run_lock
 from core.schema import SchemaValidationError, validate_schema
 
 
@@ -193,6 +194,19 @@ def ensure_project_identity(
     book_id: str | None = None,
 ) -> ProjectIdentity:
     root = _validated_story_project_root(story_project_root)
+    with project_identity_mutation_lock(root, allow_unlocked_bootstrap=True):
+        return _ensure_project_identity_locked(
+            root, now=now, uuid_factory=uuid_factory, book_id=book_id
+        )
+
+
+def _ensure_project_identity_locked(
+    root: Path,
+    *,
+    now: Callable[[], datetime] | None = None,
+    uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
+    book_id: str | None = None,
+) -> ProjectIdentity:
     existing = load_project_identity(root)
     if existing is not None:
         if existing.ephemeral:
@@ -223,6 +237,48 @@ def ensure_project_identity(
             raise ProjectIdentityError("Project identity creation raced but no identity can be loaded")
         return winner
     return identity
+
+
+@contextmanager
+def project_identity_mutation_lock(
+    story_project_root: str | Path, *, allow_unlocked_bootstrap: bool = False
+):
+    """Serialize ProjectIdentity writers with whole-project remapping.
+
+    Before a root registry exists there is no remap control plane to race, so
+    bootstrap identity creation only needs its state lock.  Once the canonical
+    main registry exists, every identity mutation follows EA -> pre-armed
+    dependency fence -> identity state/local lock.
+    """
+
+    root = _validated_story_project_root(story_project_root)
+    identity_file = project_identity_path(root)
+    main_registry = root / ".novelagent" / "runtime" / "persistence" / "root_registry.json"
+    fence = root / ".novelagent" / "runtime" / ".root-remap-fence"
+    ea_home = root / ".novelagent" / "runtime" / "ea"
+    local_lock = root / ".novelagent" / "authority" / "cas"
+    with ExitStack() as stack:
+        if main_registry.is_file():
+            if ea_home.exists():
+                stack.enter_context(
+                    persistence_run_lock(
+                        ea_home,
+                        require_existing_root=True,
+                        require_existing_lock=True,
+                    )
+                )
+            stack.enter_context(
+                persistence_run_lock(
+                    fence,
+                    require_existing_root=True,
+                    require_existing_lock=True,
+                )
+            )
+        if main_registry.is_file() or not allow_unlocked_bootstrap:
+            stack.enter_context(
+                persistence_run_lock(local_lock, state_paths=(identity_file,))
+            )
+        yield
 
 
 def project_identity_for_operation(
@@ -311,5 +367,6 @@ __all__ = [
     "load_project_identity",
     "project_identity_path",
     "project_identity_for_operation",
+    "project_identity_mutation_lock",
     "validate_project_identity",
 ]

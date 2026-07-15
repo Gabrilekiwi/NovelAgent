@@ -116,6 +116,83 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertIn("inactive_character_action", {p["code"] for p in result["problems"]})
 
+    def test_named_voice_gender_conflicts_are_blocking_in_both_directions(self) -> None:
+        cases = (
+            ("male", "女声", "female"),
+            ("female", "男声", "male"),
+        )
+        for snapshot_gender, prose_voice, actual_gender in cases:
+            with self.subTest(snapshot_gender=snapshot_gender, prose_voice=prose_voice):
+                chapter = f"沈砚按住门闩后开口回答，走廊里响起清晰的{prose_voice}：“先检查回执。”"
+                snapshot = {
+                    "chapter_index": 12,
+                    "world_state": {},
+                    "characters": {
+                        "沈砚": {
+                            "status": "active",
+                            "voice_gender": snapshot_gender,
+                        }
+                    },
+                    "timeline": [],
+                }
+
+                result = validate_chapter(
+                    snapshot,
+                    chapter,
+                    {"validation_focus": ["continuity"]},
+                )
+
+                problem = next(
+                    item
+                    for item in result["problems"]
+                    if item["code"] == "character_voice_gender_conflict"
+                )
+                self.assertFalse(result["ok"])
+                self.assertEqual("critical", problem["severity"])
+                self.assertTrue(problem["blocking"])
+                self.assertEqual("continuity", problem["validator"])
+                self.assertEqual("沈砚", problem["character"])
+                self.assertEqual(snapshot_gender, problem["expected"])
+                self.assertEqual(actual_gender, problem["actual"])
+                self.assertEqual(
+                    "snapshot:characters.沈砚.voice_gender",
+                    problem["fact_id"],
+                )
+                evidence = {item["kind"]: item["value"] for item in problem["evidence"]}
+                self.assertEqual("characters.沈砚.voice_gender", evidence["snapshot_fact_path"])
+                start, end = (int(value) for value in evidence["chapter_span"].split(":"))
+                self.assertEqual(chapter[start:end], evidence["chapter_excerpt"])
+                self.assertIn("沈砚", evidence["chapter_excerpt"])
+                self.assertIn(prose_voice, evidence["chapter_excerpt"])
+
+    def test_voice_gender_requires_named_speaker_binding_not_pronouns_or_nearby_voice(self) -> None:
+        snapshot = {
+            "chapter_index": 12,
+            "world_state": {},
+            "characters": {
+                "沈砚": {"status": "active", "voice_gender": "male"},
+                "林遥": {"status": "active", "voice_gender": "female"},
+            },
+            "timeline": [],
+        }
+        clean_cases = (
+            "广播员的女声从墙内传来，沈砚只抬手关掉喇叭，没有开口。",
+            "沈砚守在门外。她听见广播里传来清晰的女声，却确认那是值班员。沈砚始终没有开口。",
+            "沈砚听见林遥开口回答，走廊里响起清晰的女声。",
+            "沈砚开口回答，走廊里响起清晰的男声。",
+        )
+        for chapter in clean_cases:
+            with self.subTest(chapter=chapter):
+                result = validate_chapter(
+                    snapshot,
+                    chapter,
+                    {"validation_focus": ["continuity"]},
+                )
+                self.assertNotIn(
+                    "character_voice_gender_conflict",
+                    {problem["code"] for problem in result["problems"]},
+                )
+
     def test_rejects_unknown_character_location(self) -> None:
         snapshot = {
             "chapter_index": 1,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -92,6 +94,33 @@ class DeliveryQueueTest(unittest.TestCase):
             policy=policy,
         )
 
+    def _uuid_file_job(
+        self,
+        queue: DeliveryQueue,
+        case: dict,
+        *,
+        job_id: str,
+        root_uuid: str,
+    ) -> Path:
+        target_path = case["export"] / f"{job_id}.json"
+        queue.enqueue(
+            job_id=job_id,
+            book_id="book-1",
+            run_id="run-1",
+            publication_receipt_hash=self._receipt_hash(),
+            target_type="file",
+            target={
+                "path_ref": path_ref_for(
+                    target_path,
+                    root_id="delivery_store",
+                    root=case["export"],
+                    root_uuid=root_uuid,
+                ).to_dict()
+            },
+            payload={"content": "safe\n", "encoding": "utf-8"},
+        )
+        return target_path
+
     def _notion_job(self, queue: DeliveryQueue, *, job_id: str = "notion-1", policy=None):
         return queue.enqueue(
             job_id=job_id,
@@ -144,6 +173,7 @@ class DeliveryQueueTest(unittest.TestCase):
         self.assertNotIn("chapter\\n", serialized)
         self.assertNotIn("api_key", serialized)
         self.assertEqual(self._receipt_hash(), receipt["publication_receipt_hash"])
+        self.assertNotIn("root_uuid", receipt["outcome"]["remote_refs"]["path_ref"])
 
     def test_safe_file_delivery_rejects_mismatched_operator_root_uuid(self) -> None:
         case = self._case("safe-root-uuid")
@@ -188,6 +218,282 @@ class DeliveryQueueTest(unittest.TestCase):
         )
         receipt = load_delivery_attempt_receipt(receipt_path)
         self.assertIn("PathRef root UUID mismatch", receipt["outcome"]["message"])
+
+    def test_uuid_bound_job_never_downgrades_when_safe_binding_is_missing(self) -> None:
+        case = self._case("safe-binding-required")
+        queue = DeliveryQueue(case["queue_root"])
+        target_path = case["export"] / "bound.json"
+        queue.enqueue(
+            job_id="bound-job",
+            book_id="book-1",
+            run_id="run-1",
+            publication_receipt_hash=self._receipt_hash(),
+            target_type="file",
+            target={
+                "path_ref": path_ref_for(
+                    target_path,
+                    root_id="delivery_store",
+                    root=case["export"],
+                    root_uuid="11111111-1111-4111-8111-111111111111",
+                ).to_dict()
+            },
+            payload={"content": "bound\n", "encoding": "utf-8"},
+        )
+
+        result = queue.attempt(
+            "bound-job",
+            worker_id="worker-1",
+            adapter=FileDeliveryAdapter(root_map=case["root_map"]),
+        )
+
+        self.assertEqual("retryable_failed", result["state"])
+        self.assertFalse(target_path.exists())
+        receipt_path = next(
+            (case["queue_root"] / "attempts" / "bound-job").glob("*.json")
+        )
+        receipt = load_delivery_attempt_receipt(receipt_path)
+        self.assertEqual("safe_root_binding_missing", receipt["outcome"]["code"])
+
+    def test_uuid_file_delivery_rejects_ordinary_root_identity_replacement(self) -> None:
+        case = self._case("safe-root-replaced")
+        queue = DeliveryQueue(case["queue_root"])
+        root_uuid = "11111111-1111-4111-8111-111111111111"
+        target_path = self._uuid_file_job(
+            queue,
+            case,
+            job_id="root-replaced",
+            root_uuid=root_uuid,
+        )
+        adapter = FileDeliveryAdapter(
+            root_map=case["root_map"],
+            root_bindings={
+                "delivery_store": RootBinding(
+                    "delivery_store", root_uuid, case["export"]
+                )
+            },
+        )
+        original_root = case["root"] / "export-before-replacement"
+        case["export"].rename(original_root)
+        case["export"].mkdir()
+
+        result = queue.attempt(
+            "root-replaced",
+            worker_id="worker-1",
+            adapter=adapter,
+        )
+
+        self.assertEqual("retryable_failed", result["state"])
+        self.assertFalse(target_path.exists())
+        self.assertFalse((original_root / target_path.name).exists())
+        receipt_path = next(
+            (case["queue_root"] / "attempts" / "root-replaced").glob("*.json")
+        )
+        receipt = load_delivery_attempt_receipt(receipt_path)
+        self.assertIn("root identity changed", receipt["outcome"]["message"])
+
+    def test_uuid_file_delivery_rejects_symlink_root_replacement(self) -> None:
+        case = self._case("safe-root-symlink")
+        queue = DeliveryQueue(case["queue_root"])
+        root_uuid = "11111111-1111-4111-8111-111111111111"
+        target_path = self._uuid_file_job(
+            queue,
+            case,
+            job_id="root-symlink",
+            root_uuid=root_uuid,
+        )
+        adapter = FileDeliveryAdapter(
+            root_map=case["root_map"],
+            root_bindings={
+                "delivery_store": RootBinding(
+                    "delivery_store", root_uuid, case["export"]
+                )
+            },
+        )
+        original_root = case["root"] / "export-before-symlink"
+        case["export"].rename(original_root)
+        try:
+            os.symlink(
+                original_root,
+                case["export"],
+                target_is_directory=True,
+            )
+        except (NotImplementedError, OSError):
+            original_root.rename(case["export"])
+            self.skipTest("directory symlink creation is not permitted")
+
+        try:
+            result = queue.attempt(
+                "root-symlink",
+                worker_id="worker-1",
+                adapter=adapter,
+            )
+            self.assertEqual("retryable_failed", result["state"])
+            self.assertFalse((original_root / target_path.name).exists())
+        finally:
+            if os.path.lexists(case["export"]):
+                try:
+                    case["export"].unlink()
+                except OSError:
+                    os.rmdir(case["export"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction semantics")
+    def test_uuid_file_delivery_rejects_junction_root_replacement(self) -> None:
+        case = self._case("safe-root-junction")
+        queue = DeliveryQueue(case["queue_root"])
+        root_uuid = "11111111-1111-4111-8111-111111111111"
+        target_path = self._uuid_file_job(
+            queue,
+            case,
+            job_id="root-junction",
+            root_uuid=root_uuid,
+        )
+        adapter = FileDeliveryAdapter(
+            root_map=case["root_map"],
+            root_bindings={
+                "delivery_store": RootBinding(
+                    "delivery_store", root_uuid, case["export"]
+                )
+            },
+        )
+        original_root = case["root"] / "export-before-junction"
+        outside = case["root"] / "outside-junction-target"
+        outside.mkdir()
+        case["export"].rename(original_root)
+        created = subprocess.run(
+            [
+                "cmd.exe",
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(case["export"]),
+                str(outside),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if created.returncode != 0:
+            original_root.rename(case["export"])
+            self.skipTest("junction creation is not permitted")
+        try:
+            result = queue.attempt(
+                "root-junction",
+                worker_id="worker-1",
+                adapter=adapter,
+            )
+            self.assertEqual("retryable_failed", result["state"])
+            self.assertFalse((outside / target_path.name).exists())
+        finally:
+            if os.path.lexists(case["export"]):
+                os.rmdir(case["export"])
+
+    def test_safe_file_delivery_detects_parent_identity_swap_before_create(self) -> None:
+        case = self._case("safe-parent-swap")
+        root_id = "external:safe-parent-swap"
+        root_uuid = "11111111-1111-4111-8111-111111111111"
+        parent = case["export"] / "nested"
+        parent.mkdir()
+        target_path = parent / "chapter.json"
+        queue = DeliveryQueue(case["queue_root"])
+        queue.enqueue(
+            job_id="parent-swap",
+            book_id="book-1",
+            run_id="run-1",
+            publication_receipt_hash=self._receipt_hash(),
+            target_type="file",
+            target={
+                "path_ref": path_ref_for(
+                    target_path,
+                    root_id=root_id,
+                    root=case["export"],
+                    root_uuid=root_uuid,
+                ).to_dict()
+            },
+            payload={"content": "safe\n", "encoding": "utf-8"},
+        )
+        adapter = SafeFileDeliveryAdapter(
+            binding=RootBinding(root_id, root_uuid, case["export"])
+        )
+        original_ensure_parent = adapter.resolver.ensure_parent
+
+        def swap_parent(path_ref, *, expected_guard=None):
+            parent.rename(case["export"] / "nested-before-swap")
+            parent.mkdir()
+            return original_ensure_parent(
+                path_ref,
+                expected_guard=expected_guard,
+            )
+
+        with patch.object(
+            adapter.resolver,
+            "ensure_parent",
+            side_effect=swap_parent,
+        ):
+            result = queue.attempt(
+                "parent-swap",
+                worker_id="worker-1",
+                adapter=adapter,
+            )
+
+        self.assertEqual("retryable_failed", result["state"])
+        self.assertFalse(target_path.exists())
+        self.assertFalse(
+            (case["export"] / "nested-before-swap" / "chapter.json").exists()
+        )
+        receipt_path = next(
+            (case["queue_root"] / "attempts" / "parent-swap").glob("*.json")
+        )
+        receipt = load_delivery_attempt_receipt(receipt_path)
+        self.assertIn("parent identity changed", receipt["outcome"]["message"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction semantics")
+    def test_safe_file_delivery_rejects_junction_parent_without_writing_target(self) -> None:
+        case = self._case("safe-junction")
+        root_id = "external:safe-junction"
+        root_uuid = "11111111-1111-4111-8111-111111111111"
+        outside = case["root"] / "outside"
+        outside.mkdir()
+        junction = case["export"] / "junction"
+        created = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(outside)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if created.returncode != 0:
+            self.skipTest("junction creation is not permitted in this environment")
+        target_path = junction / "must-not-exist.json"
+        try:
+            queue = DeliveryQueue(case["queue_root"])
+            queue.enqueue(
+                job_id="junction-job",
+                book_id="book-1",
+                run_id="run-1",
+                publication_receipt_hash=self._receipt_hash(),
+                target_type="file",
+                target={
+                    "path_ref": {
+                        "root_id": root_id,
+                        "root_uuid": root_uuid,
+                        "relative_path": "junction/must-not-exist.json",
+                    }
+                },
+                payload={"content": "unsafe\n", "encoding": "utf-8"},
+            )
+            result = queue.attempt(
+                "junction-job",
+                worker_id="worker-1",
+                adapter=SafeFileDeliveryAdapter(
+                    binding=RootBinding(root_id, root_uuid, case["export"])
+                ),
+            )
+
+            self.assertEqual("retryable_failed", result["state"])
+            self.assertFalse((outside / "must-not-exist.json").exists())
+        finally:
+            if os.path.lexists(junction):
+                os.rmdir(junction)
 
     def test_enqueue_is_idempotent_and_payload_change_conflicts(self) -> None:
         case = self._case("enqueue")

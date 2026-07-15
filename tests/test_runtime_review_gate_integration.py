@@ -9,6 +9,7 @@ from pathlib import Path
 
 from core.engine.executor import AgentExecutor
 from core.quality_decision import build_quality_decision
+from core.quality_decision import resolve_quality_policy
 from core.review.runtime import RuntimeReviewConfig
 from core.schema import validate_schema
 
@@ -137,8 +138,57 @@ class RuntimeReviewGateIntegrationTests(unittest.TestCase):
         self.assertFalse(result["run"]["accepted"])
         self.assertFalse(result["run"]["committed"])
 
+    def test_effective_strict_always_enables_independent_needs_revision_gate(self) -> None:
+        executor = AgentExecutor(
+            dry_run=True,
+            quality_policy="strict",
+            enable_execution_provenance=False,
+            review_config=RuntimeReviewConfig(enabled=False, gate_threshold="off"),
+        )
+
+        effective = executor._runtime_review_config_for_policy(
+            resolve_quality_policy("strict")
+        )
+        self.assertTrue(effective.enabled)
+        self.assertEqual("warning", effective.gate_threshold)
+
+        warning_gate = executor._review_gate_for_review(
+            {"status": "warning"},
+            {"accepted": True},
+            review_config=effective,
+        )
+        revision_gate = executor._review_gate_for_review(
+            {"status": "needs_revision"},
+            {"accepted": True},
+            review_config=effective,
+        )
+        self.assertEqual("pass", warning_gate["status"])
+        self.assertEqual("fail", revision_gate["status"])
+
+    def test_non_strict_explicit_gate_off_remains_legacy_compatible(self) -> None:
+        executor = AgentExecutor(
+            dry_run=True,
+            quality_policy="standard",
+            enable_execution_provenance=False,
+            review_config=RuntimeReviewConfig(enabled=True, gate_threshold="off"),
+        )
+
+        effective = executor._runtime_review_config_for_policy(
+            resolve_quality_policy("standard")
+        )
+        self.assertTrue(effective.enabled)
+        self.assertEqual("off", effective.gate_threshold)
+        self.assertIsNone(
+            executor._review_gate_for_review(
+                {"status": "blocked"},
+                {"accepted": True},
+                review_config=effective,
+            )
+        )
+
     def test_cli_gate_off_returncode_zero(self) -> None:
         case_dir = self._case_dir("cli_off")
+        snapshot_path = self._write_snapshot(case_dir)
         result = subprocess.run(
             [
                 sys.executable,
@@ -149,6 +199,12 @@ class RuntimeReviewGateIntegrationTests(unittest.TestCase):
                 "off",
                 "--review-output-dir",
                 str(case_dir / "reviews"),
+                "--snapshot",
+                str(snapshot_path),
+                "--run-dir",
+                str(case_dir / "runs"),
+                "--chapter-dir",
+                str(case_dir / "chapters"),
                 "--memory",
                 "data/notion_memory.example.json",
             ],

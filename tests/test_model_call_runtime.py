@@ -17,8 +17,14 @@ from api.openai_client import (
     chat_completion,
 )
 from api.retry import CLAUDE_POLISH, MODEL_READ_GENERATION, RetryPolicy
-from core.context_budget import ContextBudgetError, RunBudgetLimits, RunBudgetTracker
+from core.context_budget import (
+    ContextBudgetError,
+    ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
+    RunBudgetLimits,
+    RunBudgetTracker,
+)
 from core.engine.persistence import atomic_write_text
+from core.memory_v2.canonical import canonical_json_bytes
 from core.model_call_runtime import (
     ModelCallRuntimeContext,
     ProviderCallUncertainError,
@@ -117,6 +123,52 @@ class ModelCallRuntimeTest(unittest.TestCase):
         self.assertEqual("request-1", receipt["request_id"])
         self.assertEqual(["reserve", "response"], [item[0] for item in self.tracker.events])
 
+    def test_default_request_reservation_uses_calibration_and_settles_provider_input(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=2,
+                max_total_input_tokens=1_000,
+                max_total_output_tokens=20,
+                max_elapsed_seconds=30,
+            )
+        )
+        runtime = ModelCallRuntimeContext(self.store, tracker=tracker)
+        request = {
+            "messages": [
+                {"role": "user", "content": "中文 and English calibration"}
+            ]
+        }
+        reserved = runtime.estimate_input_tokens(request)
+        self.assertGreater(reserved, 0)
+        self.assertEqual(
+            len(canonical_json_bytes(request, exclude_environment_fields=False))
+            + ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
+            reserved,
+        )
+
+        runtime.execute_attempt(
+            call_id="calibrated-input",
+            attempt_number=1,
+            provider="openai",
+            model="gpt-test",
+            stage="draft",
+            endpoint_type="official",
+            request=request,
+            max_output_tokens=8,
+            operation=lambda: ModelResponse(
+                "done",
+                usage={"input_tokens": 9, "output_tokens": 2},
+                endpoint_type="official",
+            ),
+        )
+
+        intent = self.store.load_intent("calibrated-input-a1")
+        self.assertEqual(
+            reserved,
+            intent["budget_reservation"]["reserved_input_tokens"],
+        )
+        self.assertEqual(9, tracker.report()["total_input_tokens"])
+
     def test_receipt_replays_without_network_and_rejects_request_collision(self) -> None:
         calls = 0
 
@@ -189,6 +241,101 @@ class ModelCallRuntimeTest(unittest.TestCase):
         uncertain = self.store.list_uncertain_calls()
         self.assertEqual("provider_call_uncertain", uncertain[0]["status"])
 
+    def test_response_boundary_faults_leave_intent_only_and_restart_never_resends(self) -> None:
+        fault_points = (
+            ("after_provider_response_before_artifact", False),
+            ("after_response_artifact_before_receipt", True),
+        )
+        for ordinal, (fault_point, artifact_expected) in enumerate(
+            fault_points, start=1
+        ):
+            with self.subTest(fault_point=fault_point):
+                root = self.root / f"fault-{ordinal}"
+                store = ModelCallStore(root)
+                tracker = RunBudgetTracker(
+                    RunBudgetLimits(
+                        max_provider_calls=5,
+                        max_total_input_tokens=100,
+                        max_total_output_tokens=100,
+                        max_elapsed_seconds=30,
+                    )
+                )
+                provider_calls = 0
+
+                def inject(
+                    event: str,
+                    _attempt_id: str,
+                    _path: Path | None,
+                ) -> None:
+                    if event == fault_point:
+                        raise RuntimeError(f"simulated crash at {event}")
+
+                def provider() -> ModelResponse:
+                    nonlocal provider_calls
+                    provider_calls += 1
+                    return ModelResponse(
+                        "provider returned normally",
+                        usage={"input_tokens": 4, "output_tokens": 3},
+                        endpoint_type="official",
+                    )
+
+                runtime = ModelCallRuntimeContext(
+                    store,
+                    tracker=tracker,
+                    fault_injector=inject,
+                )
+                arguments = {
+                    "call_id": f"fault-call-{ordinal}",
+                    "attempt_number": 1,
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "stage": "draft",
+                    "endpoint_type": "official",
+                    "request": {"messages": []},
+                    "max_output_tokens": 20,
+                    "input_tokens": 4,
+                }
+                attempt_id = f"fault-call-{ordinal}-a1"
+
+                with self.assertRaises(ProviderCallUncertainError) as raised:
+                    runtime.execute_attempt(operation=provider, **arguments)
+
+                self.assertEqual("provider_call_uncertain", raised.exception.failure_category)
+                self.assertEqual(1, provider_calls)
+                self.assertTrue(store.intent_path(attempt_id).is_file())
+                self.assertFalse(store.receipt_path(attempt_id).exists())
+                self.assertEqual(
+                    artifact_expected,
+                    (root / "responses" / f"{attempt_id}.txt").is_file(),
+                )
+
+                restarted_tracker = RunBudgetTracker(
+                    RunBudgetLimits(
+                        max_provider_calls=5,
+                        max_total_input_tokens=100,
+                        max_total_output_tokens=100,
+                        max_elapsed_seconds=30,
+                    )
+                )
+                restarted = ModelCallRuntimeContext(
+                    store,
+                    tracker=restarted_tracker,
+                )
+                self.assertEqual([], restarted.hydrate_tracker_from_store())
+                self.assertEqual(1, restarted_tracker.provider_calls)
+                self.assertEqual(4, restarted_tracker.total_input_tokens)
+                self.assertEqual(0, restarted_tracker.total_output_tokens)
+                self.assertEqual(20, restarted_tracker.reserved_output_tokens)
+
+                with self.assertRaises(ProviderCallUncertainError) as replay:
+                    restarted.execute_attempt(
+                        operation=lambda: self.fail("provider must never be resent"),
+                        **arguments,
+                    )
+                self.assertEqual("provider_call_uncertain", replay.exception.failure_category)
+                self.assertEqual(1, provider_calls)
+                self.assertFalse(store.receipt_path(attempt_id).exists())
+
     def test_budget_rejection_writes_terminal_receipt_without_calling_provider(self) -> None:
         tracker = RunBudgetTracker(
             RunBudgetLimits(
@@ -224,6 +371,34 @@ class ModelCallRuntimeTest(unittest.TestCase):
         receipt = self.store.load_receipt("budget-blocked-a1")
         self.assertEqual("budget_rejected", receipt["status"])
         self.assertEqual([], self.store.list_uncertain_calls())
+
+        fresh_tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=2,
+                max_total_input_tokens=100,
+                max_total_output_tokens=100,
+                max_elapsed_seconds=30,
+            )
+        )
+        with self.assertRaises(ModelCallIntegrityError):
+            ModelCallRuntimeContext(
+                self.store,
+                tracker=fresh_tracker,
+            ).execute_attempt(
+                call_id="budget-blocked",
+                attempt_number=1,
+                provider="openai",
+                model="gpt-test",
+                stage="draft",
+                endpoint_type="official",
+                request={"messages": [{"role": "user", "content": "private"}]},
+                max_output_tokens=6,
+                input_tokens=1,
+                operation=lambda: self.fail("provider must not run"),
+            )
+        self.assertEqual(0, fresh_tracker.provider_calls)
+        self.assertEqual(0, fresh_tracker.total_input_tokens)
+        self.assertEqual(0, fresh_tracker.reserved_output_tokens)
 
     def test_hydration_restores_succeeded_and_uncertain_budget_without_charging_rejection(self) -> None:
         writer = ModelCallRuntimeContext(
@@ -316,6 +491,175 @@ class ModelCallRuntimeTest(unittest.TestCase):
             [item["attempt_id"] for item in self.store.list_uncertain_calls()],
         )
         self.assertFalse(self.store.receipt_path("uncertain-a1").exists())
+
+    def test_estimator_drift_replays_stored_receipt_and_preserves_uncertain_intent(self) -> None:
+        limits = RunBudgetLimits(
+            max_provider_calls=5,
+            max_total_input_tokens=100,
+            max_total_output_tokens=100,
+            max_elapsed_seconds=30,
+        )
+        receipt_store = ModelCallStore(self.root / "counter-drift-receipt")
+        original = ModelCallRuntimeContext(
+            receipt_store,
+            tracker=RunBudgetTracker(limits),
+            input_token_counter=lambda _request: 5,
+        )
+        arguments = {
+            "call_id": "counter-drift",
+            "attempt_number": 1,
+            "provider": "openai",
+            "model": "gpt-test",
+            "stage": "draft",
+            "endpoint_type": "official",
+            "request": {"messages": []},
+            "max_output_tokens": 10,
+        }
+        original.execute_attempt(
+            operation=lambda: ModelResponse(
+                "done",
+                usage={"input_tokens": 5, "output_tokens": 2},
+                endpoint_type="official",
+            ),
+            **arguments,
+        )
+
+        replay_calls = 0
+
+        def forbidden_replay() -> ModelResponse:
+            nonlocal replay_calls
+            replay_calls += 1
+            return ModelResponse("must not run")
+
+        replay_tracker = RunBudgetTracker(limits)
+        restarted = ModelCallRuntimeContext(
+            receipt_store,
+            tracker=replay_tracker,
+            input_token_counter=lambda _request: 6,
+        )
+        self.assertEqual(
+            "done",
+            restarted.execute_attempt(operation=forbidden_replay, **arguments).text,
+        )
+        restarted.execute_attempt(operation=forbidden_replay, **arguments)
+        self.assertEqual(0, replay_calls)
+        self.assertEqual(1, replay_tracker.provider_calls)
+        self.assertEqual(5, replay_tracker.total_input_tokens)
+        self.assertEqual(2, replay_tracker.total_output_tokens)
+
+        with self.assertRaises(ModelCallConflictError):
+            restarted.execute_attempt(
+                operation=forbidden_replay,
+                input_tokens=6,
+                **arguments,
+            )
+        changed_output = dict(arguments)
+        changed_output["max_output_tokens"] = 11
+        with self.assertRaises(ModelCallConflictError):
+            restarted.execute_attempt(
+                operation=forbidden_replay,
+                **changed_output,
+            )
+
+        uncertain_store = ModelCallStore(self.root / "counter-drift-uncertain")
+        uncertain_writer = ModelCallRuntimeContext(
+            uncertain_store,
+            tracker=RunBudgetTracker(limits),
+            input_token_counter=lambda _request: 5,
+        )
+        with self.assertRaises(ProviderCallUncertainError):
+            uncertain_writer.execute_attempt(
+                operation=lambda: (_ for _ in ()).throw(TimeoutError("unknown")),
+                **arguments,
+            )
+
+        uncertain_tracker = RunBudgetTracker(limits)
+        uncertain_restart = ModelCallRuntimeContext(
+            uncertain_store,
+            tracker=uncertain_tracker,
+            input_token_counter=lambda _request: 6,
+        )
+        with self.assertRaises(ProviderCallUncertainError):
+            uncertain_restart.execute_attempt(
+                operation=lambda: self.fail("provider must not be resent"),
+                **arguments,
+            )
+        with self.assertRaises(ProviderCallUncertainError):
+            uncertain_restart.execute_attempt(
+                operation=lambda: self.fail("provider must not be resent"),
+                **arguments,
+            )
+        self.assertEqual(1, uncertain_tracker.provider_calls)
+        self.assertEqual(5, uncertain_tracker.total_input_tokens)
+        self.assertEqual(10, uncertain_tracker.reserved_output_tokens)
+
+    def test_missing_and_cached_usage_match_live_hydration_and_replay(self) -> None:
+        cases = (
+            ("missing", {}, 4, len("正文".encode("utf-8"))),
+            (
+                "anthropic-cache",
+                {
+                    "input_tokens": 2,
+                    "cache_creation_input_tokens": 3,
+                    "cache_read_input_tokens": 11,
+                    "output_tokens": 4,
+                },
+                16,
+                4,
+            ),
+        )
+        for name, usage, expected_input, expected_output in cases:
+            with self.subTest(name=name):
+                store = ModelCallStore(self.root / f"settlement-{name}")
+                limits = RunBudgetLimits(
+                    max_provider_calls=5,
+                    max_total_input_tokens=100,
+                    max_total_output_tokens=100,
+                    max_elapsed_seconds=30,
+                )
+                live_tracker = RunBudgetTracker(limits)
+                writer = ModelCallRuntimeContext(store, tracker=live_tracker)
+                arguments = {
+                    "call_id": f"settlement-{name}",
+                    "attempt_number": 1,
+                    "provider": "anthropic",
+                    "model": "claude-test",
+                    "stage": "draft",
+                    "endpoint_type": "official",
+                    "request": {"messages": []},
+                    "max_output_tokens": 20,
+                    "input_tokens": 4,
+                }
+                writer.execute_attempt(
+                    operation=lambda usage=usage: ModelResponse(
+                        "正文",
+                        usage=usage,
+                        endpoint_type="official",
+                    ),
+                    **arguments,
+                )
+                live_report = live_tracker.report()
+                self.assertEqual(expected_input, live_report["total_input_tokens"])
+                self.assertEqual(expected_output, live_report["total_output_tokens"])
+
+                fresh_tracker = RunBudgetTracker(limits)
+                restarted = ModelCallRuntimeContext(store, tracker=fresh_tracker)
+                receipt_hashes = restarted.hydrate_tracker_from_store()
+                self.assertEqual(1, len(receipt_hashes))
+                self.assertEqual(receipt_hashes, restarted.hydrate_tracker_from_store())
+                restarted.execute_attempt(
+                    operation=lambda: self.fail("provider must not be resent"),
+                    **arguments,
+                )
+                fresh_report = fresh_tracker.report()
+                for field in (
+                    "provider_calls",
+                    "total_input_tokens",
+                    "total_output_tokens",
+                    "reserved_output_tokens",
+                    "unsettled_attempt_count",
+                ):
+                    self.assertEqual(live_report[field], fresh_report[field])
 
     def test_tampered_response_artifact_fails_closed(self) -> None:
         arguments = {

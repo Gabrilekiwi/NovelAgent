@@ -81,7 +81,23 @@ class LegacyWrapperTest(unittest.TestCase):
         self.assertIs(query_database_pages, api.query_database_pages)
 
     def test_legacy_orchestrator_runs_through_agent_executor(self) -> None:
-        result = legacy_orchestrator.run_agent_once(dry_run=True, persist=False)
+        case_dir = self._case_dir("run_agent_once_preview")
+        snapshot_path = case_dir / "snapshot.json"
+        run_dir = case_dir / "runs"
+        chapter_dir = case_dir / "chapters"
+        self._write_snapshot(snapshot_path)
+        run_dir.mkdir()
+        chapter_dir.mkdir()
+
+        result = legacy_orchestrator.run_agent_once(
+            snapshot_path=snapshot_path,
+            memory_path=case_dir / "missing-memory.json",
+            memory_source="file",
+            run_dir=run_dir,
+            chapter_dir=chapter_dir,
+            dry_run=True,
+            persist=False,
+        )
 
         self.assertIn("run", result)
         self.assertIn("validation", result)
@@ -90,7 +106,23 @@ class LegacyWrapperTest(unittest.TestCase):
         self.assertEqual("preview", result["run"]["status"])
 
     def test_legacy_orchestrator_run_once_returns_chapter_text(self) -> None:
-        chapter = legacy_orchestrator.run_once(dry_run=True, persist=False)
+        case_dir = self._case_dir("run_once_preview")
+        snapshot_path = case_dir / "snapshot.json"
+        run_dir = case_dir / "runs"
+        chapter_dir = case_dir / "chapters"
+        self._write_snapshot(snapshot_path)
+        run_dir.mkdir()
+        chapter_dir.mkdir()
+
+        chapter = legacy_orchestrator.run_once(
+            snapshot_path=snapshot_path,
+            memory_path=case_dir / "missing-memory.json",
+            memory_source="file",
+            run_dir=run_dir,
+            chapter_dir=chapter_dir,
+            dry_run=True,
+            persist=False,
+        )
 
         self.assertIsInstance(chapter, str)
         self.assertIn("conflict", chapter.lower())

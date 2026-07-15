@@ -11,7 +11,33 @@ from core.schema import validate_schema
 
 
 CONTEXT_BUDGET_SCHEMA_VERSION = "1.0"
-ESTIMATOR_VERSION = "utf8-upper-bound-v1"
+# Installed from the calibration-only side of
+# tests/fixtures/token_calibration/synthetic_acceptance_v1.json.  The source
+# is deliberately named in the version: it is production wiring and offline
+# acceptance evidence, not a claim of real-provider accuracy.  The frozen
+# holdout has zero observed under-estimation; the normal ContextBudget safety
+# ratio is applied separately.
+ESTIMATOR_VERSION = "mixed-endpoint-synthetic-calibration-v1"
+CALIBRATED_TOKENS_PER_UTF8_BYTE = 7 / 18
+ESTIMATOR_DATASET_SOURCE = "synthetic_acceptance_v1"
+ESTIMATOR_CALIBRATION_MANIFEST_HASH = (
+    "60564e43724b947ce70b6054e5e72af58c35de3fd47dca6c603b7922e1f06edc"
+)
+ESTIMATOR_HOLDOUT_MANIFEST_HASH = (
+    "864b3798e6eafee2a0c7e20c093278981fdbecc76bfecdf0923a197c00a42a1e"
+)
+ESTIMATOR_REAL_PROVIDER_VERIFIED = False
+ESTIMATOR_CALIBRATION_METHOD = "max-observed-tokens-per-utf8-byte-v1"
+# The fitted ratio above is useful telemetry, but the synthetic natural-text
+# fixture is not evidence that arbitrary canonical JSON is bounded by that
+# ratio.  Hard enforcement therefore has an independent, predeclared byte
+# upper-bound profile.  Holdout observations never tune these values.
+ESTIMATOR_ENFORCEMENT_METHOD = "max-calibrated-or-utf8-byte-floor-v1"
+ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE = 1.0
+# Predeclared allowance for provider-side message framing that is not present
+# in canonical request JSON. It is intentionally independent of holdout data.
+ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS = 64
+ESTIMATOR_ENFORCEMENT_SAFETY_RATIO = 0.15
 NEW_TOKEN_COUNT_MODES = frozenset(
     {
         "provider_exact",
@@ -54,7 +80,7 @@ class CalibratedTokenEstimator:
     """Deterministic, offline token estimate with explicit calibration metadata."""
 
     version: str = ESTIMATOR_VERSION
-    tokens_per_utf8_byte: float = 1.0
+    tokens_per_utf8_byte: float = CALIBRATED_TOKENS_PER_UTF8_BYTE
     fixed_overhead_tokens: int = 0
 
     def __post_init__(self) -> None:
@@ -257,6 +283,31 @@ class ContextBudget:
                 "counter_source": "calibration",
                 "calibration_version": estimator.version,
             }
+            if estimator is DEFAULT_CALIBRATED_ESTIMATOR:
+                budgeted_tokens = conservative_calibrated_token_estimate(
+                    combined,
+                    estimator=estimator,
+                    safety_ratio=self.safety_ratio,
+                )
+                count_metadata.update(
+                    {
+                        "calibration_source": ESTIMATOR_DATASET_SOURCE,
+                        "calibration_manifest_hash": ESTIMATOR_CALIBRATION_MANIFEST_HASH,
+                        "holdout_manifest_hash": ESTIMATOR_HOLDOUT_MANIFEST_HASH,
+                        "holdout_role": "evaluation_only",
+                        "calibration_real_provider_verified": ESTIMATOR_REAL_PROVIDER_VERIFIED,
+                        "calibration_method": ESTIMATOR_CALIBRATION_METHOD,
+                        "calibration_tokens_per_utf8_byte": estimator.tokens_per_utf8_byte,
+                        "enforcement_method": ESTIMATOR_ENFORCEMENT_METHOD,
+                        "enforcement_floor_tokens_per_utf8_byte": (
+                            ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE
+                        ),
+                        "enforcement_fixed_overhead_tokens": (
+                            ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS
+                        ),
+                        "enforcement_safety_ratio": self.safety_ratio,
+                    }
+                )
         report = {
             "schema_version": CONTEXT_BUDGET_SCHEMA_VERSION,
             "stage": stage,
@@ -401,10 +452,61 @@ class RunBudgetTracker:
         self.estimated_cost += estimated_cost
         self._model_reservations[attempt_id] = {
             "call_id": call_id,
+            "reserved_input_tokens": input_tokens,
             "max_output_tokens": max_output_tokens,
             "status": "reserved",
+            "actual_input_tokens": None,
             "actual_output_tokens": None,
+            "settlement_error": None,
         }
+
+    def ensure_model_call(
+        self,
+        *,
+        input_tokens: int,
+        max_output_tokens: int,
+        call_id: str,
+        attempt_id: str,
+        estimated_cost: float = 0.0,
+    ) -> bool:
+        """Idempotently restore or create one immutable attempt reservation.
+
+        Returns ``True`` when a new reservation was charged and ``False`` when
+        the exact attempt was already present.  A reused attempt id with
+        different immutable budget evidence remains a hard conflict.
+        """
+
+        self._require_non_negative(input_tokens, "input_tokens")
+        self._require_non_negative(max_output_tokens, "max_output_tokens")
+        if not isinstance(call_id, str) or not call_id:
+            raise ContextBudgetError(
+                "run_budget_usage_invalid", "call_id must be non-empty"
+            )
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise ContextBudgetError(
+                "run_budget_usage_invalid", "attempt_id must be non-empty"
+            )
+        existing = self._model_reservations.get(attempt_id)
+        if existing is not None:
+            expected = {
+                "call_id": call_id,
+                "reserved_input_tokens": input_tokens,
+                "max_output_tokens": max_output_tokens,
+            }
+            if any(existing.get(field) != value for field, value in expected.items()):
+                raise ContextBudgetError(
+                    "run_budget_attempt_conflict",
+                    f"attempt_id {attempt_id} conflicts with its existing reservation",
+                )
+            return False
+        self.reserve_model_call(
+            input_tokens=input_tokens,
+            max_output_tokens=max_output_tokens,
+            call_id=call_id,
+            attempt_id=attempt_id,
+            estimated_cost=estimated_cost,
+        )
+        return True
 
     def record_model_response(
         self,
@@ -415,7 +517,6 @@ class RunBudgetTracker:
     ) -> None:
         """Settle a reservation from provider usage or a conservative fallback."""
 
-        self._check_elapsed()
         reservation = self._model_reservations.get(attempt_id)
         if reservation is None or reservation.get("call_id") != call_id:
             raise ContextBudgetError(
@@ -423,22 +524,58 @@ class RunBudgetTracker:
                 f"attempt_id {attempt_id} has no matching reservation",
             )
         if reservation["status"] == "settled":
+            settlement_error = reservation.get("settlement_error")
+            if settlement_error is not None:
+                code, message = settlement_error
+                raise ContextBudgetError(str(code), str(message))
             return
-        actual_output = _model_response_output_tokens(response)
-        if actual_output is None:
-            actual_output = conservative_token_estimate(str(getattr(response, "text", response)))
-        self._require_non_negative(actual_output, "actual_output_tokens")
-        reserved = int(reservation["max_output_tokens"])
-        prospective = self.total_output_tokens + self.reserved_output_tokens - reserved + actual_output
-        if prospective > self.limits.max_total_output_tokens:
-            raise ContextBudgetError(
+        self._check_elapsed()
+        reserved_input = int(reservation["reserved_input_tokens"])
+        reserved_output = int(reservation["max_output_tokens"])
+        fallback_output = conservative_token_estimate(
+            str(getattr(response, "text", response))
+        )
+        usage = _model_response_token_usage(response)
+        actual_input, actual_output = usage.settlement(
+            reserved_input_tokens=reserved_input,
+            reserved_output_tokens=reserved_output,
+            fallback_output_tokens=fallback_output,
+        )
+        prospective_input = self.total_input_tokens - reserved_input + actual_input
+        prospective_output = (
+            self.total_output_tokens
+            + self.reserved_output_tokens
+            - reserved_output
+            + actual_output
+        )
+        # The provider call and its successful Receipt already exist.  Settle
+        # the tracker truthfully before reporting an overrun so failure records
+        # and restart hydration charge the same actual usage.
+        self.total_input_tokens = prospective_input
+        self.reserved_output_tokens -= reserved_output
+        self.total_output_tokens += actual_output
+        reservation["status"] = "settled"
+        reservation["actual_input_tokens"] = actual_input
+        reservation["actual_output_tokens"] = actual_output
+        settlement_error: tuple[str, str] | None = None
+        if usage.invalid:
+            settlement_error = (
+                "run_budget_usage_invalid",
+                "provider token usage is malformed or internally contradictory",
+            )
+        elif prospective_input > self.limits.max_total_input_tokens:
+            settlement_error = (
+                "run_input_token_budget_exceeded",
+                "provider input usage exceeds max_total_input_tokens",
+            )
+        elif prospective_output > self.limits.max_total_output_tokens:
+            settlement_error = (
                 "run_output_token_budget_exceeded",
                 "provider output exceeds remaining max_total_output_tokens",
             )
-        self.reserved_output_tokens -= reserved
-        self.total_output_tokens += actual_output
-        reservation["status"] = "settled"
-        reservation["actual_output_tokens"] = actual_output
+        reservation["settlement_error"] = settlement_error
+        if settlement_error is not None:
+            raise ContextBudgetError(*settlement_error)
 
     def remaining_seconds(self) -> float:
         return max(0.0, self.limits.max_elapsed_seconds - (self._now() - self._started_at))
@@ -467,19 +604,151 @@ class RunBudgetTracker:
             raise ContextBudgetError("run_budget_usage_invalid", f"{name} must be a non-negative integer")
 
 
-def _model_response_output_tokens(response: Any) -> int | None:
+@dataclass(frozen=True)
+class _ModelResponseTokenUsage:
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    invalid: bool = False
+
+    def settlement(
+        self,
+        *,
+        reserved_input_tokens: int,
+        reserved_output_tokens: int,
+        fallback_output_tokens: int,
+    ) -> tuple[int, int]:
+        if self.invalid:
+            # A successful provider effect already exists, so fail closed while
+            # preserving at least the entire reservation.  total_tokens is
+            # charged to both independently bounded dimensions because an
+            # inconsistent payload cannot safely reveal its allocation.
+            total = self.total_tokens or 0
+            return (
+                max(reserved_input_tokens, self.input_tokens or 0, total),
+                max(
+                    reserved_output_tokens,
+                    fallback_output_tokens,
+                    self.output_tokens or 0,
+                    total,
+                ),
+            )
+        if (
+            self.total_tokens is not None
+            and self.input_tokens is None
+            and self.output_tokens is None
+        ):
+            # With no allocation information, charging total to each separate
+            # hard limit is the only representation that cannot understate one
+            # of those limits.
+            return (
+                max(reserved_input_tokens, self.total_tokens),
+                max(fallback_output_tokens, self.total_tokens),
+            )
+        return (
+            reserved_input_tokens if self.input_tokens is None else self.input_tokens,
+            fallback_output_tokens if self.output_tokens is None else self.output_tokens,
+        )
+
+
+def _model_response_token_usage(response: Any) -> _ModelResponseTokenUsage:
     usage = getattr(response, "usage", None)
     if not isinstance(usage, Mapping):
-        return None
-    for key in ("output_tokens", "completion_tokens"):
-        value = usage.get(key)
-        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-            return value
-    nested = usage.get("output_tokens_details")
+        return _ModelResponseTokenUsage(None, None, None)
+
+    input_tokens, input_invalid = _first_usage_integer(
+        usage,
+        ("input_tokens", "prompt_tokens"),
+        nested_key="input_tokens_details",
+    )
+    # Anthropic reports cache creation/read tokens as additional top-level
+    # input components.  OpenAI cached_tokens lives in details and is already a
+    # subset of prompt/input tokens, so it is deliberately not added here.
+    cache_creation, cache_creation_invalid = _usage_field(
+        usage, "cache_creation_input_tokens"
+    )
+    cache_read, cache_read_invalid = _usage_field(
+        usage, "cache_read_input_tokens"
+    )
+    if cache_creation is not None or cache_read is not None:
+        input_tokens = (input_tokens or 0) + (cache_creation or 0) + (cache_read or 0)
+
+    output_tokens, output_invalid = _first_usage_integer(
+        usage,
+        ("output_tokens", "completion_tokens"),
+        nested_key="output_tokens_details",
+    )
+    total_tokens, total_invalid = _usage_field(usage, "total_tokens")
+    invalid = any(
+        (
+            input_invalid,
+            cache_creation_invalid,
+            cache_read_invalid,
+            output_invalid,
+            total_invalid,
+        )
+    )
+    if total_tokens is not None:
+        if input_tokens is not None and output_tokens is not None:
+            invalid = invalid or input_tokens + output_tokens != total_tokens
+        elif input_tokens is not None:
+            if input_tokens <= total_tokens:
+                output_tokens = total_tokens - input_tokens
+            else:
+                invalid = True
+        elif output_tokens is not None:
+            if output_tokens <= total_tokens:
+                input_tokens = total_tokens - output_tokens
+            else:
+                invalid = True
+    return _ModelResponseTokenUsage(
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        invalid,
+    )
+
+
+def _first_usage_integer(
+    usage: Mapping[str, Any],
+    keys: tuple[str, ...],
+    *,
+    nested_key: str,
+) -> tuple[int | None, bool]:
+    invalid = False
+    selected: int | None = None
+    for key in keys:
+        value, field_invalid = _usage_field(usage, key)
+        invalid = invalid or field_invalid
+        if value is not None:
+            if selected is None:
+                selected = value
+            elif selected != value:
+                invalid = True
+    nested = usage.get(nested_key)
     if isinstance(nested, Mapping):
-        value = nested.get("total")
-        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-            return value
+        value, field_invalid = _usage_field(nested, "total")
+        invalid = invalid or field_invalid
+        if value is not None:
+            if selected is None:
+                selected = value
+            elif selected != value:
+                invalid = True
+    elif nested_key in usage:
+        invalid = True
+    return selected, invalid
+
+
+def _usage_field(usage: Mapping[str, Any], key: str) -> tuple[int | None, bool]:
+    if key not in usage:
+        return None, False
+    value = _usage_integer(usage.get(key))
+    return value, value is None
+
+
+def _usage_integer(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
     return None
 
 
@@ -498,6 +767,35 @@ def conservative_token_estimate(text: str) -> int:
     if not text:
         return 0
     return len(text.encode("utf-8"))
+
+
+def conservative_calibrated_token_estimate(
+    text: str,
+    *,
+    estimator: CalibratedTokenEstimator = DEFAULT_CALIBRATED_ESTIMATOR,
+    safety_ratio: float = ESTIMATOR_ENFORCEMENT_SAFETY_RATIO,
+) -> int:
+    """Return the production hard-reservation estimate for unknown tokenizers."""
+
+    if isinstance(safety_ratio, bool) or not isinstance(safety_ratio, (int, float)):
+        raise ContextBudgetError(
+            "token_calibration_invalid",
+            "safety_ratio must be a finite non-negative number",
+        )
+    if not math.isfinite(safety_ratio) or safety_ratio < 0:
+        raise ContextBudgetError(
+            "token_calibration_invalid",
+            "safety_ratio must be a finite non-negative number",
+        )
+    source = str(text)
+    calibrated_with_margin = math.ceil(estimator.estimate(source) * (1 + safety_ratio))
+    byte_floor = math.ceil(
+        len(source.encode("utf-8"))
+        * ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE
+    )
+    return max(calibrated_with_margin, byte_floor) + (
+        ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS
+    )
 
 
 def preview_chinese_output_compatibility(
@@ -583,6 +881,15 @@ __all__ = [
     "ContextBudget",
     "ContextBudgetError",
     "DEFAULT_CALIBRATED_ESTIMATOR",
+    "ESTIMATOR_CALIBRATION_METHOD",
+    "ESTIMATOR_CALIBRATION_MANIFEST_HASH",
+    "ESTIMATOR_DATASET_SOURCE",
+    "ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS",
+    "ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE",
+    "ESTIMATOR_ENFORCEMENT_METHOD",
+    "ESTIMATOR_ENFORCEMENT_SAFETY_RATIO",
+    "ESTIMATOR_HOLDOUT_MANIFEST_HASH",
+    "ESTIMATOR_REAL_PROVIDER_VERIFIED",
     "ESTIMATOR_VERSION",
     "LEGACY_TOKEN_COUNT_MODES",
     "NEW_TOKEN_COUNT_MODES",
@@ -590,6 +897,7 @@ __all__ = [
     "RunBudgetTracker",
     "SAFE_ENDPOINT_TYPES",
     "TokenCounter",
+    "conservative_calibrated_token_estimate",
     "conservative_token_estimate",
     "default_context_budget",
     "preview_chinese_output_compatibility",

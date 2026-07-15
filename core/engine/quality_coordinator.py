@@ -70,6 +70,18 @@ class QualityCoordinator:
         policy: QualityPolicy,
         configured: RuntimeReviewConfig,
     ) -> RuntimeReviewConfig:
+        if policy.name == "strict":
+            return RuntimeReviewConfig(
+                enabled=True,
+                output_dir=configured.output_dir,
+                rules_path=configured.rules_path,
+                use_default_rules=configured.use_default_rules,
+                build_repair_prompt=configured.build_repair_prompt,
+                build_human_report=configured.build_human_report,
+                # The historical threshold name keeps warning-only findings
+                # advisory and blocks needs_revision or blocked review output.
+                gate_threshold="warning",
+            )
         if configured.enabled or not policy.include_review:
             return configured
         return RuntimeReviewConfig(

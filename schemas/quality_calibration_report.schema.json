@@ -18,7 +18,10 @@
   "properties": {
     "schema_version": {"type": "string", "enum": ["1.0"]},
     "fixture_id": {"type": "string", "minLength": 1},
-    "fixture_source": {"type": "string", "enum": ["synthetic_acceptance_v1"]},
+    "fixture_source": {
+      "type": "string",
+      "enum": ["synthetic_acceptance_v1", "synthetic_raw_production_v1"]
+    },
     "fixture_sha256": {"type": "string", "minLength": 64},
     "sample_counts": {
       "type": "object",
@@ -47,7 +50,10 @@
       "properties": {
         "schema_version": {"type": "string", "enum": ["1.0"]},
         "fixture_id": {"type": "string", "minLength": 1},
-        "fixture_source": {"type": "string", "enum": ["synthetic_acceptance_v1"]},
+        "fixture_source": {
+          "type": "string",
+          "enum": ["synthetic_acceptance_v1", "synthetic_raw_production_v1"]
+        },
         "blocking_threshold": {
           "type": "string",
           "enum": ["warning", "medium", "high", "critical"]

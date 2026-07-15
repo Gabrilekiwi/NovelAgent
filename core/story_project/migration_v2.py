@@ -39,6 +39,7 @@ _RUNTIME_SOURCE_DIRECTORIES = (
     "runs",
     "persistence",
     "receipts",
+    "deliveries",
     "memory",
     "chapters",
     "reviews",

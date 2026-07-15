@@ -4,12 +4,13 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from core.path_refs import PathRef, PathRefError, validate_path_ref
 
 
 FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+_DurabilityHook = Callable[[str, Path, Callable[[], Any]], Any]
 
 
 class SafePathError(RuntimeError):
@@ -48,6 +49,7 @@ class SafePathResolver:
 
     def __init__(self, bindings: Mapping[str, RootBinding | Mapping[str, Any]]) -> None:
         normalized: dict[str, RootBinding] = {}
+        root_identities: dict[str, dict[str, Any]] = {}
         for root_id, raw in bindings.items():
             if isinstance(raw, RootBinding):
                 binding = raw
@@ -66,9 +68,11 @@ class SafePathResolver:
             normalized[str(root_id)] = RootBinding(
                 root_id=str(root_id), root_uuid=binding.root_uuid, path=path
             )
+            root_identities[str(root_id)] = _identity(path, relative_path=".")
         if not normalized:
             raise SafePathError("at least one safe root binding is required")
         self._bindings = normalized
+        self._root_identities = root_identities
 
     @property
     def bindings(self) -> dict[str, RootBinding]:
@@ -100,10 +104,12 @@ class SafePathResolver:
     ) -> SafeResolvedPath:
         ref = self.bind(value)
         binding = self._binding(ref)
+        self._assert_bound_root(binding)
         parts = tuple(ref.relative_path.replace("\\", "/").split("/"))
         candidate = binding.path.joinpath(*parts)
         _assert_lexically_within(candidate, binding.path)
         lineage = _directory_lineage(binding.path, parts[:-1])
+        self._assert_bound_root(binding)
         if candidate.exists() or os.path.lexists(candidate):
             _assert_not_link_or_reparse(candidate)
         guard = {
@@ -125,6 +131,7 @@ class SafePathResolver:
         value: PathRef | Mapping[str, Any],
         *,
         expected_guard: Mapping[str, Any] | None = None,
+        durability_hook: _DurabilityHook | None = None,
     ) -> SafeResolvedPath:
         resolved = self.resolve(value, expected_guard=expected_guard)
         binding = self._binding(resolved.path_ref)
@@ -135,8 +142,16 @@ class SafePathResolver:
             if os.path.lexists(current):
                 _assert_existing_directory(current, label="PathRef parent")
             else:
-                current.mkdir()
-                _fsync_directory(current.parent)
+                _run_durability_operation(
+                    durability_hook,
+                    "directory_mkdir",
+                    current,
+                    current.mkdir,
+                )
+                _fsync_directory(
+                    current.parent,
+                    durability_hook=durability_hook,
+                )
                 _assert_existing_directory(current, label="created PathRef parent")
         # Preserve the original guarded prefix while allowing directories that
         # this method just created to extend it.
@@ -151,6 +166,14 @@ class SafePathResolver:
             return self._bindings[ref.root_id]
         except KeyError as exc:
             raise PathRefError(f"PathRef root is not registered: {ref.root_id}") from exc
+
+    def _assert_bound_root(self, binding: RootBinding) -> None:
+        _assert_existing_directory(binding.path, label=f"root {binding.root_id}")
+        actual = _identity(binding.path, relative_path=".")
+        if actual != self._root_identities[binding.root_id]:
+            raise PathGuardMismatchError(
+                f"safe path root identity changed after binding: {binding.root_id}"
+            )
 
 
 def assert_safe_local_tree(root: str | Path) -> Path:
@@ -268,14 +291,34 @@ def _assert_not_link_or_reparse(path: Path) -> None:
         raise UnsafePathComponentError(f"Windows reparse points/junctions are forbidden: {path}")
 
 
-def _fsync_directory(path: Path) -> None:
+def _fsync_directory(
+    path: Path,
+    *,
+    durability_hook: _DurabilityHook | None = None,
+) -> None:
     if os.name == "nt":
         return
     descriptor = os.open(path, os.O_RDONLY)
     try:
-        os.fsync(descriptor)
+        _run_durability_operation(
+            durability_hook,
+            "directory_fsync",
+            path,
+            lambda: os.fsync(descriptor),
+        )
     finally:
         os.close(descriptor)
+
+
+def _run_durability_operation(
+    durability_hook: _DurabilityHook | None,
+    operation: str,
+    path: Path,
+    action: Callable[[], Any],
+) -> Any:
+    if durability_hook is None:
+        return action()
+    return durability_hook(operation, path, action)
 
 
 __all__ = [

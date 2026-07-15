@@ -21,7 +21,7 @@ from core.autonomy.common import (
     state_lock,
     validate_mapping,
 )
-from core.autonomy.plans import validate_instruction_plan
+from core.autonomy.plans import story_brief_for_plan, validate_instruction_plan
 
 
 _GOAL_FIELDS = (
@@ -38,6 +38,51 @@ _GOAL_LABELS = {
     "escalation": "升级",
     "resource_cost": "代价",
     "foreshadowing": "伏笔",
+}
+
+_ARC_PHASE_GOALS = {
+    "单章闭环": {
+        "mainline": "建立、推进并完成一个可验证的核心因果闭环",
+        "relationship": "让关键人物立场或信任发生可追踪变化",
+        "escalation": "把威胁推至必须回应的局面并给出阶段结果",
+        "resource_cost": "让选择产生明确且不可无故撤销的资源或状态代价",
+        "foreshadowing": "播种或回收一项与核心因果直接相连的伏笔",
+    },
+    "起势": {
+        "mainline": "建立本区间核心冲突、行动方向与因果起点",
+        "relationship": "显露关键人物的初始立场、信任张力或合作条件",
+        "escalation": "提出会持续施压的威胁、期限或两难选择",
+        "resource_cost": "暴露本区间最先受到约束的资源、能力或安全边界",
+        "foreshadowing": "播种后续推进所需的线索、承诺或未解问题",
+    },
+    "展开": {
+        "mainline": "沿既定因果推进一次不可替换的行动结果",
+        "relationship": "用共同目标或利益冲突推动人物关系发生增量变化",
+        "escalation": "让既有威胁获得新条件、范围或紧迫性",
+        "resource_cost": "支付与本章推进相称的资源、能力或机会成本",
+        "foreshadowing": "推进已播种线索并保留可追踪的后续指向",
+    },
+    "转折": {
+        "mainline": "用新事实或失败结果改变主线的下一步路径",
+        "relationship": "让关键关系因真相、选择或背离出现方向性转折",
+        "escalation": "把冲突提升到旧方案无法直接解决的新层级",
+        "resource_cost": "让转折留下持续生效的损失、伤势或资源缺口",
+        "foreshadowing": "兑现一项早期线索，同时把影响导向后续章节",
+    },
+    "逼近": {
+        "mainline": "收拢分支并迫使主角接近本区间关键决断",
+        "relationship": "让同盟、对立或信任条件在决断前明确站位",
+        "escalation": "压缩时间与选择空间，使核心冲突逼近临界点",
+        "resource_cost": "累积并显化决战前不可忽略的资源与状态代价",
+        "foreshadowing": "把关键线索推进到可在区间末兑现的位置",
+    },
+    "兑现": {
+        "mainline": "兑现本区间核心因果并形成通往下一阶段的新局面",
+        "relationship": "让关键人物关系对本区间选择给出明确后果",
+        "escalation": "完成本轮冲突升级并保留有依据的后续压力",
+        "resource_cost": "结算本区间累计代价且不重置已发生的损失",
+        "foreshadowing": "回收应兑现线索，并播种由本次结果自然产生的新问题",
+    },
 }
 
 _RELATIONSHIP_SIGNALS = (
@@ -248,15 +293,15 @@ def build_run_arc_plan(
     )
     targets = []
     count = int(plan["requested_chapter_count"])
+    story_brief = story_brief_for_plan(plan)
     for offset, chapter_index in enumerate(
         range(int(plan["chapter_start"]), int(plan["chapter_end"]) + 1), start=1
     ):
+        phase = _arc_phase(offset, count)
+        prefix = f"故事叙事意图「{story_brief}」；跨章阶段“{phase}” {offset}/{count}"
         planned = {
-            "mainline": f"推进本次区间主线节点 {offset}/{count}",
-            "relationship": f"落实本次区间关系变化 {offset}/{count}",
-            "escalation": f"完成本次区间升级节奏 {offset}/{count}",
-            "resource_cost": f"记录本次区间资源代价 {offset}/{count}",
-            "foreshadowing": f"处理本次区间伏笔播种或回收 {offset}/{count}",
+            field: f"{prefix}：{_ARC_PHASE_GOALS[phase][field]}"
+            for field in _GOAL_FIELDS
         }
         targets.append(
             {
@@ -293,6 +338,21 @@ def build_run_arc_plan(
         arc_plan, exclude_fields=("arc_plan_hash",)
     )
     return validate_run_arc_plan(arc_plan)
+
+
+def _arc_phase(offset: int, count: int) -> str:
+    if count == 1:
+        return "单章闭环"
+    if offset == 1:
+        return "起势"
+    if offset == count:
+        return "兑现"
+    progress = (offset - 1) / (count - 1)
+    if progress <= 0.34:
+        return "展开"
+    if progress <= 0.66:
+        return "转折"
+    return "逼近"
 
 
 def validate_run_arc_plan(value: Any) -> dict[str, Any]:

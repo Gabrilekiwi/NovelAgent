@@ -11,7 +11,8 @@ from core.engine.persistence import atomic_write_json
 from core.schema import SchemaValidationError, validate_schema
 from core.story_project.identity import (
     ProjectIdentity,
-    ensure_project_identity,
+    _ensure_project_identity_locked,
+    project_identity_mutation_lock,
     project_identity_path,
     validate_project_identity,
 )
@@ -161,7 +162,17 @@ def activate_story_state(
         if isinstance(calibration_report, (str, Path))
         else validate_story_state_calibration_report(dict(calibration_report))
     )
-    identity = ensure_project_identity(root, now=now)
+    with project_identity_mutation_lock(root):
+        return _activate_story_state_locked(root, report, now=now)
+
+
+def _activate_story_state_locked(
+    root: Path,
+    report: Mapping[str, Any],
+    *,
+    now: Callable[[], datetime] | None,
+) -> ProjectIdentity:
+    identity = _ensure_project_identity_locked(root, now=now)
     if report["book_id"] != identity.book_id:
         raise StoryStateActivationError(
             "calibration report belongs to another StoryProject",

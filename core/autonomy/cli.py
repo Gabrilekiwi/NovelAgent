@@ -14,6 +14,7 @@ from core.autonomy.session import AutonomySessionStore
 from core.config import get_config
 from core.delivery import DeliveryQueue
 from core.engine.executor import AgentExecutor
+from core.review.runtime import RuntimeReviewConfig
 from core.story_project.writer import StoryProjectWritebackConfig
 from core.story_project.identity import load_project_identity
 from core.story_project.paths import infer_next_chapter
@@ -390,6 +391,15 @@ def _build_autonomy_runner(
                     "configured endpoint type differs from the trusted profile",
                 )
         enable_llm_validator = not dry_run and quality["policy"] == "strict"
+        strict_review_config = (
+            RuntimeReviewConfig(
+                enabled=True,
+                output_dir=story_runtime_paths.review_dir,
+                gate_threshold="warning",
+            )
+            if quality["policy"] == "strict"
+            else None
+        )
         loader = build_generation_story_project_context_loader(
             story_project=story_root,
             chapter=request.chapter_index,
@@ -405,6 +415,7 @@ def _build_autonomy_runner(
             persistence_dir=story_runtime_paths.persistence_dir,
             dry_run=dry_run,
             enable_llm_validator=enable_llm_validator,
+            review_config=strict_review_config,
             use_run_history=False,
             memory_loader=lambda: {},
             polisher=lambda chapter: chapter,

@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator
 
 from api.contracts import ModelResponse, coerce_model_response
+from core.context_budget import conservative_calibrated_token_estimate
 from core.engine.persistence import atomic_create_json, atomic_create_text
 from core.memory_v2.canonical import canonical_json_bytes
 from core.model_calls import (
@@ -30,6 +31,7 @@ _ACTIVE_MODEL_CALL_RUNTIME: ContextVar["ModelCallRuntimeContext | None"] = Conte
     default=None,
 )
 _SAFE_LABEL = re.compile(r"[^A-Za-z0-9._-]+")
+_FaultInjector = Callable[[str, str, Path | None], None]
 
 
 class ProviderCallUncertainError(ModelCallEvidenceError):
@@ -80,6 +82,7 @@ class ModelCallRuntimeContext:
     clock: Callable[[], datetime] = field(
         default=lambda: datetime.now(timezone.utc)
     )
+    fault_injector: _FaultInjector | None = None
     _operation_scope: ModelCallOperationScope | None = field(
         default=None, init=False, repr=False
     )
@@ -135,11 +138,13 @@ class ModelCallRuntimeContext:
                     "model-call input_token_counter returned an invalid value"
                 )
             return value
-        # One token per canonical UTF-8 byte is deliberately conservative and
-        # is explicitly a reservation, not a claim of provider-exact usage.
-        return len(
-            canonical_json_bytes(request, exclude_environment_fields=False)
-        )
+        canonical_request = canonical_json_bytes(
+            request, exclude_environment_fields=False
+        ).decode("utf-8")
+        # This remains a pre-provider reservation, never a claim of exact
+        # provider usage. The fitted synthetic ratio is bounded by the
+        # independent production byte floor inside this helper.
+        return conservative_calibrated_token_estimate(canonical_request)
 
     def hydrate_tracker_from_store(self) -> list[str]:
         """Rebuild charged budget usage from immutable attempt evidence.
@@ -169,19 +174,7 @@ class ModelCallRuntimeContext:
                 raise ModelCallIntegrityError(
                     f"unsupported terminal model receipt status: {receipt['status']}"
                 )
-            reservation = intent["budget_reservation"]
-            self._reserve_tracker(
-                input_tokens=_non_negative_int(
-                    "reserved_input_tokens",
-                    reservation.get("reserved_input_tokens"),
-                ),
-                max_output_tokens=_non_negative_int(
-                    "reserved_output_tokens",
-                    reservation.get("reserved_output_tokens"),
-                ),
-                call_id=intent["call_id"],
-                attempt_id=intent["attempt_id"],
-            )
+            self._restore_tracker_reservation(intent)
             if receipt is not None:
                 response = self._response_from_receipt(receipt["attempt_id"])
                 self._record_tracker_response(
@@ -215,6 +208,39 @@ class ModelCallRuntimeContext:
         intent_path = self.store.intent_path(attempt_id)
         receipt_path = self.store.receipt_path(attempt_id)
 
+        if receipt_path.exists():
+            intent = self.store.load_intent(attempt_id)
+            self._require_expected_intent(
+                intent,
+                call_id=call_id,
+                attempt_id=attempt_id,
+                provider=provider,
+                model=model,
+                stage=stage,
+                request=request,
+                max_output_tokens=max_output_tokens,
+                explicit_input_tokens=input_tokens,
+            )
+            return self._replay_receipt(intent)
+        if intent_path.exists():
+            intent = self.store.load_intent(attempt_id)
+            self._require_expected_intent(
+                intent,
+                call_id=call_id,
+                attempt_id=attempt_id,
+                provider=provider,
+                model=model,
+                stage=stage,
+                request=request,
+                max_output_tokens=max_output_tokens,
+                explicit_input_tokens=input_tokens,
+            )
+            self._restore_tracker_reservation(intent)
+            raise ProviderCallUncertainError(
+                call_id=intent["call_id"],
+                attempt_id=attempt_id,
+            )
+
         reserved_input = (
             self.estimate_input_tokens(request)
             if input_tokens is None
@@ -225,31 +251,6 @@ class ModelCallRuntimeContext:
             "reserved_output_tokens": max_output_tokens,
             "reserved_total_tokens": reserved_input + max_output_tokens,
         }
-
-        if receipt_path.exists():
-            self._require_expected_intent(
-                self.store.load_intent(attempt_id),
-                provider=provider,
-                model=model,
-                stage=stage,
-                request=request,
-                reservation=reservation,
-            )
-            return self._response_from_receipt(attempt_id)
-        if intent_path.exists():
-            intent = self.store.load_intent(attempt_id)
-            self._require_expected_intent(
-                intent,
-                provider=provider,
-                model=model,
-                stage=stage,
-                request=request,
-                reservation=reservation,
-            )
-            raise ProviderCallUncertainError(
-                call_id=intent["call_id"],
-                attempt_id=attempt_id,
-            )
 
         intent = build_model_call_intent(
             call_id=call_id,
@@ -271,14 +272,18 @@ class ModelCallRuntimeContext:
             existing = self.store.load_intent(attempt_id)
             self._require_expected_intent(
                 existing,
+                call_id=call_id,
+                attempt_id=attempt_id,
                 provider=provider,
                 model=model,
                 stage=stage,
                 request=request,
-                reservation=reservation,
+                max_output_tokens=max_output_tokens,
+                explicit_input_tokens=input_tokens,
             )
             if receipt_path.exists():
-                return self._response_from_receipt(attempt_id)
+                return self._replay_receipt(existing)
+            self._restore_tracker_reservation(existing)
             raise ProviderCallUncertainError(
                 call_id=call_id,
                 attempt_id=attempt_id,
@@ -323,7 +328,18 @@ class ModelCallRuntimeContext:
                 endpoint_type=endpoint_type,
             )
             relative_ref = f"responses/{attempt_id}.txt"
+            artifact_path = _resolve_artifact(self.store.root, relative_ref)
+            self._inject_fault(
+                "after_provider_response_before_artifact",
+                attempt_id,
+                artifact_path,
+            )
             self._persist_response_artifact(relative_ref, response.text)
+            self._inject_fault(
+                "after_response_artifact_before_receipt",
+                attempt_id,
+                artifact_path,
+            )
             receipt = build_model_call_receipt(
                 intent,
                 response=response,
@@ -348,28 +364,111 @@ class ModelCallRuntimeContext:
         self._record_operation_receipt(receipt["receipt_hash"])
         return response
 
+    def _inject_fault(
+        self,
+        event: str,
+        attempt_id: str,
+        path: Path | None,
+    ) -> None:
+        if self.fault_injector is not None:
+            self.fault_injector(event, attempt_id, path)
+
     def _require_expected_intent(
         self,
         intent: dict[str, Any],
         *,
+        call_id: str,
+        attempt_id: str,
         provider: str,
         model: str,
         stage: str,
         request: Any,
-        reservation: dict[str, int],
-    ) -> None:
+        max_output_tokens: int,
+        explicit_input_tokens: int | None,
+    ) -> dict[str, int]:
         expected = {
+            "call_id": call_id,
+            "attempt_id": attempt_id,
             "provider": provider,
             "model": model,
             "stage": stage,
             "request_digest": canonical_model_request_digest(request),
-            "budget_reservation": reservation,
         }
         for field, value in expected.items():
             if intent[field] != value:
                 raise ModelCallConflictError(
                     f"model-call {field} conflicts with immutable intent {intent['attempt_id']}"
                 )
+        reservation = self._stored_reservation(intent)
+        if reservation["reserved_output_tokens"] != max_output_tokens:
+            raise ModelCallConflictError(
+                "model-call reserved_output_tokens conflicts with immutable intent "
+                f"{intent['attempt_id']}"
+            )
+        if explicit_input_tokens is not None:
+            explicit = _non_negative_int("input_tokens", explicit_input_tokens)
+            if reservation["reserved_input_tokens"] != explicit:
+                raise ModelCallConflictError(
+                    "model-call reserved_input_tokens conflicts with immutable intent "
+                    f"{intent['attempt_id']}"
+                )
+        return reservation
+
+    @staticmethod
+    def _stored_reservation(intent: dict[str, Any]) -> dict[str, int]:
+        raw = intent.get("budget_reservation")
+        if not isinstance(raw, dict):
+            raise ModelCallIntegrityError(
+                "durable model-call intent has no budget reservation object"
+            )
+        try:
+            reservation = {
+                "reserved_input_tokens": _non_negative_int(
+                    "reserved_input_tokens", raw.get("reserved_input_tokens")
+                ),
+                "reserved_output_tokens": _non_negative_int(
+                    "reserved_output_tokens", raw.get("reserved_output_tokens")
+                ),
+                "reserved_total_tokens": _non_negative_int(
+                    "reserved_total_tokens", raw.get("reserved_total_tokens")
+                ),
+            }
+        except ValueError as exc:
+            raise ModelCallIntegrityError(
+                "durable model-call intent has an invalid budget reservation"
+            ) from exc
+        if reservation["reserved_total_tokens"] != (
+            reservation["reserved_input_tokens"]
+            + reservation["reserved_output_tokens"]
+        ):
+            raise ModelCallIntegrityError(
+                "durable model-call intent has an inconsistent total reservation"
+            )
+        return reservation
+
+    def _restore_tracker_reservation(self, intent: dict[str, Any]) -> None:
+        reservation = self._stored_reservation(intent)
+        self._reserve_tracker(
+            input_tokens=reservation["reserved_input_tokens"],
+            max_output_tokens=reservation["reserved_output_tokens"],
+            call_id=intent["call_id"],
+            attempt_id=intent["attempt_id"],
+        )
+
+    def _replay_receipt(self, intent: dict[str, Any]) -> ModelResponse:
+        receipt = self.store.load_receipt(intent["attempt_id"])
+        # Local budget rejection is terminal but never crossed the provider
+        # boundary and must remain uncharged.
+        if receipt["status"] != "succeeded":
+            return self._response_from_receipt(intent["attempt_id"])
+        self._restore_tracker_reservation(intent)
+        response = self._response_from_receipt(intent["attempt_id"])
+        self._record_tracker_response(
+            response,
+            call_id=intent["call_id"],
+            attempt_id=intent["attempt_id"],
+        )
+        return response
 
     def _persist_response_artifact(self, relative_ref: str, text: str) -> Path:
         path = _resolve_artifact(self.store.root, relative_ref)
@@ -439,6 +538,15 @@ class ModelCallRuntimeContext:
     ) -> None:
         tracker = self.tracker
         if tracker is None:
+            return
+        ensure_attempt = getattr(tracker, "ensure_model_call", None)
+        if callable(ensure_attempt):
+            ensure_attempt(
+                input_tokens=input_tokens,
+                max_output_tokens=max_output_tokens,
+                call_id=call_id,
+                attempt_id=attempt_id,
+            )
             return
         reserve_attempt = getattr(tracker, "reserve_model_call", None)
         if callable(reserve_attempt):

@@ -523,12 +523,50 @@ class _FixedOutcomeAdapter:
 
 
 class FileDeliveryAdapter:
-    def __init__(self, *, root_map: Mapping[str, str | Path]) -> None:
+    """Route legacy and UUID-bound file jobs without weakening either contract.
+
+    A v1 PathRef has no ``root_uuid`` and retains the historical resolver and
+    attempt-receipt behaviour.  A newer UUID-bound PathRef is never allowed to
+    fall back to that resolver: it must have an operator-controlled
+    ``RootBinding`` and is delegated to ``SafeFileDeliveryAdapter``.
+    """
+
+    def __init__(
+        self,
+        *,
+        root_map: Mapping[str, str | Path],
+        root_bindings: Mapping[str, RootBinding] | None = None,
+    ) -> None:
         self.root_map = dict(root_map)
+        self.root_bindings: dict[str, RootBinding] = {}
+        self._safe_adapters: dict[str, SafeFileDeliveryAdapter] = {}
+        for root_id, binding in dict(root_bindings or {}).items():
+            if not isinstance(binding, RootBinding) or binding.root_id != str(root_id):
+                raise DeliveryError(f"invalid safe file-delivery root binding: {root_id}")
+            self.root_bindings[str(root_id)] = binding
+            self._safe_adapters[str(root_id)] = SafeFileDeliveryAdapter(
+                binding=binding
+            )
 
     def deliver(self, job: Mapping[str, Any], context: DeliveryAttemptContext) -> Mapping[str, Any]:
-        del context
-        path = resolve_path_ref(job["target"]["path_ref"], self.root_map)
+        path_ref = validate_path_ref(job["target"]["path_ref"])
+        if path_ref.root_uuid is not None:
+            adapter = self._safe_adapters.get(path_ref.root_id)
+            if adapter is None:
+                return delivery_outcome(
+                    "retryable_failed",
+                    code="safe_root_binding_missing",
+                    message=(
+                        "UUID-bound file delivery requires the matching operator "
+                        f"RootBinding for {path_ref.root_id}"
+                    ),
+                )
+            return adapter.deliver(job, context)
+
+        # Compatibility path: legacy v1 jobs keep their original bytes and
+        # their historical adapter semantics.  In particular, no UUID is
+        # synthesized into their immutable target or attempt evidence.
+        path = resolve_path_ref(path_ref, self.root_map)
         encoding = str(job["payload"].get("encoding") or "utf-8")
         content = str(job["payload"]["content"]).encode(encoding)
         expected_hash = hashlib.sha256(content).hexdigest()

@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from core.engine.project_root_remap import remap_story_project_roots
 from core.engine.root_registry import RootRegistryError, RootRegistryService
 
 
@@ -95,9 +96,18 @@ def root_remap_command_requested(
 
 
 def run_root_remap_command(args: argparse.Namespace) -> dict[str, Any]:
-    """Change registered physical paths without moving or copying any data."""
+    """Rebind paths after an operator-controlled move; never move data here."""
 
     requested = _parse_remap_entries(list(args.remap_root or []))
+    if "story_project" in requested:
+        return remap_story_project_roots(
+            new_story_project=requested["story_project"]["path"],
+            control_plane=args.persistence_dir,
+            requested=requested,
+            expected_revision=int(args.expected_root_registry_revision),
+            expected_registry_digest=str(args.expected_root_registry_digest),
+        )
+
     service = RootRegistryService(args.persistence_dir)
     before = service.load()
 
@@ -125,6 +135,7 @@ def run_root_remap_command(args: argparse.Namespace) -> dict[str, Any]:
         "control_plane": str(service.transaction_root),
         "data_moved_or_copied": False,
         "runtime_control_plane_relocation_supported": False,
+        "runtime_control_plane_relocated": False,
         "registry": {
             "registry_id": after["registry_id"],
             "previous_revision": before["revision"],
@@ -140,8 +151,8 @@ def run_root_remap_command(args: argparse.Namespace) -> dict[str, Any]:
             for root_id in sorted(requested)
         ],
         "notice": (
-            "Only existing logical data-root bindings were changed. "
-            "No files were moved or copied; runtime control-plane relocation is unsupported."
+            "Logical bindings were changed after validating the existing control plane. "
+            "No files were moved or copied by this command."
         ),
     }
 

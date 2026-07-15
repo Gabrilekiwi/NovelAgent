@@ -5,8 +5,10 @@ import json
 from pathlib import Path
 
 from core.config import get_config
-from core.delivery import DeliveryQueue, FileDeliveryAdapter, NotionDeliveryAdapter
+from core.delivery import DeliveryError, DeliveryQueue, FileDeliveryAdapter, NotionDeliveryAdapter
 from core.engine.delivery_coordinator import DeliveryCoordinator
+from core.engine.root_registry import load_root_registry
+from core.engine.safe_paths import RootBinding
 from core.runtime_paths import RuntimePaths
 
 
@@ -56,7 +58,32 @@ def delivery_adapters_from_args(
     story_root = getattr(args, "_resolved_story_project_root", None) or Path.cwd()
     root_map = paths.root_map(story_root)
     root_map["delivery_store"] = Path(args.delivery_dir).resolve()
-    adapters: dict = {"file": FileDeliveryAdapter(root_map=root_map)}
+    registry_root = Path(
+        getattr(args, "persistence_dir", None) or paths.persistence_dir
+    ).absolute()
+    registry_path = registry_root / "root_registry.json"
+    root_bindings: dict[str, RootBinding] = {}
+    if registry_path.exists():
+        try:
+            registry = load_root_registry(registry_path)
+        except Exception as exc:
+            raise DeliveryError(
+                f"cannot load safe file-delivery root registry: {type(exc).__name__}: {exc}"
+            ) from exc
+        root_bindings = {
+            root_id: RootBinding(
+                root_id=root_id,
+                root_uuid=str(binding["root_uuid"]),
+                path=Path(str(binding["path"])),
+            )
+            for root_id, binding in registry["roots"].items()
+        }
+    adapters: dict = {
+        "file": FileDeliveryAdapter(
+            root_map=root_map,
+            root_bindings=root_bindings,
+        )
+    }
     config = get_config()
     if config.notion_api_key and config.notion_database_id:
         database_schema = None

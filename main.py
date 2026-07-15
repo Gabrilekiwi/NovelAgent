@@ -225,8 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--remap-roots",
         action="store_true",
         help=(
-            "Explicitly update existing logical data-root bindings in a root registry; "
-            "does not move files or relocate the runtime control plane."
+            "Explicitly rebind roots after an identity-preserving same-volume directory "
+            "rename; the command validates and journals the rebind but never moves files."
         ),
     )
     parser.add_argument(
@@ -237,7 +237,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar=("ROOT_ID", "ROOT_UUID", "NEW_PATH"),
         help=(
             "With --remap-roots, bind one existing logical root UUID to an existing "
-            "new physical directory. Repeat for multiple roots."
+            "new physical directory. A story_project entry selects the crash-recoverable "
+            "whole-project path, which discovers and rebinds every embedded registry."
         ),
     )
     parser.add_argument(
@@ -1018,13 +1019,15 @@ def _reconcile_and_publish_persistence(
     expected_book_id: str | None = None,
     persistence_dir: str | Path | None = None,
 ) -> dict:
-    with persistence_run_lock(run_dir, state_paths=state_paths):
-        return _reconcile_and_publish_persistence_locked(
-            run_dir,
-            chapter_dir=chapter_dir,
-            expected_book_id=expected_book_id,
-            persistence_dir=persistence_dir,
-        )
+    runtime_fence = Path(run_dir).parent / ".root-remap-fence"
+    with persistence_run_lock(runtime_fence):
+        with persistence_run_lock(run_dir, state_paths=state_paths):
+            return _reconcile_and_publish_persistence_locked(
+                run_dir,
+                chapter_dir=chapter_dir,
+                expected_book_id=expected_book_id,
+                persistence_dir=persistence_dir,
+            )
 
 
 def _reconcile_authority_persistence(

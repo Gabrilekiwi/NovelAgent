@@ -7,7 +7,9 @@ import unittest
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
+from core.delivery import DeliveryQueue, FileDeliveryAdapter, delivery_payload_hash
 from core.engine.persistence_v2 import (
     PersistenceV2IntegrityError,
     PersistenceV2PreparationError,
@@ -23,7 +25,8 @@ from core.engine.persistence_v2 import (
     verify_publication_receipt,
 )
 from core.engine.run_record import build_run_record, validate_run_result
-from core.path_refs import path_ref_for
+from core.engine.safe_paths import SafePathResolver
+from core.path_refs import path_ref_for, validate_path_ref
 from core.schema import validate_schema
 
 
@@ -106,6 +109,7 @@ class PersistenceV2Test(unittest.TestCase):
         *,
         fault_injector=None,
         final_payload: dict | None = None,
+        delivery_jobs: list[dict] | None = None,
     ) -> tuple[PersistenceV2Transaction, dict]:
         runtime = case["runtime"]
         receipt_ref = path_ref_for(
@@ -185,13 +189,17 @@ class PersistenceV2Test(unittest.TestCase):
             generation_input_context_digest=self._digest("input-context"),
             story_project_source_revision_after={"revision": 2, "digest": self._digest("story-after")},
             candidate_result={"run": {"id": run_id}, "candidate": True},
-            delivery_jobs=[
-                {
-                    "id": f"delivery-{run_id}",
-                    "payload_hash": self._digest("payload"),
-                    "policy": {"required": True, "target": "file"},
-                }
-            ],
+            delivery_jobs=(
+                delivery_jobs
+                if delivery_jobs is not None
+                else [
+                    {
+                        "id": f"delivery-{run_id}",
+                        "payload_hash": self._digest("payload"),
+                        "policy": {"required": True, "target": "file"},
+                    }
+                ]
+            ),
         )
         return transaction, manifest
 
@@ -311,6 +319,65 @@ class PersistenceV2Test(unittest.TestCase):
         self.assertFalse(verification["valid"])
         self.assertFalse(verification["committed"])
 
+    def test_final_run_result_bytes_never_change_during_delivery_reconcile(self) -> None:
+        case = self._case("run_result_delivery_immutable")
+        run_id = "run-result-delivery"
+        payload = {"content": "canonical export\n", "encoding": "utf-8"}
+        job_id = f"delivery-{run_id}"
+        transaction, _ = self._prepared(
+            case,
+            run_id=run_id,
+            final_payload=self._run_result_envelope(run_id),
+            delivery_jobs=[
+                {
+                    "id": job_id,
+                    "payload_hash": delivery_payload_hash(payload),
+                    "policy": {"required": True, "target": "file"},
+                }
+            ],
+        )
+        committed = transaction.commit()
+        self.assertTrue(committed["committed"])
+
+        final_path = case["runtime"] / "runs" / f"{run_id}.json"
+        receipt_path = case["runtime"] / "receipts" / f"{run_id}.json"
+        immutable_bytes = final_path.read_bytes()
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        parsed_before = json.loads(immutable_bytes.decode("utf-8"))
+        self.assertIs(parsed_before, validate_run_result(parsed_before))
+
+        queue = DeliveryQueue(case["delivery"])
+        export_path = case["delivery"] / "exports" / f"{run_id}.txt"
+        queue.enqueue(
+            job_id=job_id,
+            book_id="book-1",
+            run_id=run_id,
+            publication_receipt_hash=receipt["receipt_hash"],
+            target_type="file",
+            target={
+                "path_ref": path_ref_for(
+                    export_path,
+                    root_id="delivery_store",
+                    root=case["delivery"],
+                ).to_dict()
+            },
+            payload=payload,
+            policy="required",
+        )
+        self.assertEqual(immutable_bytes, final_path.read_bytes())
+
+        report = queue.reconcile(
+            adapters={"file": FileDeliveryAdapter(root_map=case["root_map"])},
+            worker_id="worker-1",
+            run_id=run_id,
+        )
+
+        self.assertTrue(report["required_succeeded"], report)
+        self.assertEqual(b"canonical export\n", export_path.read_bytes())
+        self.assertEqual(immutable_bytes, final_path.read_bytes())
+        parsed_after = json.loads(final_path.read_text(encoding="utf-8"))
+        self.assertIs(parsed_after, validate_run_result(parsed_after))
+
     def test_orphan_run_result_envelope_recovers_without_changing_its_shape(self) -> None:
         case = self._case("envelope_orphan")
 
@@ -351,6 +418,117 @@ class PersistenceV2Test(unittest.TestCase):
         self.assertTrue(
             verify_publication_receipt(receipt_path, root_map=case["root_map"])["valid"]
         )
+
+    def test_receipt_parent_swap_after_ensure_parent_fails_closed(self) -> None:
+        case = self._case("receipt_parent_swap")
+        transaction, _ = self._prepared(case)
+        original_ensure_parent = SafePathResolver.ensure_parent
+        swapped = False
+
+        def swap_receipt_parent(resolver, value, **kwargs):
+            nonlocal swapped
+            resolved = original_ensure_parent(resolver, value, **kwargs)
+            ref = validate_path_ref(value)
+            if not swapped and ref.relative_path == "receipts/run-1.json":
+                swapped = True
+                receipt_parent = case["runtime"] / "receipts"
+                receipt_parent.rename(case["runtime"] / "receipts-before-swap")
+                receipt_parent.mkdir()
+            return resolved
+
+        with patch.object(
+            SafePathResolver,
+            "ensure_parent",
+            new=swap_receipt_parent,
+        ):
+            result = transaction.commit()
+
+        self.assertTrue(swapped)
+        self.assertEqual("commit_marked", result["state"])
+        self.assertFalse(result["committed"])
+        self.assertFalse((case["runtime"] / "receipts" / "run-1.json").exists())
+        self.assertFalse(
+            (case["runtime"] / "receipts-before-swap" / "run-1.json").exists()
+        )
+
+    def test_apply_create_with_new_parent_uses_full_guard_and_commits(self) -> None:
+        case = self._case("apply_new_parent")
+        target_path = case["story"] / "genesis" / "canonical.json"
+        transaction = PersistenceV2Transaction(
+            transaction_root=case["transaction_root"],
+            run_id="run-genesis-parent",
+            book_id="book-1",
+            root_map=case["root_map"],
+        )
+        receipt_ref = path_ref_for(
+            case["runtime"] / "receipts" / "run-genesis-parent.json",
+            root_id="runtime",
+            root=case["runtime"],
+        )
+        final_ref = path_ref_for(
+            case["runtime"] / "runs" / "run-genesis-parent.json",
+            root_id="runtime",
+            root=case["runtime"],
+        )
+        final = bind_final_run_record_receipt(
+            {"id": "run-genesis-parent", "committed": True},
+            receipt_id="receipt-run-genesis-parent",
+            receipt_path_ref=receipt_ref,
+        )
+        transaction.prepare(
+            apply_targets=[
+                PersistenceV2Target(
+                    target_id="genesis-canonical",
+                    kind="canonical_memory",
+                    path_ref=path_ref_for(
+                        target_path,
+                        root_id="story_project",
+                        root=case["story"],
+                    ),
+                    content='{"genesis":true}\n',
+                    expected_before_exists=False,
+                )
+            ],
+            artifacts=[],
+            final_run_record=final,
+            final_run_path_ref=final_ref,
+            receipt_id="receipt-run-genesis-parent",
+            receipt_path_ref=receipt_ref,
+            context_digest=self._digest("genesis-context"),
+            generation_input_context_digest=self._digest("genesis-input"),
+            story_project_source_revision_after={
+                "revision": 1,
+                "digest": self._digest("genesis-after"),
+            },
+            candidate_result={"run": {"id": "run-genesis-parent"}},
+        )
+
+        result = transaction.commit()
+
+        self.assertTrue(result["committed"], result)
+        self.assertEqual(b'{"genesis":true}\n', target_path.read_bytes())
+
+    def test_publication_parent_mkdir_is_an_injectable_durability_boundary(self) -> None:
+        case = self._case("publication_parent_mkdir_fault")
+        review_parent = case["runtime"] / "reviews"
+        injected = False
+
+        def crash(event: str, _index: int | None, path: Path | None) -> None:
+            nonlocal injected
+            if event == "after_durability_directory_mkdir" and path == review_parent:
+                injected = True
+                raise SimulatedCrash("power loss after safe parent mkdir")
+
+        transaction, _ = self._prepared(case, fault_injector=crash)
+        with self.assertRaises(SimulatedCrash):
+            transaction.commit()
+
+        self.assertTrue(injected)
+        self.assertTrue(transaction.marker_path.exists())
+        report = reconcile_pending_persistence_v2(case["transaction_root"])
+        self.assertTrue(report["ok"], report)
+        self.assertEqual("completed", report["transactions"][0]["state"])
+        self.assertTrue((review_parent / "run-1.json").is_file())
 
     def test_orphan_final_run_is_not_committed_and_marker_recovery_ignores_candidate(self) -> None:
         case = self._case("orphan")
@@ -435,6 +613,7 @@ class PersistenceV2Test(unittest.TestCase):
             [(item[1], item[2]) for item in after],
         )
         event_names = {item[0] for item in first}
+        self.assertIn("before_durability_directory_mkdir", event_names)
         self.assertIn("before_durability_file_fsync", event_names)
         self.assertIn("before_durability_replace_rename", event_names)
         self.assertIn("before_durability_journal_rename", event_names)
@@ -444,6 +623,64 @@ class PersistenceV2Test(unittest.TestCase):
             else "before_durability_create_link",
             event_names,
         )
+
+    def test_every_durability_boundary_recovers_by_commit_marker_presence(self) -> None:
+        baseline = self._case("durability_fault_matrix_baseline")
+        durability_events: list[tuple[str, int]] = []
+
+        def capture(event: str, index: int | None, _path: Path | None) -> None:
+            if event.startswith(("before_durability_", "after_durability_")):
+                self.assertIsNotNone(index)
+                durability_events.append((event, int(index)))
+
+        transaction, _ = self._prepared(baseline, fault_injector=capture)
+        self.assertTrue(transaction.commit()["committed"])
+        self.assertTrue(durability_events)
+
+        for ordinal, (fault_event, fault_index) in enumerate(durability_events):
+            with self.subTest(event=fault_event, index=fault_index):
+                case = self._case(f"durability_fault_matrix_{ordinal}")
+                injected = False
+
+                def crash(
+                    event: str,
+                    index: int | None,
+                    _path: Path | None,
+                    *,
+                    expected_event: str = fault_event,
+                    expected_index: int = fault_index,
+                ) -> None:
+                    nonlocal injected
+                    if event == expected_event and index == expected_index:
+                        injected = True
+                        raise SimulatedCrash(f"{event}:{index}")
+
+                with self.assertRaises(SimulatedCrash):
+                    faulted, _ = self._prepared(case, fault_injector=crash)
+                    faulted.commit()
+
+                self.assertTrue(injected)
+                marker = (
+                    case["transaction_root"]
+                    / "journals"
+                    / "run-1"
+                    / "commit.marker"
+                )
+                marker_was_durable = marker.exists()
+                report = reconcile_pending_persistence_v2(case["transaction_root"])
+                states = [item["state"] for item in report["transactions"]]
+
+                self.assertTrue(report["ok"], report)
+                if marker_was_durable:
+                    self.assertIn("completed", states, report)
+                    self.assertEqual(
+                        b'{"chapter":2}\n', case["snapshot"].read_bytes()
+                    )
+                else:
+                    self.assertNotIn("completed", states, report)
+                    self.assertEqual(
+                        b'{"chapter":1}\n', case["snapshot"].read_bytes()
+                    )
 
     def test_apply_rename_fault_before_marker_rolls_back(self) -> None:
         case = self._case("apply_rename_fault")

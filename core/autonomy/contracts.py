@@ -95,12 +95,13 @@ class BookRunSelections(TypedDict):
 class BookRunPlan(TypedDict):
     """Typed public view of the persisted ``InstructionPlan`` contract."""
 
-    schema_version: Literal["1.0"]
+    schema_version: Literal["1.0", "1.1"]
     plan_id: str
     plan_hash: str
     state: Literal["preview"]
     intent: Literal["generate_contiguous_canonical_chapters"]
     instruction_digest: str
+    story_brief: NotRequired[str]
     profile_set_id: str
     profile_set_hash: str
     source_snapshot: SourceSnapshot

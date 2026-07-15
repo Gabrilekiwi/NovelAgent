@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+from datetime import datetime, timezone
 import io
 import json
 from pathlib import Path
@@ -12,12 +13,14 @@ from unittest.mock import patch
 import uuid
 
 import main as cli
+from core.delivery import DeliveryQueue, delivery_outcome
 from core.memory_v2.canonical import canonical_json_hash
 from core.story_project.identity import ensure_project_identity, project_identity_path
 from core.story_project.migration_v2 import (
     MigrationPlanStaleError,
     MigrationV2Error,
     assert_migration_plan_current,
+    assert_migration_source_snapshot_current,
     build_migration_approval,
     build_migration_plan,
     build_migration_preview,
@@ -27,6 +30,13 @@ from core.story_project.migration_v2 import (
 
 
 NOW = "2026-07-14T00:00:00+00:00"
+
+
+class _LegacySuccessAdapter:
+    def deliver(self, _job, _context):
+        return delivery_outcome(
+            "succeeded", code="legacy_delivery_verified", message="legacy fixture"
+        )
 
 
 class StoryProjectMigrationV2Test(unittest.TestCase):
@@ -56,6 +66,36 @@ class StoryProjectMigrationV2Test(unittest.TestCase):
         review.parent.mkdir(parents=True)
         review.write_text('{"status":"legacy"}\n', encoding="utf-8")
         return root
+
+    @staticmethod
+    def _legacy_delivery_history(root: Path) -> tuple[Path, Path]:
+        fixed_now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        queue = DeliveryQueue(
+            root / ".novelagent" / "runtime" / "deliveries",
+            clock=lambda: fixed_now,
+        )
+        queue.enqueue(
+            job_id="legacy-job-1",
+            book_id="legacy-book-1",
+            run_id="legacy-run-1",
+            publication_receipt_hash="a" * 64,
+            target_type="file",
+            target={
+                "path_ref": {
+                    "root_id": "delivery_store",
+                    "relative_path": "legacy-export.md",
+                }
+            },
+            payload={"content": "legacy chapter\n", "encoding": "utf-8"},
+        )
+        queue.attempt(
+            "legacy-job-1",
+            worker_id="legacy-worker-1",
+            adapter=_LegacySuccessAdapter(),
+        )
+        job = queue.jobs_dir / "legacy-job-1.json"
+        attempt = next((queue.attempts_dir / "legacy-job-1").glob("*.json"))
+        return job, attempt
 
     def test_clean_interpreter_can_import_migration_preview_api(self) -> None:
         completed = subprocess.run(
@@ -273,6 +313,60 @@ class StoryProjectMigrationV2Test(unittest.TestCase):
         project_identity_path(root).write_bytes(b"not-json-anymore")
         with self.assertRaisesRegex(MigrationPlanStaleError, "ProjectIdentity bytes changed"):
             assert_migration_plan_current(plan, root)
+
+    def test_legacy_delivery_job_and_attempt_receipt_are_frozen_and_cas_bound(self) -> None:
+        root = self._populated_book("delivery_history")
+        job, attempt = self._legacy_delivery_history(root)
+        before = {path: path.read_bytes() for path in (job, attempt)}
+
+        plan = build_migration_plan(root, created_at=NOW)
+
+        sources = {item["relative_path"]: item for item in plan["sources"]}
+        for path, content in before.items():
+            relative = path.relative_to(root).as_posix()
+            self.assertEqual("legacy_deliveries", sources[relative]["role"])
+            self.assertEqual("legacy_artifact", sources[relative]["evidence_class"])
+            self.assertEqual(canonical_json_hash(plan["sources"]), plan["source_digest"])
+            self.assertEqual(content, path.read_bytes())
+
+    def test_delivery_history_add_edit_delete_each_expires_plan_without_rewrite(self) -> None:
+        mutations = ("add", "edit", "delete")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                root = self._populated_book(f"delivery_{mutation}")
+                job, attempt = self._legacy_delivery_history(root)
+                plan = build_migration_plan(root, created_at=NOW)
+                job_before = job.read_bytes()
+                attempt_before = attempt.read_bytes()
+
+                if mutation == "add":
+                    added = attempt.parent / "legacy-added.json"
+                    added.write_bytes(b'{"schema_version":"1.0","legacy":true}\r\n')
+                elif mutation == "edit":
+                    job.write_bytes(job_before + b" ")
+                else:
+                    attempt.unlink()
+
+                with self.assertRaises(MigrationPlanStaleError):
+                    assert_migration_plan_current(plan, root)
+                with self.assertRaisesRegex(
+                    MigrationPlanStaleError, "during migration bootstrap"
+                ):
+                    assert_migration_source_snapshot_current(plan, root)
+
+                if mutation == "add":
+                    self.assertEqual(job_before, job.read_bytes())
+                    self.assertEqual(attempt_before, attempt.read_bytes())
+                    self.assertEqual(
+                        b'{"schema_version":"1.0","legacy":true}\r\n',
+                        added.read_bytes(),
+                    )
+                elif mutation == "edit":
+                    self.assertEqual(job_before + b" ", job.read_bytes())
+                    self.assertEqual(attempt_before, attempt.read_bytes())
+                else:
+                    self.assertEqual(job_before, job.read_bytes())
+                    self.assertFalse(attempt.exists())
 
     def test_plan_and_approval_are_tamper_evident(self) -> None:
         root = self._populated_book("approval")

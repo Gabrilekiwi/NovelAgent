@@ -11,7 +11,6 @@ from typing import Any, Callable, Mapping
 from core.engine.persistence import (
     atomic_create_json,
     atomic_write_json,
-    persistence_run_lock,
 )
 from core.schema import SchemaValidationError, validate_schema
 from core.story_project.identity import (
@@ -19,6 +18,7 @@ from core.story_project.identity import (
     PROJECT_IDENTITY_V2_SCHEMA_VERSION,
     ProjectIdentity,
     ProjectIdentityError,
+    project_identity_mutation_lock,
     project_identity_path,
     validate_project_identity,
 )
@@ -380,8 +380,7 @@ def activate_event_authority(
         )
 
     identity_file = project_identity_path(root)
-    lock_dir = root / ".novelagent" / "authority" / "cas"
-    with persistence_run_lock(lock_dir, state_paths=(identity_file,)):
+    with project_identity_mutation_lock(root):
         before = _read_identity_bytes(identity_file)
         actual_sha = hashlib.sha256(before).hexdigest()
         if actual_sha != expected_sha:

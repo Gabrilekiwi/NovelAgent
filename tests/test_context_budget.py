@@ -12,6 +12,9 @@ from core.context_budget import (
     CalibratedTokenEstimator,
     ContextBudget,
     ContextBudgetError,
+    ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
+    ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE,
+    ESTIMATOR_ENFORCEMENT_METHOD,
     RunBudgetLimits,
     RunBudgetTracker,
     TokenCounter,
@@ -79,10 +82,59 @@ class ContextBudgetTest(unittest.TestCase):
         report = self._budget().measure("中文", stage="scene")
 
         self.assertEqual("calibrated_estimate", report["count_mode"])
-        self.assertEqual("utf8-upper-bound-v1", report["counter_version"])
-        self.assertEqual(6, report["raw_input_tokens"])
-        self.assertEqual(7, report["budgeted_input_tokens"])
-        self.assertEqual("utf8-upper-bound-v1", report["count_metadata"]["calibration_version"])
+        self.assertEqual(
+            "mixed-endpoint-synthetic-calibration-v1",
+            report["counter_version"],
+        )
+        self.assertEqual(3, report["raw_input_tokens"])
+        self.assertEqual(70, report["budgeted_input_tokens"])
+        self.assertEqual(
+            "mixed-endpoint-synthetic-calibration-v1",
+            report["count_metadata"]["calibration_version"],
+        )
+        self.assertEqual(
+            "synthetic_acceptance_v1",
+            report["count_metadata"]["calibration_source"],
+        )
+        self.assertFalse(
+            report["count_metadata"]["calibration_real_provider_verified"]
+        )
+        self.assertEqual("evaluation_only", report["count_metadata"]["holdout_role"])
+        self.assertEqual(
+            "max-observed-tokens-per-utf8-byte-v1",
+            report["count_metadata"]["calibration_method"],
+        )
+        self.assertEqual(
+            ESTIMATOR_ENFORCEMENT_METHOD,
+            report["count_metadata"]["enforcement_method"],
+        )
+        self.assertEqual(
+            ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE,
+            report["count_metadata"]["enforcement_floor_tokens_per_utf8_byte"],
+        )
+        self.assertEqual(
+            ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
+            report["count_metadata"]["enforcement_fixed_overhead_tokens"],
+        )
+        self.assertEqual(
+            self._budget().safety_ratio,
+            report["count_metadata"]["enforcement_safety_ratio"],
+        )
+
+    def test_default_hard_estimate_bounds_adversarial_utf8_payloads(self) -> None:
+        payloads = (
+            '{"digest":"' + ("abcdef0123456789" * 64) + '"}',
+            '{"id":"123e4567-e89b-12d3-a456-426614174000"}',
+            "中英混合-token-边界" * 40,
+        )
+        for payload in payloads:
+            with self.subTest(payload_prefix=payload[:24]):
+                report = self._budget().measure(payload, stage="adversarial")
+                byte_floor = len(payload.encode("utf-8"))
+                self.assertGreaterEqual(
+                    report["budgeted_input_tokens"],
+                    byte_floor + ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
+                )
 
     def test_official_known_model_may_report_provider_exact_with_bound_metadata(self) -> None:
         budget = self._budget(provider="openai", model="gpt-known", endpoint_type="official")
@@ -319,11 +371,14 @@ class ContextBudgetTest(unittest.TestCase):
         )
         self.assertEqual(30, tracker.report()["reserved_output_tokens"])
         tracker.record_model_response(
-            response=ModelResponse("正文", usage={"output_tokens": 7}),
+            response=ModelResponse(
+                "正文", usage={"input_tokens": 6, "output_tokens": 7}
+            ),
             call_id="call-1",
             attempt_id="call-1-a1",
         )
         settled = tracker.report()
+        self.assertEqual(6, settled["total_input_tokens"])
         self.assertEqual(7, settled["total_output_tokens"])
         self.assertEqual(0, settled["reserved_output_tokens"])
 
@@ -337,6 +392,209 @@ class ContextBudgetTest(unittest.TestCase):
         self.assertEqual(20, uncertain["reserved_output_tokens"])
         self.assertEqual(27, uncertain["charged_output_tokens"])
         self.assertEqual(1, uncertain["unsettled_attempt_count"])
+
+    def test_provider_input_usage_settles_estimate_and_overrun_is_charged(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=2,
+                max_total_input_tokens=10,
+                max_total_output_tokens=20,
+                max_elapsed_seconds=10,
+            )
+        )
+        tracker.reserve_model_call(
+            input_tokens=4,
+            max_output_tokens=5,
+            call_id="call-input",
+            attempt_id="call-input-a1",
+        )
+
+        with self.assertRaises(ContextBudgetError) as raised:
+            tracker.record_model_response(
+                response=ModelResponse(
+                    "done", usage={"input_tokens": 11, "output_tokens": 2}
+                ),
+                call_id="call-input",
+                attempt_id="call-input-a1",
+            )
+
+        self.assertEqual("run_input_token_budget_exceeded", raised.exception.code)
+        report = tracker.report()
+        self.assertEqual(11, report["total_input_tokens"])
+        self.assertEqual(2, report["total_output_tokens"])
+        self.assertEqual(0, report["reserved_output_tokens"])
+        self.assertEqual(0, report["unsettled_attempt_count"])
+        with self.assertRaises(ContextBudgetError) as replayed:
+            tracker.record_model_response(
+                response=ModelResponse("ignored"),
+                call_id="call-input",
+                attempt_id="call-input-a1",
+            )
+        self.assertEqual("run_input_token_budget_exceeded", replayed.exception.code)
+
+    def test_provider_usage_formats_are_reconciled_without_cache_or_total_leaks(self) -> None:
+        cases = (
+            (
+                "anthropic-cache-components",
+                {
+                    "input_tokens": 2,
+                    "cache_creation_input_tokens": 3,
+                    "cache_read_input_tokens": 11,
+                    "output_tokens": 4,
+                },
+                16,
+                4,
+            ),
+            (
+                "openai-cached-subset",
+                {
+                    "prompt_tokens": 20,
+                    "prompt_tokens_details": {"cached_tokens": 15},
+                    "completion_tokens": 2,
+                    "total_tokens": 22,
+                },
+                20,
+                2,
+            ),
+            (
+                "derive-output-from-total",
+                {"input_tokens": 9, "total_tokens": 14},
+                9,
+                5,
+            ),
+            (
+                "derive-input-from-total",
+                {"output_tokens": 5, "total_tokens": 14},
+                9,
+                5,
+            ),
+            (
+                "total-only-fails-closed",
+                {"total_tokens": 14},
+                14,
+                14,
+            ),
+        )
+        for ordinal, (name, usage, expected_input, expected_output) in enumerate(
+            cases, start=1
+        ):
+            with self.subTest(name=name):
+                tracker = RunBudgetTracker(
+                    RunBudgetLimits(
+                        max_provider_calls=2,
+                        max_total_input_tokens=100,
+                        max_total_output_tokens=100,
+                        max_elapsed_seconds=10,
+                    )
+                )
+                attempt_id = f"usage-{ordinal}-a1"
+                tracker.reserve_model_call(
+                    input_tokens=6,
+                    max_output_tokens=30,
+                    call_id=f"usage-{ordinal}",
+                    attempt_id=attempt_id,
+                )
+                tracker.record_model_response(
+                    response=ModelResponse("x", usage=usage),
+                    call_id=f"usage-{ordinal}",
+                    attempt_id=attempt_id,
+                )
+                report = tracker.report()
+                self.assertEqual(expected_input, report["total_input_tokens"])
+                self.assertEqual(expected_output, report["total_output_tokens"])
+
+    def test_contradictory_total_fails_closed_after_conservative_settlement(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=2,
+                max_total_input_tokens=100,
+                max_total_output_tokens=100,
+                max_elapsed_seconds=10,
+            )
+        )
+        tracker.reserve_model_call(
+            input_tokens=2,
+            max_output_tokens=10,
+            call_id="contradictory",
+            attempt_id="contradictory-a1",
+        )
+
+        with self.assertRaises(ContextBudgetError) as raised:
+            tracker.record_model_response(
+                response=ModelResponse(
+                    "x",
+                    usage={"input_tokens": 4, "output_tokens": 3, "total_tokens": 6},
+                ),
+                call_id="contradictory",
+                attempt_id="contradictory-a1",
+            )
+
+        self.assertEqual("run_budget_usage_invalid", raised.exception.code)
+        report = tracker.report()
+        self.assertEqual(6, report["total_input_tokens"])
+        self.assertEqual(10, report["total_output_tokens"])
+        self.assertEqual(0, report["unsettled_attempt_count"])
+        with self.assertRaises(ContextBudgetError) as replayed:
+            tracker.record_model_response(
+                response=ModelResponse("ignored"),
+                call_id="contradictory",
+                attempt_id="contradictory-a1",
+            )
+        self.assertEqual("run_budget_usage_invalid", replayed.exception.code)
+
+    def test_malformed_recognized_usage_field_fails_closed(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=2,
+                max_total_input_tokens=100,
+                max_total_output_tokens=100,
+                max_elapsed_seconds=10,
+            )
+        )
+        tracker.reserve_model_call(
+            input_tokens=5,
+            max_output_tokens=12,
+            call_id="malformed",
+            attempt_id="malformed-a1",
+        )
+        with self.assertRaises(ContextBudgetError) as raised:
+            tracker.record_model_response(
+                response=ModelResponse(
+                    "x",
+                    usage={"input_tokens": -1, "output_tokens": 2},
+                ),
+                call_id="malformed",
+                attempt_id="malformed-a1",
+            )
+        self.assertEqual("run_budget_usage_invalid", raised.exception.code)
+        self.assertEqual(5, tracker.total_input_tokens)
+        self.assertEqual(12, tracker.total_output_tokens)
+        self.assertEqual(0, tracker.reserved_output_tokens)
+
+    def test_ensure_model_call_is_idempotent_but_rejects_evidence_drift(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=2,
+                max_total_input_tokens=100,
+                max_total_output_tokens=100,
+                max_elapsed_seconds=10,
+            )
+        )
+        arguments = {
+            "input_tokens": 7,
+            "max_output_tokens": 11,
+            "call_id": "ensure",
+            "attempt_id": "ensure-a1",
+        }
+        self.assertTrue(tracker.ensure_model_call(**arguments))
+        self.assertFalse(tracker.ensure_model_call(**arguments))
+        self.assertEqual(1, tracker.provider_calls)
+        self.assertEqual(7, tracker.total_input_tokens)
+        self.assertEqual(11, tracker.reserved_output_tokens)
+
+        with self.assertRaises(ContextBudgetError) as raised:
+            tracker.ensure_model_call(**{**arguments, "input_tokens": 8})
+        self.assertEqual("run_budget_attempt_conflict", raised.exception.code)
 
     def test_model_call_reservation_rejects_output_before_network(self) -> None:
         tracker = RunBudgetTracker(

@@ -4,12 +4,13 @@
   "type": "object",
   "required": ["schema_version", "plan_id", "plan_hash", "state", "intent", "instruction_digest", "profile_set_id", "profile_set_hash", "source_snapshot", "selections", "requested_chapter_count", "chapter_start", "chapter_end", "created_at"],
   "properties": {
-    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "schema_version": {"type": "string", "enum": ["1.0", "1.1"]},
     "plan_id": {"type": "string", "minLength": 1},
     "plan_hash": {"type": "string", "minLength": 64},
     "state": {"type": "string", "enum": ["preview"]},
     "intent": {"type": "string", "enum": ["generate_contiguous_canonical_chapters"]},
     "instruction_digest": {"type": "string", "minLength": 64},
+    "story_brief": {"type": "string", "minLength": 1},
     "profile_set_id": {"type": "string", "minLength": 1},
     "profile_set_hash": {"type": "string", "minLength": 64},
     "source_snapshot": {

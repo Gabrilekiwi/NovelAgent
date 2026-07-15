@@ -27,7 +27,18 @@
         "tokenizer": {"type": "string", "minLength": 1},
         "tokenizer_version": {"type": "string", "minLength": 1},
         "provider_counter_version": {"type": "string", "minLength": 1},
-        "calibration_version": {"type": "string", "minLength": 1}
+        "calibration_version": {"type": "string", "minLength": 1},
+        "calibration_source": {"type": "string", "minLength": 1},
+        "calibration_manifest_hash": {"type": "string", "minLength": 64},
+        "holdout_manifest_hash": {"type": "string", "minLength": 64},
+        "holdout_role": {"type": "string", "enum": ["evaluation_only"]},
+        "calibration_real_provider_verified": {"type": "boolean"},
+        "calibration_method": {"type": "string", "minLength": 1},
+        "calibration_tokens_per_utf8_byte": {"type": "number", "minimum": 0},
+        "enforcement_method": {"type": "string", "minLength": 1},
+        "enforcement_floor_tokens_per_utf8_byte": {"type": "number", "minimum": 0},
+        "enforcement_fixed_overhead_tokens": {"type": "integer", "minimum": 0},
+        "enforcement_safety_ratio": {"type": "number", "minimum": 0}
       },
       "additionalProperties": false
     },

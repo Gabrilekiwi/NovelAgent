@@ -680,12 +680,16 @@ class AutonomyRecoveryTest(unittest.TestCase):
             base = Path(temporary)
             runtime = base / "runtime"
             story = base / "story"
-            moved = base / "story-moved"
+            external = base / "external"
+            moved = base / "external-moved"
             runtime.mkdir()
             story.mkdir()
+            external.mkdir()
             moved.mkdir()
             service = RootRegistryService(runtime / "persistence")
-            registry = service.ensure({"runtime": runtime, "story_project": story})
+            registry = service.ensure(
+                {"runtime": runtime, "story_project": story, "external": external}
+            )
             store = AutonomySessionStore(
                 runtime / "autonomy", trusted_profiles=trusted_profiles()
             )
@@ -696,29 +700,33 @@ class AutonomyRecoveryTest(unittest.TestCase):
             )
             with self.assertRaises(RootRemapBlockedError):
                 service.remap(
-                    {"story_project": moved},
+                    {"external": moved},
                     expected_revision=registry["revision"],
                     expected_registry_digest=registry["registry_digest"],
                 )
             store.cancel(started["session_id"], at=T1)
             remapped = service.remap(
-                {"story_project": moved},
+                {"external": moved},
                 expected_revision=registry["revision"],
                 expected_registry_digest=registry["registry_digest"],
             )
-            self.assertEqual(str(moved.absolute()), remapped["roots"]["story_project"]["path"])
+            self.assertEqual(str(moved.absolute()), remapped["roots"]["external"]["path"])
 
     def test_root_remap_blocks_terminal_session_with_pending_operation(self) -> None:
         with workspace_case("recover_remap_pending_operation") as temporary:
             base = Path(temporary)
             runtime = base / "runtime"
             story = base / "story"
-            moved = base / "story-moved"
+            external = base / "external"
+            moved = base / "external-moved"
             runtime.mkdir()
             story.mkdir()
+            external.mkdir()
             moved.mkdir()
             service = RootRegistryService(runtime / "persistence")
-            registry = service.ensure({"runtime": runtime, "story_project": story})
+            registry = service.ensure(
+                {"runtime": runtime, "story_project": story, "external": external}
+            )
             store = AutonomySessionStore(
                 runtime / "autonomy", trusted_profiles=trusted_profiles()
             )
@@ -738,17 +746,17 @@ class AutonomyRecoveryTest(unittest.TestCase):
             # intent has no result marker yet and must fence root remapping.
             with self.assertRaises(RootRemapBlockedError):
                 service.remap(
-                    {"story_project": moved},
+                    {"external": moved},
                     expected_revision=registry["revision"],
                     expected_registry_digest=registry["registry_digest"],
                 )
             store.reconcile_orphans(at=T1)
             remapped = service.remap(
-                {"story_project": moved},
+                {"external": moved},
                 expected_revision=registry["revision"],
                 expected_registry_digest=registry["registry_digest"],
             )
-            self.assertEqual(str(moved.absolute()), remapped["roots"]["story_project"]["path"])
+            self.assertEqual(str(moved.absolute()), remapped["roots"]["external"]["path"])
 
 
 if __name__ == "__main__":

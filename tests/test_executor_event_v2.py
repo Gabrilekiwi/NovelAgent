@@ -13,6 +13,7 @@ from core.engine.delivery_intent_recovery import recover_completed_delivery_jobs
 from core.engine.executor import AgentExecutor
 from core.engine.persistence import PersistenceError
 from core.engine.persistence_v2 import verify_publication_receipt
+from core.engine.safe_paths import RootBinding
 from core.memory_v2 import (
     apply_genesis_event,
     canonical_memory_to_snapshot,
@@ -307,7 +308,14 @@ class EventAuthorityExecutorV2E2ETest(unittest.TestCase):
             queue,
             adapters={
                 "file": FileDeliveryAdapter(
-                    root_map={fixture["profile"]["root_id"]: fixture["external"]}
+                    root_map={fixture["profile"]["root_id"]: fixture["external"]},
+                    root_bindings={
+                        fixture["profile"]["root_id"]: RootBinding(
+                            root_id=fixture["profile"]["root_id"],
+                            root_uuid=fixture["profile"]["root_uuid"],
+                            path=fixture["external"],
+                        )
+                    },
                 )
             },
             worker_id="event-v2-e2e-worker",

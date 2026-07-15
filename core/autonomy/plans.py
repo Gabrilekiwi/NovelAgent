@@ -30,7 +30,8 @@ _SELECTOR_KINDS = {
 }
 _FORBIDDEN_INSTRUCTION = re.compile(
     r"(?ix)(?:"
-    r"notion|api[_ -]?key|credential|password|secret|access[_ -]?token|"
+    r"notion|authorization|bearer\s+[a-z0-9._-]+|sk-[a-z0-9_-]{8,}|"
+    r"api[_ -]?key|credential|password|secret|access[_ -]?token|"
     r"env(?:ironment)?\s+var(?:iable)?s?|file://|"
     r"环境变量|凭据|密钥|密码|令牌|"
     r"(?:^|\s)(?:env|path|root|directory|file)\s*=|"
@@ -47,6 +48,28 @@ _SELECTOR = re.compile(
     re.IGNORECASE,
 )
 _CHAPTER_COUNT = re.compile(r"(?<!\d)(\d{1,6})\s*(?:章|chapters?\b)", re.IGNORECASE)
+_CHAPTER_COMMAND = re.compile(
+    r"(?ix)(?:"
+    r"(?:请(?:你)?\s*)?(?:连续\s*)?(?:写|续写|生成|创作)\s*"
+    r"\d{1,6}\s*章|"
+    r"(?:please\s+)?(?:write|continue|generate|produce)\s+"
+    r"\d{1,6}\s+chapters?\b"
+    r")"
+)
+_BRIEF_EDGE_CHARS = " \t\r\n,，。.;；:：|-—_()（）[]【】{}<>《》\"'“”‘’"
+_BRIEF_META_ONLY = re.compile(
+    r"(?ix)^(?:"
+    r"请|请你|连续|写|续写|生成|创作|使用|采用|选择|并|以及|和|"
+    r"please|write|continue|generate|produce|use|using|with|and|"
+    r"[\s,，。.;；:：|\-—_()（）\[\]【】{}<>《》\"'“”‘’]"
+    r")+$"
+)
+
+STORY_BRIEF_MAX_CHARS = 240
+DEFAULT_STORY_BRIEF = (
+    "承接当前 StoryProject 已提交的权威状态，延续既有主线因果、人物关系、"
+    "资源约束与伏笔，不跳章、不重置既有事实。"
+)
 
 
 class AutonomyPlanError(AutonomyContractError):
@@ -145,13 +168,15 @@ def compile_instruction_plan(
             f"requested {count} chapters exceeds trusted budget profile limit {maximum}",
         )
     start = int(source["canonical_next_chapter"])
+    story_brief = _extract_story_brief(text)
     plan = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "plan_id": "pending",
         "plan_hash": "0" * 64,
         "state": "preview",
         "intent": "generate_contiguous_canonical_chapters",
         "instruction_digest": canonical_hash({"instruction": text}),
+        "story_brief": story_brief,
         "profile_set_id": trusted_profiles.profile_set_id,
         "profile_set_hash": trusted_profiles.profile_set_hash,
         "source_snapshot": copy.deepcopy(source),
@@ -178,6 +203,19 @@ def validate_instruction_plan(
     sha256_digest("plan_hash", plan["plan_hash"])
     sha256_digest("instruction_digest", plan["instruction_digest"])
     sha256_digest("profile_set_hash", plan["profile_set_hash"])
+    version = plan["schema_version"]
+    if version == "1.1" and "story_brief" not in plan:
+        raise AutonomyPlanError(
+            "instruction_story_brief_missing",
+            "InstructionPlan 1.1 must retain a bounded narrative story brief",
+        )
+    if version == "1.0" and "story_brief" in plan:
+        raise AutonomyPlanError(
+            "instruction_story_brief_version_invalid",
+            "InstructionPlan 1.0 cannot contain the 1.1 story brief field",
+        )
+    if "story_brief" in plan:
+        _validate_story_brief(plan["story_brief"])
     source = validate_source_snapshot(plan["source_snapshot"])
     expected_hash = canonical_hash(plan, exclude_fields=("plan_id", "plan_hash"))
     expected_id = f"plan_{expected_hash[:24]}"
@@ -265,10 +303,52 @@ def _requested_chapters(text: str) -> int:
     return next(iter(matches)) if matches else 1
 
 
+def story_brief_for_plan(plan: Mapping[str, Any]) -> str:
+    """Return persisted narrative intent, with a read-only legacy default.
+
+    Historical InstructionPlan 1.0 bytes did not retain narrative text.  They
+    remain valid and hash-stable; downstream Arc construction gives them the
+    explicit continuity brief without mutating or upcasting the stored plan.
+    """
+
+    value = plan.get("story_brief", DEFAULT_STORY_BRIEF)
+    return _validate_story_brief(value)
+
+
+def _extract_story_brief(text: str) -> str:
+    # Trusted selectors and chapter-count controls configure an already
+    # bounded capability.  They are deliberately removed before any text can
+    # become story semantics consumed by Arc/outline generation.
+    brief = _SELECTOR.sub(" ", text)
+    brief = _CHAPTER_COMMAND.sub(" ", brief)
+    brief = _CHAPTER_COUNT.sub(" ", brief)
+    brief = re.sub(r"\s+", " ", brief).strip(_BRIEF_EDGE_CHARS)
+    if not brief or _BRIEF_META_ONLY.fullmatch(brief):
+        brief = DEFAULT_STORY_BRIEF
+    return _validate_story_brief(brief)
+
+
+def _validate_story_brief(value: Any) -> str:
+    brief = required_text("story_brief", value)
+    if len(brief) > STORY_BRIEF_MAX_CHARS:
+        raise AutonomyPlanError(
+            "instruction_story_brief_too_long",
+            f"story brief must not exceed {STORY_BRIEF_MAX_CHARS} characters",
+        )
+    if _SELECTOR.search(brief) is not None:
+        raise AutonomyPlanError(
+            "instruction_story_brief_control_invalid",
+            "trusted profile selectors cannot become narrative story intent",
+        )
+    _assert_instruction_safe(brief)
+    return brief
+
+
 __all__ = [
     "AutonomyPlanError",
     "build_source_snapshot",
     "compile_instruction_plan",
+    "story_brief_for_plan",
     "validate_instruction_plan",
     "validate_source_snapshot",
 ]

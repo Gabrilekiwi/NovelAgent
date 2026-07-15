@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,9 +16,17 @@ from core.engine.persistence import (
     PersistenceLockError,
     _atomic_create_from_bytes,
     _atomic_replace_from_bytes,
+    _journal_child,
+    _load_manifest,
+    _validate_commit_marker,
     persistence_run_lock,
 )
-from core.engine.safe_paths import RootBinding, SafePathResolver, assert_safe_local_tree
+from core.engine.safe_paths import (
+    FILE_ATTRIBUTE_REPARSE_POINT,
+    RootBinding,
+    SafePathResolver,
+    assert_safe_local_tree,
+)
 from core.memory_v2.canonical import canonical_json_hash
 from core.schema import SchemaValidationError, validate_schema
 
@@ -64,6 +73,8 @@ class RootRegistryService:
             root_map, require_runtime=require_runtime
         )
         self.transaction_root.mkdir(parents=True, exist_ok=True)
+        _arm_persistence_lock(self.transaction_root)
+        fence_attestation = _arm_main_project_fence(self.transaction_root, roots)
         if self.registry_path.exists():
             registry = load_root_registry(self.registry_path)
             missing = sorted(set(roots) - set(registry["roots"]))
@@ -77,12 +88,40 @@ class RootRegistryService:
                 raise RootRemapRequiredError(
                     "physical roots changed; use explicit remap-roots: " + ", ".join(mismatched)
                 )
-            if not missing:
+            unarmed = sorted(
+                root_id
+                for root_id, path in roots.items()
+                if root_id in registry["roots"]
+                and "directory_identity" not in registry["roots"][root_id]
+                and os.path.lexists(path)
+            )
+            fence_needs_binding = False
+            if fence_attestation is not None:
+                current_attestation = registry["roots"]["runtime"].get(
+                    "project_remap_fence"
+                )
+                if current_attestation is None:
+                    fence_needs_binding = True
+                elif current_attestation != fence_attestation:
+                    raise RootRegistryError(
+                        "project remap fence identity changed; refusing to re-arm a replaced fence"
+                    )
+            if not missing and not unarmed and not fence_needs_binding:
                 return registry
             _assert_pending_persistence_idle(self.transaction_root)
             updated = copy.deepcopy(registry)
             for root_id in missing:
                 updated["roots"][root_id] = _new_binding(root_id, roots[root_id])
+            for root_id in unarmed:
+                updated["roots"][root_id]["directory_identity"] = directory_identity(
+                    roots[root_id]
+                )
+                updated["roots"][root_id]["updated_at"] = _utc_now()
+            if fence_attestation is not None:
+                updated["roots"]["runtime"][
+                    "project_remap_fence"
+                ] = fence_attestation
+                updated["roots"]["runtime"]["updated_at"] = _utc_now()
             updated["revision"] += 1
             updated["updated_at"] = _utc_now()
             updated["registry_digest"] = _registry_digest(updated)
@@ -100,6 +139,10 @@ class RootRegistryService:
             "updated_at": now,
             "registry_digest": "",
         }
+        if fence_attestation is not None:
+            registry["roots"]["runtime"][
+                "project_remap_fence"
+            ] = fence_attestation
         registry["registry_digest"] = _registry_digest(registry)
         payload = _json_bytes(validate_root_registry(registry))
         try:
@@ -153,6 +196,15 @@ class RootRegistryService:
                     locks.enter_context(persistence_run_lock(self.transaction_root))
                 _assert_remap_idle(self.transaction_root, active_sessions=active_sessions)
                 registry = self.load()
+                story_binding = registry.get("roots", {}).get("story_project")
+                if isinstance(story_binding, Mapping) and _is_path_beneath(
+                    self.transaction_root,
+                    Path(str(story_binding.get("path") or "")).absolute(),
+                ):
+                    raise RootRegistryError(
+                        "an embedded StoryProject root registry may only be changed by "
+                        "the project-level remap-roots orchestrator"
+                    )
                 if registry["revision"] != expected_revision:
                     raise RootRegistryCasError(
                         f"root registry revision changed: expected={expected_revision} actual={registry['revision']}"
@@ -162,10 +214,17 @@ class RootRegistryService:
                 unknown = sorted(set(remaps) - set(registry["roots"]))
                 if unknown:
                     raise RootRegistryError("unknown logical roots: " + ", ".join(unknown))
+                if "story_project" in remaps and _canonical_path(
+                    registry["roots"]["story_project"]["path"]
+                ) != _canonical_path(remaps["story_project"]):
+                    raise RootRegistryError(
+                        "StoryProject relocation requires the project-level remap-roots "
+                        "orchestrator; a single registry cannot prove completion"
+                    )
                 if "runtime" in remaps:
                     raise RootRegistryError(
-                        "runtime root remap is not supported without an explicit "
-                        "persistence control-plane relocation"
+                        "runtime root remap is not supported by a single registry; use "
+                        "the project-level remap-roots orchestrator"
                     )
                 validated = _validate_physical_roots(remaps, require_runtime=False)
                 updated = copy.deepcopy(registry)
@@ -173,6 +232,7 @@ class RootRegistryService:
                     binding = updated["roots"][root_id]
                     binding["path"] = str(path)
                     binding["path_identity_sha256"] = _path_digest(path)
+                    binding["directory_identity"] = directory_identity(path)
                     binding["updated_at"] = _utc_now()
                 updated["revision"] += 1
                 updated["updated_at"] = _utc_now()
@@ -249,6 +309,21 @@ def validate_root_registry(value: Any) -> dict[str, Any]:
         path = Path(str(binding.get("path"))).absolute()
         if binding.get("path_identity_sha256") != _path_digest(path):
             raise RootRegistryError(f"logical root path binding is invalid: {root_id}")
+        identity = binding.get("directory_identity")
+        if identity is not None:
+            validate_directory_identity(identity)
+        fence = binding.get("project_remap_fence")
+        if fence is not None:
+            if (
+                root_id != "runtime"
+                or not isinstance(fence, Mapping)
+                or set(fence)
+                != {"relative_path", "directory_identity", "lock_identity"}
+                or fence.get("relative_path") != ".root-remap-fence"
+            ):
+                raise RootRegistryError("project remap fence binding is invalid")
+            validate_directory_identity(fence.get("directory_identity"))
+            _validate_file_identity(fence.get("lock_identity"))
     return payload
 
 
@@ -345,9 +420,102 @@ def _new_binding(root_id: str, path: Path) -> dict[str, Any]:
         "root_uuid": str(uuid.uuid4()),
         "path": str(path),
         "path_identity_sha256": _path_digest(path),
+        "directory_identity": directory_identity(path),
         "created_at": now,
         "updated_at": now,
     }
+
+
+def _arm_main_project_fence(
+    transaction_root: Path, roots: Mapping[str, Path]
+) -> dict[str, Any] | None:
+    """Pre-arm the no-create relocation fence while the old tree is stable."""
+
+    story = roots.get("story_project")
+    runtime = roots.get("runtime")
+    if story is None or runtime is None:
+        return None
+    expected_runtime = story / ".novelagent" / "runtime"
+    expected_transaction_root = expected_runtime / "persistence"
+    if (
+        _canonical_path(runtime) != _canonical_path(expected_runtime)
+        or _canonical_path(transaction_root) != _canonical_path(expected_transaction_root)
+    ):
+        return None
+    fence = runtime / ".root-remap-fence"
+    if os.path.lexists(fence):
+        _assert_plain_directory_for_arm(fence)
+    else:
+        try:
+            os.mkdir(fence)
+        except FileExistsError:
+            # A no-clobber loser must inspect what won before writing a lock.
+            pass
+        except OSError as exc:
+            raise RootRegistryError(f"cannot arm project remap fence: {fence}: {exc}") from exc
+        _assert_plain_directory_for_arm(fence)
+    lock_identity = _arm_persistence_lock(fence)
+    return {
+        "relative_path": ".root-remap-fence",
+        "directory_identity": directory_identity(fence),
+        "lock_identity": lock_identity,
+    }
+
+
+def _arm_persistence_lock(root: Path) -> dict[str, int]:
+    _assert_plain_directory_for_arm(root)
+    lock = root / ".persistence.lock"
+    try:
+        _atomic_create_from_bytes(lock, b"\0")
+    except FileExistsError:
+        pass
+    return _plain_file_identity(lock)
+
+
+def _assert_plain_directory_for_arm(path: Path) -> None:
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise RootRegistryError(f"cannot inspect persistence lock root: {path}") from exc
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        raise RootRegistryError(f"unsafe persistence lock root: {path}")
+
+
+def _plain_file_identity(path: Path) -> dict[str, int]:
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise RootRegistryError(f"required persistence lock is missing: {path}") from exc
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT
+        or info.st_size < 1
+    ):
+        raise RootRegistryError(f"unsafe persistence lock file: {path}")
+    return {
+        "device": int(info.st_dev),
+        "inode": int(info.st_ino),
+        "mode": int(stat.S_IFMT(info.st_mode)),
+    }
+
+
+def _validate_file_identity(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping) or set(value) != {"device", "inode", "mode"}:
+        raise RootRegistryError("persistence lock file identity is invalid")
+    result: dict[str, int] = {}
+    for field in ("device", "inode", "mode"):
+        item = value.get(field)
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise RootRegistryError(f"persistence lock file identity {field} is invalid")
+        result[field] = item
+    if result["inode"] == 0 or not stat.S_ISREG(result["mode"]):
+        raise RootRegistryError("persistence lock identity cannot prove a regular file")
+    return result
 
 
 def _assert_remap_idle(transaction_root: Path, *, active_sessions: Iterable[str]) -> None:
@@ -381,6 +549,57 @@ def _assert_pending_persistence_idle(transaction_root: Path) -> None:
         for state in ("completed", "rolled_back"):
             terminal_ids.update(path.stem for path in (transaction_root / "registry" / state).glob("*.json"))
         orphan_journals = [path for path in journals.iterdir() if path.is_dir() and path.name not in terminal_ids]
+    legacy_pending: list[Path] = []
+    # v1 journals are direct children of ``persistence_dir`` (for example
+    # ``chapter_10_<timestamp>``), not ``runtime/runs/transactions``.  A v2
+    # registry may coexist with those historical journals during upgrade, so
+    # every unknown direct child must be classified before a root rebind.
+    known_control_directories = {"abandoned", "journals", "r", "registry", "staging"}
+    if transaction_root.exists():
+        for child in transaction_root.iterdir():
+            try:
+                child_info = os.lstat(child)
+            except OSError:
+                legacy_pending.append(child)
+                continue
+            if (
+                stat.S_ISLNK(child_info.st_mode)
+                or getattr(child_info, "st_file_attributes", 0)
+                & FILE_ATTRIBUTE_REPARSE_POINT
+            ):
+                legacy_pending.append(child)
+                continue
+            if stat.S_ISREG(child_info.st_mode):
+                continue
+            if not stat.S_ISDIR(child_info.st_mode):
+                legacy_pending.append(child)
+                continue
+            if child.name in known_control_directories:
+                continue
+            try:
+                _assert_plain_directory_for_arm(child)
+                _plain_file_identity(child / "manifest.json")
+                manifest = _load_manifest(child)
+                state = str(manifest.get("state") or "")
+                marker_relative = manifest.get("commit_marker") or "commit.marker"
+                if not isinstance(marker_relative, str):
+                    raise RootRegistryError("legacy commit marker path is invalid")
+                marker = _journal_child(child, marker_relative)
+                if state == "completed":
+                    _plain_file_identity(marker)
+                    if _validate_commit_marker(
+                        marker,
+                        str(manifest.get("run_id") or child.name),
+                        manifest.get("candidate_sha256"),
+                    ) is not None:
+                        legacy_pending.append(child)
+                elif state == "rolled_back":
+                    if os.path.lexists(marker):
+                        legacy_pending.append(child)
+                else:
+                    legacy_pending.append(child)
+            except Exception:
+                legacy_pending.append(child)
     if (
         pending
         or recovery_required
@@ -388,6 +607,7 @@ def _assert_pending_persistence_idle(transaction_root: Path) -> None:
         or authority_recovery_required
         or staging
         or orphan_journals
+        or legacy_pending
     ):
         raise RootRemapBlockedError("remap-roots is blocked by a pending persistence transaction")
 
@@ -407,12 +627,20 @@ def _active_or_invalid_autonomy_sessions(autonomy_root: Path) -> list[str]:
         from core.autonomy.session import AutonomySessionStore
 
         store = AutonomySessionStore(autonomy_root, reconcile_on_open=False)
+        if operations_root.exists():
+            for entry in sorted(operations_root.iterdir(), key=lambda item: item.name):
+                if not entry.is_dir():
+                    blocked.append(f"invalid:operation-entry:{entry.name}")
         for operation in store.operations.pending():
             blocked.append(f"operation:{operation['operation_id']}")
         if sessions_root.exists():
+            session_directories: list[Path] = []
             for directory in sorted(sessions_root.iterdir(), key=lambda item: item.name):
                 if not directory.is_dir():
+                    if directory.name != "latest.json" or not directory.is_file():
+                        blocked.append(f"invalid:session-entry:{directory.name}")
                     continue
+                session_directories.append(directory)
                 try:
                     genesis = store._load_genesis(directory.name)
                     events = store._load_events(directory.name)
@@ -423,11 +651,16 @@ def _active_or_invalid_autonomy_sessions(autonomy_root: Path) -> list[str]:
                     blocked.append(directory.name)
                 if genesis.get("session_id") != directory.name:
                     blocked.append(f"invalid:{directory.name}")
+            if session_directories:
+                latest = sessions_root / "latest.json"
+                if not latest.is_file():
+                    blocked.append("invalid:latest-session-missing")
+                else:
+                    store.resolve_session_id("latest")
         if leases_root.exists():
-            from core.autonomy.common import load_json_object, now_utc, parse_utc
+            from core.autonomy.common import load_json_object
             from core.autonomy.lease import validate_book_lease
 
-            now = parse_utc(now_utc())
             for lease_directory in sorted(leases_root.iterdir(), key=lambda item: item.name):
                 if not lease_directory.is_dir():
                     blocked.append(f"invalid:lease-entry:{lease_directory.name}")
@@ -447,9 +680,10 @@ def _active_or_invalid_autonomy_sessions(autonomy_root: Path) -> list[str]:
                     )
                     if durable != lease or historical != lease:
                         raise ValueError("lease current.json does not match its durable history")
-                    if lease.get("status") == "active" and parse_utc(
-                        lease["expires_at"]
-                    ) > now:
+                    # Expiry alone does not release a durable writer identity.
+                    # A stale active lease can still be taken over/resumed, so
+                    # project relocation requires an explicit terminal lease.
+                    if lease.get("status") == "active":
                         blocked.append(f"lease:{lease['session_id']}")
                 except Exception:
                     blocked.append(f"invalid:{current.parent.name}")
@@ -481,12 +715,60 @@ def _registry_digest(payload: Mapping[str, Any]) -> str:
     return canonical_json_hash(content)
 
 
+def directory_identity(path: str | Path) -> dict[str, int]:
+    """Return the stable directory identity required for rename-only remaps."""
+
+    candidate = assert_safe_local_tree(path)
+    if not candidate.is_dir():
+        raise RootRegistryError(f"logical root is not an existing directory: {candidate}")
+    info = os.lstat(candidate)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        raise RootRegistryError(
+            f"logical root final component is a link or reparse point: {candidate}"
+        )
+    identity = {
+        "device": int(info.st_dev),
+        "inode": int(info.st_ino),
+        "mode": int(stat.S_IFMT(info.st_mode)),
+    }
+    return validate_directory_identity(identity)
+
+
+def validate_directory_identity(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        raise RootRegistryError("logical root directory identity is invalid")
+    if set(value) != {"device", "inode", "mode"}:
+        raise RootRegistryError("logical root directory identity fields are invalid")
+    result: dict[str, int] = {}
+    for field in ("device", "inode", "mode"):
+        item = value.get(field)
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise RootRegistryError(f"logical root directory identity {field} is invalid")
+        result[field] = item
+    if result["inode"] == 0 or not stat.S_ISDIR(result["mode"]):
+        raise RootRegistryError("logical root directory identity cannot prove a directory rename")
+    return result
+
+
 def _path_digest(path: str | Path) -> str:
     return hashlib.sha256(_canonical_path(path).encode("utf-8")).hexdigest()
 
 
 def _canonical_path(path: str | Path) -> str:
     return os.path.normcase(str(Path(path).absolute()))
+
+
+def _is_path_beneath(path: Path, root: Path) -> bool:
+    try:
+        return os.path.commonpath((_canonical_path(path), _canonical_path(root))) == _canonical_path(
+            root
+        )
+    except ValueError:
+        return False
 
 
 def _validate_root_id(value: str) -> None:
@@ -509,9 +791,11 @@ __all__ = [
     "RootRegistryService",
     "RootRemapBlockedError",
     "RootRemapRequiredError",
+    "directory_identity",
     "load_root_registry",
     "remap_roots",
     "root_registry_manifest_binding",
     "validate_registry_manifest_binding",
+    "validate_directory_identity",
     "validate_root_registry",
 ]

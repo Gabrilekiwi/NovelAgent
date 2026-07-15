@@ -747,22 +747,16 @@ class PersistenceV21Test(unittest.TestCase):
         case = self._case("completed_remap")
         transaction = self._prepare(case)
         self.assertTrue(transaction.commit()["committed"])
-        moved_story = case["base"] / "story-moved"
         moved_artifacts = case["base"] / "artifacts-moved"
-        case["story"].rename(moved_story)
         case["artifacts"].rename(moved_artifacts)
         service = RootRegistryService(case["transaction_root"])
         before = service.load()
         service.remap(
-            {
-                "story_project": moved_story,
-                "chapter_artifacts": moved_artifacts,
-            },
+            {"chapter_artifacts": moved_artifacts},
             expected_revision=before["revision"],
             expected_registry_digest=before["registry_digest"],
         )
         current_roots = dict(case["root_map"])
-        current_roots["story_project"] = moved_story
         current_roots["chapter_artifacts"] = moved_artifacts
 
         verification = verify_publication_receipt(
@@ -785,25 +779,27 @@ class RootRegistryAndBackendTest(unittest.TestCase):
     def test_remap_is_pure_cas_and_preserves_logical_uuid(self) -> None:
         transaction_root, roots = self._roots("cas")
         service = RootRegistryService(transaction_root)
-        before = service.ensure(roots)
-        moved = transaction_root.parent.parent / "story-moved"
+        external = transaction_root.parent.parent / "external"
+        external.mkdir()
+        before = service.ensure({**roots, "external": external})
+        moved = transaction_root.parent.parent / "external-moved"
         moved.mkdir()
 
         after = service.remap(
-            {"story_project": moved},
+            {"external": moved},
             expected_revision=before["revision"],
             expected_registry_digest=before["registry_digest"],
         )
 
         self.assertEqual(
-            before["roots"]["story_project"]["root_uuid"],
-            after["roots"]["story_project"]["root_uuid"],
+            before["roots"]["external"]["root_uuid"],
+            after["roots"]["external"]["root_uuid"],
         )
-        self.assertEqual(str(moved.absolute()), after["roots"]["story_project"]["path"])
-        self.assertTrue(roots["story_project"].is_dir())
+        self.assertEqual(str(moved.absolute()), after["roots"]["external"]["path"])
+        self.assertTrue(external.is_dir())
         with self.assertRaises(RootRegistryCasError):
             service.remap(
-                {"story_project": roots["story_project"]},
+                {"external": external},
                 expected_revision=before["revision"],
                 expected_registry_digest=before["registry_digest"],
             )
@@ -815,7 +811,7 @@ class RootRegistryAndBackendTest(unittest.TestCase):
         moved_runtime = transaction_root.parent.parent / "runtime-moved"
         moved_runtime.mkdir()
 
-        with self.assertRaisesRegex(RootRegistryError, "control-plane relocation"):
+        with self.assertRaisesRegex(RootRegistryError, "single registry"):
             service.remap(
                 {"runtime": moved_runtime},
                 expected_revision=before["revision"],

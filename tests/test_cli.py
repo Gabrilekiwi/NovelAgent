@@ -14,9 +14,17 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import main as cli
+from core.delivery import DeliveryQueue
 from core.engine.persistence import PersistenceError
+from core.engine.root_registry import RootRegistryService
 from core.engine.run_record import build_run_record
-from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH
+from core.path_refs import path_ref_for
+from core.runtime_paths import (
+    DEFAULT_CHAPTER_DIR,
+    DEFAULT_RUN_DIR,
+    DEFAULT_SNAPSHOT_PATH,
+    RuntimePaths,
+)
 from core.story_project.activation import build_story_state_calibration_report
 from core.story_project.identity import ensure_project_identity, load_project_identity, project_identity_path
 from core.story_project.semantic_contracts import STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION
@@ -569,6 +577,94 @@ class CliTest(unittest.TestCase):
         reconcile.assert_called_once()
         executor.assert_not_called()
         self.assertEqual(report, json.loads(output.getvalue()))
+
+    def test_cli_file_delivery_routes_uuid_path_refs_through_root_registry_binding(self) -> None:
+        case_dir = self._case_dir("delivery_safe_adapter")
+        story = case_dir / "story"
+        runtime = case_dir / "runtime"
+        external = case_dir / "external"
+        for directory in (story, runtime, external):
+            directory.mkdir()
+        paths = RuntimePaths(
+            runtime_dir=runtime,
+            snapshot_path=runtime / "snapshot.json",
+            run_dir=runtime / "runs",
+            chapter_dir=runtime / "chapters",
+            review_dir=runtime / "reviews",
+            persistence_dir=runtime / "persistence",
+            delivery_dir=runtime / "deliveries",
+            memory_dir=runtime / "memory",
+        )
+        for directory in (
+            paths.run_dir,
+            paths.chapter_dir,
+            paths.review_dir,
+            paths.persistence_dir,
+            paths.delivery_dir,
+            paths.memory_dir,
+        ):
+            directory.mkdir(parents=True, exist_ok=True)
+        root_id = "external:cli-export"
+        registry = RootRegistryService(paths.persistence_dir).ensure(
+            {**paths.root_map(story), root_id: external}
+        )
+        root_uuid = registry["roots"][root_id]["root_uuid"]
+        args = SimpleNamespace(
+            delivery_dir=str(paths.delivery_dir),
+            persistence_dir=str(paths.persistence_dir),
+            notion_delivery_schema=None,
+            _resolved_story_project_root=story,
+        )
+        adapter = cli._delivery_adapters_from_args(
+            args,
+            story_runtime_paths=paths,
+        )["file"]
+        self.assertEqual(root_uuid, adapter.root_bindings[root_id].root_uuid)
+
+        queue = DeliveryQueue(paths.delivery_dir)
+        expected_path = external / "safe.json"
+        queue.enqueue(
+            job_id="safe-job",
+            book_id="book-1",
+            run_id="run-1",
+            publication_receipt_hash="a" * 64,
+            target_type="file",
+            target={
+                "path_ref": path_ref_for(
+                    expected_path,
+                    root_id=root_id,
+                    root=external,
+                    root_uuid=root_uuid,
+                ).to_dict()
+            },
+            payload={"content": "safe\n", "encoding": "utf-8"},
+        )
+        succeeded = queue.attempt("safe-job", worker_id="worker", adapter=adapter)
+        self.assertEqual("succeeded", succeeded["state"])
+        self.assertEqual(b"safe\n", expected_path.read_bytes())
+
+        mismatch_path = external / "must-not-exist.json"
+        queue.enqueue(
+            job_id="uuid-mismatch",
+            book_id="book-1",
+            run_id="run-1",
+            publication_receipt_hash="a" * 64,
+            target_type="file",
+            target={
+                "path_ref": path_ref_for(
+                    mismatch_path,
+                    root_id=root_id,
+                    root=external,
+                    root_uuid="22222222-2222-4222-8222-222222222222",
+                ).to_dict()
+            },
+            payload={"content": "unsafe\n", "encoding": "utf-8"},
+        )
+        rejected = queue.attempt(
+            "uuid-mismatch", worker_id="worker", adapter=adapter
+        )
+        self.assertEqual("retryable_failed", rejected["state"])
+        self.assertFalse(mismatch_path.exists())
 
     def test_event_authority_reconcile_never_calls_v1_publisher(self) -> None:
         case_dir = self._case_dir("event_reconcile_backend")

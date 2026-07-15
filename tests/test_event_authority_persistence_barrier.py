@@ -14,7 +14,7 @@ from core.engine.persistence_v2 import (
     bind_final_run_record_receipt,
 )
 from core.engine.persistence import persistence_run_lock
-from core.engine.root_registry import RootRegistryService, RootRemapBlockedError
+from core.engine.root_registry import RootRegistryError, RootRegistryService, RootRemapBlockedError
 from core.memory_v2.canonical import canonical_json_hash
 from core.path_refs import path_ref_for
 from core.story_project.authority_persistence import (
@@ -502,7 +502,7 @@ class EventAuthorityPersistenceBarrierTest(unittest.TestCase):
             (moved_parent / "receipts" / "registry-drift.json").exists()
         )
 
-    def test_idle_story_and_external_roots_remap_without_new_semantic_ids(self) -> None:
+    def test_idle_ea_single_registry_remap_is_rejected_without_id_drift(self) -> None:
         case = self._case("idle-remap")
         first, first_prepare = self._transaction(
             case,
@@ -532,16 +532,18 @@ class EventAuthorityPersistenceBarrierTest(unittest.TestCase):
             for root_id, binding in before["roots"].items()
         }
 
-        remapped = service.remap(
-            {
-                "story_project": moved_story,
-                "external:event-authority-chapter": case["runtime_b"],
-            },
-            expected_revision=before["revision"],
-            expected_registry_digest=before["registry_digest"],
-        )
+        with self.assertRaisesRegex(RootRegistryError, "project-level"):
+            service.remap(
+                {
+                    "story_project": moved_story,
+                    "external:event-authority-chapter": case["runtime_b"],
+                },
+                expected_revision=before["revision"],
+                expected_registry_digest=before["registry_digest"],
+            )
+        remapped = service.load()
         self.assertEqual(before["registry_id"], remapped["registry_id"])
-        self.assertEqual(before["revision"] + 1, remapped["revision"])
+        self.assertEqual(before["revision"], remapped["revision"])
         self.assertEqual(root_ids, set(remapped["roots"]))
         self.assertEqual(
             root_uuids,
@@ -551,25 +553,10 @@ class EventAuthorityPersistenceBarrierTest(unittest.TestCase):
             },
         )
 
-        second, second_prepare = self._transaction(
-            case,
-            runtime=case["runtime_b"],
-            run_id="idle-remap-b",
-            before='{"head":1}\n',
-            after='{"head":2}\n',
-        )
-        with event_authority_write_operation(
-            moved_story,
-            expected_book_id=case["book_id"],
-            writer_kind="chapter",
-        ) as operation:
-            operation.prepare_transaction(second, **second_prepare)
-            self.assertTrue(operation.commit_transaction(second)["committed"])
-
         after = service.load()
         self.assertEqual(remapped["registry_digest"], after["registry_digest"])
         self.assertEqual(root_ids, set(after["roots"]))
-        self.assertEqual('{"head":2}\n', case["shared"].read_text(encoding="utf-8"))
+        self.assertEqual('{"head":1}\n', case["shared"].read_text(encoding="utf-8"))
 
     def test_real_agent_executor_recovers_cross_root_marked_transaction(self) -> None:
         from tests.test_executor_event_v2 import EventAuthorityExecutorV2E2ETest

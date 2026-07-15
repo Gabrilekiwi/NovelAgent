@@ -12,7 +12,7 @@ from typing import Any, Callable, Mapping
 
 from api.contracts import ModelCallError, ModelOutputError
 from api.retry import consume_retry_telemetry, reset_retry_telemetry
-from core.chapter_contexts import ChapterContextError, resolve_committed_previous_chapter_artifact
+from core.chapter_contexts import resolve_committed_previous_chapter_artifact
 from core.config import get_config
 from core.context_budget import ContextBudgetError, RunBudgetLimits, RunBudgetTracker
 from core.execution_provenance import ExecutionProvenance, capture_execution_provenance
@@ -468,16 +468,21 @@ class AgentExecutor:
                 previous_result=previous_result,
                 chapter_hint=chapter_hint,
             )
-        with persistence_run_lock(
-            self.run_dir, state_paths=self._persistence_state_paths()
-        ):
-            self._assert_persistence_ready(expected_book_id=self._expected_book_id)
-            return self._run_once_impl(
-                persist=True,
-                snapshot_override=snapshot_override,
-                previous_result=previous_result,
-                chapter_hint=chapter_hint,
-            )
+        # Legacy/local writers share the project relocation dependency fence
+        # before taking their historical run-directory lock.  This preserves
+        # the established run lock while making the order compatible with the
+        # whole-StoryProject EA->fence->local remap barrier.
+        with persistence_run_lock(self.run_dir.parent / ".root-remap-fence"):
+            with persistence_run_lock(
+                self.run_dir, state_paths=self._persistence_state_paths()
+            ):
+                self._assert_persistence_ready(expected_book_id=self._expected_book_id)
+                return self._run_once_impl(
+                    persist=True,
+                    snapshot_override=snapshot_override,
+                    previous_result=previous_result,
+                    chapter_hint=chapter_hint,
+                )
 
     def _run_once_impl(
         self,
@@ -1636,7 +1641,11 @@ class AgentExecutor:
             review=original_review,
             chapter_index=int(decision["chapter_index"]),
         )
-        review_gate = self._review_gate_for_review(original_review, original_quality_decision)
+        review_gate = self._review_gate_for_review(
+            original_review,
+            original_quality_decision,
+            review_config=review_config,
+        )
         if not self.review_repair_config.enabled:
             return (
                 chapter,
@@ -1735,7 +1744,11 @@ class AgentExecutor:
                 final_review,
             )
         )
-        final_gate = self._review_gate_for_review(final_review, final_quality_decision)
+        final_gate = self._review_gate_for_review(
+            final_review,
+            final_quality_decision,
+            review_config=review_config,
+        )
 
         if final_quality_decision["accepted"] and _review_gate_allows_commit(final_gate):
             repaired_chapter = str(review_repair.get("final_chapter") or chapter)
@@ -1797,9 +1810,11 @@ class AgentExecutor:
         self,
         review: dict[str, Any] | None,
         quality_decision: dict[str, Any],
+        *,
+        review_config: RuntimeReviewConfig | None = None,
     ) -> dict[str, Any] | None:
         return self.quality_coordinator.review_gate(
-            review_config=self.review_config,
+            review_config=review_config or self.review_config,
             review=review,
             quality_decision=quality_decision,
         )
@@ -3494,14 +3509,11 @@ def _previous_chapter_text(
                     return value
                 break
     if run_dir is not None and chapter_artifact_root is not None:
-        try:
-            fallback = resolve_committed_previous_chapter_artifact(
-                chapter_index=chapter_index,
-                run_dir=run_dir,
-                chapter_artifact_root=chapter_artifact_root,
-            )
-        except ChapterContextError:
-            return None
+        fallback = resolve_committed_previous_chapter_artifact(
+            chapter_index=chapter_index,
+            run_dir=run_dir,
+            chapter_artifact_root=chapter_artifact_root,
+        )
         return fallback.review_tail["text"] if fallback is not None else None
     return None
 
