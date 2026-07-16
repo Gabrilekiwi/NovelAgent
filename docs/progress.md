@@ -1,14 +1,14 @@
 # Project Progress
 
-Last updated: 2026-07-15
+Last updated: 2026-07-16
 
-Current reliability/autonomy claims are governed by the four-level [Reliability and autonomy capability status](reliability-autonomy-capability-status.md): code exists, main-path integration, default enablement, and real verification. Synthetic verification is recorded separately and never promoted to real evidence. Historical completion notes below do not imply that the new autonomy path is default-enabled or real-verified. See [Real autonomy E2E release gates](real-autonomy-e2e.md) for the separate billable gate.
+Current reliability/autonomy claims are governed by the four-level [Reliability and autonomy capability status](reliability-autonomy-capability-status.md): code exists, main-path integration, default enablement, and real verification. Synthetic verification is recorded separately and never promoted to real evidence. Historical completion notes below do not imply that the new autonomy path is default-enabled or real-verified. The billable real single-chapter, four-chapter, ten-chapter, and 20-or-more-chapter checks are now [operator-run post-goal validation](real-autonomy-e2e.md): they are outside the current Codex goal and do not block its completion. Codex analyzes the operator's later redacted reports without running the tests.
 
 Current upgrade evidence snapshot:
 
 - **Code/integration:** after an operator-controlled same-volume StoryProject rename, the explicit `--remap-roots` CLI can validate directory identities and forward-rebind all recognized embedded registries, main registry last. It requires UUID plus revision/digest CAS, pre-armed locks, an absent old path, and no pending/recovery transaction or active session/lease. It moves no data and fails closed on cross-volume/copy-delete/case-only moves, changed roots, unknown registries, or external mutable EA transaction roots. This is conditional local integration, not default portability or real target-project evidence.
 - **Synthetic verification:** a complete 50-chapter deterministic autonomy simulation passed against code commit `491fe1d` in 1278.705 seconds, with 50 outlines, prose publications, EA completion entries, publication receipts, Delivery intents/jobs/attempt receipts, and required external JSON deliveries, plus 49 linear next-target Arc adjustments. See the [retained evidence report](reliability-autonomy-50-chapter-evidence.json). The same commit then passed 1308 unit tests (7 platform skips) and 21/21 v1 preflight checks. This closes only the synthetic long-run gate.
-- **Real verification:** the first one-chapter gate of the user's five-chapter authorization entered the real runner/provider path on 2026-07-15 but failed before chapter completion; it is not a successful gate. The four-chapter canary was not started, that old authorization is now consumed, and no successful 1/4/10/20+ report exists. The hardened harness disables workspace `.env` loading, requires a clean commit and an explicit proxy choice, and retains future redacted failure diagnostics. No Notion call was made in this upgrade run.
+- **Real verification:** the first single-chapter attempt entered the real runner/provider path on 2026-07-15 but failed before chapter completion; it is not a successful validation. The four-chapter test was not started, the old authorization is consumed, and no successful 1/4/10/20+ report exists. Future runs are manual operator work after the current goal. The harness remains available, but Codex will only analyze the resulting redacted reports. No Notion call was made in this upgrade run.
 - **Default enablement:** autonomy, event-authority migration, and whole-project remap remain explicit/conditional. Neither default autonomous generation nor default project portability is claimed.
 
 ## Reliable semantic production status
@@ -35,7 +35,7 @@ Phase 2, validation layering, is complete. Rule validation remains the required 
 
 Phase 3, generation pipeline split, is complete. Chapter generation is split into `plan_chapter`, `generate_scenes`, `merge_scenes`, `validate`, `repair`, and `commit`. Runtime records and artifacts include the chapter plan, scene drafts, merged chapter, validation report, repair deltas, and scene span metadata.
 
-Phase 4 records a historical v1.5 provider-smoke run. It is not evidence for the current event-authority/autonomy 1/4/10/20+ gates. At the time, the acceptance run used `--no-proxy` because the local proxy environment previously pointed provider SDK traffic at a dead proxy, and its report recorded these checks:
+Phase 4 records a historical v1.5 provider-smoke run. It is not evidence for the post-goal operator-run event-authority/autonomy single-chapter, four-chapter, ten-chapter, or 20-or-more-chapter validations, and those manual validations are not current Codex goal work. At the time, the acceptance run used `--no-proxy` because the local proxy environment previously pointed provider SDK traffic at a dead proxy, and its report recorded these checks:
 
 - OpenAI Director
 - OpenAI chapter generation
