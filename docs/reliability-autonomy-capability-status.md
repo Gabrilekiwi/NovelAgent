@@ -33,6 +33,12 @@ analyzes operator-supplied redacted reports; it does not execute these billable
 runs. Their pending status still prevents a real-verification or default-enabled
 claim.
 
+Legacy-book event-authority migration is separately paused as of 2026-07-16.
+Its code and local evidence remain recorded below, but no further implementation,
+six-decision review, `MigrationApproval`, real migration, or activation is current
+goal work. The active legacy book stays on its existing authority mode. A later
+resumption requires explicit operator direction and a fresh read-only preview.
+
 ## Status matrix
 
 | Capability | Code exists | Main-path integration | Default enablement | Real verification | Evidence boundary / next gate |
@@ -43,7 +49,7 @@ claim.
 | Memory 2.2 typed patches, immutable Event batches, canonical replay, and event authority | Yes | Conditional: the chapter runtime uses it after an approved event-authority migration | No; existing projects remain on their declared authority mode and downgrade after the first event-authority receipt is forbidden | No | Local contract, replay, tamper, drift, and fault tests exist. A later operator-run real chapter report is still required only for a real-verification or default-enabled claim, not for completion of the current Codex goal. |
 | Persistence v2.1 publication/recovery and required File Delivery | Yes | Conditional: event-authority chapter publication uses Persistence v2.1; File Delivery requires a trusted profile and operator root map | No for File Delivery and no for event-authority migration; legacy-compatible runs keep their existing path | No | Local tests cover read-set checks, marker recovery, idempotent delivery, root UUID binding, readback, and fault injection. Synthetic success is not remote/provider evidence. |
 | Event Authority / StoryProject data-root remap and whole-project relocation | Yes | Conditional: after an operator same-volume rename, the explicit `--remap-roots` CLI verifies directory identities and forward-rebinds every recognized embedded registry, main registry last, under UUID plus revision/digest CAS | No | No | The command moves no data. It requires pre-armed locks, an absent old path, stable ProjectIdentity/logical-root identities, and no pending/recovery transaction or active session/lease. Cross-volume/copy-delete/case-only moves, replaced roots, rogue registries, and external mutable EA transaction roots fail closed. Local Windows/junction/fault/concurrency tests exist; there is no real target-project report or claim of arbitrary-ancestor TOCTOU protection beyond checked no-create lock boundaries. |
-| Preview, approval, and atomic event-authority migration | Yes | Conditional: read-only shadow preview is available through `--preview-event-authority-migration`; immutable approval and CAS execution remain explicit library/API operations | No; preview, immutable approval, and CAS execution are mandatory | No | Local tests prove byte-identical read-only preview, approval/staleness/rollback/source-sync behavior. The active target book has a preview only and has not been approved, migrated, or activated. |
+| Preview, approval, and atomic legacy-book event-authority migration | Yes, retained while paused | Paused for the current goal. The read-only preview CLI and explicit approval/CAS library operations remain available but are not current work | No | No | Local tests prove byte-identical read-only preview, approval/staleness/rollback/source-sync behavior. The active target book's retained preview is historical only; it has not been approved, migrated, or activated. Resume only on explicit operator direction and regenerate a fresh preview first. |
 | Historical `amend` / `import` / `retcon` transactions | Yes | No; explicit library/API entry points only. No normal chapter append invokes them | No | No | Local tests exercise append-only correction events, dependency invalidation, receipts, CAS, and recovery. No published real book has been revised by this upgrade run. |
 | Natural-language autonomy, trusted profiles, `RunArcPlan`, immutable outlines, `StageReceipt`, lease/session/resume | Yes | Conditional: explicit autonomy CLI commands invoke `AutonomyRunner` and the normal executor/publication path | No; instructions are previewed, trusted profiles/root maps are required, and execution needs explicit consent | No | Focused and deterministic local E2E tests use synthetic or fake-provider prose. They prove control flow, not real generation quality. |
 | 50-chapter deterministic autonomy simulation | Yes, opt-in test harness | Test-only; it is not a production default | No | Not applicable (synthetic gate) | **Passed (synthetic only).** A clean frozen-source run against code commit `491fe1d` completed in 1278.705 seconds with 50 outlines/prose publications, EA completion entries, publication receipts, Delivery intents/jobs/attempt receipts and required external JSON deliveries, plus 49 linear next-target Arc adjustments. The same commit then passed 1308 unit tests (7 platform skips) and v1 smoke with 21/21 preflight checks. See the [retained evidence report](reliability-autonomy-50-chapter-evidence.json). |
@@ -73,6 +79,13 @@ because the real-provider single-chapter, four-chapter, ten-chapter, and
 of the current Codex goal, but it still blocks any real-verification or
 default-enabled claim. Real Notion execution remains prohibited for this release
 regardless of any older provider-smoke report.
+
+Legacy-book event-authority migration is also outside the current goal. Pausing
+does not retract or delete its implementation and local test evidence, but no
+`MigrationApproval` or active-book authority switch is pending. Its absence does
+not block current-goal completion and does prevent any claim that the active
+legacy book has been migrated. Retained previews must be treated as potentially
+stale if the operator later resumes the work.
 
 Likewise, guarded whole-StoryProject `--remap-roots` is a conditional post-rename
 recovery path, not default project portability. It never moves or copies files,
