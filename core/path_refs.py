@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path, PurePath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from typing import Any, Mapping
 
@@ -131,8 +131,9 @@ def _validate_relative_path(value: str) -> None:
     normalized = value.replace("\\", "/")
     if any(part in {"", ".", ".."} for part in normalized.split("/")):
         raise PathRefError("PathRef relative_path cannot contain empty, dot, or parent segments")
-    path = PurePath(normalized)
-    if path.is_absolute() or path.drive or normalized.startswith("//"):
+    posix_path = PurePosixPath(normalized)
+    windows_path = PureWindowsPath(normalized)
+    if posix_path.is_absolute() or windows_path.is_absolute() or windows_path.drive:
         raise PathRefError("PathRef relative_path must be relative")
 
 

@@ -668,16 +668,55 @@ class PersistenceV2Test(unittest.TestCase):
                 )
                 marker_was_durable = marker.exists()
                 report = reconcile_pending_persistence_v2(case["transaction_root"])
-                states = [item["state"] for item in report["transactions"]]
+                observed_states = {
+                    item["state"] for item in report["transactions"]
+                }
+                # The reconciliation report describes work performed in this
+                # call, not every already-terminal transaction.  On POSIX the
+                # final pending-directory fsync boundary occurs after the
+                # completed registry entry is durable and the pending entry
+                # has been unlinked.  A simulated crash there legitimately
+                # leaves no pending work for reconciliation, so also verify
+                # the durable terminal registry rather than requiring a
+                # synthetic recovery result.
+                for terminal_state in (
+                    "completed",
+                    "rolled_back",
+                    "recovery_required",
+                ):
+                    entry_path = (
+                        case["transaction_root"]
+                        / "registry"
+                        / terminal_state
+                        / "run-1.json"
+                    )
+                    if not entry_path.exists():
+                        continue
+                    entry = validate_schema(
+                        json.loads(entry_path.read_text(encoding="utf-8")),
+                        "persistence_registry_entry.schema.json",
+                    )
+                    self.assertEqual("run-1", entry["run_id"])
+                    self.assertEqual(terminal_state, entry["state"])
+                    observed_states.add(terminal_state)
 
                 self.assertTrue(report["ok"], report)
+                self.assertFalse(
+                    (
+                        case["transaction_root"]
+                        / "registry"
+                        / "pending"
+                        / "run-1.json"
+                    ).exists(),
+                    report,
+                )
                 if marker_was_durable:
-                    self.assertIn("completed", states, report)
+                    self.assertEqual({"completed"}, observed_states, report)
                     self.assertEqual(
                         b'{"chapter":2}\n', case["snapshot"].read_bytes()
                     )
                 else:
-                    self.assertNotIn("completed", states, report)
+                    self.assertEqual({"rolled_back"}, observed_states, report)
                     self.assertEqual(
                         b'{"chapter":1}\n', case["snapshot"].read_bytes()
                     )

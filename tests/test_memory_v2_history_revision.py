@@ -953,9 +953,13 @@ class HistoricalRevisionTransactionTest(unittest.TestCase):
             "d89c0815707bc7413d3573b7b13c9fe3e8b10341f5963a04b548c7eafd6ef329",
             batch["batch_hash"],
         )
+        # The legacy writer uses text mode, so only its transport newline is
+        # platform-native. Freeze the JSON serialization independently of that
+        # Windows CRLF/Linux LF detail; batch_hash above freezes its semantics.
+        serialized = path.read_bytes().replace(b"\r\n", b"\n")
         self.assertEqual(
-            "784c589893f4335d456def0db145edf2c15ef7d7092d47e9d16e2c89a6c6b646",
-            self._sha(path.read_bytes()),
+            "5fd694516a9d44db788d4d980c796ced5d7aa0c703cc2d540c43b2dfd4077881",
+            self._sha(serialized),
         )
         self.assertEqual(batch, validate_memory_event_batch(json.loads(path.read_text(encoding="utf-8"))))
 
