@@ -2,23 +2,24 @@
   "schema_version": "1.0",
   "gate": "50_chapter_deterministic_autonomy_simulation",
   "classification": "synthetic_deterministic_not_real_provider_or_target_book",
-  "tested_code_commit": "491fe1dadcb1def3c7bdc01793f46f58f2f10e52",
+  "tested_code_commit": "42d4804b076de71fc5dca0aff48a99c8aeb507ef",
   "test": "tests.test_autonomy_runner_e2e.AutonomyRunnerE2ETest.test_fifty_chapter_deterministic_acceptance",
   "invocation": {
     "environment": {
       "NOVELAGENT_RUN_50_CHAPTER_SIM": "1"
     },
     "command_equivalent": "python -B -m unittest tests.test_autonomy_runner_e2e.AutonomyRunnerE2ETest.test_fifty_chapter_deterministic_acceptance",
-    "trusted_max_wall_seconds": 3600,
+    "trusted_max_wall_seconds": 2400,
     "executor_dry_run": true,
     "real_provider_calls": 0,
     "notion_calls": 0
   },
   "result": {
     "status": "passed",
-    "started_at": "2026-07-15T11:34:32.4888583Z",
-    "finished_at": "2026-07-15T11:55:51.1935962Z",
-    "duration_seconds": 1278.705,
+    "started_at": "2026-07-20T00:34:49.4417967Z",
+    "finished_at": "2026-07-20T00:56:35.4417967Z",
+    "duration_seconds": 1306.0,
+    "unittest_duration_seconds": 1305.359,
     "tests_run": 1,
     "failures": 0,
     "errors": 0,
@@ -36,6 +37,8 @@
   "post_run_artifact_counts": {
     "published_outline_count": 50,
     "published_prose_count": 50,
+    "memory_event_batch_count_including_genesis": 51,
+    "chapter_memory_event_batch_count": 50,
     "event_authority_completed_entry_count": 50,
     "publication_receipt_count": 50,
     "delivery_intent_count": 50,
@@ -46,42 +49,44 @@
     "verification_method": "Read-only counts of the retained gitignored workspace after the test passed."
   },
   "post_run_verification": {
+    "execution_order": "unit_suite_then_smoke_then_50_chapter_simulation",
     "unit_suite": {
       "command_equivalent": "python -B -m unittest discover -s tests",
-      "completed_after_simulation": true,
-      "tests": 1308,
+      "completed_before_simulation": true,
+      "tests": 1317,
       "failures": 0,
       "errors": 0,
       "skipped": 7,
-      "wall_duration_seconds": 234.1,
-      "unittest_duration_seconds": 233.271,
+      "wall_duration_seconds": 240.4,
+      "unittest_duration_seconds": 238.036,
       "terminal_status": "OK"
     },
     "smoke_v1": {
-      "command_equivalent": "python -B scripts/smoke_v1.py",
-      "completed_after_simulation": true,
+      "command_equivalent": "python -B scripts/smoke_v1.py --skip-tests",
+      "completed_before_simulation": true,
       "status": "passed",
-      "wall_duration_seconds": 223.9,
-      "inner_unit_tests": 1308,
-      "inner_unit_test_skipped": 7,
-      "inner_unit_test_duration_seconds": 221.182,
+      "wall_duration_seconds": 2.6,
+      "inner_unit_tests": 0,
+      "unit_tests_skipped_by_flag": true,
       "preflight_checks_passed": 21,
       "preflight_checks_failed": 0,
       "provider_smoke_policy": "allow-missing, ignore workspace dotenv, explicit no-proxy; no real provider call"
     }
   },
   "capture": {
-    "temporary_workspace": ".tmp/ar/ef1e636f",
-    "temporary_workspace_created_at": "2026-07-15T11:34:32.8692828Z",
-    "latest_durable_operation_result_at": "2026-07-15T11:55:43.459720Z",
-    "terminal_result": "Ran 1 test in 1278.301s; OK",
-    "note": "The temporary workspace is gitignored; this version-controlled file retains the non-sensitive result summary and binds it to the clean tested code commit."
+    "temporary_workspace": ".tmp/ar/358a7523",
+    "temporary_workspace_created_at": "2026-07-20T00:34:49.4417967Z",
+    "latest_durable_operation_result_at": "2026-07-20T00:56:32.0997391Z",
+    "terminal_result": "Ran 1 test in 1305.359s; OK",
+    "terminal_wall_time_seconds": 1306.0,
+    "terminal_timing_basis": "finished_at is the retained workspace creation time plus the shell-reported 1306-second wall time; unittest separately reported 1305.359 seconds",
+    "note": "The temporary workspace is gitignored; this version-controlled file retains the non-sensitive result summary and binds it to the clean tested commit. The full unit suite ran once before smoke, and smoke used --skip-tests to avoid duplicating it."
   },
   "claim_boundary": [
     "This closes only the synthetic 50-chapter long-run gate.",
     "It is not real-provider, target-book, token-calibration, or generation-quality evidence.",
-    "It does not satisfy the real 1-, 4-, 10-, or 20-or-more-chapter gates.",
+    "It does not substitute for the post-goal operator-run real single-chapter, four-chapter, ten-chapter, or 20-or-more-chapter validations.",
     "It does not enable autonomy by default.",
-    "No Notion read or write was performed."
+    "No real provider or Notion read/write was performed."
   ]
 }
