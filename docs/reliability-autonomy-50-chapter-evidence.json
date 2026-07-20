@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "gate": "50_chapter_deterministic_autonomy_simulation",
   "classification": "synthetic_deterministic_not_real_provider_or_target_book",
-  "tested_code_commit": "42d4804b076de71fc5dca0aff48a99c8aeb507ef",
+  "tested_code_commit": "bfa3d04bef93827d28d1e61c49a80f33ccbb10ca",
   "test": "tests.test_autonomy_runner_e2e.AutonomyRunnerE2ETest.test_fifty_chapter_deterministic_acceptance",
   "invocation": {
     "environment": {
@@ -16,10 +16,10 @@
   },
   "result": {
     "status": "passed",
-    "started_at": "2026-07-20T00:34:49.4417967Z",
-    "finished_at": "2026-07-20T00:56:35.4417967Z",
-    "duration_seconds": 1306.0,
-    "unittest_duration_seconds": 1305.359,
+    "started_at": "2026-07-20T01:41:48.0558451Z",
+    "finished_at": "2026-07-20T02:03:26.9256078Z",
+    "duration_seconds": 1298.864,
+    "unittest_duration_seconds": 1298.451,
     "tests_run": 1,
     "failures": 0,
     "errors": 0,
@@ -57,15 +57,15 @@
       "failures": 0,
       "errors": 0,
       "skipped": 7,
-      "wall_duration_seconds": 240.4,
-      "unittest_duration_seconds": 238.036,
+      "wall_duration_seconds": 260.546,
+      "unittest_duration_seconds": 259.677,
       "terminal_status": "OK"
     },
     "smoke_v1": {
       "command_equivalent": "python -B scripts/smoke_v1.py --skip-tests",
       "completed_before_simulation": true,
       "status": "passed",
-      "wall_duration_seconds": 2.6,
+      "wall_duration_seconds": 2.318,
       "inner_unit_tests": 0,
       "unit_tests_skipped_by_flag": true,
       "preflight_checks_passed": 21,
@@ -74,12 +74,12 @@
     }
   },
   "capture": {
-    "temporary_workspace": ".tmp/ar/358a7523",
-    "temporary_workspace_created_at": "2026-07-20T00:34:49.4417967Z",
-    "latest_durable_operation_result_at": "2026-07-20T00:56:32.0997391Z",
-    "terminal_result": "Ran 1 test in 1305.359s; OK",
-    "terminal_wall_time_seconds": 1306.0,
-    "terminal_timing_basis": "finished_at is the retained workspace creation time plus the shell-reported 1306-second wall time; unittest separately reported 1305.359 seconds",
+    "temporary_workspace": ".tmp/ar/b5e330ec",
+    "temporary_workspace_created_at": "2026-07-20T01:41:48.4220141Z",
+    "latest_durable_operation_result_at": "2026-07-20T02:03:23.7565813Z",
+    "terminal_result": "Ran 1 test in 1298.451s; OK",
+    "terminal_wall_time_seconds": 1298.864,
+    "terminal_timing_basis": "started_at and finished_at were captured by the same shell invocation around the test; a monotonic stopwatch reported 1298.864 seconds and unittest separately reported 1298.451 seconds",
     "note": "The temporary workspace is gitignored; this version-controlled file retains the non-sensitive result summary and binds it to the clean tested commit. The full unit suite ran once before smoke, and smoke used --skip-tests to avoid duplicating it."
   },
   "claim_boundary": [
