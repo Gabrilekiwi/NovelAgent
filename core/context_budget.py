@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import base64
+from dataclasses import dataclass, field
+import functools
 import hashlib
+import importlib
+import importlib.metadata
 import math
 import os
+import stat
+import tempfile
 import time
+import types
 from typing import Any, Callable, Iterable, Mapping
 
 from core.schema import validate_schema
@@ -28,16 +35,81 @@ ESTIMATOR_HOLDOUT_MANIFEST_HASH = (
 )
 ESTIMATOR_REAL_PROVIDER_VERIFIED = False
 ESTIMATOR_CALIBRATION_METHOD = "max-observed-tokens-per-utf8-byte-v1"
-# The fitted ratio above is useful telemetry, but the synthetic natural-text
-# fixture is not evidence that arbitrary canonical JSON is bounded by that
-# ratio.  Hard enforcement therefore has an independent, predeclared byte
-# upper-bound profile.  Holdout observations never tune these values.
-ESTIMATOR_ENFORCEMENT_METHOD = "max-calibrated-or-utf8-byte-floor-v1"
-ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE = 1.0
+# The fitted ratio controls normal admission.  A previous enforcement profile
+# took max(calibrated, every UTF-8 byte), which reduced every realistic request
+# to byte_count + framing and made calibration behaviorally irrelevant.  The
+# v2 profile keeps the calibrated margin for non-ASCII bytes while retaining
+# a one-token-per-byte floor for the ASCII portion of unknown-tokenizer input.
+# This protects JSON syntax, escapes, punctuation, hashes, and high-entropy
+# ASCII without charging each byte of ordinary Chinese as a token.
+ESTIMATOR_ENFORCEMENT_METHOD = "ascii-byte-floor-plus-nonascii-calibration-v2"
+# Retained as compatibility/report metadata: there is no longer a global byte
+# floor in the enforcement formula.
+ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE = 0.0
+ESTIMATOR_ASCII_FLOOR_TOKENS_PER_BYTE = 1.0
 # Predeclared allowance for provider-side message framing that is not present
 # in canonical request JSON. It is intentionally independent of holdout data.
 ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS = 64
 ESTIMATOR_ENFORCEMENT_SAFETY_RATIO = 0.15
+MODEL_TOKENIZER_FIXED_OVERHEAD_TOKENS = 64
+_TIKTOKEN_CACHE_BLOBS: dict[str, tuple[tuple[str, str], ...]] = {
+    "gpt2": (
+        (
+            "https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/vocab.bpe",
+            "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
+        ),
+        (
+            "https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/encoder.json",
+            "196139668be63f3b5d6574427317ae82f612a97c5d1cdaf36ed2256dbf636783",
+        ),
+    ),
+    "r50k_base": (
+        (
+            "https://openaipublic.blob.core.windows.net/encodings/r50k_base.tiktoken",
+            "306cd27f03c1a714eca7108e03d66b7dc042abe8c258b44c199a7ed9838dd930",
+        ),
+    ),
+    "p50k_base": (
+        (
+            "https://openaipublic.blob.core.windows.net/encodings/p50k_base.tiktoken",
+            "94b5ca7dff4d00767bc256fdd1b27e5b17361d7b8a5f968547f9f23eb70d2069",
+        ),
+    ),
+    "p50k_edit": (
+        (
+            "https://openaipublic.blob.core.windows.net/encodings/p50k_base.tiktoken",
+            "94b5ca7dff4d00767bc256fdd1b27e5b17361d7b8a5f968547f9f23eb70d2069",
+        ),
+    ),
+    "cl100k_base": (
+        (
+            "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken",
+            "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
+        ),
+    ),
+    "o200k_base": (
+        (
+            "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+            "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
+        ),
+    ),
+    "o200k_harmony": (
+        (
+            "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+            "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
+        ),
+    ),
+}
+_TIKTOKEN_PINNED_VERSION = "0.13.0"
+_TIKTOKEN_MAX_ASSET_BYTES = 16 * 1024 * 1024
+_TIKTOKEN_EXPECTED_RANK_COUNTS = {
+    "r50k_base": 50_256,
+    "p50k_base": 50_280,
+    "p50k_edit": 50_280,
+    "cl100k_base": 100_256,
+    "o200k_base": 199_998,
+    "o200k_harmony": 199_998,
+}
 NEW_TOKEN_COUNT_MODES = frozenset(
     {
         "provider_exact",
@@ -125,6 +197,7 @@ class TokenCounter:
     version: str
     tokenizer: str | None = None
     model_is_known: bool = False
+    fixed_overhead_tokens: int = 0
 
     def __post_init__(self) -> None:
         if not callable(self.counter):
@@ -140,6 +213,20 @@ class TokenCounter:
         _require_safe_metadata(self.version, "counter version")
         if not isinstance(self.model_is_known, bool):
             raise ContextBudgetError("token_counter_invalid", "model_is_known must be boolean")
+        if (
+            isinstance(self.fixed_overhead_tokens, bool)
+            or not isinstance(self.fixed_overhead_tokens, int)
+            or self.fixed_overhead_tokens < 0
+        ):
+            raise ContextBudgetError(
+                "token_counter_invalid",
+                "fixed_overhead_tokens must be a non-negative integer",
+            )
+        if self.count_mode == "provider_exact" and self.fixed_overhead_tokens:
+            raise ContextBudgetError(
+                "token_counter_invalid",
+                "provider_exact counters cannot add fixed overhead tokens",
+            )
         if self.tokenizer is not None:
             _require_safe_metadata(self.tokenizer, "tokenizer")
         if self.count_mode == "model_tokenizer" and not self.tokenizer:
@@ -159,7 +246,7 @@ class TokenCounter:
         value = self.counter(text)
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ContextBudgetError("token_counter_invalid", "token counter returned an invalid value")
-        return value
+        return value + self.fixed_overhead_tokens
 
     def metadata(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -172,9 +259,191 @@ class TokenCounter:
         if self.tokenizer:
             result["tokenizer"] = self.tokenizer
             result["tokenizer_version"] = self.version
+            result["tokenizer_fixed_overhead_tokens"] = self.fixed_overhead_tokens
         else:
             result["provider_counter_version"] = self.version
         return result
+
+
+def model_token_counter(
+    *,
+    provider: str,
+    model: str,
+    endpoint_type: str,
+) -> TokenCounter | None:
+    """Return a model-bound local tokenizer when its mapping is explicit.
+
+    A local tokenizer is an admission estimate, never provider-exact usage.
+    Only an official OpenAI endpoint is auto-bound. Compatible endpoints may
+    advertise an OpenAI-looking alias without using the same tokenizer, so they
+    and unknown models fall back to calibrated admission unless an embedding
+    caller explicitly supplies a bound counter.
+    """
+
+    _require_safe_metadata(provider, "counter provider")
+    _require_safe_metadata(model, "counter model")
+    _require_endpoint_type(endpoint_type)
+    if provider.strip().lower() != "openai" or endpoint_type != "official":
+        return None
+    try:
+        import tiktoken
+
+        encoding_name = tiktoken.encoding_name_for_model(model)
+        encoding = _cached_tiktoken_encoding(encoding_name)
+        if encoding is None:
+            return None
+    except Exception:  # Missing package, unknown model, or unavailable cached data.
+        return None
+    try:
+        version = importlib.metadata.version("tiktoken")
+    except importlib.metadata.PackageNotFoundError:
+        version = "unknown"
+
+    def count(text: str) -> int:
+        return len(encoding.encode(str(text), disallowed_special=()))
+
+    return TokenCounter(
+        counter=count,
+        count_mode="model_tokenizer",
+        provider=provider,
+        model=model,
+        endpoint_type=endpoint_type,
+        version=f"tiktoken-{version}",
+        tokenizer=str(encoding.name),
+        model_is_known=True,
+        fixed_overhead_tokens=MODEL_TOKENIZER_FIXED_OVERHEAD_TOKENS,
+    )
+
+
+def _cached_tiktoken_encoding(encoding_name: str) -> Any | None:
+    """Load an already-local encoding without invoking tiktoken's URL loader."""
+
+    try:
+        if importlib.metadata.version("tiktoken") != _TIKTOKEN_PINNED_VERSION:
+            return None
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    blobs = _TIKTOKEN_CACHE_BLOBS.get(encoding_name)
+    # GPT-2's legacy data-gym format uses two source files. Unknown or
+    # multi-file formats deliberately fall back to calibration rather than
+    # entering the upstream loader.
+    if not blobs or len(blobs) != 1:
+        return None
+    if "TIKTOKEN_CACHE_DIR" in os.environ:
+        cache_dir = os.environ["TIKTOKEN_CACHE_DIR"]
+    elif "DATA_GYM_CACHE_DIR" in os.environ:
+        cache_dir = os.environ["DATA_GYM_CACHE_DIR"]
+    else:
+        cache_dir = os.path.join(tempfile.gettempdir(), "data-gym-cache")
+    if not cache_dir:
+        return None
+    blob_url, expected_hash = blobs[0]
+    cache_key = hashlib.sha1(blob_url.encode("utf-8")).hexdigest()
+    cache_path = os.path.join(cache_dir, cache_key)
+    try:
+        return _load_local_tiktoken_encoding(
+            encoding_name,
+            cache_path,
+            blob_url,
+            expected_hash,
+        )
+    except (ImportError, OSError, TypeError, ValueError):
+        return None
+
+
+@functools.lru_cache(maxsize=8)
+def _load_local_tiktoken_encoding(
+    encoding_name: str,
+    cache_path: str,
+    blob_url: str,
+    expected_hash: str,
+) -> Any:
+    """Construct an Encoding from one hash-verified local BPE snapshot.
+
+    The complete asset is read and verified before parsing.  The installed
+    constructor is cloned with a local rank loader, so this code never calls
+    tiktoken's cache-miss downloader and has no check/use race with that loader.
+    """
+
+    cache_stat = os.stat(cache_path, follow_symlinks=False)
+    if not stat.S_ISREG(cache_stat.st_mode):
+        raise OSError("cached tiktoken asset is not a regular file")
+    if cache_stat.st_size > _TIKTOKEN_MAX_ASSET_BYTES:
+        raise ValueError("cached tiktoken asset exceeds the size limit")
+    with open(cache_path, "rb") as handle:
+        contents = handle.read(_TIKTOKEN_MAX_ASSET_BYTES + 1)
+    if len(contents) > _TIKTOKEN_MAX_ASSET_BYTES:
+        raise ValueError("cached tiktoken asset exceeds the size limit")
+    if hashlib.sha256(contents).hexdigest() != expected_hash:
+        raise ValueError("cached tiktoken asset hash mismatch")
+    mergeable_ranks: dict[bytes, int] = {}
+    for line in contents.splitlines():
+        if not line:
+            continue
+        try:
+            encoded_token, encoded_rank = line.split()
+            token = base64.b64decode(encoded_token, validate=True)
+            rank = int(encoded_rank)
+        except Exception as exc:
+            raise ValueError("cached tiktoken asset is malformed") from exc
+        if token in mergeable_ranks:
+            raise ValueError("cached tiktoken asset contains duplicate tokens")
+        mergeable_ranks[token] = rank
+    expected_count = _TIKTOKEN_EXPECTED_RANK_COUNTS.get(encoding_name)
+    if expected_count is None or len(mergeable_ranks) != expected_count:
+        raise ValueError("cached tiktoken asset has an unexpected rank count")
+    ranks = set(mergeable_ranks.values())
+    if len(ranks) != expected_count or min(ranks) != 0 or max(ranks) != expected_count - 1:
+        raise ValueError("cached tiktoken asset ranks are not unique and contiguous")
+
+    public = importlib.import_module("tiktoken_ext.openai_public")
+    constructors = getattr(public, "ENCODING_CONSTRUCTORS", {})
+    constructor = constructors.get(encoding_name)
+    if constructor is None:
+        raise ValueError("installed tiktoken has no matching constructor")
+
+    manifest_hash = expected_hash
+    loader_calls = 0
+
+    def local_rank_loader(
+        requested_path: str,
+        expected_hash: str | None = None,
+    ) -> dict[bytes, int]:
+        nonlocal loader_calls
+        if requested_path != blob_url:
+            raise ValueError("tiktoken constructor requested an unexpected asset")
+        if expected_hash != manifest_hash:
+            raise ValueError("tiktoken constructor expected an unexpected asset hash")
+        loader_calls += 1
+        return dict(mergeable_ranks)
+
+    def clone_with_local_loader(source: Any) -> Any:
+        local_globals = dict(source.__globals__)
+        local_globals["load_tiktoken_bpe"] = local_rank_loader
+        return types.FunctionType(
+            source.__code__,
+            local_globals,
+            name=source.__name__,
+            argdefs=source.__defaults__,
+            closure=source.__closure__,
+        )
+
+    local_constructor = clone_with_local_loader(constructor)
+    if encoding_name == "o200k_harmony":
+        base_constructor = constructors.get("o200k_base")
+        if base_constructor is None:
+            raise ValueError("installed tiktoken has no o200k base constructor")
+        local_constructor.__globals__["o200k_base"] = clone_with_local_loader(
+            base_constructor
+        )
+    config = local_constructor()
+    if not isinstance(config, dict) or config.get("name") != encoding_name:
+        raise ValueError("tiktoken constructor returned mismatched metadata")
+    if loader_calls != 1 or config.get("mergeable_ranks") != mergeable_ranks:
+        raise ValueError("tiktoken constructor bypassed the verified local ranks")
+    import tiktoken
+
+    return tiktoken.Encoding(**config)
 
 
 @dataclass(frozen=True)
@@ -190,6 +459,11 @@ class ContextBudget:
     previous_chapter_tokens: int = 6_000
     safety_ratio: float = 0.15
     endpoint_type: str = "unknown"
+    bound_token_counter: TokenCounter | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         integer_fields = (
@@ -214,6 +488,8 @@ class ContextBudget:
         _require_safe_metadata(self.provider, "provider")
         _require_safe_metadata(self.model, "model")
         _require_endpoint_type(self.endpoint_type)
+        if self.bound_token_counter is not None:
+            self._validate_counter_binding(self.bound_token_counter)
         if self.usable_input_tokens <= 0:
             raise ContextBudgetError("context_budget_invalid", "reserves leave no usable input tokens")
 
@@ -261,6 +537,12 @@ class ContextBudget:
                 model=self.model,
                 endpoint_type=self.endpoint_type,
             )
+        if (
+            effective_counter is None
+            and calibrated_estimator is None
+            and exact_counter is None
+        ):
+            effective_counter = self.bound_token_counter
 
         if effective_counter is not None:
             self._validate_counter_binding(effective_counter)
@@ -302,10 +584,16 @@ class ContextBudget:
                         "enforcement_floor_tokens_per_utf8_byte": (
                             ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE
                         ),
+                        "ascii_floor_tokens_per_byte": (
+                            ESTIMATOR_ASCII_FLOOR_TOKENS_PER_BYTE
+                        ),
                         "enforcement_fixed_overhead_tokens": (
                             ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS
                         ),
                         "enforcement_safety_ratio": self.safety_ratio,
+                        "ascii_floor_applied": any(
+                            ord(character) < 128 for character in combined
+                        ),
                     }
                 )
         report = {
@@ -643,11 +931,19 @@ class _ModelResponseTokenUsage:
             # of those limits.
             return (
                 max(reserved_input_tokens, self.total_tokens),
-                max(fallback_output_tokens, self.total_tokens),
+                max(
+                    reserved_output_tokens,
+                    fallback_output_tokens,
+                    self.total_tokens,
+                ),
             )
         return (
             reserved_input_tokens if self.input_tokens is None else self.input_tokens,
-            fallback_output_tokens if self.output_tokens is None else self.output_tokens,
+            (
+                max(reserved_output_tokens, fallback_output_tokens)
+                if self.output_tokens is None
+                else self.output_tokens
+            ),
         )
 
 
@@ -752,14 +1048,36 @@ def _usage_integer(value: Any) -> int | None:
     return None
 
 
-def default_context_budget(*, provider: str = "openai", model: str = "runtime-default") -> ContextBudget:
-    window = _positive_env("NOVELAGENT_MODEL_CONTEXT_WINDOW", 128_000)
-    max_input_tokens = _positive_env("NOVELAGENT_MAX_INPUT_TOKENS", 32_000)
-    return ContextBudget(
+def default_context_budget(
+    *,
+    provider: str = "openai",
+    model: str | None = None,
+    endpoint_type: str | None = None,
+    enable_model_tokenizer: bool = True,
+) -> ContextBudget:
+    resolved_model, resolved_endpoint_type = _runtime_model_binding(
         provider=provider,
         model=model,
+        endpoint_type=endpoint_type,
+    )
+    window = _positive_env("NOVELAGENT_MODEL_CONTEXT_WINDOW", 128_000)
+    max_input_tokens = _positive_env("NOVELAGENT_MAX_INPUT_TOKENS", 32_000)
+    counter = (
+        model_token_counter(
+            provider=provider,
+            model=resolved_model,
+            endpoint_type=resolved_endpoint_type,
+        )
+        if enable_model_tokenizer
+        else None
+    )
+    return ContextBudget(
+        provider=provider,
+        model=resolved_model,
         model_context_window=window,
         max_input_tokens=max_input_tokens,
+        endpoint_type=resolved_endpoint_type,
+        bound_token_counter=counter,
     )
 
 
@@ -774,8 +1092,15 @@ def conservative_calibrated_token_estimate(
     *,
     estimator: CalibratedTokenEstimator = DEFAULT_CALIBRATED_ESTIMATOR,
     safety_ratio: float = ESTIMATOR_ENFORCEMENT_SAFETY_RATIO,
+    fixed_overhead_tokens: int = ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
 ) -> int:
-    """Return the production hard-reservation estimate for unknown tokenizers."""
+    """Return the production reservation estimate for unknown tokenizers.
+
+    Non-ASCII bytes use the calibrated estimate and its declared safety margin.
+    The ASCII portion retains a one-token-per-byte floor so unknown tokenizers
+    remain protected for JSON syntax, escapes, punctuation, and high-entropy
+    atoms without globally charging Chinese once per UTF-8 byte.
+    """
 
     if isinstance(safety_ratio, bool) or not isinstance(safety_ratio, (int, float)):
         raise ContextBudgetError(
@@ -787,15 +1112,65 @@ def conservative_calibrated_token_estimate(
             "token_calibration_invalid",
             "safety_ratio must be a finite non-negative number",
         )
+    if (
+        isinstance(fixed_overhead_tokens, bool)
+        or not isinstance(fixed_overhead_tokens, int)
+        or fixed_overhead_tokens < 0
+    ):
+        raise ContextBudgetError(
+            "token_calibration_invalid",
+            "fixed_overhead_tokens must be a non-negative integer",
+        )
     source = str(text)
-    calibrated_with_margin = math.ceil(estimator.estimate(source) * (1 + safety_ratio))
-    byte_floor = math.ceil(
-        len(source.encode("utf-8"))
-        * ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE
+    ascii_bytes = sum(ord(character) < 128 for character in source)
+    non_ascii_bytes = len(source.encode("utf-8")) - ascii_bytes
+    ratio = estimator.tokens_per_utf8_byte
+    ascii_calibrated = math.ceil(
+        math.ceil(ascii_bytes * ratio) * (1 + safety_ratio)
     )
-    return max(calibrated_with_margin, byte_floor) + (
-        ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS
+    ascii_floor = math.ceil(
+        ascii_bytes * ESTIMATOR_ASCII_FLOOR_TOKENS_PER_BYTE
     )
+    non_ascii_calibrated = math.ceil(
+        (
+            math.ceil(non_ascii_bytes * ratio)
+            + estimator.fixed_overhead_tokens
+        )
+        * (1 + safety_ratio)
+    )
+    return (
+        max(ascii_floor, ascii_calibrated)
+        + non_ascii_calibrated
+        + fixed_overhead_tokens
+    )
+
+
+def _runtime_model_binding(
+    *,
+    provider: str,
+    model: str | None,
+    endpoint_type: str | None,
+) -> tuple[str, str]:
+    normalized_provider = str(provider).strip().lower()
+    resolved_model = str(model).strip() if model is not None else ""
+    resolved_endpoint = str(endpoint_type).strip() if endpoint_type is not None else ""
+    if normalized_provider in {"openai", "anthropic"} and (
+        not resolved_model or not resolved_endpoint
+    ):
+        from core.config import get_config
+
+        config = get_config()
+        if normalized_provider == "openai":
+            resolved_model = resolved_model or config.openai_model
+            resolved_endpoint = resolved_endpoint or (
+                "openai_compatible" if config.openai_base_url else "official"
+            )
+        else:
+            resolved_model = resolved_model or config.claude_model or "runtime-default"
+            resolved_endpoint = resolved_endpoint or (
+                "unknown" if config.claude_base_url else "official"
+            )
+    return resolved_model or "runtime-default", resolved_endpoint or "unknown"
 
 
 def preview_chinese_output_compatibility(
@@ -884,6 +1259,7 @@ __all__ = [
     "ESTIMATOR_CALIBRATION_METHOD",
     "ESTIMATOR_CALIBRATION_MANIFEST_HASH",
     "ESTIMATOR_DATASET_SOURCE",
+    "ESTIMATOR_ASCII_FLOOR_TOKENS_PER_BYTE",
     "ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS",
     "ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE",
     "ESTIMATOR_ENFORCEMENT_METHOD",
@@ -893,6 +1269,7 @@ __all__ = [
     "ESTIMATOR_VERSION",
     "LEGACY_TOKEN_COUNT_MODES",
     "NEW_TOKEN_COUNT_MODES",
+    "MODEL_TOKENIZER_FIXED_OVERHEAD_TOKENS",
     "RunBudgetLimits",
     "RunBudgetTracker",
     "SAFE_ENDPOINT_TYPES",
@@ -900,5 +1277,6 @@ __all__ = [
     "conservative_calibrated_token_estimate",
     "conservative_token_estimate",
     "default_context_budget",
+    "model_token_counter",
     "preview_chinese_output_compatibility",
 ]

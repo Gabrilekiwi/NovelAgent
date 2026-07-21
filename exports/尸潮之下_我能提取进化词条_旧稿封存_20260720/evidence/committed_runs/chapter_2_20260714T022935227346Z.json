@@ -1,0 +1,5008 @@
+{
+  "accepted": true,
+  "analysis": {
+    "character_changes": [],
+    "conflicts": [
+      "选择"
+    ],
+    "events": [
+      {
+        "text": "陆沉选择的不是那条封死夹道，而是员工通道内段旁的清洁间检修门——监控刚确认清洁通道地面无人，真正的风险来自上方那处漏检的吊顶口。"
+      },
+      {
+        "text": "”\n\n“必须夺。"
+      }
+    ],
+    "new_locations": [
+      "负二层冷库",
+      "冷库",
+      "监控室",
+      "地下停车场"
+    ],
+    "spatial_state": {
+      "blocked_paths": [],
+      "character_positions": {},
+      "connections": [],
+      "last_transition": {
+        "source": "chapter_analysis",
+        "to": "冷库"
+      },
+      "spaces": {
+        "冷库": {
+          "source": "chapter_analysis"
+        },
+        "地下停车场": {
+          "source": "chapter_analysis"
+        },
+        "监控室": {
+          "source": "chapter_analysis"
+        },
+        "负二层冷库": {
+          "source": "chapter_analysis"
+        }
+      }
+    },
+    "story_state": {
+      "last_chapter_ending": "备用电切断前残留的一帧画面，短暂印在陆沉视网膜上：早已变形的冷库铁门，被从里面撞开了一道缝。",
+      "last_scene_characters": [],
+      "last_scene_location": "冷库",
+      "open_threads": [],
+      "required_opening_bridge": "冷库"
+    },
+    "summary": "剩余电量：17分钟。 红色数字在监控台右上角闪烁，陆沉的手还压在键盘边缘，右肩一阵阵发烫。",
+    "validation_ok": true,
+    "world_changes": [
+      {
+        "text": "Infection pressure is active in the chapter.",
+        "type": "infection_pressure"
+      }
+    ]
+  },
+  "chapter": "剩余电量：17分钟。\n\n红色数字在监控台右上角闪烁，陆沉的手还压在键盘边缘，右肩一阵阵发烫。负二层冷库的画面占据主屏，白雾从铁门缝里往外渗，门板内侧又传来一下沉闷撞击，凸起的位置比刚才更深。\n\n砰。\n\n获救女孩蜷在监控室靠墙的位置，双手死死按着腿上的纱布，脸色白得像纸。钱明缩在另一侧，眼睛红肿，却还盯着控制台下方的卷帘门钥匙孔。\n\n陆沉没有离开监控室。他只是通过屏幕看着负二层冷库，看着那团只有他能看见的紫色轮廓在铁门后短暂浮现，又被雪花干扰吞没。\n\n监控室有三道直接通行门，还有一组只能远程控制的西侧仓储卷帘门。\n\n他抬眼扫过门位状态：监控室内门连接员工通道内段，机械锁完好，可以开；东侧外门通向医药专柜方向，是接应幸存者进员工通道的门，远程控制还在线；营业区侧门刚才被感染者撞开过，已经被机械扣和倒塌货架封死，门体状态显示异常，绝不能再碰。西侧仓储卷帘门连着仓储区外廊和停车场方向，卷帘门外还有钱明妻子所在的混乱区域，摄像头能看见，控制回路也还能响应，但那里没有清空、没有隔离，门外已经出现被咬者和感染者，绝不是可安全开启的救援门。\n\n倒计时跳到16分42秒。\n\n陆沉按下广播内线，声音压得很低：“一层医药专柜附近，有活人听到吗？这里是监控室。不要大喊，回答敲击柜台两下。”\n\n三秒后，三号屏右下角，医药专柜旁的摄像头里，一个短发女人猛地抬头。她身边还有两个人，一个中年男人捂着胳膊，一个年轻店员背着包，三人躲在倒翻的药架后。短发女人没有喊，只用金属剪刀在柜面上敲了两下。\n\n陆沉切到柜台附近公共广播的收音，听见女人冷静到近乎冰冷的声音：“我是苏晴，急诊医生。这里有两名幸存者，一人前臂撕裂，暂未见咬痕。你能开哪道门？”\n\n“东侧外门。”陆沉盯着屏幕，“你从医药专柜后方出来，贴右侧母婴区货架走，经过收银台别停。东侧外门会在你接近后三秒开启，进门后就是员工通道外段。不要去营业区侧门，那边已经封死，也不能从那里进。”\n\n苏晴看了一眼远处晃动的人影：“感染者在扶梯口和生鲜区之间，至少六个。你要怎么引开？”\n\n陆沉切换十六格画面，快速确认每一条通道。清洁通道在营业区北侧，卷帘门两端都已落下，地面和柜间没有幸存者活动痕迹，只有拖把车、清洁柜和一排玻璃冷柜；上方天花板管线密集，有两处检修口处在摄像头仰角之外。再往外是狭窄的冷柜过道，监控清楚，死角少。\n\n他没有打开面向营业区的公共外放，只把广播目标锁定在清洁通道内部的维修喇叭和冷柜区最里面一个小喇叭上。\n\n“我只在已确认地面无人的封闭清洁通道放声。”陆沉说，“不会把它们往未知区域引。你听我倒数，等扶梯口那批被引走，再跑。”\n\n他把一副备用耳麦丢给获救女孩：“你坐在这儿，看三号屏和五号屏。看到苏晴偏离路线，或者有感染者从收银台左侧切过来，就报点。别喊，用这个说。”\n\n女孩手指抖得几乎戴不上耳麦，还是咬牙点头：“我、我能看。”\n\n“你叫什么？”\n\n“林夏。”\n\n“林夏，盯住她们。”\n\n倒计时：15分58秒。\n\n陆沉设定十五秒延迟广播，清洁通道喇叭里随即响起刺耳的促销录音：“今日冷鲜特价——”\n\n声音被他压在封闭通道内，却足够穿过卷帘门缝。屏幕里，扶梯口两只感染者同时转头，随后更多摇晃的人影被声音牵动，撞向北侧卷帘门。\n\n苏晴没有浪费半秒，拎起一个鼓胀的急救包，把受伤男人往前一推：“跑。”\n\n林夏的声音从耳麦里发颤：“她们出柜台了……右边安全，左边有一个趴着的，不动……不，动了！它抬头了！”\n\n“苏晴，别走中线，贴母婴区蓝色货架。”陆沉说。\n\n苏晴立刻改变路线，几乎是擦着货架边缘掠过。年轻店员脚下一滑，药盒散了一地，扶梯口一只感染者被动静吸引，偏离广播方向，朝她们扑去。\n\n陆沉按下分区卷帘门控制，收银台与母婴区之间的半截卷帘门哗啦落下，感染者撞在门板上，双手从缝隙里乱抓。苏晴拖起店员，三人冲向东侧外门。\n\n就在陆沉准备开启东侧外门时，身后传来一声闷响。\n\n钱明扑到林夏身后，一只胳膊勒住她脖子，另一只手里攥着从桌上摸到的裁纸刀，刀尖抵在女孩颈侧。林夏瞬间僵住，眼泪涌出来，却没敢叫。\n\n“开西侧卷帘门。”钱明声音沙哑，“我知道你能开。你把我老婆关在外面，现在又要救别人？凭什么？”\n\n陆沉的手停在东侧外门控制键上。屏幕里，苏晴三人距离门只剩二十米。\n\n“放开她。”\n\n“开门！”钱明把刀压深了一点，林夏颈侧沁出细细血珠，“否则我杀了她！”\n\n陆沉没有去抢刀。他抬手，把西侧卷帘门外的监控画面切到监控室最大屏，又把刚才存档回放调出来，只在监控室屏幕播放，没有接入任何营业区广播。\n\n画面里，钱明的妻子扶着墙，肩膀上清晰可见一圈牙印；钱明本人在混乱中冲向控制盒，砸下解锁键，侧门弹开，第一只感染者冲进员工通道。\n\n陆沉的声音不高，却每个字都砸在监控室里：“你隐瞒她被咬，擅自开门，害感染者进来。外面那些人不是我关死的，是你把风险带进来的。”\n\n钱明眼神崩裂：“闭嘴……”\n\n“我不会杀你。”陆沉看着他，“但你再碰控制台，再拿她做人质，我会打断你的手。西侧卷帘门不开，营业区和任何未清空区域都不外放声音。”\n\n东侧外门前，苏晴已经到了。她抬头看摄像头，脸上第一次出现急切：“开门。”\n\n倒计时：14分21秒。\n\n陆沉的左手仍悬在控制键上，右手慢慢摸到腰间钥匙串。他看着钱明握刀的手，忽然把强光手电打开，光束直刺钱明眼睛。钱明本能偏头，林夏猛地往下缩。陆沉一步跨近，钥匙串缠住钱明手腕向外一绞，裁纸刀落地。\n\n钱明惨叫，陆沉没有追加，只把他按在椅背上，用扎带反捆双手。\n\n“林夏，开东侧外门。”陆沉说。\n\n林夏扑到控制台前，按下绿色键。\n\n屏幕里，东侧外门滑开一道缝，苏晴先把年轻店员推入员工通道，再拖着受伤男人进门。门在她身后闭合的瞬间，清洁通道那边的促销录音突然断了一拍。\n\n随后，另一个声音贴着监控拾音器传来。\n\n咔哒。咔哒。\n\n像指甲敲击瓷砖。\n\n陆沉切到清洁通道摄像头，先看见画面上沿一块检修盖轻轻晃动，缝隙里垂下一截沾血的保温棉。下一秒，一只感染者从天花管线下方倒挂着滑出，四肢反折，脖子以不正常的角度贴着地面。它不是一直待在通道地面，而是从摄像头仰角外的吊顶检修口爬进来，被维修喇叭吸到了清洁通道上方。\n\n它没有像普通感染者那样乱撞，而是侧着头，一下下分辨声音来源。促销录音刚停，它却猛地转头，看向员工通道内段的方向。\n\n听觉强化。\n\n它听见了东侧外门开启的电机声。\n\n“苏晴，别往监控室跑。”陆沉抓起伸缩棍和强光手电，打开监控室内门，“你们进员工通道后贴墙蹲下，等我清掉它。”\n\n“你一个人？”\n\n“门不能失守。”\n\n陆沉从监控室内门进入员工通道内段，反手将门虚掩，确认被货架封死的营业区侧门仍在身后另一侧，没有触碰。清洁通道与员工通道之间隔着一段冷柜补货狭道，狭道尽头堆着杂物，只能从冷柜侧进入，不通往其他幸存者。陆沉选择的不是那条封死夹道，而是员工通道内段旁的清洁间检修门——监控刚确认清洁通道地面无人，真正的风险来自上方那处漏检的吊顶口。\n\n倒计时：11分03秒。\n\n他把维修喇叭设成十秒后再次播放，自己贴着冷柜玻璃边缘站定。玻璃柜门半开，地面全是融化的水，狭窄过道只够一个成年人侧身通过。\n\n促销录音响起。\n\n爬行感染者像被钩子拽动，四肢同时发力，贴地冲来。速度比普通感染者快一倍，膝肘关节发出密集爆响，几乎贴着地面滑进冷柜过道。\n\n陆沉把强光手电照向它的耳侧。那东西猛地一顿，头颅偏转，露出脖颈下方鼓胀的灰白筋膜。陆沉挥棍砸下，却被它反折的前肢挡住，巨力震得他右肩剧痛，伸缩棍险些脱手。\n\n感染者张口没有吼，只发出细细的吸气声，像在捕捉他的心跳。\n\n陆沉后退半步，故意让鞋底踩碎一片冷柜玻璃。\n\n清脆声响在狭窄通道里炸开。爬行感染者瞬间扑向声音来源，半个身体撞进打开的玻璃柜门。陆沉用左肩顶住柜门，右手抓住货架边缘，胸腔里那股熟悉的灼热被迫点燃。\n\n应激爆发。\n\n世界在一瞬间变慢。陆沉看见它手肘关节外翻的轨迹，看见玻璃裂纹延伸，看见自己右肩皮肉下像有火线撕开。他咬住牙，猛地合上冷柜玻璃门，将感染者一条前肢卡在门缝里，同时伸缩棍从下往上捅进它张开的下颌。\n\n咔。\n\n感染者疯狂抽搐，反折的后肢踹碎冷柜底座，玻璃碎片溅在陆沉脸侧。他没有松手，借着应激爆发最后一股力，把整排冷柜门往前一拽。狭窄通道里，柜门、墙壁和货架形成夹角，将它的身体死死卡住。\n\n陆沉拔出伸缩棍，对准耳后灰白鼓包连续砸下。\n\n第一下，右肩像被撕裂。\n\n第二下，视野边缘浮起血色噪点。\n\n第三下，爬行感染者的头颅撞碎玻璃，终于塌了下去。\n\n热流退去时，陆沉单膝跪在满地碎玻璃里，喉咙里泛起铁锈味。眼前浮现出只有他能看见的字迹。\n\n【灰色素材词条：灵敏关节】\n\n【可提取。可用于装备/设施改造。人体槽位适配率低。】\n\n陆沉抬手触碰灰字，把它收入那片意识深处，却没有装入人体词条槽。灰字沉下去的一瞬间，他立刻明白：这只是素材，不是完成改造后的升级；没有合适材料和能量，它不会让他的身体变快，也不会替眼前这扇门多挡一下。\n\n下一行刺痛般跳出。\n\n侵蚀值：2/100。\n\n他扶着冷柜站起，右肩肿胀得几乎抬不起来。\n\n倒计时：7分36秒。\n\n苏晴带着两名幸存者抵达员工通道内段时，先看到的是陆沉满身玻璃碎和血痕。她没有立刻问战斗经过，而是蹲下查看受伤男人的前臂，剪开衣袖，闻了闻血腥味，又看瞳孔和伤口边缘。\n\n“撕裂伤，不是咬痕。”她把止血带递给年轻店员，“你按住这里。所有沾血的人靠右墙隔离，互相保持两米。任何人发热、意识混乱、牙龈出血，立刻说。”\n\n她打开急救包，里面有绷带、止血粉、碘伏、缝合贴和几支肾上腺素。又从外套内袋摸出一串商超分区钥匙和一台黑色短波对讲机，放到陆沉面前。\n\n“医药专柜的备用物资、分区钥匙，还有这个。”苏晴说，“短波还能用，比商超对讲稳定。”\n\n陆沉把钥匙和短波收起，却没有立刻退回监控室。他靠在控制台前，用左手调出电力分配界面，右手因为肩伤只能垂在身侧。\n\n备用电源还剩不到八分钟，常规线路已经被系统锁死。屏幕上，冷库独立柴油发电机的标识仍亮着一枚暗黄图标，控制权限显示在负二层仓储区与地下停车场卸货区之间的本地控制点。陆沉尝试切换供电，把监控室、员工通道门禁和负二层监控接入那组柴油发电机。\n\n第一遍，返回失败。\n\n第二遍，提示本地复位未完成。\n\n第三遍，地下停车场卸货区的监控画面跳出一片雪花，只在角落里闪过一瞬车灯反光。\n\n陆沉抓起原本的商超对讲，切到卸货区和发电机维护频道：“地下停车场卸货区，有人能听见吗？这里是监控室。柴油发电机控制点需要本地复位，听到回话。”\n\n只有电流杂音。\n\n他又用苏晴带来的短波扫了一遍相邻频段，仍旧没有回应。冷库方向传来的撞击隔着楼板闷闷压来，像在提醒他，每一次尝试都在吃掉剩下的时间。\n\n苏晴看着屏幕：“你要夺发电机控制权？”\n\n“必须夺。”陆沉盯着失败提示，“监控室撑不到十分钟，冷库那东西一出来，黑灯下所有门位都会失去意义。远程切不过去，只能找卸货区的人或者亲自去本地控制点。”\n\n他收起短波，声音低而快：“监控室能暂时守住。你的人先进来，等备用电切断，我们转去发电机控制点。现在的问题是，卸货区没人回话。”\n\n苏晴抬眼看他：“外面医药专柜后面还有人。我听见过哭声，至少不止这两个。”\n\n“没有监控确认的区域，我不会开门。”\n\n“你用广播和门救了我们，也能救他们。”\n\n“也可能把感染者引过去。”陆沉声音很低，“我不会为了可能存在的人，牺牲已经在门里的人。”\n\n苏晴手上动作没停，却抬头直视他：“分诊不是放弃。规则也不是把门一关就结束。你是守门的人，不是决定谁有资格活的人。”\n\n陆沉沉默一瞬，冷库方向又传来一声撞击，连员工通道的墙都轻微震了一下。\n\n砰。\n\n倒计时：3分12秒。\n\n他把止血材料压在自己右肩上，疼得额角抽动：“那你告诉我，三分钟内，你要我开哪扇门？还是让我现在离开监控室，摸黑去夺发电机控制点？”\n\n苏晴看向监控室方向，又看向受伤的人，最终咬住下颌：“先隔离，先止血，先确认路线。不开未知门。发电机控制点没有本地回应前，不能把所有人丢在这里。”\n\n这句话像妥协，也像一把刀。\n\n陆沉点头，带她们从监控室内门退回监控室。林夏还坐在控制台前，脸上全是泪，却没有离开屏幕。钱明被反绑在椅子旁，低着头发抖。\n\n苏晴给林夏重新包扎，又把止血粉和绷带推给陆沉：“急救包归团队统一用。你的肩膀十分钟内不处理，会影响行动。”\n\n“我们没有十分钟。”\n\n短波对讲机忽然亮起微弱绿灯，里面传出断续电流声。苏晴立刻调频，杂音里，一个男人嘶哑又带点慌的声音冲出来：\n\n“有人吗？我是赵铁！地下停车场卸货区！卷帘门卡住了，外面全是那玩意儿！我车上有柴油和工具，谁能听见回个话，快点啊！”\n\n陆沉和苏晴同时看向屏幕。地下停车场的监控画面一片雪花，只剩角落里偶尔闪过车灯反光。\n\n倒计时：00分09秒。\n\n负二层冷库画面中，铁门内侧的紫色轮廓猛然膨胀。\n\n00分03秒。\n\n陆沉伸手去切备用电分配，却只摸到一片冰冷的失控提示。\n\n00分00秒。\n\n监控室灯光骤然熄灭，所有屏幕同时黑下去。黑暗压下来的瞬间，负二层方向传来最后一次沉重撞击，哪怕隔着楼板和墙体，仍像砸在每个人胸口。\n\n咔——\n\n那是金属锁舌断裂的声音。\n\n备用电切断前残留的一帧画面，短暂印在陆沉视网膜上：早已变形的冷库铁门，被从里面撞开了一道缝。",
+  "committed": true,
+  "decision": {
+    "actions": [
+      "build_snapshot",
+      "pre_validate_bridge",
+      "generate_chapter",
+      "validate",
+      "repair_if_needed",
+      "commit_snapshot"
+    ],
+    "chapter_index": 2,
+    "goal": "recover_from_failed_run",
+    "max_repair_attempts": 3,
+    "notes": [
+      "Use snapshot as the runtime source of truth.",
+      "Keep Notion memory read-only during this execution step.",
+      "Memory items available: 11.",
+      "Active constraints: 3.",
+      "Current infection level: 快速上升.",
+      "Previous run failed with problem codes: missing_last_scene_continuity, llm_complex_plot_logic_spatial_access_conflict, llm_timeline_causality_power_timer_undertracked, llm_continuity_character_location_floor_mismatch.",
+      "Previous validation blocking problems: 4; severity counts: high=2, medium=2.",
+      "Previous error: ContextBudgetError: story_project_context_budget_exceeded: repair input requires 120051 tokens; hard limit is 118000.",
+      "Previous workflow: build_snapshot, pre_validate_bridge, generate_chapter, validate, repair_if_needed, commit_snapshot.",
+      "Skip polish during recovery so fact repair runs before prose refinement.",
+      "Previous validation coverage: executed=spatial,continuity,logic; skipped=none.",
+      "Previous repair plan: risk=high; budget=4; attempt=1; manual_review=3.",
+      "Previous repair plan required manual review; run full validation focus before polish."
+    ],
+    "validation_focus": [
+      "continuity",
+      "spatial",
+      "logic"
+    ]
+  },
+  "memory_write": {
+    "gate": {
+      "allowed": true,
+      "final_repair_delta": {
+        "after_ok": true,
+        "after_problem_codes": [],
+        "after_problem_count": 0,
+        "attempt": 2,
+        "before_ok": false,
+        "before_problem_codes": [
+          "llm_complex_plot_logic_spatial_access_conflict",
+          "llm_timeline_causality_goal_underpaid"
+        ],
+        "before_problem_count": 2,
+        "new_problem_codes": [],
+        "remaining_problem_codes": [],
+        "resolved_problem_codes": [
+          "llm_complex_plot_logic_spatial_access_conflict",
+          "llm_timeline_causality_goal_underpaid"
+        ]
+      },
+      "pending_update_count": 10,
+      "pending_update_types": [
+        {
+          "count": 1,
+          "type": "world_state"
+        },
+        {
+          "count": 1,
+          "type": "story_state"
+        },
+        {
+          "count": 1,
+          "type": "spatial_state"
+        },
+        {
+          "count": 4,
+          "type": "location"
+        },
+        {
+          "count": 3,
+          "type": "timeline_event"
+        }
+      ],
+      "reasons": [],
+      "repair_attempt_count": 4
+    },
+    "item_mappings": [
+      {
+        "memory_id": "chapter_2:timeline_event:chapter_2_summary",
+        "name": "chapter_2_summary",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "timeline_event"
+      },
+      {
+        "memory_id": "chapter_2:timeline_event:chapter_2_event_1",
+        "name": "chapter_2_event_1",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "timeline_event"
+      },
+      {
+        "memory_id": "chapter_2:timeline_event:chapter_2_event_2",
+        "name": "chapter_2_event_2",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "timeline_event"
+      },
+      {
+        "memory_id": "chapter_2:world_state:infection_pressure",
+        "name": "infection_pressure",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "world_state"
+      },
+      {
+        "memory_id": "chapter_2:location:负二层冷库",
+        "name": "负二层冷库",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "location"
+      },
+      {
+        "memory_id": "chapter_2:location:冷库",
+        "name": "冷库",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "location"
+      },
+      {
+        "memory_id": "chapter_2:location:监控室",
+        "name": "监控室",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "location"
+      },
+      {
+        "memory_id": "chapter_2:location:地下停车场",
+        "name": "地下停车场",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "location"
+      },
+      {
+        "memory_id": "chapter_2:story_state:chapter_2_story_state",
+        "name": "chapter_2_story_state",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "story_state"
+      },
+      {
+        "memory_id": "chapter_2:spatial_state:chapter_2_spatial_state",
+        "name": "chapter_2_spatial_state",
+        "status": "skipped_no_writer",
+        "target": null,
+        "type": "spatial_state"
+      }
+    ],
+    "skipped": true,
+    "target": null,
+    "verification": {
+      "reason": "no_writer",
+      "status": "not_applicable",
+      "target": null
+    },
+    "written": 0
+  },
+  "persistence": {
+    "candidate_result_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\persistence\\chapter_2_20260714T022935227346Z\\candidate_result.json",
+    "commit_marker": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\persistence\\chapter_2_20260714T022935227346Z\\commit.marker",
+    "committed": true,
+    "errors": [],
+    "journal_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\persistence\\chapter_2_20260714T022935227346Z",
+    "partial": false,
+    "publication": {
+      "chapter_artifact": {
+        "chars": 5462,
+        "format": "markdown",
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\chapters\\chapter_0002_committed_chapter_2_20260714T022935227346Z.md",
+        "sha256": "f89a1b28e741484e2bf802ab8caf8d551c0313a029adf47bc27aa3f1440030cf"
+      },
+      "memory_outbox": {
+        "gate": {
+          "allowed": true,
+          "final_repair_delta": {
+            "after_ok": true,
+            "after_problem_codes": [],
+            "after_problem_count": 0,
+            "attempt": 2,
+            "before_ok": false,
+            "before_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ],
+            "before_problem_count": 2,
+            "new_problem_codes": [],
+            "remaining_problem_codes": [],
+            "resolved_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ]
+          },
+          "pending_update_count": 10,
+          "pending_update_types": [
+            {
+              "count": 1,
+              "type": "world_state"
+            },
+            {
+              "count": 1,
+              "type": "story_state"
+            },
+            {
+              "count": 1,
+              "type": "spatial_state"
+            },
+            {
+              "count": 4,
+              "type": "location"
+            },
+            {
+              "count": 3,
+              "type": "timeline_event"
+            }
+          ],
+          "reasons": [],
+          "repair_attempt_count": 4
+        },
+        "status": "delivered",
+        "target": null,
+        "update_count": 10
+      }
+    },
+    "run_id": "chapter_2_20260714T022935227346Z",
+    "state": "completed",
+    "targets": [
+      {
+        "after_sha256": "c0b0de2489244ea9d8c553a7e4676063659a504f77a18dd08927459fc8bb7821",
+        "after_size": 15815,
+        "backup_path": null,
+        "before_sha256": null,
+        "before_size": null,
+        "error": null,
+        "existed": false,
+        "id": "target-000",
+        "index": 0,
+        "kind": "prose",
+        "metadata": {
+          "story_target_index": 0
+        },
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\正文\\第002章_第二章：十七分钟倒计时.md",
+        "staged_path": "staged/000.bin",
+        "status": "verified"
+      },
+      {
+        "after_sha256": "442d9feec5525508368bc93616adb3a0f94b5cbea215784414b80b361332d04c",
+        "after_size": 2200,
+        "backup_path": "backups/001.bin",
+        "before_sha256": "44a6f4ee097203861e02c106a7440874b7b729480a5c6a0aa5748493aaf3e84e",
+        "before_size": 1402,
+        "error": null,
+        "existed": true,
+        "id": "target-001",
+        "index": 1,
+        "kind": "context",
+        "metadata": {
+          "story_target_index": 1
+        },
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\上下文.md",
+        "staged_path": "staged/001.bin",
+        "status": "verified"
+      },
+      {
+        "after_sha256": "ef5a3bb01fe6784382227485a04d493c4cd8c82819a49bc210a7f8c3b75f6904",
+        "after_size": 1754,
+        "backup_path": "backups/002.bin",
+        "before_sha256": "afdb30d6700d4b36d96c159c014c5980a49ce115aa4425090627aa7b7e91f344",
+        "before_size": 1155,
+        "error": null,
+        "existed": true,
+        "id": "target-002",
+        "index": 2,
+        "kind": "foreshadowing",
+        "metadata": {
+          "story_target_index": 2
+        },
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\伏笔.md",
+        "staged_path": "staged/002.bin",
+        "status": "verified"
+      },
+      {
+        "after_sha256": "58c77b4b5deba173a9dd34fc51eca36a7d88b4c9786afef0df56a0209640b2ff",
+        "after_size": 2279,
+        "backup_path": "backups/003.bin",
+        "before_sha256": "b6f4f5e340ede6e267d25530186a731492fac13e2f5747663aec67db5cdf04d8",
+        "before_size": 1418,
+        "error": null,
+        "existed": true,
+        "id": "target-003",
+        "index": 3,
+        "kind": "timeline",
+        "metadata": {
+          "story_target_index": 3
+        },
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\时间线.md",
+        "staged_path": "staged/003.bin",
+        "status": "verified"
+      },
+      {
+        "after_sha256": "5d085f46b302ff7db4e9164c1e59b98adfc5852b08e88d070444232363819e38",
+        "after_size": 1796,
+        "backup_path": "backups/004.bin",
+        "before_sha256": "6fc10a2e71d97e33d96e357013d7387df6fc3220067330a92017406c860b01b0",
+        "before_size": 1184,
+        "error": null,
+        "existed": true,
+        "id": "target-004",
+        "index": 4,
+        "kind": "character_state",
+        "metadata": {
+          "story_target_index": 4
+        },
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\角色状态.md",
+        "staged_path": "staged/004.bin",
+        "status": "verified"
+      },
+      {
+        "after_sha256": "4072e807b6f25b50c0a301fcec62f9bec44e5d75541f2a2c60325ddc4d787e20",
+        "after_size": 15875,
+        "backup_path": "backups/005.bin",
+        "before_sha256": "e5f8593b8254544afa04ff7c1bf19b44c6d8865364dbfd668ea7398931ae424d",
+        "before_size": 10873,
+        "error": null,
+        "existed": true,
+        "id": "target-005",
+        "index": 5,
+        "kind": "snapshot",
+        "metadata": {
+          "chapter_index": 2
+        },
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\snapshot.json",
+        "staged_path": "staged/005.bin",
+        "status": "verified"
+      }
+    ]
+  },
+  "quality_decision": {
+    "accepted": true,
+    "blocking_finding_ids": [],
+    "decision_digest": "993540a33a91b14273dd9c9b6ea7f8ccc9e38b67a8fb46be058fb85bd606050a",
+    "finding_ids": [
+      "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+    ],
+    "findings": [
+      {
+        "blocking": false,
+        "canonical": {
+          "predicate": "conflict_progression",
+          "subject": "chapter",
+          "time_range": "chapter:2"
+        },
+        "category": "conflict_progression",
+        "code_family": "conflict_progression",
+        "codes": [
+          "advance_current_conflict",
+          "advances_open_threads_or_conflicts"
+        ],
+        "evidence": [
+          {
+            "kind": "candidate_terms",
+            "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+          },
+          {
+            "kind": "message",
+            "value": "Chapter does not clearly touch current threads or conflicts."
+          },
+          {
+            "kind": "quality_check_codes",
+            "value": "[\"advances_open_threads_or_conflicts\"]"
+          },
+          {
+            "kind": "message",
+            "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+          }
+        ],
+        "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+        "identity_version": "1.0",
+        "producer_evidence": [
+          {
+            "code": "advances_open_threads_or_conflicts",
+            "evidence": [
+              {
+                "kind": "candidate_terms",
+                "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Chapter does not clearly touch current threads or conflicts."
+              }
+            ],
+            "producer": "deterministic_review",
+            "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+          },
+          {
+            "code": "advance_current_conflict",
+            "evidence": [
+              {
+                "kind": "quality_check_codes",
+                "value": "[\"advances_open_threads_or_conflicts\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+              }
+            ],
+            "producer": "narrative_rules",
+            "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+          }
+        ],
+        "repair": {
+          "action": "manual_review",
+          "parameters": {}
+        },
+        "severity": "warning",
+        "source_artifacts": [
+          "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+          "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+        ],
+        "validation_coverage": {
+          "executed_checks": [],
+          "requested_checks": [],
+          "skipped_checks": []
+        }
+      }
+    ],
+    "llm_validator": {
+      "attempt_history": [
+        {
+          "attempt": 1,
+          "cause_type": null,
+          "delay_ms": 0,
+          "elapsed_ms": 14000,
+          "failure_category": null,
+          "outcome": "succeeded",
+          "partial_content_received": false,
+          "profile": "model_read_generation",
+          "retry_after_ms": null,
+          "retryable": false,
+          "stop_reason": "succeeded"
+        }
+      ],
+      "available": true,
+      "configured": true,
+      "model": "gpt-5.5",
+      "policy_version": "1.0",
+      "prompt_hash": "7ddb9575e18628408030cb7409408a624b1aa45a1f440bd1d155ea39716600e2",
+      "provider": "openai",
+      "required": false
+    },
+    "manual_review_finding_ids": [
+      "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+    ],
+    "max_severity": "warning",
+    "policy": {
+      "include_review": true,
+      "llm_validator_required": false,
+      "max_repair_attempts": 2,
+      "name": "standard",
+      "producers": [
+        "base_validation",
+        "blueprint_coverage",
+        "deterministic_review",
+        "narrative_rules"
+      ],
+      "threshold": "needs_revision",
+      "version": "1.0"
+    },
+    "producers": [
+      "base_validation",
+      "blueprint_coverage",
+      "deterministic_review",
+      "llm_validator",
+      "narrative_rules"
+    ],
+    "schema_version": "1.0",
+    "status": "accepted",
+    "validation_coverage": {
+      "executed_checks": [
+        "continuity",
+        "llm",
+        "logic",
+        "spatial",
+        "story_project"
+      ],
+      "requested_checks": [
+        "continuity",
+        "logic",
+        "spatial"
+      ],
+      "skipped_checks": []
+    }
+  },
+  "repair_attempts": 2,
+  "review_gate": {
+    "enabled": true,
+    "exit_code": 0,
+    "matched": false,
+    "reason": "review status warning does not meet gate threshold needs_revision",
+    "review_status": "warning",
+    "schema_version": "1.0",
+    "status": "pass",
+    "threshold": "needs_revision"
+  },
+  "review_index": {
+    "enabled": true,
+    "entry_count": 3,
+    "index_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\review_index.json",
+    "latest_run_id": "chapter_2_20260714T022935227346Z",
+    "status": "updated"
+  },
+  "review_pipeline": {
+    "artifacts_dir": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original",
+    "blocking_task_count": 0,
+    "decision": "needs_revision",
+    "enabled": true,
+    "quality_decision": {
+      "accepted": true,
+      "blocking_finding_ids": [],
+      "decision_digest": "5f0673d39dc0291ac55cf878b0c5d9e6ca729d84cec7cf96d4b3c535fb4224d0",
+      "finding_ids": [
+        "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+      ],
+      "findings": [
+        {
+          "blocking": false,
+          "canonical": {
+            "predicate": "conflict_progression",
+            "subject": "chapter",
+            "time_range": "chapter:2"
+          },
+          "category": "conflict_progression",
+          "code_family": "conflict_progression",
+          "codes": [
+            "advance_current_conflict",
+            "advances_open_threads_or_conflicts"
+          ],
+          "evidence": [
+            {
+              "kind": "candidate_terms",
+              "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+            },
+            {
+              "kind": "message",
+              "value": "Chapter does not clearly touch current threads or conflicts."
+            },
+            {
+              "kind": "quality_check_codes",
+              "value": "[\"advances_open_threads_or_conflicts\"]"
+            },
+            {
+              "kind": "message",
+              "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+            }
+          ],
+          "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+          "identity_version": "1.0",
+          "producer_evidence": [
+            {
+              "code": "advances_open_threads_or_conflicts",
+              "evidence": [
+                {
+                  "kind": "candidate_terms",
+                  "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Chapter does not clearly touch current threads or conflicts."
+                }
+              ],
+              "producer": "deterministic_review",
+              "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+            },
+            {
+              "code": "advance_current_conflict",
+              "evidence": [
+                {
+                  "kind": "quality_check_codes",
+                  "value": "[\"advances_open_threads_or_conflicts\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                }
+              ],
+              "producer": "narrative_rules",
+              "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+            }
+          ],
+          "repair": {
+            "action": "manual_review",
+            "parameters": {}
+          },
+          "severity": "warning",
+          "source_artifacts": [
+            "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+            "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+          ],
+          "validation_coverage": {
+            "executed_checks": [],
+            "requested_checks": [],
+            "skipped_checks": []
+          }
+        }
+      ],
+      "llm_validator": {
+        "attempt_history": [],
+        "available": false,
+        "configured": false,
+        "model": null,
+        "policy_version": "1.0",
+        "prompt_hash": null,
+        "provider": null,
+        "required": false
+      },
+      "manual_review_finding_ids": [
+        "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+      ],
+      "max_severity": "warning",
+      "policy": {
+        "include_review": true,
+        "llm_validator_required": false,
+        "max_repair_attempts": 2,
+        "name": "standard",
+        "producers": [
+          "base_validation",
+          "blueprint_coverage",
+          "deterministic_review",
+          "narrative_rules"
+        ],
+        "threshold": "needs_revision",
+        "version": "1.0"
+      },
+      "producers": [
+        "deterministic_review",
+        "narrative_rules"
+      ],
+      "schema_version": "1.0",
+      "status": "accepted",
+      "validation_coverage": {
+        "executed_checks": [],
+        "requested_checks": [],
+        "skipped_checks": []
+      }
+    },
+    "quality_score": 92,
+    "repair_task_count": 1,
+    "rule_score": 88,
+    "status": "needs_revision",
+    "summary_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\review_pipeline_summary.json"
+  },
+  "review_repair": {
+    "accepted": true,
+    "after_gate": {
+      "enabled": true,
+      "exit_code": 0,
+      "matched": false,
+      "reason": "review status warning does not meet gate threshold needs_revision",
+      "review_status": "warning",
+      "schema_version": "1.0",
+      "status": "pass",
+      "threshold": "needs_revision"
+    },
+    "after_review": null,
+    "artifacts": {},
+    "attempt_count": 0,
+    "attempted": false,
+    "before_gate": {
+      "enabled": true,
+      "exit_code": 0,
+      "matched": false,
+      "reason": "review status warning does not meet gate threshold needs_revision",
+      "review_status": "warning",
+      "schema_version": "1.0",
+      "status": "pass",
+      "threshold": "needs_revision"
+    },
+    "before_quality_decision": {
+      "accepted": true,
+      "blocking_finding_ids": [],
+      "decision_digest": "993540a33a91b14273dd9c9b6ea7f8ccc9e38b67a8fb46be058fb85bd606050a",
+      "finding_ids": [
+        "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+      ],
+      "findings": [
+        {
+          "blocking": false,
+          "canonical": {
+            "predicate": "conflict_progression",
+            "subject": "chapter",
+            "time_range": "chapter:2"
+          },
+          "category": "conflict_progression",
+          "code_family": "conflict_progression",
+          "codes": [
+            "advance_current_conflict",
+            "advances_open_threads_or_conflicts"
+          ],
+          "evidence": [
+            {
+              "kind": "candidate_terms",
+              "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+            },
+            {
+              "kind": "message",
+              "value": "Chapter does not clearly touch current threads or conflicts."
+            },
+            {
+              "kind": "quality_check_codes",
+              "value": "[\"advances_open_threads_or_conflicts\"]"
+            },
+            {
+              "kind": "message",
+              "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+            }
+          ],
+          "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+          "identity_version": "1.0",
+          "producer_evidence": [
+            {
+              "code": "advances_open_threads_or_conflicts",
+              "evidence": [
+                {
+                  "kind": "candidate_terms",
+                  "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Chapter does not clearly touch current threads or conflicts."
+                }
+              ],
+              "producer": "deterministic_review",
+              "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+            },
+            {
+              "code": "advance_current_conflict",
+              "evidence": [
+                {
+                  "kind": "quality_check_codes",
+                  "value": "[\"advances_open_threads_or_conflicts\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                }
+              ],
+              "producer": "narrative_rules",
+              "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+            }
+          ],
+          "repair": {
+            "action": "manual_review",
+            "parameters": {}
+          },
+          "severity": "warning",
+          "source_artifacts": [
+            "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+            "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+          ],
+          "validation_coverage": {
+            "executed_checks": [],
+            "requested_checks": [],
+            "skipped_checks": []
+          }
+        }
+      ],
+      "llm_validator": {
+        "attempt_history": [
+          {
+            "attempt": 1,
+            "cause_type": null,
+            "delay_ms": 0,
+            "elapsed_ms": 14000,
+            "failure_category": null,
+            "outcome": "succeeded",
+            "partial_content_received": false,
+            "profile": "model_read_generation",
+            "retry_after_ms": null,
+            "retryable": false,
+            "stop_reason": "succeeded"
+          }
+        ],
+        "available": true,
+        "configured": true,
+        "model": "gpt-5.5",
+        "policy_version": "1.0",
+        "prompt_hash": "7ddb9575e18628408030cb7409408a624b1aa45a1f440bd1d155ea39716600e2",
+        "provider": "openai",
+        "required": false
+      },
+      "manual_review_finding_ids": [
+        "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+      ],
+      "max_severity": "warning",
+      "policy": {
+        "include_review": true,
+        "llm_validator_required": false,
+        "max_repair_attempts": 2,
+        "name": "standard",
+        "producers": [
+          "base_validation",
+          "blueprint_coverage",
+          "deterministic_review",
+          "narrative_rules"
+        ],
+        "threshold": "needs_revision",
+        "version": "1.0"
+      },
+      "producers": [
+        "base_validation",
+        "blueprint_coverage",
+        "deterministic_review",
+        "llm_validator",
+        "narrative_rules"
+      ],
+      "schema_version": "1.0",
+      "status": "accepted",
+      "validation_coverage": {
+        "executed_checks": [
+          "continuity",
+          "llm",
+          "logic",
+          "spatial",
+          "story_project"
+        ],
+        "requested_checks": [
+          "continuity",
+          "logic",
+          "spatial"
+        ],
+        "skipped_checks": []
+      }
+    },
+    "before_review": {
+      "artifacts_dir": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original",
+      "blocking_task_count": 0,
+      "decision": "needs_revision",
+      "enabled": true,
+      "quality_decision": {
+        "accepted": true,
+        "blocking_finding_ids": [],
+        "decision_digest": "5f0673d39dc0291ac55cf878b0c5d9e6ca729d84cec7cf96d4b3c535fb4224d0",
+        "finding_ids": [
+          "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+        ],
+        "findings": [
+          {
+            "blocking": false,
+            "canonical": {
+              "predicate": "conflict_progression",
+              "subject": "chapter",
+              "time_range": "chapter:2"
+            },
+            "category": "conflict_progression",
+            "code_family": "conflict_progression",
+            "codes": [
+              "advance_current_conflict",
+              "advances_open_threads_or_conflicts"
+            ],
+            "evidence": [
+              {
+                "kind": "candidate_terms",
+                "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Chapter does not clearly touch current threads or conflicts."
+              },
+              {
+                "kind": "quality_check_codes",
+                "value": "[\"advances_open_threads_or_conflicts\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+              }
+            ],
+            "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+            "identity_version": "1.0",
+            "producer_evidence": [
+              {
+                "code": "advances_open_threads_or_conflicts",
+                "evidence": [
+                  {
+                    "kind": "candidate_terms",
+                    "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                  },
+                  {
+                    "kind": "message",
+                    "value": "Chapter does not clearly touch current threads or conflicts."
+                  }
+                ],
+                "producer": "deterministic_review",
+                "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+              },
+              {
+                "code": "advance_current_conflict",
+                "evidence": [
+                  {
+                    "kind": "quality_check_codes",
+                    "value": "[\"advances_open_threads_or_conflicts\"]"
+                  },
+                  {
+                    "kind": "message",
+                    "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                  }
+                ],
+                "producer": "narrative_rules",
+                "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+              }
+            ],
+            "repair": {
+              "action": "manual_review",
+              "parameters": {}
+            },
+            "severity": "warning",
+            "source_artifacts": [
+              "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+              "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+            ],
+            "validation_coverage": {
+              "executed_checks": [],
+              "requested_checks": [],
+              "skipped_checks": []
+            }
+          }
+        ],
+        "llm_validator": {
+          "attempt_history": [],
+          "available": false,
+          "configured": false,
+          "model": null,
+          "policy_version": "1.0",
+          "prompt_hash": null,
+          "provider": null,
+          "required": false
+        },
+        "manual_review_finding_ids": [
+          "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+        ],
+        "max_severity": "warning",
+        "policy": {
+          "include_review": true,
+          "llm_validator_required": false,
+          "max_repair_attempts": 2,
+          "name": "standard",
+          "producers": [
+            "base_validation",
+            "blueprint_coverage",
+            "deterministic_review",
+            "narrative_rules"
+          ],
+          "threshold": "needs_revision",
+          "version": "1.0"
+        },
+        "producers": [
+          "deterministic_review",
+          "narrative_rules"
+        ],
+        "schema_version": "1.0",
+        "status": "accepted",
+        "validation_coverage": {
+          "executed_checks": [],
+          "requested_checks": [],
+          "skipped_checks": []
+        }
+      },
+      "quality_score": 92,
+      "repair_task_count": 1,
+      "rule_score": 88,
+      "status": "needs_revision",
+      "summary_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\review_pipeline_summary.json"
+    },
+    "dry_run": false,
+    "enabled": true,
+    "errors": [],
+    "final_quality_decision": {
+      "accepted": true,
+      "blocking_finding_ids": [],
+      "decision_digest": "993540a33a91b14273dd9c9b6ea7f8ccc9e38b67a8fb46be058fb85bd606050a",
+      "finding_ids": [
+        "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+      ],
+      "findings": [
+        {
+          "blocking": false,
+          "canonical": {
+            "predicate": "conflict_progression",
+            "subject": "chapter",
+            "time_range": "chapter:2"
+          },
+          "category": "conflict_progression",
+          "code_family": "conflict_progression",
+          "codes": [
+            "advance_current_conflict",
+            "advances_open_threads_or_conflicts"
+          ],
+          "evidence": [
+            {
+              "kind": "candidate_terms",
+              "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+            },
+            {
+              "kind": "message",
+              "value": "Chapter does not clearly touch current threads or conflicts."
+            },
+            {
+              "kind": "quality_check_codes",
+              "value": "[\"advances_open_threads_or_conflicts\"]"
+            },
+            {
+              "kind": "message",
+              "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+            }
+          ],
+          "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+          "identity_version": "1.0",
+          "producer_evidence": [
+            {
+              "code": "advances_open_threads_or_conflicts",
+              "evidence": [
+                {
+                  "kind": "candidate_terms",
+                  "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Chapter does not clearly touch current threads or conflicts."
+                }
+              ],
+              "producer": "deterministic_review",
+              "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+            },
+            {
+              "code": "advance_current_conflict",
+              "evidence": [
+                {
+                  "kind": "quality_check_codes",
+                  "value": "[\"advances_open_threads_or_conflicts\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                }
+              ],
+              "producer": "narrative_rules",
+              "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+            }
+          ],
+          "repair": {
+            "action": "manual_review",
+            "parameters": {}
+          },
+          "severity": "warning",
+          "source_artifacts": [
+            "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+            "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+          ],
+          "validation_coverage": {
+            "executed_checks": [],
+            "requested_checks": [],
+            "skipped_checks": []
+          }
+        }
+      ],
+      "llm_validator": {
+        "attempt_history": [
+          {
+            "attempt": 1,
+            "cause_type": null,
+            "delay_ms": 0,
+            "elapsed_ms": 14000,
+            "failure_category": null,
+            "outcome": "succeeded",
+            "partial_content_received": false,
+            "profile": "model_read_generation",
+            "retry_after_ms": null,
+            "retryable": false,
+            "stop_reason": "succeeded"
+          }
+        ],
+        "available": true,
+        "configured": true,
+        "model": "gpt-5.5",
+        "policy_version": "1.0",
+        "prompt_hash": "7ddb9575e18628408030cb7409408a624b1aa45a1f440bd1d155ea39716600e2",
+        "provider": "openai",
+        "required": false
+      },
+      "manual_review_finding_ids": [
+        "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+      ],
+      "max_severity": "warning",
+      "policy": {
+        "include_review": true,
+        "llm_validator_required": false,
+        "max_repair_attempts": 2,
+        "name": "standard",
+        "producers": [
+          "base_validation",
+          "blueprint_coverage",
+          "deterministic_review",
+          "narrative_rules"
+        ],
+        "threshold": "needs_revision",
+        "version": "1.0"
+      },
+      "producers": [
+        "base_validation",
+        "blueprint_coverage",
+        "deterministic_review",
+        "llm_validator",
+        "narrative_rules"
+      ],
+      "schema_version": "1.0",
+      "status": "accepted",
+      "validation_coverage": {
+        "executed_checks": [
+          "continuity",
+          "llm",
+          "logic",
+          "spatial",
+          "story_project"
+        ],
+        "requested_checks": [
+          "continuity",
+          "logic",
+          "spatial"
+        ],
+        "skipped_checks": []
+      }
+    },
+    "gate_threshold": "needs_revision",
+    "max_attempts": 1,
+    "rejected_reason": "review_status_does_not_require_repair",
+    "repair_deltas": [],
+    "repair_plan": null,
+    "trigger_status": "needs_revision"
+  },
+  "run": {
+    "accepted": true,
+    "analysis": {
+      "conflict_count": 1,
+      "event_count": 2,
+      "summary": "剩余电量：17分钟。 红色数字在监控台右上角闪烁，陆沉的手还压在键盘边缘，右肩一阵阵发烫。",
+      "validation_ok": true,
+      "world_change_count": 1
+    },
+    "chapter": {
+      "artifact": {
+        "chars": 5462,
+        "format": "markdown",
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\chapters\\chapter_0002_committed_chapter_2_20260714T022935227346Z.md",
+        "sha256": "f89a1b28e741484e2bf802ab8caf8d551c0313a029adf47bc27aa3f1440030cf"
+      },
+      "chars": 5462,
+      "pipeline": {
+        "artifacts": {
+          "merged_chapter": {
+            "chars": 4656,
+            "format": "markdown",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\chapter_pipeline\\merged_chapter_0002_chapter_2_20260714T022935227346Z.md",
+            "sha256": "2a8f593bd27dbbf30518ad5311b763e204b38cb88c4f2c48041248d0f137c5eb"
+          },
+          "plan": {
+            "chars": 1441,
+            "format": "json",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\chapter_pipeline\\chapter_plan_0002_chapter_2_20260714T022935227346Z.json",
+            "sha256": "f2808ad5a79b8cb50eec68189130f675faa85ac0e482d2c788fc153b8675f5bb"
+          },
+          "repair_deltas": {
+            "chars": 2428,
+            "format": "json",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\chapter_pipeline\\repair_deltas_0002_chapter_2_20260714T022935227346Z.json",
+            "sha256": "6695e512f1e7df0b5f6f2f9c85909b0ca7b6b466a5fb3098685cad8588e9882b"
+          },
+          "scene_drafts": [
+            {
+              "chars": 5253,
+              "format": "markdown",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\chapter_pipeline\\scene_0002_01_chapter_2_20260714T022935227346Z.md",
+              "sha256": "3726ab7715bc1210a85b43ac0a6ee2be573513683af3e479d7eff0d35021ee0e"
+            }
+          ],
+          "validation_report": {
+            "chars": 1481,
+            "format": "json",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\chapter_pipeline\\validation_report_0002_chapter_2_20260714T022935227346Z.json",
+            "sha256": "1c21fb52accd66ef3afc948b67308b5b6a78d43d68d2b3c2f587d6abc9ff52ca"
+          }
+        },
+        "blueprint_coverage": {
+          "covered_beat_indexes": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "ending_pressure_covered": true,
+          "ending_pressure_required": true,
+          "missing_beat_indexes": [],
+          "required_beat_count": 6
+        },
+        "chapter_blueprint": {
+          "chapter_index": 2,
+          "core_event": "备用电量进入十七分钟倒计时，陆沉必须在守住监控室与救援医药专柜幸存者之间做出战术选择，并首次与苏晴建立联络。",
+          "ending_pressure": "苏晴从短波对讲机中听见地下停车场的赵铁求救；备用电切断瞬间，未完成实验体最后一次撞击破坏了早已变形的锁舌，负二层冷库铁门被撞开一道缝。",
+          "missing_fields": [],
+          "outline_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\大纲\\细纲_第002章.md",
+          "required_beats": [
+            {
+              "index": 1,
+              "text": "开篇紧接备用电量只剩17分钟与冷库未完成实验体苏醒；陆沉确认自己仍在监控室，只是通过屏幕观察负二层冷库。必须区分可开启的监控室内门、用于接应苏晴的东侧外门、已被货架封死的营业区侧门。"
+            },
+            {
+              "index": 2,
+              "text": "陆沉利用监控、广播和分区卷帘门为苏晴规划一条从医药专柜撤向员工通道的路线；广播诱敌只能使用监控已确认无人的封闭通道，不能把感染者引向未知幸存者，同时让获救女孩负责报点。"
+            },
+            {
+              "index": 3,
+              "text": "钱明企图用获救女孩做人质逼陆沉开启西侧卷帘门；陆沉不杀钱明，而是只通过监控室内的屏幕与近距离对话公开其隐瞒妻子被咬并擅自开门的事实，禁止向营业区或任何未清空区域外放声音。"
+            },
+            {
+              "index": 4,
+              "text": "一只听觉强化的爬行感染者循广播声逼近，陆沉利用监控确认无人的清洁通道、定时广播、冷柜玻璃与狭窄通道完成战术反杀；“应激爆发”帮助他执行关键动作，却使右肩伤势加重、侵蚀值升至2/100。"
+            },
+            {
+              "index": 5,
+              "text": "苏晴带着急救包和两名幸存者抵达员工通道，先为伤员分诊并要求隔离所有沾血者；她与陆沉就“先救更多人还是先守住门”发生克制但尖锐的第一次价值观碰撞。"
+            },
+            {
+              "index": 6,
+              "text": "资源收益必须明确：获得急救包、止血材料、商超分区钥匙和一台可工作的短波对讲机；爬行感染者掉落灰色素材词条“灵敏关节”，暂不装入人体词条槽。"
+            }
+          ],
+          "source_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\大纲\\细纲_第002章.md",
+          "title": "第二章：十七分钟倒计时"
+        },
+        "chapter_index": 2,
+        "merged_chars": 4587,
+        "plan_goal": "备用电量进入十七分钟倒计时，陆沉必须在守住监控室与救援医药专柜幸存者之间做出战术选择，并首次与苏晴建立联络。",
+        "scene_count": 1,
+        "scene_spans": [
+          {
+            "chars": 4587,
+            "end_char": 4587,
+            "index": 1,
+            "start_char": 0
+          }
+        ],
+        "stages": [
+          {
+            "artifact_key": "plan",
+            "name": "plan_chapter",
+            "status": "completed",
+            "summary": {
+              "scene_count": 1
+            }
+          },
+          {
+            "artifact_key": "scene_drafts",
+            "name": "generate_scenes",
+            "status": "completed",
+            "summary": {
+              "scene_count": 1
+            }
+          },
+          {
+            "artifact_key": "merged_chapter",
+            "name": "merge_scenes",
+            "status": "completed",
+            "summary": {
+              "chars": 4587
+            }
+          },
+          {
+            "artifact_key": "validation_report",
+            "name": "validate",
+            "status": "completed",
+            "summary": {
+              "blocking_count": 0,
+              "ok": true,
+              "problem_count": 0,
+              "warning_count": 0
+            }
+          },
+          {
+            "artifact_key": "repair_deltas",
+            "name": "repair",
+            "status": "completed",
+            "summary": {
+              "after_ok": true,
+              "attempt_count": 4,
+              "new_problem_codes": [],
+              "remaining_problem_codes": [],
+              "resolved_problem_codes": [
+                "llm_complex_plot_logic_spatial_access_conflict",
+                "llm_timeline_causality_goal_underpaid"
+              ]
+            }
+          },
+          {
+            "artifact_key": "chapter",
+            "name": "commit",
+            "status": "completed",
+            "summary": {
+              "committed": true
+            }
+          }
+        ]
+      }
+    },
+    "chapter_index": 2,
+    "committed": true,
+    "decision": {
+      "actions": [
+        "build_snapshot",
+        "pre_validate_bridge",
+        "generate_chapter",
+        "validate",
+        "repair_if_needed",
+        "commit_snapshot"
+      ],
+      "goal": "recover_from_failed_run",
+      "max_repair_attempts": 3,
+      "validation_focus": [
+        "continuity",
+        "spatial",
+        "logic"
+      ]
+    },
+    "director": {
+      "duration_ms": 0,
+      "finished_at": "2026-07-14T02:29:35.297342+00:00",
+      "mode": "rule",
+      "model": null,
+      "source": "core.director.director.decide_next_step",
+      "started_at": "2026-07-14T02:29:35.297342+00:00",
+      "status": "completed"
+    },
+    "finished_at": "2026-07-14T02:35:11.628982+00:00",
+    "id": "chapter_2_20260714T022935227346Z",
+    "input_pack": {
+      "artifact": {
+        "chars": 46418,
+        "format": "markdown",
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\input_packs\\input_pack_0002_chapter_2_20260714T022935227346Z.md"
+      },
+      "chars": 46418,
+      "metadata": {
+        "chapter_index": 2,
+        "chars": 46418,
+        "decision": {
+          "actions": [
+            "build_snapshot",
+            "pre_validate_bridge",
+            "generate_chapter",
+            "validate",
+            "repair_if_needed",
+            "commit_snapshot"
+          ],
+          "goal": "recover_from_failed_run",
+          "max_repair_attempts": 3,
+          "validation_focus": [
+            "continuity",
+            "spatial",
+            "logic"
+          ]
+        },
+        "kind": "chapter_input_pack",
+        "memory_index": {
+          "indexed_item_count": 11,
+          "item_count": 11,
+          "last_run_present": true,
+          "source": "story-project",
+          "source_mapping_count": 11,
+          "status": "ready"
+        },
+        "recovery_context": {
+          "available": true,
+          "executed_checks": [
+            "spatial",
+            "continuity",
+            "logic",
+            "story_project",
+            "llm"
+          ],
+          "problem_count": 4,
+          "repair_attempts": 0,
+          "skipped_checks": [],
+          "source_run_id": "chapter_2_20260714T022545663839Z",
+          "status": "failed"
+        },
+        "sections": [
+          "chapter_index",
+          "project_profile",
+          "director_decision",
+          "world_state",
+          "story_state",
+          "spatial_state",
+          "characters",
+          "timeline",
+          "constraints",
+          "runtime_memory_metadata",
+          "memory_index",
+          "recovery_context",
+          "requirements",
+          "story_project_chapter_blueprint"
+        ],
+        "snapshot": {
+          "character_count": 3,
+          "character_position_count": 3,
+          "connection_count": 0,
+          "constraint_count": 3,
+          "memory_item_count": 11,
+          "memory_source": "story-project",
+          "memory_status": "ready",
+          "open_thread_count": 4,
+          "project_profile": {
+            "known_characters": [
+              "陆沉",
+              "苏晴",
+              "赵铁",
+              "陆遥",
+              "钱明",
+              "获救女孩"
+            ],
+            "known_locations": [
+              "临江市地下商超",
+              "监控室",
+              "冷库",
+              "地下停车场",
+              "地下一层营业区",
+              "负二层冷库"
+            ],
+            "language": "zh-CN"
+          },
+          "space_count": 4,
+          "spatial_state_keys": [
+            "blocked_paths",
+            "character_positions",
+            "connections",
+            "last_transition",
+            "spaces"
+          ],
+          "story_state_keys": [
+            "last_chapter_ending",
+            "last_scene_characters",
+            "last_scene_location",
+            "open_threads",
+            "path",
+            "relative_path",
+            "required_opening_bridge",
+            "source",
+            "summary",
+            "text",
+            "truncated"
+          ],
+          "timeline_count": 1,
+          "world_state_keys": [
+            "city_power",
+            "infection_level",
+            "last_world_changes",
+            "locations",
+            "outbreak_stage",
+            "path",
+            "relative_path",
+            "source",
+            "summary",
+            "text",
+            "truncated"
+          ]
+        },
+        "story_project": {
+          "chapter_index": 2,
+          "enabled": true,
+          "ending_pressure_present": true,
+          "required_beat_count": 6
+        }
+      },
+      "preview": "You are NovelAgent's chapter generation module. Generate the next chapter from the runtime Snapshot and Director decision.\n\n# Chapter Index\n2\n\n# Project Profile\n{\n  \"language\": \"zh-CN\",\n  \"known_characters\": [\n    \"陆沉\",\n    \"苏晴\",\n    \"赵铁\",\n    \"陆遥\",\n    \"钱明\",\n    \"获救女孩\"\n  ],\n  \"known_locations\": [\n    \"临江市地下商超\",\n    \"监控室\",\n    \"冷库\",\n    \"地下停车场\",\n    \"地下一层营业区\",\n    \"负二层冷库\"\n  ]\n}\n\n# Director Decision\n{\n  \"chapter_index\": 2,\n  \"goal\": \"recover_from_failed_run\",\n  \"actions\": [\n    \"build_snapshot\",\n"
+    },
+    "memory": {
+      "file_mapping_count": 11,
+      "item_count": 11,
+      "line_mapping_count": 0,
+      "notion_page_mapping_count": 0,
+      "notion_page_url_count": 0,
+      "source": "story-project",
+      "source_mapping_count": 11,
+      "source_mapping_sources": [
+        {
+          "count": 11,
+          "source": "story_project"
+        }
+      ],
+      "status": "ready",
+      "writeback": {
+        "gate": {
+          "allowed": true,
+          "final_repair_delta": {
+            "after_ok": true,
+            "after_problem_codes": [],
+            "after_problem_count": 0,
+            "attempt": 2,
+            "before_ok": false,
+            "before_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ],
+            "before_problem_count": 2,
+            "new_problem_codes": [],
+            "remaining_problem_codes": [],
+            "resolved_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ]
+          },
+          "pending_update_count": 10,
+          "pending_update_types": [
+            {
+              "count": 1,
+              "type": "world_state"
+            },
+            {
+              "count": 1,
+              "type": "story_state"
+            },
+            {
+              "count": 1,
+              "type": "spatial_state"
+            },
+            {
+              "count": 4,
+              "type": "location"
+            },
+            {
+              "count": 3,
+              "type": "timeline_event"
+            }
+          ],
+          "reasons": [],
+          "repair_attempt_count": 4
+        },
+        "item_mappings": [
+          {
+            "memory_id": "chapter_2:timeline_event:chapter_2_summary",
+            "name": "chapter_2_summary",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "timeline_event"
+          },
+          {
+            "memory_id": "chapter_2:timeline_event:chapter_2_event_1",
+            "name": "chapter_2_event_1",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "timeline_event"
+          },
+          {
+            "memory_id": "chapter_2:timeline_event:chapter_2_event_2",
+            "name": "chapter_2_event_2",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "timeline_event"
+          },
+          {
+            "memory_id": "chapter_2:world_state:infection_pressure",
+            "name": "infection_pressure",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "world_state"
+          },
+          {
+            "memory_id": "chapter_2:location:负二层冷库",
+            "name": "负二层冷库",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "location"
+          },
+          {
+            "memory_id": "chapter_2:location:冷库",
+            "name": "冷库",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "location"
+          },
+          {
+            "memory_id": "chapter_2:location:监控室",
+            "name": "监控室",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "location"
+          },
+          {
+            "memory_id": "chapter_2:location:地下停车场",
+            "name": "地下停车场",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "location"
+          },
+          {
+            "memory_id": "chapter_2:story_state:chapter_2_story_state",
+            "name": "chapter_2_story_state",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "story_state"
+          },
+          {
+            "memory_id": "chapter_2:spatial_state:chapter_2_spatial_state",
+            "name": "chapter_2_spatial_state",
+            "status": "skipped_no_writer",
+            "target": null,
+            "type": "spatial_state"
+          }
+        ],
+        "skipped": true,
+        "target": null,
+        "verification": {
+          "reason": "no_writer",
+          "status": "not_applicable",
+          "target": null
+        },
+        "written": 0
+      }
+    },
+    "persistence": {
+      "candidate_result_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\persistence\\chapter_2_20260714T022935227346Z\\candidate_result.json",
+      "commit_marker": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\persistence\\chapter_2_20260714T022935227346Z\\commit.marker",
+      "committed": true,
+      "errors": [],
+      "journal_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\persistence\\chapter_2_20260714T022935227346Z",
+      "partial": false,
+      "publication": {
+        "chapter_artifact": {
+          "chars": 5462,
+          "format": "markdown",
+          "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\chapters\\chapter_0002_committed_chapter_2_20260714T022935227346Z.md",
+          "sha256": "f89a1b28e741484e2bf802ab8caf8d551c0313a029adf47bc27aa3f1440030cf"
+        },
+        "memory_outbox": {
+          "gate": {
+            "allowed": true,
+            "final_repair_delta": {
+              "after_ok": true,
+              "after_problem_codes": [],
+              "after_problem_count": 0,
+              "attempt": 2,
+              "before_ok": false,
+              "before_problem_codes": [
+                "llm_complex_plot_logic_spatial_access_conflict",
+                "llm_timeline_causality_goal_underpaid"
+              ],
+              "before_problem_count": 2,
+              "new_problem_codes": [],
+              "remaining_problem_codes": [],
+              "resolved_problem_codes": [
+                "llm_complex_plot_logic_spatial_access_conflict",
+                "llm_timeline_causality_goal_underpaid"
+              ]
+            },
+            "pending_update_count": 10,
+            "pending_update_types": [
+              {
+                "count": 1,
+                "type": "world_state"
+              },
+              {
+                "count": 1,
+                "type": "story_state"
+              },
+              {
+                "count": 1,
+                "type": "spatial_state"
+              },
+              {
+                "count": 4,
+                "type": "location"
+              },
+              {
+                "count": 3,
+                "type": "timeline_event"
+              }
+            ],
+            "reasons": [],
+            "repair_attempt_count": 4
+          },
+          "status": "delivered",
+          "target": null,
+          "update_count": 10
+        }
+      },
+      "run_id": "chapter_2_20260714T022935227346Z",
+      "state": "completed",
+      "targets": [
+        {
+          "after_sha256": "c0b0de2489244ea9d8c553a7e4676063659a504f77a18dd08927459fc8bb7821",
+          "after_size": 15815,
+          "backup_path": null,
+          "before_sha256": null,
+          "before_size": null,
+          "error": null,
+          "existed": false,
+          "id": "target-000",
+          "index": 0,
+          "kind": "prose",
+          "metadata": {
+            "story_target_index": 0
+          },
+          "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\正文\\第002章_第二章：十七分钟倒计时.md",
+          "staged_path": "staged/000.bin",
+          "status": "verified"
+        },
+        {
+          "after_sha256": "442d9feec5525508368bc93616adb3a0f94b5cbea215784414b80b361332d04c",
+          "after_size": 2200,
+          "backup_path": "backups/001.bin",
+          "before_sha256": "44a6f4ee097203861e02c106a7440874b7b729480a5c6a0aa5748493aaf3e84e",
+          "before_size": 1402,
+          "error": null,
+          "existed": true,
+          "id": "target-001",
+          "index": 1,
+          "kind": "context",
+          "metadata": {
+            "story_target_index": 1
+          },
+          "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\上下文.md",
+          "staged_path": "staged/001.bin",
+          "status": "verified"
+        },
+        {
+          "after_sha256": "ef5a3bb01fe6784382227485a04d493c4cd8c82819a49bc210a7f8c3b75f6904",
+          "after_size": 1754,
+          "backup_path": "backups/002.bin",
+          "before_sha256": "afdb30d6700d4b36d96c159c014c5980a49ce115aa4425090627aa7b7e91f344",
+          "before_size": 1155,
+          "error": null,
+          "existed": true,
+          "id": "target-002",
+          "index": 2,
+          "kind": "foreshadowing",
+          "metadata": {
+            "story_target_index": 2
+          },
+          "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\伏笔.md",
+          "staged_path": "staged/002.bin",
+          "status": "verified"
+        },
+        {
+          "after_sha256": "58c77b4b5deba173a9dd34fc51eca36a7d88b4c9786afef0df56a0209640b2ff",
+          "after_size": 2279,
+          "backup_path": "backups/003.bin",
+          "before_sha256": "b6f4f5e340ede6e267d25530186a731492fac13e2f5747663aec67db5cdf04d8",
+          "before_size": 1418,
+          "error": null,
+          "existed": true,
+          "id": "target-003",
+          "index": 3,
+          "kind": "timeline",
+          "metadata": {
+            "story_target_index": 3
+          },
+          "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\时间线.md",
+          "staged_path": "staged/003.bin",
+          "status": "verified"
+        },
+        {
+          "after_sha256": "5d085f46b302ff7db4e9164c1e59b98adfc5852b08e88d070444232363819e38",
+          "after_size": 1796,
+          "backup_path": "backups/004.bin",
+          "before_sha256": "6fc10a2e71d97e33d96e357013d7387df6fc3220067330a92017406c860b01b0",
+          "before_size": 1184,
+          "error": null,
+          "existed": true,
+          "id": "target-004",
+          "index": 4,
+          "kind": "character_state",
+          "metadata": {
+            "story_target_index": 4
+          },
+          "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\角色状态.md",
+          "staged_path": "staged/004.bin",
+          "status": "verified"
+        },
+        {
+          "after_sha256": "4072e807b6f25b50c0a301fcec62f9bec44e5d75541f2a2c60325ddc4d787e20",
+          "after_size": 15875,
+          "backup_path": "backups/005.bin",
+          "before_sha256": "e5f8593b8254544afa04ff7c1bf19b44c6d8865364dbfd668ea7398931ae424d",
+          "before_size": 10873,
+          "error": null,
+          "existed": true,
+          "id": "target-005",
+          "index": 5,
+          "kind": "snapshot",
+          "metadata": {
+            "chapter_index": 2
+          },
+          "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\snapshot.json",
+          "staged_path": "staged/005.bin",
+          "status": "verified"
+        }
+      ]
+    },
+    "quality_decision": {
+      "accepted": true,
+      "blocking_finding_ids": [],
+      "decision_digest": "993540a33a91b14273dd9c9b6ea7f8ccc9e38b67a8fb46be058fb85bd606050a",
+      "finding_ids": [
+        "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+      ],
+      "findings": [
+        {
+          "blocking": false,
+          "canonical": {
+            "predicate": "conflict_progression",
+            "subject": "chapter",
+            "time_range": "chapter:2"
+          },
+          "category": "conflict_progression",
+          "code_family": "conflict_progression",
+          "codes": [
+            "advance_current_conflict",
+            "advances_open_threads_or_conflicts"
+          ],
+          "evidence": [
+            {
+              "kind": "candidate_terms",
+              "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+            },
+            {
+              "kind": "message",
+              "value": "Chapter does not clearly touch current threads or conflicts."
+            },
+            {
+              "kind": "quality_check_codes",
+              "value": "[\"advances_open_threads_or_conflicts\"]"
+            },
+            {
+              "kind": "message",
+              "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+            }
+          ],
+          "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+          "identity_version": "1.0",
+          "producer_evidence": [
+            {
+              "code": "advances_open_threads_or_conflicts",
+              "evidence": [
+                {
+                  "kind": "candidate_terms",
+                  "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Chapter does not clearly touch current threads or conflicts."
+                }
+              ],
+              "producer": "deterministic_review",
+              "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+            },
+            {
+              "code": "advance_current_conflict",
+              "evidence": [
+                {
+                  "kind": "quality_check_codes",
+                  "value": "[\"advances_open_threads_or_conflicts\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                }
+              ],
+              "producer": "narrative_rules",
+              "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+            }
+          ],
+          "repair": {
+            "action": "manual_review",
+            "parameters": {}
+          },
+          "severity": "warning",
+          "source_artifacts": [
+            "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+            "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+          ],
+          "validation_coverage": {
+            "executed_checks": [],
+            "requested_checks": [],
+            "skipped_checks": []
+          }
+        }
+      ],
+      "llm_validator": {
+        "attempt_history": [
+          {
+            "attempt": 1,
+            "cause_type": null,
+            "delay_ms": 0,
+            "elapsed_ms": 14000,
+            "failure_category": null,
+            "outcome": "succeeded",
+            "partial_content_received": false,
+            "profile": "model_read_generation",
+            "retry_after_ms": null,
+            "retryable": false,
+            "stop_reason": "succeeded"
+          }
+        ],
+        "available": true,
+        "configured": true,
+        "model": "gpt-5.5",
+        "policy_version": "1.0",
+        "prompt_hash": "7ddb9575e18628408030cb7409408a624b1aa45a1f440bd1d155ea39716600e2",
+        "provider": "openai",
+        "required": false
+      },
+      "manual_review_finding_ids": [
+        "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+      ],
+      "max_severity": "warning",
+      "policy": {
+        "include_review": true,
+        "llm_validator_required": false,
+        "max_repair_attempts": 2,
+        "name": "standard",
+        "producers": [
+          "base_validation",
+          "blueprint_coverage",
+          "deterministic_review",
+          "narrative_rules"
+        ],
+        "threshold": "needs_revision",
+        "version": "1.0"
+      },
+      "producers": [
+        "base_validation",
+        "blueprint_coverage",
+        "deterministic_review",
+        "llm_validator",
+        "narrative_rules"
+      ],
+      "schema_version": "1.0",
+      "status": "accepted",
+      "validation_coverage": {
+        "executed_checks": [
+          "continuity",
+          "llm",
+          "logic",
+          "spatial",
+          "story_project"
+        ],
+        "requested_checks": [
+          "continuity",
+          "logic",
+          "spatial"
+        ],
+        "skipped_checks": []
+      }
+    },
+    "recovery_context": {
+      "available": true,
+      "blocking_problem_count": 4,
+      "problem_codes": [
+        "missing_last_scene_continuity",
+        "llm_complex_plot_logic_spatial_access_conflict",
+        "llm_timeline_causality_power_timer_undertracked",
+        "llm_continuity_character_location_floor_mismatch"
+      ],
+      "problem_count": 4,
+      "repair_attempts": 0,
+      "repair_budget": 4,
+      "repair_budget_exhausted": false,
+      "repair_effective": null,
+      "repair_introduced_new_problems": false,
+      "repair_manual_review_count": 3,
+      "repair_risk_level": "high",
+      "repair_stalled": false,
+      "severity_counts": [
+        {
+          "count": 2,
+          "severity": "high"
+        },
+        {
+          "count": 2,
+          "severity": "medium"
+        }
+      ],
+      "source_chapter_index": 2,
+      "source_committed": false,
+      "source_goal": "recover_from_rejected_run",
+      "source_run_id": "chapter_2_20260714T022545663839Z",
+      "source_status": "failed"
+    },
+    "repair_attempts": 2,
+    "review_gate": {
+      "enabled": true,
+      "exit_code": 0,
+      "matched": false,
+      "reason": "review status warning does not meet gate threshold needs_revision",
+      "review_status": "warning",
+      "schema_version": "1.0",
+      "status": "pass",
+      "threshold": "needs_revision"
+    },
+    "review_index": {
+      "enabled": true,
+      "entry_count": 3,
+      "index_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\review_index.json",
+      "latest_run_id": "chapter_2_20260714T022935227346Z",
+      "status": "updated"
+    },
+    "review_pipeline": {
+      "artifacts_dir": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original",
+      "blocking_task_count": 0,
+      "decision": "needs_revision",
+      "enabled": true,
+      "quality_decision": {
+        "accepted": true,
+        "blocking_finding_ids": [],
+        "decision_digest": "5f0673d39dc0291ac55cf878b0c5d9e6ca729d84cec7cf96d4b3c535fb4224d0",
+        "finding_ids": [
+          "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+        ],
+        "findings": [
+          {
+            "blocking": false,
+            "canonical": {
+              "predicate": "conflict_progression",
+              "subject": "chapter",
+              "time_range": "chapter:2"
+            },
+            "category": "conflict_progression",
+            "code_family": "conflict_progression",
+            "codes": [
+              "advance_current_conflict",
+              "advances_open_threads_or_conflicts"
+            ],
+            "evidence": [
+              {
+                "kind": "candidate_terms",
+                "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Chapter does not clearly touch current threads or conflicts."
+              },
+              {
+                "kind": "quality_check_codes",
+                "value": "[\"advances_open_threads_or_conflicts\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+              }
+            ],
+            "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+            "identity_version": "1.0",
+            "producer_evidence": [
+              {
+                "code": "advances_open_threads_or_conflicts",
+                "evidence": [
+                  {
+                    "kind": "candidate_terms",
+                    "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                  },
+                  {
+                    "kind": "message",
+                    "value": "Chapter does not clearly touch current threads or conflicts."
+                  }
+                ],
+                "producer": "deterministic_review",
+                "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+              },
+              {
+                "code": "advance_current_conflict",
+                "evidence": [
+                  {
+                    "kind": "quality_check_codes",
+                    "value": "[\"advances_open_threads_or_conflicts\"]"
+                  },
+                  {
+                    "kind": "message",
+                    "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                  }
+                ],
+                "producer": "narrative_rules",
+                "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+              }
+            ],
+            "repair": {
+              "action": "manual_review",
+              "parameters": {}
+            },
+            "severity": "warning",
+            "source_artifacts": [
+              "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+              "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+            ],
+            "validation_coverage": {
+              "executed_checks": [],
+              "requested_checks": [],
+              "skipped_checks": []
+            }
+          }
+        ],
+        "llm_validator": {
+          "attempt_history": [],
+          "available": false,
+          "configured": false,
+          "model": null,
+          "policy_version": "1.0",
+          "prompt_hash": null,
+          "provider": null,
+          "required": false
+        },
+        "manual_review_finding_ids": [
+          "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+        ],
+        "max_severity": "warning",
+        "policy": {
+          "include_review": true,
+          "llm_validator_required": false,
+          "max_repair_attempts": 2,
+          "name": "standard",
+          "producers": [
+            "base_validation",
+            "blueprint_coverage",
+            "deterministic_review",
+            "narrative_rules"
+          ],
+          "threshold": "needs_revision",
+          "version": "1.0"
+        },
+        "producers": [
+          "deterministic_review",
+          "narrative_rules"
+        ],
+        "schema_version": "1.0",
+        "status": "accepted",
+        "validation_coverage": {
+          "executed_checks": [],
+          "requested_checks": [],
+          "skipped_checks": []
+        }
+      },
+      "quality_score": 92,
+      "repair_task_count": 1,
+      "rule_score": 88,
+      "status": "needs_revision",
+      "summary_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\review_pipeline_summary.json"
+    },
+    "review_repair": {
+      "accepted": true,
+      "after_gate": {
+        "enabled": true,
+        "exit_code": 0,
+        "matched": false,
+        "reason": "review status warning does not meet gate threshold needs_revision",
+        "review_status": "warning",
+        "schema_version": "1.0",
+        "status": "pass",
+        "threshold": "needs_revision"
+      },
+      "after_review": null,
+      "artifacts": {},
+      "attempt_count": 0,
+      "attempted": false,
+      "before_gate": {
+        "enabled": true,
+        "exit_code": 0,
+        "matched": false,
+        "reason": "review status warning does not meet gate threshold needs_revision",
+        "review_status": "warning",
+        "schema_version": "1.0",
+        "status": "pass",
+        "threshold": "needs_revision"
+      },
+      "before_quality_decision": {
+        "accepted": true,
+        "blocking_finding_ids": [],
+        "decision_digest": "993540a33a91b14273dd9c9b6ea7f8ccc9e38b67a8fb46be058fb85bd606050a",
+        "finding_ids": [
+          "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+        ],
+        "findings": [
+          {
+            "blocking": false,
+            "canonical": {
+              "predicate": "conflict_progression",
+              "subject": "chapter",
+              "time_range": "chapter:2"
+            },
+            "category": "conflict_progression",
+            "code_family": "conflict_progression",
+            "codes": [
+              "advance_current_conflict",
+              "advances_open_threads_or_conflicts"
+            ],
+            "evidence": [
+              {
+                "kind": "candidate_terms",
+                "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Chapter does not clearly touch current threads or conflicts."
+              },
+              {
+                "kind": "quality_check_codes",
+                "value": "[\"advances_open_threads_or_conflicts\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+              }
+            ],
+            "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+            "identity_version": "1.0",
+            "producer_evidence": [
+              {
+                "code": "advances_open_threads_or_conflicts",
+                "evidence": [
+                  {
+                    "kind": "candidate_terms",
+                    "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                  },
+                  {
+                    "kind": "message",
+                    "value": "Chapter does not clearly touch current threads or conflicts."
+                  }
+                ],
+                "producer": "deterministic_review",
+                "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+              },
+              {
+                "code": "advance_current_conflict",
+                "evidence": [
+                  {
+                    "kind": "quality_check_codes",
+                    "value": "[\"advances_open_threads_or_conflicts\"]"
+                  },
+                  {
+                    "kind": "message",
+                    "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                  }
+                ],
+                "producer": "narrative_rules",
+                "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+              }
+            ],
+            "repair": {
+              "action": "manual_review",
+              "parameters": {}
+            },
+            "severity": "warning",
+            "source_artifacts": [
+              "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+              "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+            ],
+            "validation_coverage": {
+              "executed_checks": [],
+              "requested_checks": [],
+              "skipped_checks": []
+            }
+          }
+        ],
+        "llm_validator": {
+          "attempt_history": [
+            {
+              "attempt": 1,
+              "cause_type": null,
+              "delay_ms": 0,
+              "elapsed_ms": 14000,
+              "failure_category": null,
+              "outcome": "succeeded",
+              "partial_content_received": false,
+              "profile": "model_read_generation",
+              "retry_after_ms": null,
+              "retryable": false,
+              "stop_reason": "succeeded"
+            }
+          ],
+          "available": true,
+          "configured": true,
+          "model": "gpt-5.5",
+          "policy_version": "1.0",
+          "prompt_hash": "7ddb9575e18628408030cb7409408a624b1aa45a1f440bd1d155ea39716600e2",
+          "provider": "openai",
+          "required": false
+        },
+        "manual_review_finding_ids": [
+          "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+        ],
+        "max_severity": "warning",
+        "policy": {
+          "include_review": true,
+          "llm_validator_required": false,
+          "max_repair_attempts": 2,
+          "name": "standard",
+          "producers": [
+            "base_validation",
+            "blueprint_coverage",
+            "deterministic_review",
+            "narrative_rules"
+          ],
+          "threshold": "needs_revision",
+          "version": "1.0"
+        },
+        "producers": [
+          "base_validation",
+          "blueprint_coverage",
+          "deterministic_review",
+          "llm_validator",
+          "narrative_rules"
+        ],
+        "schema_version": "1.0",
+        "status": "accepted",
+        "validation_coverage": {
+          "executed_checks": [
+            "continuity",
+            "llm",
+            "logic",
+            "spatial",
+            "story_project"
+          ],
+          "requested_checks": [
+            "continuity",
+            "logic",
+            "spatial"
+          ],
+          "skipped_checks": []
+        }
+      },
+      "before_review": {
+        "artifacts_dir": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original",
+        "blocking_task_count": 0,
+        "decision": "needs_revision",
+        "enabled": true,
+        "quality_decision": {
+          "accepted": true,
+          "blocking_finding_ids": [],
+          "decision_digest": "5f0673d39dc0291ac55cf878b0c5d9e6ca729d84cec7cf96d4b3c535fb4224d0",
+          "finding_ids": [
+            "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+          ],
+          "findings": [
+            {
+              "blocking": false,
+              "canonical": {
+                "predicate": "conflict_progression",
+                "subject": "chapter",
+                "time_range": "chapter:2"
+              },
+              "category": "conflict_progression",
+              "code_family": "conflict_progression",
+              "codes": [
+                "advance_current_conflict",
+                "advances_open_threads_or_conflicts"
+              ],
+              "evidence": [
+                {
+                  "kind": "candidate_terms",
+                  "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Chapter does not clearly touch current threads or conflicts."
+                },
+                {
+                  "kind": "quality_check_codes",
+                  "value": "[\"advances_open_threads_or_conflicts\"]"
+                },
+                {
+                  "kind": "message",
+                  "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                }
+              ],
+              "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+              "identity_version": "1.0",
+              "producer_evidence": [
+                {
+                  "code": "advances_open_threads_or_conflicts",
+                  "evidence": [
+                    {
+                      "kind": "candidate_terms",
+                      "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                    },
+                    {
+                      "kind": "message",
+                      "value": "Chapter does not clearly touch current threads or conflicts."
+                    }
+                  ],
+                  "producer": "deterministic_review",
+                  "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+                },
+                {
+                  "code": "advance_current_conflict",
+                  "evidence": [
+                    {
+                      "kind": "quality_check_codes",
+                      "value": "[\"advances_open_threads_or_conflicts\"]"
+                    },
+                    {
+                      "kind": "message",
+                      "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                    }
+                  ],
+                  "producer": "narrative_rules",
+                  "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+                }
+              ],
+              "repair": {
+                "action": "manual_review",
+                "parameters": {}
+              },
+              "severity": "warning",
+              "source_artifacts": [
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+              ],
+              "validation_coverage": {
+                "executed_checks": [],
+                "requested_checks": [],
+                "skipped_checks": []
+              }
+            }
+          ],
+          "llm_validator": {
+            "attempt_history": [],
+            "available": false,
+            "configured": false,
+            "model": null,
+            "policy_version": "1.0",
+            "prompt_hash": null,
+            "provider": null,
+            "required": false
+          },
+          "manual_review_finding_ids": [
+            "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+          ],
+          "max_severity": "warning",
+          "policy": {
+            "include_review": true,
+            "llm_validator_required": false,
+            "max_repair_attempts": 2,
+            "name": "standard",
+            "producers": [
+              "base_validation",
+              "blueprint_coverage",
+              "deterministic_review",
+              "narrative_rules"
+            ],
+            "threshold": "needs_revision",
+            "version": "1.0"
+          },
+          "producers": [
+            "deterministic_review",
+            "narrative_rules"
+          ],
+          "schema_version": "1.0",
+          "status": "accepted",
+          "validation_coverage": {
+            "executed_checks": [],
+            "requested_checks": [],
+            "skipped_checks": []
+          }
+        },
+        "quality_score": 92,
+        "repair_task_count": 1,
+        "rule_score": 88,
+        "status": "needs_revision",
+        "summary_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\review_pipeline_summary.json"
+      },
+      "dry_run": false,
+      "enabled": true,
+      "errors": [],
+      "final_quality_decision": {
+        "accepted": true,
+        "blocking_finding_ids": [],
+        "decision_digest": "993540a33a91b14273dd9c9b6ea7f8ccc9e38b67a8fb46be058fb85bd606050a",
+        "finding_ids": [
+          "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+        ],
+        "findings": [
+          {
+            "blocking": false,
+            "canonical": {
+              "predicate": "conflict_progression",
+              "subject": "chapter",
+              "time_range": "chapter:2"
+            },
+            "category": "conflict_progression",
+            "code_family": "conflict_progression",
+            "codes": [
+              "advance_current_conflict",
+              "advances_open_threads_or_conflicts"
+            ],
+            "evidence": [
+              {
+                "kind": "candidate_terms",
+                "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Chapter does not clearly touch current threads or conflicts."
+              },
+              {
+                "kind": "quality_check_codes",
+                "value": "[\"advances_open_threads_or_conflicts\"]"
+              },
+              {
+                "kind": "message",
+                "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+              }
+            ],
+            "id": "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7",
+            "identity_version": "1.0",
+            "producer_evidence": [
+              {
+                "code": "advances_open_threads_or_conflicts",
+                "evidence": [
+                  {
+                    "kind": "candidate_terms",
+                    "value": "[\"陆遥最后语音中的防空警报来自哪里\",\"负二层冷库内关着什么\",\"北侧防火门为何在灾变前被锁死\",\"冷库频道里的声音为何知道陆沉和陆遥\"]"
+                  },
+                  {
+                    "kind": "message",
+                    "value": "Chapter does not clearly touch current threads or conflicts."
+                  }
+                ],
+                "producer": "deterministic_review",
+                "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json"
+              },
+              {
+                "code": "advance_current_conflict",
+                "evidence": [
+                  {
+                    "kind": "quality_check_codes",
+                    "value": "[\"advances_open_threads_or_conflicts\"]"
+                  },
+                  {
+                    "kind": "message",
+                    "value": "Rule warning because mapped quality check(s) advances_open_threads_or_conflicts warning."
+                  }
+                ],
+                "producer": "narrative_rules",
+                "source_artifact": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+              }
+            ],
+            "repair": {
+              "action": "manual_review",
+              "parameters": {}
+            },
+            "severity": "warning",
+            "source_artifacts": [
+              "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\chapter_quality_report.json",
+              "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\reviews\\chapter_2_20260714T022935227346Z\\original\\rule_validation_report.json"
+            ],
+            "validation_coverage": {
+              "executed_checks": [],
+              "requested_checks": [],
+              "skipped_checks": []
+            }
+          }
+        ],
+        "llm_validator": {
+          "attempt_history": [
+            {
+              "attempt": 1,
+              "cause_type": null,
+              "delay_ms": 0,
+              "elapsed_ms": 14000,
+              "failure_category": null,
+              "outcome": "succeeded",
+              "partial_content_received": false,
+              "profile": "model_read_generation",
+              "retry_after_ms": null,
+              "retryable": false,
+              "stop_reason": "succeeded"
+            }
+          ],
+          "available": true,
+          "configured": true,
+          "model": "gpt-5.5",
+          "policy_version": "1.0",
+          "prompt_hash": "7ddb9575e18628408030cb7409408a624b1aa45a1f440bd1d155ea39716600e2",
+          "provider": "openai",
+          "required": false
+        },
+        "manual_review_finding_ids": [
+          "qf:v1:de78424bb381ef9e7564bbbddb0ed5afef4f370a99f1994d97f3d1bcb5a4baa7"
+        ],
+        "max_severity": "warning",
+        "policy": {
+          "include_review": true,
+          "llm_validator_required": false,
+          "max_repair_attempts": 2,
+          "name": "standard",
+          "producers": [
+            "base_validation",
+            "blueprint_coverage",
+            "deterministic_review",
+            "narrative_rules"
+          ],
+          "threshold": "needs_revision",
+          "version": "1.0"
+        },
+        "producers": [
+          "base_validation",
+          "blueprint_coverage",
+          "deterministic_review",
+          "llm_validator",
+          "narrative_rules"
+        ],
+        "schema_version": "1.0",
+        "status": "accepted",
+        "validation_coverage": {
+          "executed_checks": [
+            "continuity",
+            "llm",
+            "logic",
+            "spatial",
+            "story_project"
+          ],
+          "requested_checks": [
+            "continuity",
+            "logic",
+            "spatial"
+          ],
+          "skipped_checks": []
+        }
+      },
+      "gate_threshold": "needs_revision",
+      "max_attempts": 1,
+      "rejected_reason": "review_status_does_not_require_repair",
+      "repair_deltas": [],
+      "repair_plan": null,
+      "trigger_status": "needs_revision"
+    },
+    "snapshot": {
+      "base_chapter_index": 2,
+      "next_chapter_index": 3,
+      "runtime_chapter_index": 2
+    },
+    "snapshot_builder": {
+      "artifact": {
+        "chars": 38456,
+        "format": "markdown",
+        "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\snapshot_packs\\snapshot_pack_0002_chapter_2_20260714T022935227346Z.md"
+      },
+      "audit": {
+        "applied_count": 11,
+        "applied_items": [
+          {
+            "id": "story_project:current_outline",
+            "index": 0,
+            "name": "current_outline",
+            "operation": "merge_story_state",
+            "source_mapping": {
+              "index": 0,
+              "memory_id": "story_project:current_outline",
+              "name": "current_outline",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\大纲\\细纲_第002章.md",
+              "source": "story_project",
+              "type": "story_state"
+            },
+            "target": "story_state",
+            "type": "story_state"
+          },
+          {
+            "id": "story_project:tracking:上下文.md",
+            "index": 1,
+            "name": "tracking:上下文.md",
+            "operation": "merge_story_state",
+            "source_mapping": {
+              "index": 1,
+              "memory_id": "story_project:tracking:上下文.md",
+              "name": "tracking:上下文.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\上下文.md",
+              "source": "story_project",
+              "type": "story_state"
+            },
+            "target": "story_state",
+            "type": "story_state"
+          },
+          {
+            "id": "story_project:tracking:伏笔.md",
+            "index": 2,
+            "name": "tracking:伏笔.md",
+            "operation": "merge_story_state",
+            "source_mapping": {
+              "index": 2,
+              "memory_id": "story_project:tracking:伏笔.md",
+              "name": "tracking:伏笔.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\伏笔.md",
+              "source": "story_project",
+              "type": "story_state"
+            },
+            "target": "story_state",
+            "type": "story_state"
+          },
+          {
+            "id": "story_project:tracking:时间线.md",
+            "index": 3,
+            "name": "tracking:时间线.md",
+            "operation": "merge_story_state",
+            "source_mapping": {
+              "index": 3,
+              "memory_id": "story_project:tracking:时间线.md",
+              "name": "tracking:时间线.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\时间线.md",
+              "source": "story_project",
+              "type": "story_state"
+            },
+            "target": "story_state",
+            "type": "story_state"
+          },
+          {
+            "id": "story_project:tracking:角色状态.md",
+            "index": 4,
+            "name": "tracking:角色状态.md",
+            "operation": "merge_story_state",
+            "source_mapping": {
+              "index": 4,
+              "memory_id": "story_project:tracking:角色状态.md",
+              "name": "tracking:角色状态.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\角色状态.md",
+              "source": "story_project",
+              "type": "story_state"
+            },
+            "target": "story_state",
+            "type": "story_state"
+          },
+          {
+            "id": "story_project:setting:作品设定.md",
+            "index": 5,
+            "name": "setting:作品设定.md",
+            "operation": "merge_world_state",
+            "source_mapping": {
+              "index": 5,
+              "memory_id": "story_project:setting:作品设定.md",
+              "name": "setting:作品设定.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\作品设定.md",
+              "source": "story_project",
+              "type": "world_state"
+            },
+            "target": "world_state",
+            "type": "world_state"
+          },
+          {
+            "id": "story_project:setting:地点/临江市地下商超.md",
+            "index": 6,
+            "name": "setting:地点/临江市地下商超.md",
+            "operation": "merge_world_state",
+            "source_mapping": {
+              "index": 6,
+              "memory_id": "story_project:setting:地点/临江市地下商超.md",
+              "name": "setting:地点/临江市地下商超.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\地点\\临江市地下商超.md",
+              "source": "story_project",
+              "type": "world_state"
+            },
+            "target": "world_state",
+            "type": "world_state"
+          },
+          {
+            "id": "story_project:setting:能力体系.md",
+            "index": 7,
+            "name": "setting:能力体系.md",
+            "operation": "merge_world_state",
+            "source_mapping": {
+              "index": 7,
+              "memory_id": "story_project:setting:能力体系.md",
+              "name": "setting:能力体系.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\能力体系.md",
+              "source": "story_project",
+              "type": "world_state"
+            },
+            "target": "world_state",
+            "type": "world_state"
+          },
+          {
+            "id": "story_project:setting:角色/苏晴.md",
+            "index": 8,
+            "name": "setting:角色/苏晴.md",
+            "operation": "merge_world_state",
+            "source_mapping": {
+              "index": 8,
+              "memory_id": "story_project:setting:角色/苏晴.md",
+              "name": "setting:角色/苏晴.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\苏晴.md",
+              "source": "story_project",
+              "type": "world_state"
+            },
+            "target": "world_state",
+            "type": "world_state"
+          },
+          {
+            "id": "story_project:setting:角色/赵铁.md",
+            "index": 9,
+            "name": "setting:角色/赵铁.md",
+            "operation": "merge_world_state",
+            "source_mapping": {
+              "index": 9,
+              "memory_id": "story_project:setting:角色/赵铁.md",
+              "name": "setting:角色/赵铁.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\赵铁.md",
+              "source": "story_project",
+              "type": "world_state"
+            },
+            "target": "world_state",
+            "type": "world_state"
+          },
+          {
+            "id": "story_project:setting:角色/陆沉.md",
+            "index": 10,
+            "name": "setting:角色/陆沉.md",
+            "operation": "merge_world_state",
+            "source_mapping": {
+              "index": 10,
+              "memory_id": "story_project:setting:角色/陆沉.md",
+              "name": "setting:角色/陆沉.md",
+              "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\陆沉.md",
+              "source": "story_project",
+              "type": "world_state"
+            },
+            "target": "world_state",
+            "type": "world_state"
+          }
+        ],
+        "applied_type_counts": [
+          {
+            "count": 5,
+            "type": "story_state"
+          },
+          {
+            "count": 6,
+            "type": "world_state"
+          }
+        ],
+        "deduplicated_count": 0,
+        "item_count": 11,
+        "skipped_blocking_count": 0,
+        "skipped_count": 0,
+        "skipped_items": [],
+        "skipped_reason_counts": [],
+        "skipped_severity_counts": [],
+        "skipped_type_counts": [],
+        "source": "story-project",
+        "status": "ready"
+      },
+      "chars": 38456,
+      "preview": "# Snapshot Prompt\n\nYou are NovelAgent's state builder.\n\nConvert long-term memory into a compact runtime Snapshot. The Snapshot is the source of truth for one execution step.\n\nThe Snapshot must include:\n\n- `chapter_index`\n- `world_state`\n- `characters`\n- `timeline`\n\nKeep the Snapshot structured. Do not store long prose passages when a concise fact, event, or status field is enough.\n\n\n# Base Snapshot\n{\n  \"chapter_index\": 2,\n  \"world_state\": {\n    \"outbreak_stage\": \"赤潮爆发后第12分钟\",\n    \"city_power\": \""
+    },
+    "started_at": "2026-07-14T02:29:35.227346+00:00",
+    "state_update": {
+      "analysis_validation_ok": true,
+      "applied": true,
+      "chapter_index": 2,
+      "character_update_count": 0,
+      "location_update_count": 4,
+      "memory_update_count": 10,
+      "memory_update_types": [
+        {
+          "count": 4,
+          "type": "location"
+        },
+        {
+          "count": 1,
+          "type": "spatial_state"
+        },
+        {
+          "count": 1,
+          "type": "story_state"
+        },
+        {
+          "count": 3,
+          "type": "timeline_event"
+        },
+        {
+          "count": 1,
+          "type": "world_state"
+        }
+      ],
+      "next_chapter_index": 3,
+      "spatial_state_updated": true,
+      "story_state_updated": true,
+      "timeline_added": 1,
+      "world_change_count": 1
+    },
+    "status": "committed",
+    "story_project": {
+      "blueprint_coverage": {
+        "covered_beat_indexes": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "ending_pressure_covered": true,
+        "ending_pressure_required": true,
+        "missing_beat_indexes": [],
+        "required_beat_count": 6
+      },
+      "book_id": "68ee0d8e-762c-4dc3-96c5-abdf3084c4e9",
+      "chapter_blueprint": {
+        "chapter_index": 2,
+        "core_event": "备用电量进入十七分钟倒计时，陆沉必须在守住监控室与救援医药专柜幸存者之间做出战术选择，并首次与苏晴建立联络。",
+        "ending_pressure": "苏晴从短波对讲机中听见地下停车场的赵铁求救；备用电切断瞬间，未完成实验体最后一次撞击破坏了早已变形的锁舌，负二层冷库铁门被撞开一道缝。",
+        "missing_fields": [],
+        "outline_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\大纲\\细纲_第002章.md",
+        "required_beats": [
+          {
+            "index": 1,
+            "text": "开篇紧接备用电量只剩17分钟与冷库未完成实验体苏醒；陆沉确认自己仍在监控室，只是通过屏幕观察负二层冷库。必须区分可开启的监控室内门、用于接应苏晴的东侧外门、已被货架封死的营业区侧门。"
+          },
+          {
+            "index": 2,
+            "text": "陆沉利用监控、广播和分区卷帘门为苏晴规划一条从医药专柜撤向员工通道的路线；广播诱敌只能使用监控已确认无人的封闭通道，不能把感染者引向未知幸存者，同时让获救女孩负责报点。"
+          },
+          {
+            "index": 3,
+            "text": "钱明企图用获救女孩做人质逼陆沉开启西侧卷帘门；陆沉不杀钱明，而是只通过监控室内的屏幕与近距离对话公开其隐瞒妻子被咬并擅自开门的事实，禁止向营业区或任何未清空区域外放声音。"
+          },
+          {
+            "index": 4,
+            "text": "一只听觉强化的爬行感染者循广播声逼近，陆沉利用监控确认无人的清洁通道、定时广播、冷柜玻璃与狭窄通道完成战术反杀；“应激爆发”帮助他执行关键动作，却使右肩伤势加重、侵蚀值升至2/100。"
+          },
+          {
+            "index": 5,
+            "text": "苏晴带着急救包和两名幸存者抵达员工通道，先为伤员分诊并要求隔离所有沾血者；她与陆沉就“先救更多人还是先守住门”发生克制但尖锐的第一次价值观碰撞。"
+          },
+          {
+            "index": 6,
+            "text": "资源收益必须明确：获得急救包、止血材料、商超分区钥匙和一台可工作的短波对讲机；爬行感染者掉落灰色素材词条“灵敏关节”，暂不装入人体词条槽。"
+          }
+        ],
+        "source_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\大纲\\细纲_第002章.md",
+        "title": "第二章：十七分钟倒计时"
+      },
+      "chapter_index": 2,
+      "chapter_resolution": {
+        "basis": [
+          "正文/"
+        ],
+        "requested": "auto",
+        "resolved_chapter": 2,
+        "warnings": []
+      },
+      "enabled": true,
+      "memory_v2": {
+        "canonical_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\memory\\v2\\canonical_memory.json",
+        "event_store": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\memory\\v2\\events",
+        "projection_hash": null,
+        "revision": null,
+        "status": "absent"
+      },
+      "mode": "shadow",
+      "oh_story": {
+        "capabilities": {
+          "active_book": true,
+          "chapter_blueprint": true,
+          "codex_hooks": false,
+          "oh_story_js_execution": false,
+          "oh_story_provider": false,
+          "quality_scripts": false,
+          "review_repair_loop": true,
+          "story_agents": false,
+          "story_project_core_dirs": true,
+          "story_project_writeback": true,
+          "story_setup": false
+        },
+        "confidence": "none",
+        "detected": false,
+        "enabled": true,
+        "markers": [
+          {
+            "details": {
+              "scope": "story_project"
+            },
+            "kind": "story_project_core_dir",
+            "name": "设定/",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定",
+            "present": true,
+            "required": false
+          },
+          {
+            "details": {
+              "scope": "story_project"
+            },
+            "kind": "story_project_core_dir",
+            "name": "大纲/",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\大纲",
+            "present": true,
+            "required": false
+          },
+          {
+            "details": {
+              "scope": "story_project"
+            },
+            "kind": "story_project_core_dir",
+            "name": "正文/",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\正文",
+            "present": true,
+            "required": false
+          },
+          {
+            "details": {
+              "scope": "story_project"
+            },
+            "kind": "story_project_core_dir",
+            "name": "追踪/",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪",
+            "present": true,
+            "required": false
+          },
+          {
+            "details": {
+              "matches_story_project": true,
+              "resolved_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+              "scope": "workspace",
+              "target_exists": true,
+              "value": "books/尸潮之下_我能提取进化词条"
+            },
+            "kind": "active_book",
+            "name": ".active-book",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\.active-book",
+            "present": true,
+            "required": false
+          },
+          {
+            "details": {
+              "scope": "workspace"
+            },
+            "kind": "deployment_marker",
+            "name": ".story-deployed",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\.story-deployed",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "candidate_paths": [
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-setup\\SKILL.md",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-setup\\SKILL.md",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-setup\\SKILL.md",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-setup\\SKILL.md",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-setup\\SKILL.md"
+              ],
+              "content_valid": false,
+              "existing_paths": [],
+              "scope": "workspace"
+            },
+            "kind": "story_setup_skill",
+            "name": "skills/story-setup/SKILL.md",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-setup\\SKILL.md",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "exists": false,
+              "json_valid": false,
+              "scope": "workspace",
+              "story_routes": []
+            },
+            "kind": "codex_hooks",
+            "name": ".codex/hooks.json",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\hooks.json",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "content_valid": false,
+              "exists": false,
+              "matched_tokens": [],
+              "scope": "workspace"
+            },
+            "kind": "codex_hook_adapter",
+            "name": ".codex/hooks/story_codex_hook.py",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\hooks\\story_codex_hook.py",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "content_valid": false,
+              "exists": false,
+              "matched_routes": [],
+              "scope": "workspace"
+            },
+            "kind": "agents_story_routing",
+            "name": "AGENTS.md:story-routing",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\AGENTS.md",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "agents": [
+                {
+                  "existing_paths": [],
+                  "name": "story-architect",
+                  "path": null,
+                  "present": false
+                },
+                {
+                  "existing_paths": [],
+                  "name": "character-designer",
+                  "path": null,
+                  "present": false
+                },
+                {
+                  "existing_paths": [],
+                  "name": "narrative-writer",
+                  "path": null,
+                  "present": false
+                },
+                {
+                  "existing_paths": [],
+                  "name": "consistency-checker",
+                  "path": null,
+                  "present": false
+                },
+                {
+                  "existing_paths": [],
+                  "name": "story-researcher",
+                  "path": null,
+                  "present": false
+                },
+                {
+                  "existing_paths": [],
+                  "name": "story-explorer",
+                  "path": null,
+                  "present": false
+                },
+                {
+                  "existing_paths": [],
+                  "name": "chapter-extractor",
+                  "path": null,
+                  "present": false
+                }
+              ],
+              "complete": false,
+              "expected_count": 7,
+              "missing_agents": [
+                "story-architect",
+                "character-designer",
+                "narrative-writer",
+                "consistency-checker",
+                "story-researcher",
+                "story-explorer",
+                "chapter-extractor"
+              ],
+              "present_count": 0,
+              "scope": "workspace"
+            },
+            "kind": "story_agents",
+            "name": "story-agents",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\agents",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "candidate_paths": [
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-deslop\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-long-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-short-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-deslop\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-long-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-short-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-deslop\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-long-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-short-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-deslop\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-long-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-short-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-deslop\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-long-write\\scripts\\check-ai-patterns.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-short-write\\scripts\\check-ai-patterns.js"
+              ],
+              "content_valid": false,
+              "existing_paths": [],
+              "scope": "workspace"
+            },
+            "kind": "quality_script",
+            "name": "check-ai-patterns.js",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-deslop\\scripts\\check-ai-patterns.js",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "candidate_paths": [
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-deslop\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-long-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-short-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-deslop\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-long-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-short-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-deslop\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-long-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-short-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-deslop\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-long-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-short-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-deslop\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-long-write\\scripts\\check-degeneration.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-short-write\\scripts\\check-degeneration.js"
+              ],
+              "content_valid": false,
+              "existing_paths": [],
+              "scope": "workspace"
+            },
+            "kind": "quality_script",
+            "name": "check-degeneration.js",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-deslop\\scripts\\check-degeneration.js",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "candidate_paths": [
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-deslop\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-long-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-short-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-deslop\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-long-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.codex\\skills\\story-short-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-deslop\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-long-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.claude\\skills\\story-short-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-deslop\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-long-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.opencode\\skills\\story-short-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-deslop\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-long-write\\scripts\\normalize-punctuation.js",
+                "D:\\Pycharm\\PythonProject\\NovelAgent\\.agents\\skills\\story-short-write\\scripts\\normalize-punctuation.js"
+              ],
+              "content_valid": false,
+              "existing_paths": [],
+              "scope": "workspace"
+            },
+            "kind": "quality_script",
+            "name": "normalize-punctuation.js",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\skills\\story-deslop\\scripts\\normalize-punctuation.js",
+            "present": false,
+            "required": false
+          },
+          {
+            "details": {
+              "exists": false,
+              "json_valid": false,
+              "scope": "workspace",
+              "scripts": []
+            },
+            "kind": "package_scripts",
+            "name": "package.json:quality-scripts",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\package.json",
+            "present": false,
+            "required": false
+          }
+        ],
+        "recommendations": [
+          "No verified oh-story deployment assets were detected; StoryProject compatible mode remains available."
+        ],
+        "root": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+        "summary": {
+          "optional_missing_count": 10,
+          "present_count": 5,
+          "unsupported_count": 2
+        },
+        "unsupported": [
+          "oh_story_js_execution",
+          "oh_story_api_provider"
+        ],
+        "warnings": [],
+        "workspace_root": "D:\\Pycharm\\PythonProject\\NovelAgent"
+      },
+      "project_identity": {
+        "activation": null,
+        "book_id": "68ee0d8e-762c-4dc3-96c5-abdf3084c4e9",
+        "created_at": "2026-07-14T01:17:06.929191+00:00",
+        "ephemeral": false,
+        "root_hint": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+        "schema_version": "1.0",
+        "story_state_mode": "shadow"
+      },
+      "root": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+      "semantic_state": {
+        "authoritative": false,
+        "blockers": [],
+        "blocking_conflict_count": 0,
+        "configured_mode": "shadow",
+        "downgraded": false,
+        "effective_mode": "shadow",
+        "layout_profile_version": "legacy-zh-1",
+        "parser_version": "shadow-1.0",
+        "profile_match": null,
+        "provenance_count": 76,
+        "ready_for_next_step": true,
+        "semantic_schema_version": "1.0",
+        "source_digest": "5f42b96f0efe670c6eac887a3c69ce21da8dee03b0cc5ad4db877f7b7a397961",
+        "warning_count": 1
+      },
+      "source_paths": {
+        "outline_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\大纲\\细纲_第002章.md",
+        "previous_prose_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\正文\\第001章_第一章：断电后的第十二分钟.md",
+        "setting_paths": {
+          "作品设定.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\作品设定.md",
+          "地点/临江市地下商超.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\地点\\临江市地下商超.md",
+          "能力体系.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\能力体系.md",
+          "角色/苏晴.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\苏晴.md",
+          "角色/赵铁.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\赵铁.md",
+          "角色/陆沉.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\陆沉.md"
+        },
+        "story_project_root": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+        "tracking_paths": {
+          "上下文.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\上下文.md",
+          "伏笔.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\伏笔.md",
+          "时间线.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\时间线.md",
+          "角色状态.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\角色状态.md"
+        }
+      },
+      "source_resolution": {
+        "entries": [
+          {
+            "chosen_source": "current_outline",
+            "discarded_sources": [],
+            "field": "chapter_blueprint",
+            "reason": "current_outline_precedes_runtime_cache"
+          },
+          {
+            "chosen_source": "tracking_files",
+            "discarded_sources": [
+              "snapshot.json",
+              "memory",
+              "model_inference"
+            ],
+            "field": "tracking_context",
+            "reason": "tracking_state_precedes_snapshot_and_memory"
+          },
+          {
+            "chosen_source": "previous_prose",
+            "discarded_sources": [
+              "snapshot.json",
+              "memory",
+              "model_inference"
+            ],
+            "field": "previous_chapter",
+            "reason": "latest_prose_precedes_runtime_cache"
+          },
+          {
+            "chosen_source": "setting_files",
+            "discarded_sources": [
+              "snapshot.json",
+              "memory",
+              "model_inference"
+            ],
+            "field": "setting_context",
+            "reason": "settings_precede_runtime_cache"
+          }
+        ],
+        "precedence": [
+          "current_outline_or_user_input",
+          "tracking_state",
+          "previous_prose",
+          "settings",
+          "snapshot_runtime_cache",
+          "memory_sync",
+          "model_inference"
+        ]
+      },
+      "writeback": {
+        "applied": true,
+        "artifacts": {
+          "diff": {
+            "chars": 232,
+            "format": "json",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\story_project_writebacks\\writeback_diff_0002_chapter_2_20260714T022935227346Z.json",
+            "sha256": "e775301004dd1bf45099f57e6f7eee5efb499b2cbb4f5c5b4b0ffa6709e2250f"
+          },
+          "plan": {
+            "chars": 1924,
+            "format": "json",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\story_project_writebacks\\writeback_plan_0002_chapter_2_20260714T022935227346Z.json",
+            "sha256": "340dd53b8778541cb59ab70455940a4c5d6d8b6210ad87bdcb7cefbbd24392ae"
+          },
+          "result": {
+            "chars": 2592,
+            "format": "json",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\runs\\story_project_writebacks\\writeback_result_0002_chapter_2_20260714T022935227346Z.json",
+            "sha256": "bb700a81aea57001bde6f1343f70d4da5b97482bd982adb5b15556d3a53cfc1a"
+          }
+        },
+        "attempted": true,
+        "blocked_reasons": [],
+        "diff_summary": {
+          "changed_targets": 5,
+          "chars_after": 10908,
+          "chars_before": 3309,
+          "chars_delta": 7599,
+          "status_counts": {
+            "created": 1,
+            "failed": 0,
+            "planned": 0,
+            "skipped": 0,
+            "updated": 4
+          },
+          "target_count": 5
+        },
+        "dry_run": false,
+        "errors": [],
+        "failed_targets": [],
+        "overwrite": false,
+        "partial": false,
+        "targets": [
+          {
+            "action": "create",
+            "changed": true,
+            "chars_after": 5463,
+            "chars_before": 0,
+            "error": null,
+            "existed": false,
+            "kind": "prose",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\正文\\第002章_第二章：十七分钟倒计时.md",
+            "reason": null,
+            "status": "created"
+          },
+          {
+            "action": "append",
+            "changed": true,
+            "chars_after": 1334,
+            "chars_before": 787,
+            "error": null,
+            "existed": true,
+            "kind": "context",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\上下文.md",
+            "reason": null,
+            "status": "updated"
+          },
+          {
+            "action": "append",
+            "changed": true,
+            "chars_after": 1316,
+            "chars_before": 832,
+            "error": null,
+            "existed": true,
+            "kind": "foreshadowing",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\伏笔.md",
+            "reason": null,
+            "status": "updated"
+          },
+          {
+            "action": "append",
+            "changed": true,
+            "chars_after": 1551,
+            "chars_before": 941,
+            "error": null,
+            "existed": true,
+            "kind": "timeline",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\时间线.md",
+            "reason": null,
+            "status": "updated"
+          },
+          {
+            "action": "append",
+            "changed": true,
+            "chars_after": 1244,
+            "chars_before": 749,
+            "error": null,
+            "existed": true,
+            "kind": "character_state",
+            "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\角色状态.md",
+            "reason": null,
+            "status": "updated"
+          }
+        ],
+        "transaction": {
+          "commit_marker": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\persistence\\chapter_2_20260714T022935227346Z\\commit.marker",
+          "committed": true,
+          "journal_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\persistence\\chapter_2_20260714T022935227346Z",
+          "partial": false,
+          "run_id": "chapter_2_20260714T022935227346Z",
+          "state": "completed"
+        }
+      }
+    },
+    "trace": [
+      {
+        "action": "build_snapshot",
+        "chapter_chars": 0,
+        "duration_ms": 0,
+        "finished_at": "2026-07-14T02:29:35.299343+00:00",
+        "plan_failure_policy": "fail_run",
+        "plan_step_index": 1,
+        "plan_step_mode": "required",
+        "repair_attempts": 0,
+        "started_at": "2026-07-14T02:29:35.299343+00:00",
+        "status": "completed"
+      },
+      {
+        "action": "pre_validate_bridge",
+        "bridge_precheck": {
+          "name": "pre_validate_bridge",
+          "ok": true,
+          "problem_codes": [],
+          "problems": []
+        },
+        "chapter_chars": 0,
+        "duration_ms": 0,
+        "finished_at": "2026-07-14T02:29:35.309344+00:00",
+        "plan_failure_policy": "fail_run",
+        "plan_step_index": 2,
+        "plan_step_mode": "required",
+        "repair_attempts": 0,
+        "started_at": "2026-07-14T02:29:35.309344+00:00",
+        "status": "completed"
+      },
+      {
+        "action": "generate_chapter",
+        "bridge_precheck": {
+          "name": "pre_validate_bridge",
+          "ok": true,
+          "problem_codes": [],
+          "problems": []
+        },
+        "chapter_chars": 4587,
+        "duration_ms": 81355,
+        "finished_at": "2026-07-14T02:30:56.666295+00:00",
+        "model_invocation": "model",
+        "model_name": "gpt-5.5",
+        "model_provider": "openai",
+        "model_stage": "chapter_generation",
+        "plan_failure_policy": "fail_run",
+        "plan_step_index": 3,
+        "plan_step_mode": "required",
+        "provider_attempts": [
+          {
+            "attempts": 1,
+            "completed": true,
+            "elapsed_ms": 80687,
+            "history": [
+              {
+                "attempt": 1,
+                "cause_type": null,
+                "delay_ms": 0,
+                "elapsed_ms": 80687,
+                "failure_category": null,
+                "outcome": "succeeded",
+                "partial_content_received": false,
+                "retry_after_ms": null,
+                "retryable": false
+              }
+            ],
+            "max_attempts": 3,
+            "profile": "model_read_generation",
+            "schema_version": "1.0",
+            "stop_reason": "succeeded"
+          }
+        ],
+        "repair_attempts": 0,
+        "started_at": "2026-07-14T02:29:35.310343+00:00",
+        "status": "completed"
+      },
+      {
+        "action": "validate",
+        "bridge_precheck": {
+          "name": "pre_validate_bridge",
+          "ok": true,
+          "problem_codes": [],
+          "problems": []
+        },
+        "chapter_chars": 4587,
+        "duration_ms": 29816,
+        "finished_at": "2026-07-14T02:31:26.482365+00:00",
+        "plan_failure_policy": "fail_run",
+        "plan_step_index": 4,
+        "plan_step_mode": "required",
+        "problem_count": 2,
+        "provider_attempts": [
+          {
+            "attempts": 1,
+            "completed": true,
+            "elapsed_ms": 29812,
+            "history": [
+              {
+                "attempt": 1,
+                "cause_type": null,
+                "delay_ms": 0,
+                "elapsed_ms": 29812,
+                "failure_category": null,
+                "outcome": "succeeded",
+                "partial_content_received": false,
+                "retry_after_ms": null,
+                "retryable": false
+              }
+            ],
+            "max_attempts": 3,
+            "profile": "model_read_generation",
+            "schema_version": "1.0",
+            "stop_reason": "succeeded"
+          }
+        ],
+        "repair_attempts": 0,
+        "started_at": "2026-07-14T02:30:56.666295+00:00",
+        "status": "completed",
+        "validation_ok": false
+      },
+      {
+        "action": "repair_if_needed",
+        "bridge_precheck": {
+          "name": "pre_validate_bridge",
+          "ok": true,
+          "problem_codes": [],
+          "problems": []
+        },
+        "chapter_chars": 5462,
+        "duration_ms": 225126,
+        "finished_at": "2026-07-14T02:35:11.610227+00:00",
+        "model_invocation": "model",
+        "model_name": "gpt-5.5",
+        "model_provider": "openai",
+        "model_stage": "scene_repair",
+        "plan_failure_policy": "fail_run",
+        "plan_step_index": 5,
+        "plan_step_mode": "conditional",
+        "problem_count": 0,
+        "provider_attempts": [
+          {
+            "attempts": 1,
+            "completed": true,
+            "elapsed_ms": 83139,
+            "history": [
+              {
+                "attempt": 1,
+                "cause_type": null,
+                "delay_ms": 0,
+                "elapsed_ms": 83139,
+                "failure_category": null,
+                "outcome": "succeeded",
+                "partial_content_received": false,
+                "retry_after_ms": null,
+                "retryable": false
+              }
+            ],
+            "max_attempts": 3,
+            "profile": "model_read_generation",
+            "schema_version": "1.0",
+            "stop_reason": "succeeded"
+          },
+          {
+            "attempts": 1,
+            "completed": true,
+            "elapsed_ms": 33157,
+            "history": [
+              {
+                "attempt": 1,
+                "cause_type": null,
+                "delay_ms": 0,
+                "elapsed_ms": 33157,
+                "failure_category": null,
+                "outcome": "succeeded",
+                "partial_content_received": false,
+                "retry_after_ms": null,
+                "retryable": false
+              }
+            ],
+            "max_attempts": 3,
+            "profile": "model_read_generation",
+            "schema_version": "1.0",
+            "stop_reason": "succeeded"
+          },
+          {
+            "attempts": 1,
+            "completed": true,
+            "elapsed_ms": 94827,
+            "history": [
+              {
+                "attempt": 1,
+                "cause_type": null,
+                "delay_ms": 0,
+                "elapsed_ms": 94827,
+                "failure_category": null,
+                "outcome": "succeeded",
+                "partial_content_received": false,
+                "retry_after_ms": null,
+                "retryable": false
+              }
+            ],
+            "max_attempts": 3,
+            "profile": "model_read_generation",
+            "schema_version": "1.0",
+            "stop_reason": "succeeded"
+          },
+          {
+            "attempts": 1,
+            "completed": true,
+            "elapsed_ms": 14000,
+            "history": [
+              {
+                "attempt": 1,
+                "cause_type": null,
+                "delay_ms": 0,
+                "elapsed_ms": 14000,
+                "failure_category": null,
+                "outcome": "succeeded",
+                "partial_content_received": false,
+                "retry_after_ms": null,
+                "retryable": false
+              }
+            ],
+            "max_attempts": 3,
+            "profile": "model_read_generation",
+            "schema_version": "1.0",
+            "stop_reason": "succeeded"
+          }
+        ],
+        "repair_attempts": 2,
+        "repair_deltas": [
+          {
+            "after_ok": false,
+            "after_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ],
+            "after_problem_count": 2,
+            "attempt": 1,
+            "before_ok": false,
+            "before_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_setup_and_payoff_upgrade_constraint_underfulfilled"
+            ],
+            "before_problem_count": 2,
+            "new_problem_codes": [
+              "llm_timeline_causality_goal_underpaid"
+            ],
+            "remaining_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict"
+            ],
+            "resolved_problem_codes": [
+              "llm_setup_and_payoff_upgrade_constraint_underfulfilled"
+            ]
+          },
+          {
+            "after_ok": true,
+            "after_problem_codes": [],
+            "after_problem_count": 0,
+            "attempt": 2,
+            "before_ok": false,
+            "before_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ],
+            "before_problem_count": 2,
+            "new_problem_codes": [],
+            "remaining_problem_codes": [],
+            "resolved_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ]
+          }
+        ],
+        "repair_plan": {
+          "actions": [
+            "manual_review",
+            "manual_review"
+          ],
+          "attempt": 2,
+          "blocking_problem_count": 2,
+          "deterministic_step_count": 0,
+          "manual_review_count": 2,
+          "problem_count": 2,
+          "recovery": {
+            "available": true,
+            "failure_modes": [
+              "previous_problem_repeated",
+              "previous_manual_review_required"
+            ],
+            "new_problem_codes": [],
+            "previous_manual_review_count": 3,
+            "previous_repair_attempts": 0,
+            "previous_repair_risk_level": "high",
+            "repair_budget_exhausted": false,
+            "repair_introduced_new_problems": false,
+            "repair_stalled": false,
+            "repeated_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict"
+            ],
+            "skipped_checks": [],
+            "source_problem_codes": [
+              "missing_last_scene_continuity",
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_power_timer_undertracked",
+              "llm_continuity_character_location_floor_mismatch"
+            ],
+            "source_run_id": "chapter_2_20260714T022545663839Z",
+            "source_status": "failed",
+            "unresolved_problem_codes": []
+          },
+          "repair_budget": 3,
+          "risk_level": "medium",
+          "severity_counts": [
+            {
+              "count": 2,
+              "severity": "medium"
+            }
+          ],
+          "steps": [
+            {
+              "action": "manual_review",
+              "blocking": true,
+              "code": "llm_complex_plot_logic_spatial_access_conflict",
+              "evidence": [
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "前段写道：“监控室有三道相关门。”随后只列出“监控室内门”“东侧外门”“营业区侧门”。"
+                },
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "后文钱明挟持林夏要求：“开西侧卷帘门。”陆沉还切出“西侧卷帘门外的监控画面”，说明它是可监控、可控制的关键门位。"
+                },
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "快照中钱明当前目标为“试图打开西侧卷帘门接回已被咬的妻子”，该门应在场景空间逻辑中提前明确。"
+                }
+              ],
+              "index": 1,
+              "message": "西侧卷帘门在关键冲突中突然成为可控目标，但本章前段明确列出的监控室相关门位没有包含它，导致钱明的行动目标和空间控制逻辑缺少可靠落点。",
+              "parameters": {
+                "raw_problem": {
+                  "area": "complex_plot_logic",
+                  "code": "llm_complex_plot_logic_spatial_access_conflict",
+                  "evidence": [
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "前段写道：“监控室有三道相关门。”随后只列出“监控室内门”“东侧外门”“营业区侧门”。"
+                    },
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "后文钱明挟持林夏要求：“开西侧卷帘门。”陆沉还切出“西侧卷帘门外的监控画面”，说明它是可监控、可控制的关键门位。"
+                    },
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "快照中钱明当前目标为“试图打开西侧卷帘门接回已被咬的妻子”，该门应在场景空间逻辑中提前明确。"
+                    }
+                  ],
+                  "message": "西侧卷帘门在关键冲突中突然成为可控目标，但本章前段明确列出的监控室相关门位没有包含它，导致钱明的行动目标和空间控制逻辑缺少可靠落点。",
+                  "repair_hint": "在陆沉扫描门位状态时加入西侧卷帘门的位置、控制状态、与钱明妻子所在区域的关系，并说明为何它不是可安全开启的救援门；避免先宣称只有三道相关门后又让第四道门成为核心冲突。",
+                  "severity": "medium"
+                }
+              },
+              "priority": 1000,
+              "repair_hint": "在陆沉扫描门位状态时加入西侧卷帘门的位置、控制状态、与钱明妻子所在区域的关系，并说明为何它不是可安全开启的救援门；避免先宣称只有三道相关门后又让第四道门成为核心冲突。",
+              "severity": "medium",
+              "strategy": "No deterministic repair strategy is registered for this validation problem.",
+              "validator": "llm"
+            },
+            {
+              "action": "manual_review",
+              "blocking": true,
+              "code": "llm_timeline_causality_goal_underpaid",
+              "evidence": [
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "快照中陆沉当前目标为“在备用电耗尽前联络幸存者并夺取发电机控制权”。"
+                },
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "本章主要行动为接应苏晴、处理钱明挟持、击杀爬行感染者；直到“倒计时：00分09秒”才通过赵铁短波得知“车上有柴油和工具”。"
+                },
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "结尾写道“00分00秒。监控室灯光骤然熄灭，所有屏幕同时黑下去”，备用电耗尽前没有夺取或尝试夺取发电机控制权。"
+                }
+              ],
+              "index": 2,
+              "message": "陆沉的既定章节目标是备用电耗尽前联络幸存者并夺取发电机控制权，但本章直到倒计时归零都没有实际推进发电机控制权，导致目标与行动线脱节。",
+              "parameters": {
+                "raw_problem": {
+                  "area": "timeline_causality",
+                  "code": "llm_timeline_causality_goal_underpaid",
+                  "evidence": [
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "快照中陆沉当前目标为“在备用电耗尽前联络幸存者并夺取发电机控制权”。"
+                    },
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "本章主要行动为接应苏晴、处理钱明挟持、击杀爬行感染者；直到“倒计时：00分09秒”才通过赵铁短波得知“车上有柴油和工具”。"
+                    },
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "结尾写道“00分00秒。监控室灯光骤然熄灭，所有屏幕同时黑下去”，备用电耗尽前没有夺取或尝试夺取发电机控制权。"
+                    }
+                  ],
+                  "message": "陆沉的既定章节目标是备用电耗尽前联络幸存者并夺取发电机控制权，但本章直到倒计时归零都没有实际推进发电机控制权，导致目标与行动线脱节。",
+                  "repair_hint": "在接应苏晴和处理突发危机之间，增加陆沉明确尝试定位发电机控制点、切换电力分配、联系卸货区或判断必须转向赵铁柴油线的场景；若本章目标是失败，也需让失败由具体阻碍造成，而不是完全未执行。",
+                  "severity": "medium"
+                }
+              },
+              "priority": 1000,
+              "repair_hint": "在接应苏晴和处理突发危机之间，增加陆沉明确尝试定位发电机控制点、切换电力分配、联系卸货区或判断必须转向赵铁柴油线的场景；若本章目标是失败，也需让失败由具体阻碍造成，而不是完全未执行。",
+              "severity": "medium",
+              "strategy": "No deterministic repair strategy is registered for this validation problem.",
+              "validator": "llm"
+            }
+          ],
+          "warning_count": 0
+        },
+        "skipped": false,
+        "started_at": "2026-07-14T02:31:26.483386+00:00",
+        "status": "completed",
+        "validation_ok": true
+      },
+      {
+        "action": "commit_snapshot",
+        "bridge_precheck": {
+          "name": "pre_validate_bridge",
+          "ok": true,
+          "problem_codes": [],
+          "problems": []
+        },
+        "chapter_chars": 5462,
+        "duration_ms": 0,
+        "finished_at": "2026-07-14T02:35:11.610615+00:00",
+        "plan_failure_policy": "fail_run",
+        "plan_step_index": 6,
+        "plan_step_mode": "conditional",
+        "problem_count": 0,
+        "repair_attempts": 2,
+        "repair_deltas": [
+          {
+            "after_ok": false,
+            "after_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ],
+            "after_problem_count": 2,
+            "attempt": 1,
+            "before_ok": false,
+            "before_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_setup_and_payoff_upgrade_constraint_underfulfilled"
+            ],
+            "before_problem_count": 2,
+            "new_problem_codes": [
+              "llm_timeline_causality_goal_underpaid"
+            ],
+            "remaining_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict"
+            ],
+            "resolved_problem_codes": [
+              "llm_setup_and_payoff_upgrade_constraint_underfulfilled"
+            ]
+          },
+          {
+            "after_ok": true,
+            "after_problem_codes": [],
+            "after_problem_count": 0,
+            "attempt": 2,
+            "before_ok": false,
+            "before_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ],
+            "before_problem_count": 2,
+            "new_problem_codes": [],
+            "remaining_problem_codes": [],
+            "resolved_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_goal_underpaid"
+            ]
+          }
+        ],
+        "repair_plan": {
+          "actions": [
+            "manual_review",
+            "manual_review"
+          ],
+          "attempt": 2,
+          "blocking_problem_count": 2,
+          "deterministic_step_count": 0,
+          "manual_review_count": 2,
+          "problem_count": 2,
+          "recovery": {
+            "available": true,
+            "failure_modes": [
+              "previous_problem_repeated",
+              "previous_manual_review_required"
+            ],
+            "new_problem_codes": [],
+            "previous_manual_review_count": 3,
+            "previous_repair_attempts": 0,
+            "previous_repair_risk_level": "high",
+            "repair_budget_exhausted": false,
+            "repair_introduced_new_problems": false,
+            "repair_stalled": false,
+            "repeated_problem_codes": [
+              "llm_complex_plot_logic_spatial_access_conflict"
+            ],
+            "skipped_checks": [],
+            "source_problem_codes": [
+              "missing_last_scene_continuity",
+              "llm_complex_plot_logic_spatial_access_conflict",
+              "llm_timeline_causality_power_timer_undertracked",
+              "llm_continuity_character_location_floor_mismatch"
+            ],
+            "source_run_id": "chapter_2_20260714T022545663839Z",
+            "source_status": "failed",
+            "unresolved_problem_codes": []
+          },
+          "repair_budget": 3,
+          "risk_level": "medium",
+          "severity_counts": [
+            {
+              "count": 2,
+              "severity": "medium"
+            }
+          ],
+          "steps": [
+            {
+              "action": "manual_review",
+              "blocking": true,
+              "code": "llm_complex_plot_logic_spatial_access_conflict",
+              "evidence": [
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "前段写道：“监控室有三道相关门。”随后只列出“监控室内门”“东侧外门”“营业区侧门”。"
+                },
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "后文钱明挟持林夏要求：“开西侧卷帘门。”陆沉还切出“西侧卷帘门外的监控画面”，说明它是可监控、可控制的关键门位。"
+                },
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "快照中钱明当前目标为“试图打开西侧卷帘门接回已被咬的妻子”，该门应在场景空间逻辑中提前明确。"
+                }
+              ],
+              "index": 1,
+              "message": "西侧卷帘门在关键冲突中突然成为可控目标，但本章前段明确列出的监控室相关门位没有包含它，导致钱明的行动目标和空间控制逻辑缺少可靠落点。",
+              "parameters": {
+                "raw_problem": {
+                  "area": "complex_plot_logic",
+                  "code": "llm_complex_plot_logic_spatial_access_conflict",
+                  "evidence": [
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "前段写道：“监控室有三道相关门。”随后只列出“监控室内门”“东侧外门”“营业区侧门”。"
+                    },
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "后文钱明挟持林夏要求：“开西侧卷帘门。”陆沉还切出“西侧卷帘门外的监控画面”，说明它是可监控、可控制的关键门位。"
+                    },
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "快照中钱明当前目标为“试图打开西侧卷帘门接回已被咬的妻子”，该门应在场景空间逻辑中提前明确。"
+                    }
+                  ],
+                  "message": "西侧卷帘门在关键冲突中突然成为可控目标，但本章前段明确列出的监控室相关门位没有包含它，导致钱明的行动目标和空间控制逻辑缺少可靠落点。",
+                  "repair_hint": "在陆沉扫描门位状态时加入西侧卷帘门的位置、控制状态、与钱明妻子所在区域的关系，并说明为何它不是可安全开启的救援门；避免先宣称只有三道相关门后又让第四道门成为核心冲突。",
+                  "severity": "medium"
+                }
+              },
+              "priority": 1000,
+              "repair_hint": "在陆沉扫描门位状态时加入西侧卷帘门的位置、控制状态、与钱明妻子所在区域的关系，并说明为何它不是可安全开启的救援门；避免先宣称只有三道相关门后又让第四道门成为核心冲突。",
+              "severity": "medium",
+              "strategy": "No deterministic repair strategy is registered for this validation problem.",
+              "validator": "llm"
+            },
+            {
+              "action": "manual_review",
+              "blocking": true,
+              "code": "llm_timeline_causality_goal_underpaid",
+              "evidence": [
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "快照中陆沉当前目标为“在备用电耗尽前联络幸存者并夺取发电机控制权”。"
+                },
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "本章主要行动为接应苏晴、处理钱明挟持、击杀爬行感染者；直到“倒计时：00分09秒”才通过赵铁短波得知“车上有柴油和工具”。"
+                },
+                {
+                  "kind": "chapter_excerpt_or_fact",
+                  "value": "结尾写道“00分00秒。监控室灯光骤然熄灭，所有屏幕同时黑下去”，备用电耗尽前没有夺取或尝试夺取发电机控制权。"
+                }
+              ],
+              "index": 2,
+              "message": "陆沉的既定章节目标是备用电耗尽前联络幸存者并夺取发电机控制权，但本章直到倒计时归零都没有实际推进发电机控制权，导致目标与行动线脱节。",
+              "parameters": {
+                "raw_problem": {
+                  "area": "timeline_causality",
+                  "code": "llm_timeline_causality_goal_underpaid",
+                  "evidence": [
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "快照中陆沉当前目标为“在备用电耗尽前联络幸存者并夺取发电机控制权”。"
+                    },
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "本章主要行动为接应苏晴、处理钱明挟持、击杀爬行感染者；直到“倒计时：00分09秒”才通过赵铁短波得知“车上有柴油和工具”。"
+                    },
+                    {
+                      "kind": "chapter_excerpt_or_fact",
+                      "value": "结尾写道“00分00秒。监控室灯光骤然熄灭，所有屏幕同时黑下去”，备用电耗尽前没有夺取或尝试夺取发电机控制权。"
+                    }
+                  ],
+                  "message": "陆沉的既定章节目标是备用电耗尽前联络幸存者并夺取发电机控制权，但本章直到倒计时归零都没有实际推进发电机控制权，导致目标与行动线脱节。",
+                  "repair_hint": "在接应苏晴和处理突发危机之间，增加陆沉明确尝试定位发电机控制点、切换电力分配、联系卸货区或判断必须转向赵铁柴油线的场景；若本章目标是失败，也需让失败由具体阻碍造成，而不是完全未执行。",
+                  "severity": "medium"
+                }
+              },
+              "priority": 1000,
+              "repair_hint": "在接应苏晴和处理突发危机之间，增加陆沉明确尝试定位发电机控制点、切换电力分配、联系卸货区或判断必须转向赵铁柴油线的场景；若本章目标是失败，也需让失败由具体阻碍造成，而不是完全未执行。",
+              "severity": "medium",
+              "strategy": "No deterministic repair strategy is registered for this validation problem.",
+              "validator": "llm"
+            }
+          ],
+          "warning_count": 0
+        },
+        "started_at": "2026-07-14T02:35:11.610615+00:00",
+        "status": "completed",
+        "validation_ok": true
+      }
+    ],
+    "validation": {
+      "blocking_problem_count": 0,
+      "deterministic_repair_count": 0,
+      "executed_checks": [
+        "continuity",
+        "spatial",
+        "logic",
+        "story_project",
+        "llm"
+      ],
+      "manual_review_count": 0,
+      "ok": true,
+      "problem_codes": [],
+      "problem_count": 0,
+      "problem_evidence": [],
+      "repair_action_counts": [],
+      "requested_focus": [
+        "continuity",
+        "spatial",
+        "logic"
+      ],
+      "severity_counts": [],
+      "skipped_checks": [],
+      "warning_count": 0
+    },
+    "workflow": [
+      "build_snapshot",
+      "pre_validate_bridge",
+      "generate_chapter",
+      "validate",
+      "repair_if_needed",
+      "commit_snapshot"
+    ],
+    "workflow_plan": {
+      "actions": [
+        "build_snapshot",
+        "pre_validate_bridge",
+        "generate_chapter",
+        "validate",
+        "repair_if_needed",
+        "commit_snapshot"
+      ],
+      "goal": "recover_from_failed_run",
+      "max_repair_attempts": 3,
+      "recovery": true,
+      "steps": [
+        {
+          "action": "build_snapshot",
+          "failure_policy": "fail_run",
+          "index": 1,
+          "mode": "required",
+          "produces": [
+            "snapshot"
+          ],
+          "purpose": "Confirm the runtime snapshot state prepared before Director execution.",
+          "requires": [],
+          "skip_condition": null,
+          "skippable": false
+        },
+        {
+          "action": "pre_validate_bridge",
+          "failure_policy": "fail_run",
+          "index": 2,
+          "mode": "required",
+          "produces": [
+            "bridge_validation"
+          ],
+          "purpose": "Prepare last-scene bridge expectations before chapter generation.",
+          "requires": [
+            "snapshot"
+          ],
+          "skip_condition": null,
+          "skippable": false
+        },
+        {
+          "action": "generate_chapter",
+          "failure_policy": "fail_run",
+          "index": 3,
+          "mode": "required",
+          "produces": [
+            "chapter"
+          ],
+          "purpose": "Generate draft chapter prose from the input pack.",
+          "requires": [],
+          "skip_condition": null,
+          "skippable": false
+        },
+        {
+          "action": "validate",
+          "failure_policy": "fail_run",
+          "index": 4,
+          "mode": "required",
+          "produces": [
+            "validation"
+          ],
+          "purpose": "Check continuity, spatial, and logic constraints selected by the Director.",
+          "requires": [
+            "chapter"
+          ],
+          "skip_condition": null,
+          "skippable": false
+        },
+        {
+          "action": "repair_if_needed",
+          "failure_policy": "fail_run",
+          "index": 5,
+          "mode": "conditional",
+          "produces": [
+            "chapter",
+            "validation"
+          ],
+          "purpose": "Repair failed validation problems within the Director repair budget.",
+          "requires": [
+            "chapter",
+            "validation"
+          ],
+          "skip_condition": "Runs only when validation is not ok and max_repair_attempts is greater than 0.",
+          "skippable": true
+        },
+        {
+          "action": "commit_snapshot",
+          "failure_policy": "fail_run",
+          "index": 6,
+          "mode": "conditional",
+          "produces": [
+            "snapshot"
+          ],
+          "purpose": "Mark the workflow commit boundary; the executor applies snapshot writes after successful validation.",
+          "requires": [
+            "chapter",
+            "validation"
+          ],
+          "skip_condition": "The executor commits only after validation succeeds.",
+          "skippable": true
+        }
+      ],
+      "validation_focus": [
+        "continuity",
+        "spatial",
+        "logic"
+      ]
+    }
+  },
+  "snapshot": {
+    "book_id": "68ee0d8e-762c-4dc3-96c5-abdf3084c4e9",
+    "chapter_index": 3,
+    "characters": {
+      "获救女孩": {
+        "condition": "腿部划伤，无明显咬痕",
+        "current_goal": "处理腿部划伤并协助报点",
+        "current_location": "监控室",
+        "role": "幸存者"
+      },
+      "钱明": {
+        "condition": "未确认感染，精神濒临崩溃",
+        "current_goal": "试图打开西侧卷帘门接回已被咬的妻子",
+        "current_location": "监控室",
+        "role": "营业主管"
+      },
+      "陆沉": {
+        "condition": "右肩挫伤，肌肉透支",
+        "current_goal": "在备用电耗尽前联络幸存者并夺取发电机控制权",
+        "current_location": "监控室",
+        "erosion": 1,
+        "role": "主角",
+        "traits": [
+          "应激爆发"
+        ]
+      }
+    },
+    "constraints": [
+      {
+        "rule": "正文必须使用简体中文。"
+      },
+      {
+        "rule": "升级必须同时体现收益、战术变化与代价。"
+      },
+      {
+        "rule": "陆沉不主动牺牲无辜者，也不把同伴当消耗品。"
+      }
+    ],
+    "memory": {
+      "item_count": 11,
+      "source": "story-project",
+      "status": "ready"
+    },
+    "project_profile": {
+      "known_characters": [
+        "陆沉",
+        "苏晴",
+        "赵铁",
+        "陆遥",
+        "钱明",
+        "获救女孩"
+      ],
+      "known_locations": [
+        "临江市地下商超",
+        "监控室",
+        "冷库",
+        "地下停车场",
+        "地下一层营业区",
+        "负二层冷库"
+      ],
+      "language": "zh-CN"
+    },
+    "spatial_state": {
+      "blocked_paths": [],
+      "character_positions": {
+        "获救女孩": "监控室",
+        "钱明": "监控室",
+        "陆沉": "监控室"
+      },
+      "connections": [],
+      "last_transition": {
+        "source": "chapter_analysis",
+        "to": "冷库"
+      },
+      "spaces": {
+        "冷库": {
+          "last_seen_chapter": 2,
+          "source": "chapter_analysis"
+        },
+        "地下一层营业区": {
+          "last_seen_chapter": 1,
+          "source": "chapter_analysis"
+        },
+        "地下停车场": {
+          "last_seen_chapter": 2,
+          "source": "chapter_analysis"
+        },
+        "监控室": {
+          "last_seen_chapter": 2,
+          "source": "chapter_analysis"
+        },
+        "负二层冷库": {
+          "last_seen_chapter": 2,
+          "source": "chapter_analysis"
+        }
+      }
+    },
+    "story_project": {
+      "chapter_index": 2,
+      "outline_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\大纲\\细纲_第002章.md",
+      "previous_prose_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\正文\\第001章_第一章：断电后的第十二分钟.md",
+      "root": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+      "setting_paths": {
+        "作品设定.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\作品设定.md",
+        "地点/临江市地下商超.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\地点\\临江市地下商超.md",
+        "能力体系.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\能力体系.md",
+        "角色/苏晴.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\苏晴.md",
+        "角色/赵铁.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\赵铁.md",
+        "角色/陆沉.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\陆沉.md"
+      },
+      "tracking_paths": {
+        "上下文.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\上下文.md",
+        "伏笔.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\伏笔.md",
+        "时间线.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\时间线.md",
+        "角色状态.md": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\角色状态.md"
+      }
+    },
+    "story_state": {
+      "last_chapter_ending": "备用电切断前残留的一帧画面，短暂印在陆沉视网膜上：早已变形的冷库铁门，被从里面撞开了一道缝。",
+      "last_scene_characters": [],
+      "last_scene_location": "冷库",
+      "open_threads": [],
+      "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\角色状态.md",
+      "relative_path": "追踪/角色状态.md",
+      "required_opening_bridge": "冷库",
+      "source": "story_project",
+      "summary": "# 角色状态",
+      "text": "# 角色状态\n\n## 陆沉\n\n| 字段 | 值 |\n|---|---|\n| 状态 | 右肩挫伤，使用“应激爆发”后肌肉透支 |\n| 位置 | 地下商超监控室 |\n| 装备 | 强光手电、对讲机、伸缩棍、钥匙串 |\n| 当前目标 | 在备用电耗尽前联络幸存者并夺取发电机控制权 |\n| 词条 | 应激爆发（白色，词条槽1/2） |\n| 侵蚀值 | 1/100 |\n\n## 苏晴\n\n尚未与陆沉汇合，位于一层医药专柜附近。\n\n## 赵铁\n\n尚未与陆沉汇合，位于地下停车场卸货区。\n\n<!-- NovelAgent:story_project_writeback run_id=chapter_1_20260714T020044192767Z chapter=001 target=character_state -->\n## 第001章 · 第一章：断电后的第十二分钟\n\n- run_id: chapter_1_20260714T020044192767Z\n- source: NovelAgent committed run\n- blueprint_coverage: covered_beat_indexes=[1, 2, 3, 4, 5, 6], ending_pressure_covered=True, ending_pressure_required=True, required_beat_count=6\n- summary: 备用电源亮起的瞬间，监控室里所有屏幕同时闪了一下。 惨白的应急灯从天花板边缘一截截亮起，像给地下商超重新接上了一口残喘。\n- character_changes: 未记录\n<!-- /NovelAgent:story_project_writeback -->\n",
+      "truncated": false
+    },
+    "timeline": [
+      {
+        "chapter_index": 1,
+        "character_changes": [],
+        "conflicts": [
+          "代价"
+        ],
+        "events": [],
+        "memory_id": "chapter_1:timeline_event:chapter_1_summary",
+        "memory_ids": [
+          "chapter_1:timeline_event:chapter_1_summary"
+        ],
+        "name": "chapter_1_summary",
+        "new_locations": [
+          "监控室",
+          "地下一层营业区",
+          "负二层冷库",
+          "冷库"
+        ],
+        "source_run_id": "chapter_1_20260714T020044192767Z",
+        "spatial_state": {
+          "blocked_paths": [],
+          "character_positions": {},
+          "connections": [],
+          "last_transition": {
+            "source": "chapter_analysis",
+            "to": "冷库"
+          },
+          "spaces": {
+            "冷库": {
+              "source": "chapter_analysis"
+            },
+            "地下一层营业区": {
+              "source": "chapter_analysis"
+            },
+            "监控室": {
+              "source": "chapter_analysis"
+            },
+            "负二层冷库": {
+              "source": "chapter_analysis"
+            }
+          }
+        },
+        "story_state": {
+          "last_chapter_ending": "剩余电量：17分钟。",
+          "last_scene_characters": [],
+          "last_scene_location": "冷库",
+          "open_threads": [],
+          "required_opening_bridge": "冷库"
+        },
+        "summary": "备用电源亮起的瞬间，监控室里所有屏幕同时闪了一下。 惨白的应急灯从天花板边缘一截截亮起，像给地下商超重新接上了一口残喘。",
+        "validation": {
+          "blocking_problem_count": 0,
+          "checks": [
+            {
+              "name": "continuity",
+              "ok": true,
+              "problems": []
+            },
+            {
+              "name": "spatial",
+              "ok": true,
+              "problems": []
+            },
+            {
+              "name": "logic",
+              "ok": true,
+              "problems": []
+            },
+            {
+              "name": "story_project",
+              "ok": true,
+              "problems": []
+            },
+            {
+              "metadata": {
+                "attempt_history": [
+                  {
+                    "attempt": 1,
+                    "cause_type": null,
+                    "delay_ms": 0,
+                    "elapsed_ms": 12264,
+                    "failure_category": null,
+                    "outcome": "succeeded",
+                    "partial_content_received": false,
+                    "profile": "model_read_generation",
+                    "retry_after_ms": null,
+                    "retryable": false,
+                    "stop_reason": "succeeded"
+                  }
+                ],
+                "model": "gpt-5.5",
+                "policy_version": "1.0",
+                "prompt_hash": "e7a0df6fdc842df6117f755c8bec86e6dab900e6a4f8c5510256f091fd42dafa",
+                "provider": "openai"
+              },
+              "name": "llm",
+              "ok": true,
+              "problems": []
+            }
+          ],
+          "deterministic_repair_count": 0,
+          "executed_checks": [
+            "continuity",
+            "spatial",
+            "logic",
+            "story_project",
+            "llm"
+          ],
+          "manual_review_count": 0,
+          "ok": true,
+          "problems": [],
+          "repair_action_counts": [],
+          "requested_focus": [
+            "continuity",
+            "spatial",
+            "logic"
+          ],
+          "severity_counts": [],
+          "skipped_checks": [],
+          "warning_count": 0
+        },
+        "world_changes": [
+          {
+            "text": "Infection pressure is active in the chapter.",
+            "type": "infection_pressure"
+          }
+        ]
+      },
+      {
+        "chapter_index": 2,
+        "character_changes": [],
+        "conflicts": [
+          "选择"
+        ],
+        "events": [
+          {
+            "text": "陆沉选择的不是那条封死夹道，而是员工通道内段旁的清洁间检修门——监控刚确认清洁通道地面无人，真正的风险来自上方那处漏检的吊顶口。"
+          },
+          {
+            "text": "”\n\n“必须夺。"
+          }
+        ],
+        "memory_id": "chapter_2:timeline_event:chapter_2_summary",
+        "memory_ids": [
+          "chapter_2:timeline_event:chapter_2_summary",
+          "chapter_2:timeline_event:chapter_2_event_1",
+          "chapter_2:timeline_event:chapter_2_event_2"
+        ],
+        "name": "chapter_2_summary",
+        "new_locations": [
+          "负二层冷库",
+          "冷库",
+          "监控室",
+          "地下停车场"
+        ],
+        "source_run_id": "chapter_2_20260714T022935227346Z",
+        "spatial_state": {
+          "blocked_paths": [],
+          "character_positions": {},
+          "connections": [],
+          "last_transition": {
+            "source": "chapter_analysis",
+            "to": "冷库"
+          },
+          "spaces": {
+            "冷库": {
+              "source": "chapter_analysis"
+            },
+            "地下停车场": {
+              "source": "chapter_analysis"
+            },
+            "监控室": {
+              "source": "chapter_analysis"
+            },
+            "负二层冷库": {
+              "source": "chapter_analysis"
+            }
+          }
+        },
+        "story_state": {
+          "last_chapter_ending": "备用电切断前残留的一帧画面，短暂印在陆沉视网膜上：早已变形的冷库铁门，被从里面撞开了一道缝。",
+          "last_scene_characters": [],
+          "last_scene_location": "冷库",
+          "open_threads": [],
+          "required_opening_bridge": "冷库"
+        },
+        "summary": "剩余电量：17分钟。 红色数字在监控台右上角闪烁，陆沉的手还压在键盘边缘，右肩一阵阵发烫。",
+        "validation": {
+          "blocking_problem_count": 0,
+          "checks": [
+            {
+              "name": "continuity",
+              "ok": true,
+              "problems": []
+            },
+            {
+              "name": "spatial",
+              "ok": true,
+              "problems": []
+            },
+            {
+              "name": "logic",
+              "ok": true,
+              "problems": []
+            },
+            {
+              "name": "story_project",
+              "ok": true,
+              "problems": []
+            },
+            {
+              "metadata": {
+                "attempt_history": [
+                  {
+                    "attempt": 1,
+                    "cause_type": null,
+                    "delay_ms": 0,
+                    "elapsed_ms": 14000,
+                    "failure_category": null,
+                    "outcome": "succeeded",
+                    "partial_content_received": false,
+                    "profile": "model_read_generation",
+                    "retry_after_ms": null,
+                    "retryable": false,
+                    "stop_reason": "succeeded"
+                  }
+                ],
+                "model": "gpt-5.5",
+                "policy_version": "1.0",
+                "prompt_hash": "7ddb9575e18628408030cb7409408a624b1aa45a1f440bd1d155ea39716600e2",
+                "provider": "openai"
+              },
+              "name": "llm",
+              "ok": true,
+              "problems": []
+            }
+          ],
+          "deterministic_repair_count": 0,
+          "executed_checks": [
+            "continuity",
+            "spatial",
+            "logic",
+            "story_project",
+            "llm"
+          ],
+          "manual_review_count": 0,
+          "ok": true,
+          "problems": [],
+          "repair_action_counts": [],
+          "requested_focus": [
+            "continuity",
+            "spatial",
+            "logic"
+          ],
+          "severity_counts": [],
+          "skipped_checks": [],
+          "warning_count": 0
+        },
+        "world_changes": [
+          {
+            "text": "Infection pressure is active in the chapter.",
+            "type": "infection_pressure"
+          }
+        ]
+      }
+    ],
+    "world_state": {
+      "city_power": "主电网中断",
+      "infection_level": "快速上升",
+      "last_world_changes": [
+        {
+          "text": "Infection pressure is active in the chapter.",
+          "type": "infection_pressure"
+        }
+      ],
+      "locations": {
+        "临江市地下商超": {
+          "risk": "极高",
+          "status": "秩序崩溃中"
+        },
+        "冷库": {
+          "first_seen_chapter": 1,
+          "source": "chapter_analysis"
+        },
+        "地下一层营业区": {
+          "first_seen_chapter": 1,
+          "source": "chapter_analysis"
+        },
+        "地下停车场": {
+          "first_seen_chapter": 2,
+          "source": "chapter_analysis"
+        },
+        "监控室": {
+          "first_seen_chapter": 1,
+          "source": "chapter_analysis"
+        },
+        "负二层冷库": {
+          "first_seen_chapter": 1,
+          "source": "chapter_analysis"
+        }
+      },
+      "outbreak_stage": "赤潮爆发后第12分钟",
+      "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\设定\\角色\\陆沉.md",
+      "relative_path": "设定/角色/陆沉.md",
+      "source": "story_project",
+      "summary": "# 陆沉",
+      "text": "# 陆沉\n\n| 字段 | 内容 |\n|---|---|\n| 年龄 | 27岁 |\n| 身份 | 大型仓储商超夜班安全员，退役消防救援队员 |\n| 性格 | 冷静、执行力强、不轻易许诺；一旦承诺便会死扛到底 |\n| 缺点 | 习惯独自承担，把“保护”变成替别人做决定 |\n| 初始目标 | 穿过封锁区，确认妹妹陆遥是否还活着 |\n| 长期目标 | 建立普通人也能活下去的安全秩序 |\n| 底线 | 不主动牺牲无辜者，不把同伴当消耗品 |\n| 核心矛盾 | 为了保护人类不断获得非人的力量 |\n\n三年前的一次仓库火灾中，陆沉服从错误命令撤退，没能救出被困同事，因此离开救援队。他对“该救谁、该放弃谁”异常敏感，这会成为末日中最锋利也最危险的软肋。\n",
+      "truncated": false
+    }
+  },
+  "state_update": {
+    "analysis_validation_ok": true,
+    "applied": true,
+    "chapter_index": 2,
+    "character_update_count": 0,
+    "location_update_count": 4,
+    "memory_update_count": 10,
+    "memory_update_types": [
+      {
+        "count": 4,
+        "type": "location"
+      },
+      {
+        "count": 1,
+        "type": "spatial_state"
+      },
+      {
+        "count": 1,
+        "type": "story_state"
+      },
+      {
+        "count": 3,
+        "type": "timeline_event"
+      },
+      {
+        "count": 1,
+        "type": "world_state"
+      }
+    ],
+    "next_chapter_index": 3,
+    "spatial_state_updated": true,
+    "story_state_updated": true,
+    "timeline_added": 1,
+    "world_change_count": 1
+  },
+  "validation": {
+    "blocking_problem_count": 0,
+    "checks": [
+      {
+        "name": "continuity",
+        "ok": true,
+        "problems": []
+      },
+      {
+        "name": "spatial",
+        "ok": true,
+        "problems": []
+      },
+      {
+        "name": "logic",
+        "ok": true,
+        "problems": []
+      },
+      {
+        "name": "story_project",
+        "ok": true,
+        "problems": []
+      },
+      {
+        "metadata": {
+          "attempt_history": [
+            {
+              "attempt": 1,
+              "cause_type": null,
+              "delay_ms": 0,
+              "elapsed_ms": 14000,
+              "failure_category": null,
+              "outcome": "succeeded",
+              "partial_content_received": false,
+              "profile": "model_read_generation",
+              "retry_after_ms": null,
+              "retryable": false,
+              "stop_reason": "succeeded"
+            }
+          ],
+          "model": "gpt-5.5",
+          "policy_version": "1.0",
+          "prompt_hash": "7ddb9575e18628408030cb7409408a624b1aa45a1f440bd1d155ea39716600e2",
+          "provider": "openai"
+        },
+        "name": "llm",
+        "ok": true,
+        "problems": []
+      }
+    ],
+    "deterministic_repair_count": 0,
+    "executed_checks": [
+      "continuity",
+      "spatial",
+      "logic",
+      "story_project",
+      "llm"
+    ],
+    "manual_review_count": 0,
+    "ok": true,
+    "problems": [],
+    "repair_action_counts": [],
+    "requested_focus": [
+      "continuity",
+      "spatial",
+      "logic"
+    ],
+    "severity_counts": [],
+    "skipped_checks": [],
+    "warning_count": 0
+  },
+  "workflow": [
+    "build_snapshot",
+    "pre_validate_bridge",
+    "generate_chapter",
+    "validate",
+    "repair_if_needed",
+    "commit_snapshot"
+  ],
+  "workflow_plan": {
+    "actions": [
+      "build_snapshot",
+      "pre_validate_bridge",
+      "generate_chapter",
+      "validate",
+      "repair_if_needed",
+      "commit_snapshot"
+    ],
+    "goal": "recover_from_failed_run",
+    "max_repair_attempts": 3,
+    "recovery": true,
+    "steps": [
+      {
+        "action": "build_snapshot",
+        "failure_policy": "fail_run",
+        "index": 1,
+        "mode": "required",
+        "produces": [
+          "snapshot"
+        ],
+        "purpose": "Confirm the runtime snapshot state prepared before Director execution.",
+        "requires": [],
+        "skip_condition": null,
+        "skippable": false
+      },
+      {
+        "action": "pre_validate_bridge",
+        "failure_policy": "fail_run",
+        "index": 2,
+        "mode": "required",
+        "produces": [
+          "bridge_validation"
+        ],
+        "purpose": "Prepare last-scene bridge expectations before chapter generation.",
+        "requires": [
+          "snapshot"
+        ],
+        "skip_condition": null,
+        "skippable": false
+      },
+      {
+        "action": "generate_chapter",
+        "failure_policy": "fail_run",
+        "index": 3,
+        "mode": "required",
+        "produces": [
+          "chapter"
+        ],
+        "purpose": "Generate draft chapter prose from the input pack.",
+        "requires": [],
+        "skip_condition": null,
+        "skippable": false
+      },
+      {
+        "action": "validate",
+        "failure_policy": "fail_run",
+        "index": 4,
+        "mode": "required",
+        "produces": [
+          "validation"
+        ],
+        "purpose": "Check continuity, spatial, and logic constraints selected by the Director.",
+        "requires": [
+          "chapter"
+        ],
+        "skip_condition": null,
+        "skippable": false
+      },
+      {
+        "action": "repair_if_needed",
+        "failure_policy": "fail_run",
+        "index": 5,
+        "mode": "conditional",
+        "produces": [
+          "chapter",
+          "validation"
+        ],
+        "purpose": "Repair failed validation problems within the Director repair budget.",
+        "requires": [
+          "chapter",
+          "validation"
+        ],
+        "skip_condition": "Runs only when validation is not ok and max_repair_attempts is greater than 0.",
+        "skippable": true
+      },
+      {
+        "action": "commit_snapshot",
+        "failure_policy": "fail_run",
+        "index": 6,
+        "mode": "conditional",
+        "produces": [
+          "snapshot"
+        ],
+        "purpose": "Mark the workflow commit boundary; the executor applies snapshot writes after successful validation.",
+        "requires": [
+          "chapter",
+          "validation"
+        ],
+        "skip_condition": "The executor commits only after validation succeeds.",
+        "skippable": true
+      }
+    ],
+    "validation_focus": [
+      "continuity",
+      "spatial",
+      "logic"
+    ]
+  }
+}

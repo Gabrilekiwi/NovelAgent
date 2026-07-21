@@ -1,0 +1,100 @@
+{
+  "chapter_index": 1,
+  "project_profile": {
+    "language": "zh-CN",
+    "known_characters": [
+      "陆沉",
+      "苏晴",
+      "赵铁",
+      "陆遥"
+    ],
+    "known_locations": [
+      "临江市地下商超",
+      "监控室",
+      "冷库",
+      "地下停车场"
+    ]
+  },
+  "world_state": {
+    "outbreak_stage": "赤潮爆发后第12分钟",
+    "city_power": "主电网中断",
+    "infection_level": "快速上升",
+    "locations": {
+      "临江市地下商超": {
+        "status": "秩序崩溃中",
+        "risk": "极高"
+      }
+    }
+  },
+  "characters": {
+    "陆沉": {
+      "role": "主角",
+      "current_location": "监控室",
+      "current_goal": "封闭员工通道并寻找安全出口",
+      "condition": "健康",
+      "traits": [],
+      "erosion": 0
+    }
+  },
+  "story_state": {
+    "last_chapter_ending": "",
+    "last_scene_location": "监控室",
+    "last_scene_characters": [
+      "陆沉"
+    ],
+    "open_threads": [
+      "陆遥最后语音中的防空警报来自哪里",
+      "负二层冷库内关着什么",
+      "北侧防火门为何在灾变前被锁死"
+    ],
+    "required_opening_bridge": "从备用电源亮起开始，陆沉通过监控确认商超内的咬人事件不是普通骚乱。"
+  },
+  "spatial_state": {
+    "spaces": {
+      "监控室": {
+        "status": "暂时安全"
+      },
+      "地下一层营业区": {
+        "status": "出现感染者"
+      },
+      "负二层冷库": {
+        "status": "未知撞击"
+      }
+    },
+    "connections": [
+      {
+        "from": "监控室",
+        "to": "员工通道",
+        "bidirectional": true
+      },
+      {
+        "from": "员工通道",
+        "to": "地下一层营业区",
+        "bidirectional": true
+      }
+    ],
+    "character_positions": {
+      "陆沉": "监控室"
+    },
+    "blocked_paths": [
+      "北侧防火门"
+    ]
+  },
+  "timeline": [],
+  "constraints": [
+    {
+      "rule": "正文必须使用简体中文。"
+    },
+    {
+      "rule": "升级必须同时体现收益、战术变化与代价。"
+    },
+    {
+      "rule": "陆沉不主动牺牲无辜者，也不把同伴当消耗品。"
+    }
+  ],
+  "memory": {
+    "source": "story-project",
+    "status": "ready",
+    "item_count": 0
+  }
+}

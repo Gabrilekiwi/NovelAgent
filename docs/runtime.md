@@ -119,6 +119,8 @@ This uses OpenAI and is never enabled implicitly by dry-run or CI. Preflight req
 
 If local proxy variables point provider SDK traffic at an unavailable proxy, add `--no-proxy` to `main.py` commands or set `NOVELAGENT_NO_PROXY=1` in `.env`. This clears `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lowercase variants before OpenAI, Claude, or Notion calls run.
 
+Input-token admission uses the configured provider model and endpoint. A recognized OpenAI model on the official endpoint uses `tiktoken==0.13.0` only when its mapped BPE asset is already present locally and passes the pinned SHA-256/rank validation; it reports `count_mode="model_tokenizer"`, is never described as Provider-exact usage, and the admission path never downloads a missing asset. OpenAI-compatible endpoints, unknown models, cache misses, and providers without a trusted local tokenizer use a split fallback with a fixed 64-token input framing allowance: all ASCII bytes retain a one-token floor, while non-ASCII UTF-8 bytes use the versioned calibration with 15% margin. This preserves protection for JSON syntax, escapes, punctuation, and high-entropy ASCII without recreating the former roughly three-token-per-Chinese-character reservation. Provider-reported usage replaces the input estimate after a successful call. If output usage is absent, settlement keeps at least the full output reservation or the visible-text UTF-8-byte fallback, whichever is larger.
+
 Run real provider smoke checks after local gates are stable:
 
 ```bash

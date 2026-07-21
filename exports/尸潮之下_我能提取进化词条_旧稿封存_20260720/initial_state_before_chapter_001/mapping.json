@@ -1,0 +1,32 @@
+[
+  {
+    "exported_path": "initial_state_before_chapter_001/追踪/上下文.md",
+    "kind": "context",
+    "sha256": "55d8713adfb911bef41327d75be7168a9ac74a51e7c0aa492916ecb12ec0601a",
+    "source_backup": "backups/001.bin"
+  },
+  {
+    "exported_path": "initial_state_before_chapter_001/追踪/伏笔.md",
+    "kind": "foreshadowing",
+    "sha256": "a0996134454e90c3670283501afcce24be91b9c9c8219f02f96c5b5e7cbf57e6",
+    "source_backup": "backups/002.bin"
+  },
+  {
+    "exported_path": "initial_state_before_chapter_001/追踪/时间线.md",
+    "kind": "timeline",
+    "sha256": "17e7658cabac682622e5a1cac45482fda32a7d1e6c1fb24da94460dbd0b94736",
+    "source_backup": "backups/003.bin"
+  },
+  {
+    "exported_path": "initial_state_before_chapter_001/追踪/角色状态.md",
+    "kind": "character_state",
+    "sha256": "65715f123ae2ce3ff0cd0c2c8c955b7d7521e0febf03a8d4cc5d4e54cff89643",
+    "source_backup": "backups/004.bin"
+  },
+  {
+    "exported_path": "initial_state_before_chapter_001/snapshot.json",
+    "kind": "snapshot",
+    "sha256": "283366074658c1ac5a942fad5eb8a54d7ff2635d66bad36c0fea8b720df36a54",
+    "source_backup": "backups/005.bin"
+  }
+]

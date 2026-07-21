@@ -37,8 +37,11 @@
         "calibration_tokens_per_utf8_byte": {"type": "number", "minimum": 0},
         "enforcement_method": {"type": "string", "minLength": 1},
         "enforcement_floor_tokens_per_utf8_byte": {"type": "number", "minimum": 0},
+        "ascii_floor_tokens_per_byte": {"type": "number", "minimum": 0},
         "enforcement_fixed_overhead_tokens": {"type": "integer", "minimum": 0},
-        "enforcement_safety_ratio": {"type": "number", "minimum": 0}
+        "enforcement_safety_ratio": {"type": "number", "minimum": 0},
+        "ascii_floor_applied": {"type": "boolean"},
+        "tokenizer_fixed_overhead_tokens": {"type": "integer", "minimum": 0}
       },
       "additionalProperties": false
     },

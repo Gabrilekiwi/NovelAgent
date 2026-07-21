@@ -11,7 +11,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator
 
 from api.contracts import ModelResponse, coerce_model_response
-from core.context_budget import conservative_calibrated_token_estimate
+from core.context_budget import (
+    conservative_calibrated_token_estimate,
+    model_token_counter,
+)
 from core.engine.persistence import atomic_create_json, atomic_create_text
 from core.memory_v2.canonical import canonical_json_bytes
 from core.model_calls import (
@@ -130,7 +133,14 @@ class ModelCallRuntimeContext:
             suffix = uuid.uuid4().hex
         return f"{prefix}-{suffix}"[:180].rstrip("._-")
 
-    def estimate_input_tokens(self, request: Any) -> int:
+    def estimate_input_tokens(
+        self,
+        request: Any,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        endpoint_type: str | None = None,
+    ) -> int:
         if self.input_token_counter is not None:
             value = self.input_token_counter(request)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -141,9 +151,16 @@ class ModelCallRuntimeContext:
         canonical_request = canonical_json_bytes(
             request, exclude_environment_fields=False
         ).decode("utf-8")
+        if provider and model and endpoint_type:
+            counter = model_token_counter(
+                provider=provider,
+                model=model,
+                endpoint_type=endpoint_type,
+            )
+            if counter is not None:
+                return counter.count(canonical_request)
         # This remains a pre-provider reservation, never a claim of exact
-        # provider usage. The fitted synthetic ratio is bounded by the
-        # independent production byte floor inside this helper.
+        # provider usage. Unknown tokenizers use the calibrated fallback.
         return conservative_calibrated_token_estimate(canonical_request)
 
     def hydrate_tracker_from_store(self) -> list[str]:
@@ -242,7 +259,12 @@ class ModelCallRuntimeContext:
             )
 
         reserved_input = (
-            self.estimate_input_tokens(request)
+            self.estimate_input_tokens(
+                request,
+                provider=provider,
+                model=model,
+                endpoint_type=endpoint_type,
+            )
             if input_tokens is None
             else _non_negative_int("input_tokens", input_tokens)
         )

@@ -40,7 +40,10 @@ def run_chapter_pipeline(
     chapter_blueprint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     blueprint = blueprint_to_dict(chapter_blueprint)
-    prompt_contexts = compile_prompt_contexts(input_pack)
+    prompt_contexts = compile_prompt_contexts(
+        input_pack,
+        budget=default_context_budget(enable_model_tokenizer=not dry_run),
+    )
     plan_input = prompt_contexts.plan.text
     scene_input = prompt_contexts.scene.text
     if blueprint is None:

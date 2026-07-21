@@ -1,0 +1,325 @@
+{
+  "archive_kind": "novelagent_old_story_baseline",
+  "artifacts": {
+    "full_story_project_zip": {
+      "bytes": 5127369,
+      "path": "尸潮之下_我能提取进化词条_完整StoryProject封存.zip",
+      "sha256": "93832e68d65208213712e7b8d836865031c7df971e5240f58d86d326c286896b"
+    },
+    "merged_current": {
+      "path": "旧稿合订本_当前正式版_第001-010章.md",
+      "sha256": "d34a7cc0a6640d383af70e357e766365b2fa1f1287a5e858256a522d7070b26a"
+    },
+    "merged_historical_committed": {
+      "path": "旧稿合订本_历史提交版_第001-010章.md",
+      "sha256": "32a58d858ddc36fc1ee48be6c24dfc005f0607f17d2db371af3d0c2ead8dad08"
+    }
+  },
+  "book_id": "68ee0d8e-762c-4dc3-96c5-abdf3084c4e9",
+  "book_name": "尸潮之下_我能提取进化词条",
+  "chapter_count": 10,
+  "chapters": [
+    {
+      "chapter": 1,
+      "committed_sha256": "0a9f0ccba9b627547ccf3f7057a6d9c10a07442ed487a284f3ef3bd1dcfc8acc",
+      "committed_stats": {
+        "bytes": 13554,
+        "non_whitespace_chars": 4445,
+        "text_chars": 4670
+      },
+      "current_relative_path": "正文/第001章_第一章：断电后的第十二分钟.md",
+      "current_sha256": "0a9f0ccba9b627547ccf3f7057a6d9c10a07442ed487a284f3ef3bd1dcfc8acc",
+      "current_stats": {
+        "bytes": 13554,
+        "non_whitespace_chars": 4445,
+        "text_chars": 4670
+      },
+      "exported_committed_path": "chapters_historical_committed/第001章_第一章：断电后的第十二分钟.md",
+      "exported_current_path": "chapters_current/第001章_第一章：断电后的第十二分钟.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_1_20260714T020044192767Z"
+    },
+    {
+      "chapter": 2,
+      "committed_sha256": "c0b0de2489244ea9d8c553a7e4676063659a504f77a18dd08927459fc8bb7821",
+      "committed_stats": {
+        "bytes": 15815,
+        "non_whitespace_chars": 5218,
+        "text_chars": 5463
+      },
+      "current_relative_path": "正文/第002章_第二章：十七分钟倒计时.md",
+      "current_sha256": "2d71351c6e5550c6a9b8406884f85215e839c4016876cb55b7f12ec058533fd6",
+      "current_stats": {
+        "bytes": 15674,
+        "non_whitespace_chars": 5171,
+        "text_chars": 5416
+      },
+      "exported_committed_path": "chapters_historical_committed/第002章_第二章：十七分钟倒计时.md",
+      "exported_current_path": "chapters_current/第002章_第二章：十七分钟倒计时.md",
+      "matches_committed": false,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_2_20260714T022935227346Z"
+    },
+    {
+      "chapter": 3,
+      "committed_sha256": "9f3ec1ad89e12e019f1140ddf5404101013e1e1cbe15d0ae4f15a64375d9792f",
+      "committed_stats": {
+        "bytes": 15462,
+        "non_whitespace_chars": 5096,
+        "text_chars": 5290
+      },
+      "current_relative_path": "正文/第003章_第三章：黑暗中的柴油.md",
+      "current_sha256": "9f3ec1ad89e12e019f1140ddf5404101013e1e1cbe15d0ae4f15a64375d9792f",
+      "current_stats": {
+        "bytes": 15462,
+        "non_whitespace_chars": 5096,
+        "text_chars": 5290
+      },
+      "exported_committed_path": "chapters_historical_committed/第003章_第三章：黑暗中的柴油.md",
+      "exported_current_path": "chapters_current/第003章_第三章：黑暗中的柴油.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_3_20260714T030200133680Z"
+    },
+    {
+      "chapter": 4,
+      "committed_sha256": "5ba7805ba77d08d512a34c1a1bf534eb86544b8c2d7c2080b0c080dabe631bf0",
+      "committed_stats": {
+        "bytes": 13400,
+        "non_whitespace_chars": 4423,
+        "text_chars": 4568
+      },
+      "current_relative_path": "正文/第004章_第四章：不开主门，也要救人.md",
+      "current_sha256": "5ba7805ba77d08d512a34c1a1bf534eb86544b8c2d7c2080b0c080dabe631bf0",
+      "current_stats": {
+        "bytes": 13400,
+        "non_whitespace_chars": 4423,
+        "text_chars": 4568
+      },
+      "exported_committed_path": "chapters_historical_committed/第004章_第四章：不开主门，也要救人.md",
+      "exported_current_path": "chapters_current/第004章_第四章：不开主门，也要救人.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_4_20260714T035611770726Z"
+    },
+    {
+      "chapter": 5,
+      "committed_sha256": "79de2df667fb623db1276adb163284ddb4de9e33210e2c3e4b935236ad7a8e21",
+      "committed_stats": {
+        "bytes": 13640,
+        "non_whitespace_chars": 4509,
+        "text_chars": 4652
+      },
+      "current_relative_path": "正文/第005章_第五章：最后一扇门.md",
+      "current_sha256": "79de2df667fb623db1276adb163284ddb4de9e33210e2c3e4b935236ad7a8e21",
+      "current_stats": {
+        "bytes": 13640,
+        "non_whitespace_chars": 4509,
+        "text_chars": 4652
+      },
+      "exported_committed_path": "chapters_historical_committed/第005章_第五章：最后一扇门.md",
+      "exported_current_path": "chapters_current/第005章_第五章：最后一扇门.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_5_20260714T040745900139Z"
+    },
+    {
+      "chapter": 6,
+      "committed_sha256": "87cf4e1e8c08a6795956248caeacb93b673068e329771fc12a7d5287a9beb9a8",
+      "committed_stats": {
+        "bytes": 14958,
+        "non_whitespace_chars": 4939,
+        "text_chars": 5114
+      },
+      "current_relative_path": "正文/第006章_第六章：红灯运输线.md",
+      "current_sha256": "87cf4e1e8c08a6795956248caeacb93b673068e329771fc12a7d5287a9beb9a8",
+      "current_stats": {
+        "bytes": 14958,
+        "non_whitespace_chars": 4939,
+        "text_chars": 5114
+      },
+      "exported_committed_path": "chapters_historical_committed/第006章_第六章：红灯运输线.md",
+      "exported_current_path": "chapters_current/第006章_第六章：红灯运输线.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_6_20260714T042521287172Z"
+    },
+    {
+      "chapter": 7,
+      "committed_sha256": "ef75d6e096ca68af71faf55bbfe15a3a141462f22fb2b1e5e78f47c5d540e7d0",
+      "committed_stats": {
+        "bytes": 15807,
+        "non_whitespace_chars": 5238,
+        "text_chars": 5427
+      },
+      "current_relative_path": "正文/第007章_第七章：门后三长两短.md",
+      "current_sha256": "ef75d6e096ca68af71faf55bbfe15a3a141462f22fb2b1e5e78f47c5d540e7d0",
+      "current_stats": {
+        "bytes": 15807,
+        "non_whitespace_chars": 5238,
+        "text_chars": 5427
+      },
+      "exported_committed_path": "chapters_historical_committed/第007章_第七章：门后三长两短.md",
+      "exported_current_path": "chapters_current/第007章_第七章：门后三长两短.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_7_20260714T045044333794Z"
+    },
+    {
+      "chapter": 8,
+      "committed_sha256": "dc9a320bc9d84f3829d2804d10a5bd5168dcace33453a9914d9ef1c80a21ea55",
+      "committed_stats": {
+        "bytes": 12560,
+        "non_whitespace_chars": 4159,
+        "text_chars": 4304
+      },
+      "current_relative_path": "正文/第008章_第八章：回收程序.md",
+      "current_sha256": "dc9a320bc9d84f3829d2804d10a5bd5168dcace33453a9914d9ef1c80a21ea55",
+      "current_stats": {
+        "bytes": 12560,
+        "non_whitespace_chars": 4159,
+        "text_chars": 4304
+      },
+      "exported_committed_path": "chapters_historical_committed/第008章_第八章：回收程序.md",
+      "exported_current_path": "chapters_current/第008章_第八章：回收程序.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_8_20260714T053329909657Z"
+    },
+    {
+      "chapter": 9,
+      "committed_sha256": "20774447897ad9cca7d2dfbcbae76723e98477135c18e7646dc2fcb545e0cfa6",
+      "committed_stats": {
+        "bytes": 11981,
+        "non_whitespace_chars": 3978,
+        "text_chars": 4103
+      },
+      "current_relative_path": "正文/第009章_第九章：坐标暴露.md",
+      "current_sha256": "20774447897ad9cca7d2dfbcbae76723e98477135c18e7646dc2fcb545e0cfa6",
+      "current_stats": {
+        "bytes": 11981,
+        "non_whitespace_chars": 3978,
+        "text_chars": 4103
+      },
+      "exported_committed_path": "chapters_historical_committed/第009章_第九章：坐标暴露.md",
+      "exported_current_path": "chapters_current/第009章_第九章：坐标暴露.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_9_20260714T054740074254Z"
+    },
+    {
+      "chapter": 10,
+      "committed_sha256": "bb69cfd750c3794329783b5f11976f656e8e1e93e57ecba1f12c9d6854c92081",
+      "committed_stats": {
+        "bytes": 15067,
+        "non_whitespace_chars": 4988,
+        "text_chars": 5167
+      },
+      "current_relative_path": "正文/第010章_第十章：火种第一夜.md",
+      "current_sha256": "bb69cfd750c3794329783b5f11976f656e8e1e93e57ecba1f12c9d6854c92081",
+      "current_stats": {
+        "bytes": 15067,
+        "non_whitespace_chars": 4988,
+        "text_chars": 5167
+      },
+      "exported_committed_path": "chapters_historical_committed/第010章_第十章：火种第一夜.md",
+      "exported_current_path": "chapters_current/第010章_第十章：火种第一夜.md",
+      "matches_committed": true,
+      "models": [
+        "gpt-5.5"
+      ],
+      "run_id": "chapter_10_20260714T060007331892Z"
+    }
+  ],
+  "committed_models": [
+    "gpt-5.5"
+  ],
+  "created_at": "2026-07-20T08:15:13.980613+00:00",
+  "current_official_totals": {
+    "bytes": 142103,
+    "non_whitespace_chars": 46946,
+    "text_chars": 48711
+  },
+  "drift": [
+    {
+      "chapter": 2,
+      "committed_path": "chapters_historical_committed/第002章_第二章：十七分钟倒计时.md",
+      "committed_sha256": "c0b0de2489244ea9d8c553a7e4676063659a504f77a18dd08927459fc8bb7821",
+      "current_path": "chapters_current/第002章_第二章：十七分钟倒计时.md",
+      "current_sha256": "2d71351c6e5550c6a9b8406884f85215e839c4016876cb55b7f12ec058533fd6"
+    }
+  ],
+  "git": {
+    "branch": "feature",
+    "dirty": true,
+    "head": "ad6d424df91a01fe33997199d5d7540660fbc897",
+    "status_sha256": "bfffb37887a5d718b3cebc80fa72c39ed87a7e16945caf84a55d41fd42de6018"
+  },
+  "historical_committed_totals": {
+    "bytes": 142244,
+    "non_whitespace_chars": 46993,
+    "text_chars": 48758
+  },
+  "initial_state": {
+    "files": [
+      {
+        "exported_path": "initial_state_before_chapter_001/追踪/上下文.md",
+        "kind": "context",
+        "sha256": "55d8713adfb911bef41327d75be7168a9ac74a51e7c0aa492916ecb12ec0601a",
+        "source_backup": "backups/001.bin"
+      },
+      {
+        "exported_path": "initial_state_before_chapter_001/追踪/伏笔.md",
+        "kind": "foreshadowing",
+        "sha256": "a0996134454e90c3670283501afcce24be91b9c9c8219f02f96c5b5e7cbf57e6",
+        "source_backup": "backups/002.bin"
+      },
+      {
+        "exported_path": "initial_state_before_chapter_001/追踪/时间线.md",
+        "kind": "timeline",
+        "sha256": "17e7658cabac682622e5a1cac45482fda32a7d1e6c1fb24da94460dbd0b94736",
+        "source_backup": "backups/003.bin"
+      },
+      {
+        "exported_path": "initial_state_before_chapter_001/追踪/角色状态.md",
+        "kind": "character_state",
+        "sha256": "65715f123ae2ce3ff0cd0c2c8c955b7d7521e0febf03a8d4cc5d4e54cff89643",
+        "source_backup": "backups/004.bin"
+      },
+      {
+        "exported_path": "initial_state_before_chapter_001/snapshot.json",
+        "kind": "snapshot",
+        "sha256": "283366074658c1ac5a942fad5eb8a54d7ff2635d66bad36c0fea8b720df36a54",
+        "source_backup": "backups/005.bin"
+      }
+    ],
+    "source_run_id": "chapter_1_20260714T020044192767Z"
+  },
+  "run_status_counts": {
+    "committed": 10,
+    "failed": 19,
+    "rejected": 12
+  },
+  "schema_version": 1,
+  "source_story_project": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+  "story_state_mode": "shadow"
+}

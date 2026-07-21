@@ -18,10 +18,12 @@ from api.openai_client import (
 )
 from api.retry import CLAUDE_POLISH, MODEL_READ_GENERATION, RetryPolicy
 from core.context_budget import (
+    conservative_calibrated_token_estimate,
     ContextBudgetError,
     ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
     RunBudgetLimits,
     RunBudgetTracker,
+    TokenCounter,
 )
 from core.engine.persistence import atomic_write_text
 from core.memory_v2.canonical import canonical_json_bytes
@@ -141,9 +143,18 @@ class ModelCallRuntimeTest(unittest.TestCase):
         reserved = runtime.estimate_input_tokens(request)
         self.assertGreater(reserved, 0)
         self.assertEqual(
+            conservative_calibrated_token_estimate(
+                canonical_json_bytes(
+                    request,
+                    exclude_environment_fields=False,
+                ).decode("utf-8")
+            ),
+            reserved,
+        )
+        self.assertLess(
+            reserved,
             len(canonical_json_bytes(request, exclude_environment_fields=False))
             + ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
-            reserved,
         )
 
         runtime.execute_attempt(
@@ -168,6 +179,140 @@ class ModelCallRuntimeTest(unittest.TestCase):
             intent["budget_reservation"]["reserved_input_tokens"],
         )
         self.assertEqual(9, tracker.report()["total_input_tokens"])
+
+    def test_long_chinese_default_reservation_no_longer_rejects_before_provider(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=1,
+                max_total_input_tokens=6_000,
+                max_total_output_tokens=20,
+                max_elapsed_seconds=30,
+            )
+        )
+        runtime = ModelCallRuntimeContext(self.store, tracker=tracker)
+        provider_calls = 0
+
+        def network() -> ModelResponse:
+            nonlocal provider_calls
+            provider_calls += 1
+            return ModelResponse(
+                "done",
+                usage={"input_tokens": 4_200, "output_tokens": 2},
+                endpoint_type="official",
+            )
+
+        runtime.execute_attempt(
+            call_id="long-chinese",
+            attempt_number=1,
+            provider="openai",
+            model="unknown-test-model",
+            stage="draft",
+            endpoint_type="official",
+            request={"messages": [{"role": "user", "content": "字" * 4_000}]},
+            max_output_tokens=8,
+            operation=network,
+        )
+
+        intent = self.store.load_intent("long-chinese-a1")
+        self.assertEqual(1, provider_calls)
+        self.assertLess(
+            intent["budget_reservation"]["reserved_input_tokens"],
+            6_000,
+        )
+        self.assertEqual("succeeded", self.store.load_receipt("long-chinese-a1")["status"])
+
+    def test_runtime_resolves_tokenizer_from_actual_call_identity(self) -> None:
+        counter = TokenCounter(
+            counter=lambda text: len(text) // 4,
+            count_mode="model_tokenizer",
+            provider="openai",
+            model="gpt-bound",
+            endpoint_type="official",
+            version="bound-tokenizer-v1",
+            tokenizer="bound-test",
+            model_is_known=True,
+            fixed_overhead_tokens=7,
+        )
+        request = {"messages": [{"role": "user", "content": "bound request"}]}
+        canonical = canonical_json_bytes(
+            request,
+            exclude_environment_fields=False,
+        ).decode("utf-8")
+
+        with patch(
+            "core.model_call_runtime.model_token_counter",
+            return_value=counter,
+        ) as resolver:
+            self.runtime.execute_attempt(
+                call_id="bound-counter",
+                attempt_number=1,
+                provider="openai",
+                model="gpt-bound",
+                stage="draft",
+                endpoint_type="official",
+                request=request,
+                max_output_tokens=8,
+                operation=lambda: ModelResponse("done", endpoint_type="official"),
+            )
+
+        resolver.assert_called_once_with(
+            provider="openai",
+            model="gpt-bound",
+            endpoint_type="official",
+        )
+        intent = self.store.load_intent("bound-counter-a1")
+        self.assertEqual(
+            len(canonical) // 4 + 7,
+            intent["budget_reservation"]["reserved_input_tokens"],
+        )
+
+    def test_injected_input_counter_precedes_automatic_model_tokenizer(self) -> None:
+        runtime = ModelCallRuntimeContext(
+            self.store,
+            tracker=self.tracker,
+            input_token_counter=lambda request: 5,
+        )
+
+        with patch("core.model_call_runtime.model_token_counter") as resolver:
+            reserved = runtime.estimate_input_tokens(
+                {"messages": [{"role": "user", "content": "request"}]},
+                provider="openai",
+                model="gpt-4.1-mini",
+                endpoint_type="official",
+            )
+
+        self.assertEqual(5, reserved)
+        resolver.assert_not_called()
+
+    def test_explicit_input_tokens_precede_injected_and_automatic_counters(self) -> None:
+        def fail_injected_counter(request: object) -> int:
+            self.fail("injected counter must not run when input_tokens is explicit")
+
+        runtime = ModelCallRuntimeContext(
+            self.store,
+            tracker=self.tracker,
+            input_token_counter=fail_injected_counter,
+        )
+        with patch("core.model_call_runtime.model_token_counter") as resolver:
+            runtime.execute_attempt(
+                call_id="explicit-counter-priority",
+                attempt_number=1,
+                provider="openai",
+                model="gpt-4.1-mini",
+                stage="draft",
+                endpoint_type="official",
+                request={"messages": [{"role": "user", "content": "request"}]},
+                max_output_tokens=8,
+                input_tokens=4,
+                operation=lambda: ModelResponse("done", endpoint_type="official"),
+            )
+
+        resolver.assert_not_called()
+        intent = self.store.load_intent("explicit-counter-priority-a1")
+        self.assertEqual(
+            4,
+            intent["budget_reservation"]["reserved_input_tokens"],
+        )
 
     def test_receipt_replays_without_network_and_rejects_request_collision(self) -> None:
         calls = 0
@@ -595,7 +740,18 @@ class ModelCallRuntimeTest(unittest.TestCase):
 
     def test_missing_and_cached_usage_match_live_hydration_and_replay(self) -> None:
         cases = (
-            ("missing", {}, 4, len("正文".encode("utf-8"))),
+            (
+                "missing",
+                {},
+                4,
+                20,
+            ),
+            (
+                "input-only",
+                {"input_tokens": 3},
+                3,
+                20,
+            ),
             (
                 "anthropic-cache",
                 {
@@ -641,6 +797,9 @@ class ModelCallRuntimeTest(unittest.TestCase):
                 live_report = live_tracker.report()
                 self.assertEqual(expected_input, live_report["total_input_tokens"])
                 self.assertEqual(expected_output, live_report["total_output_tokens"])
+                self.assertEqual(0, live_report["reserved_output_tokens"])
+                self.assertEqual(expected_output, live_report["charged_output_tokens"])
+                self.assertEqual(0, live_report["unsettled_attempt_count"])
 
                 fresh_tracker = RunBudgetTracker(limits)
                 restarted = ModelCallRuntimeContext(store, tracker=fresh_tracker)
@@ -657,6 +816,7 @@ class ModelCallRuntimeTest(unittest.TestCase):
                     "total_input_tokens",
                     "total_output_tokens",
                     "reserved_output_tokens",
+                    "charged_output_tokens",
                     "unsettled_attempt_count",
                 ):
                     self.assertEqual(live_report[field], fresh_report[field])
@@ -742,6 +902,77 @@ class ModelCallRuntimeTest(unittest.TestCase):
         self.assertEqual("stop", first.finish_reason)
         self.assertEqual(7, first.usage["total_tokens"])
         self.assertEqual("official", first.endpoint_type)
+
+    def test_openai_client_passes_configured_identity_to_token_resolver(self) -> None:
+        class FakeCompletions:
+            @staticmethod
+            def create(**kwargs: object) -> object:
+                return SimpleNamespace(
+                    id="chatcmpl-compatible",
+                    model="gateway-actual",
+                    usage=SimpleNamespace(
+                        prompt_tokens=5,
+                        completion_tokens=2,
+                        total_tokens=7,
+                    ),
+                    choices=[
+                        SimpleNamespace(
+                            finish_reason="stop",
+                            message=SimpleNamespace(content="gateway text"),
+                        )
+                    ],
+                )
+
+        class FakeOpenAI:
+            def __init__(inner_self, **kwargs: object) -> None:
+                inner_self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        messages = [{"role": "user", "content": "生产身份绑定"}]
+        environment = {
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_MODEL": "gateway-model",
+            "OPENAI_BASE_URL": "https://gateway.invalid/v1",
+            "OPENAI_STREAM": "false",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=False),
+            patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}),
+            patch(
+                "core.model_call_runtime.model_token_counter",
+                return_value=None,
+            ) as resolver,
+        ):
+            response = chat_completion(
+                messages,
+                call_id="openai-configured-identity",
+                max_tokens=20,
+                model_call_runtime=self.runtime,
+            )
+
+        self.assertEqual("gateway text", response)
+        resolver.assert_called_once_with(
+            provider="openai",
+            model="gateway-model",
+            endpoint_type="openai_compatible",
+        )
+        evidence_request = {
+            "model": "gateway-model",
+            "messages": messages,
+            "temperature": 0.8,
+            "max_tokens": 20,
+            "stream": False,
+        }
+        expected_reservation = conservative_calibrated_token_estimate(
+            canonical_json_bytes(
+                evidence_request,
+                exclude_environment_fields=False,
+            ).decode("utf-8")
+        )
+        intent = self.store.load_intent("openai-configured-identity-a1")
+        self.assertEqual(
+            expected_reservation,
+            intent["budget_reservation"]["reserved_input_tokens"],
+        )
 
     def test_openai_uncertain_runtime_stops_generic_retry(self) -> None:
         calls = 0

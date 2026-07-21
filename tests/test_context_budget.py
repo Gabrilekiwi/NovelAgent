@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 import unittest
 import uuid
 from unittest.mock import patch
@@ -12,13 +14,16 @@ from core.context_budget import (
     CalibratedTokenEstimator,
     ContextBudget,
     ContextBudgetError,
+    ESTIMATOR_ASCII_FLOOR_TOKENS_PER_BYTE,
     ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
     ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE,
     ESTIMATOR_ENFORCEMENT_METHOD,
+    MODEL_TOKENIZER_FIXED_OVERHEAD_TOKENS,
     RunBudgetLimits,
     RunBudgetTracker,
     TokenCounter,
     default_context_budget,
+    model_token_counter,
     preview_chinese_output_compatibility,
 )
 from core.prompt_compiler import compile_prompt_contexts
@@ -87,7 +92,7 @@ class ContextBudgetTest(unittest.TestCase):
             report["counter_version"],
         )
         self.assertEqual(3, report["raw_input_tokens"])
-        self.assertEqual(70, report["budgeted_input_tokens"])
+        self.assertEqual(68, report["budgeted_input_tokens"])
         self.assertEqual(
             "mixed-endpoint-synthetic-calibration-v1",
             report["count_metadata"]["calibration_version"],
@@ -113,6 +118,10 @@ class ContextBudgetTest(unittest.TestCase):
             report["count_metadata"]["enforcement_floor_tokens_per_utf8_byte"],
         )
         self.assertEqual(
+            ESTIMATOR_ASCII_FLOOR_TOKENS_PER_BYTE,
+            report["count_metadata"]["ascii_floor_tokens_per_byte"],
+        )
+        self.assertEqual(
             ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
             report["count_metadata"]["enforcement_fixed_overhead_tokens"],
         )
@@ -120,21 +129,56 @@ class ContextBudgetTest(unittest.TestCase):
             self._budget().safety_ratio,
             report["count_metadata"]["enforcement_safety_ratio"],
         )
+        self.assertFalse(report["count_metadata"]["ascii_floor_applied"])
 
-    def test_default_hard_estimate_bounds_adversarial_utf8_payloads(self) -> None:
-        payloads = (
-            '{"digest":"' + ("abcdef0123456789" * 64) + '"}',
-            '{"id":"123e4567-e89b-12d3-a456-426614174000"}',
-            "中英混合-token-边界" * 40,
+    def test_long_chinese_admission_uses_calibration_not_global_byte_floor(self) -> None:
+        payload = "字" * 3_000
+
+        report = self._budget(window=8_000, max_input=6_000).require_input(
+            payload,
+            stage="long-zh",
         )
+
+        self.assertEqual(3_500, report["raw_input_tokens"])
+        self.assertEqual(4_089, report["budgeted_input_tokens"])
+        self.assertLess(
+            report["budgeted_input_tokens"],
+            len(payload.encode("utf-8")) // 2,
+        )
+        self.assertFalse(report["count_metadata"]["ascii_floor_applied"])
+
+        mixed = ("a" * 100) + payload
+        mixed_report = self._budget(window=8_000, max_input=6_000).require_input(
+            mixed,
+            stage="mixed-long-zh",
+        )
+        self.assertEqual(4_189, mixed_report["budgeted_input_tokens"])
+        self.assertTrue(mixed_report["count_metadata"]["ascii_floor_applied"])
+
+    def test_ascii_floor_covers_punctuation_entropy_and_json_escapes(self) -> None:
+        payloads = (
+            "!@#$%^&*()[]{};:,.<>?/\\|~`" * 80,
+            "a!0?B#1$c%2^D&3*e(4)F-5_" * 80,
+            '{"escaped":"' + ("\\u4e2d" * 200) + '"}',
+        )
+
         for payload in payloads:
             with self.subTest(payload_prefix=payload[:24]):
-                report = self._budget().measure(payload, stage="adversarial")
-                byte_floor = len(payload.encode("utf-8"))
+                report = self._budget().measure(payload, stage="ascii-guard")
+                self.assertTrue(report["count_metadata"]["ascii_floor_applied"])
                 self.assertGreaterEqual(
                     report["budgeted_input_tokens"],
-                    byte_floor + ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
+                    len(payload.encode("ascii"))
+                    + ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
                 )
+
+        mixed = "中英混合-token-边界" * 80
+        mixed_report = self._budget().measure(mixed, stage="mixed")
+        self.assertTrue(mixed_report["count_metadata"]["ascii_floor_applied"])
+        self.assertLess(
+            mixed_report["budgeted_input_tokens"],
+            len(mixed.encode("utf-8")) + ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
+        )
 
     def test_official_known_model_may_report_provider_exact_with_bound_metadata(self) -> None:
         budget = self._budget(provider="openai", model="gpt-known", endpoint_type="official")
@@ -228,6 +272,204 @@ class ContextBudgetTest(unittest.TestCase):
             estimated["count_metadata"]["calibration_version"],
         )
 
+    def test_official_openai_model_resolves_local_tokenizer_without_claiming_exact(self) -> None:
+        class FakeEncoding:
+            name = "fake-openai-bpe"
+
+            @staticmethod
+            def encode(text: str, *, disallowed_special=()):
+                self.assertEqual((), disallowed_special)
+                return list(range(max(1, len(text) // 2)))
+
+        fake_tiktoken = SimpleNamespace(
+            encoding_name_for_model=lambda model: "fake-openai-bpe"
+            if model == "gpt-bound"
+            else (_ for _ in ()).throw(KeyError(model)),
+        )
+        with (
+            patch.dict(sys.modules, {"tiktoken": fake_tiktoken}),
+            patch(
+                "core.context_budget._cached_tiktoken_encoding",
+                return_value=FakeEncoding(),
+            ),
+            patch("core.context_budget.importlib.metadata.version", return_value="test-build"),
+        ):
+            counter = model_token_counter(
+                provider="openai",
+                model="gpt-bound",
+                endpoint_type="official",
+            )
+
+        self.assertIsNotNone(counter)
+        assert counter is not None
+        self.assertEqual("model_tokenizer", counter.count_mode)
+        self.assertNotEqual("provider_exact", counter.count_mode)
+        self.assertEqual("fake-openai-bpe", counter.tokenizer)
+        self.assertEqual(
+            max(1, len("中文 and English") // 2)
+            + MODEL_TOKENIZER_FIXED_OVERHEAD_TOKENS,
+            counter.count("中文 and English"),
+        )
+
+    def test_compatible_or_unknown_model_does_not_guess_openai_tokenizer(self) -> None:
+        compatible_encoding_calls: list[str] = []
+
+        def compatible_encoding_for_model(model: str) -> str:
+            compatible_encoding_calls.append(model)
+            return "must-not-be-used"
+
+        compatible_tiktoken = SimpleNamespace(
+            encoding_name_for_model=compatible_encoding_for_model,
+            get_encoding=lambda name: self.fail("compatible endpoint must not load an encoding"),
+        )
+        with patch.dict(sys.modules, {"tiktoken": compatible_tiktoken}):
+            compatible = model_token_counter(
+                provider="openai",
+                model="gpt-4.1-mini",
+                endpoint_type="openai_compatible",
+            )
+
+        unknown_tiktoken = SimpleNamespace(
+            encoding_name_for_model=lambda model: (_ for _ in ()).throw(KeyError(model)),
+            get_encoding=lambda name: self.fail("unknown model must not load an encoding"),
+        )
+        with patch.dict(sys.modules, {"tiktoken": unknown_tiktoken}):
+            unknown = model_token_counter(
+                provider="openai",
+                model="gateway-alias",
+                endpoint_type="official",
+            )
+
+        self.assertIsNone(compatible)
+        self.assertEqual([], compatible_encoding_calls)
+        self.assertIsNone(unknown)
+
+    def test_tiktoken_cache_miss_does_not_attempt_encoding_load(self) -> None:
+        import tiktoken
+        import tiktoken.registry
+
+        empty_cache = (
+            Path.cwd()
+            / ".tmp"
+            / "test_tiktoken_cache_miss"
+            / uuid.uuid4().hex
+        )
+        empty_cache.mkdir(parents=True)
+        with (
+            patch.dict(
+                os.environ,
+                {"TIKTOKEN_CACHE_DIR": str(empty_cache)},
+                clear=False,
+            ),
+            patch.dict(
+                tiktoken.registry.ENCODINGS,
+                {
+                    "o200k_base": SimpleNamespace(
+                        encode=lambda text, **kwargs: self.fail(
+                            "mutable registry entries must not bypass local verification"
+                        )
+                    )
+                },
+                clear=True,
+            ),
+            patch.object(tiktoken, "get_encoding") as get_encoding,
+            patch("tiktoken.load.read_file") as read_file,
+        ):
+            counter = model_token_counter(
+                provider="openai",
+                model="gpt-4.1-mini",
+                endpoint_type="official",
+            )
+
+        self.assertIsNone(counter)
+        get_encoding.assert_not_called()
+        read_file.assert_not_called()
+
+    def test_corrupt_tiktoken_cache_is_not_deleted_or_downloaded(self) -> None:
+        import tiktoken.registry
+
+        cache_dir = (
+            Path.cwd()
+            / ".tmp"
+            / "test_tiktoken_corrupt_cache"
+            / uuid.uuid4().hex
+        )
+        cache_dir.mkdir(parents=True)
+        blob_url = (
+            "https://openaipublic.blob.core.windows.net/encodings/"
+            "o200k_base.tiktoken"
+        )
+        cache_path = cache_dir / hashlib.sha1(blob_url.encode("utf-8")).hexdigest()
+        corrupt = b"not-a-valid-tokenizer-asset"
+        cache_path.write_bytes(corrupt)
+
+        with (
+            patch.dict(
+                os.environ,
+                {"TIKTOKEN_CACHE_DIR": str(cache_dir)},
+                clear=False,
+            ),
+            patch.dict(tiktoken.registry.ENCODINGS, {}, clear=True),
+            patch("tiktoken.load.read_file") as read_file,
+        ):
+            counter = model_token_counter(
+                provider="openai",
+                model="gpt-4.1-mini",
+                endpoint_type="official",
+            )
+
+        self.assertIsNone(counter)
+        self.assertEqual(corrupt, cache_path.read_bytes())
+        read_file.assert_not_called()
+
+    def test_provider_exact_counter_rejects_added_overhead(self) -> None:
+        with self.assertRaises(ContextBudgetError) as raised:
+            TokenCounter(
+                counter=lambda text: 7,
+                count_mode="provider_exact",
+                provider="openai",
+                model="gpt-exact",
+                endpoint_type="official",
+                version="provider-v1",
+                model_is_known=True,
+                fixed_overhead_tokens=1,
+            )
+
+        self.assertEqual("token_counter_invalid", raised.exception.code)
+        exact = TokenCounter(
+            counter=lambda text: 7,
+            count_mode="provider_exact",
+            provider="openai",
+            model="gpt-exact",
+            endpoint_type="official",
+            version="provider-v1",
+            model_is_known=True,
+        )
+        self.assertEqual(7, exact.count("anything"))
+
+    def test_bound_counter_identity_mismatch_fails_closed(self) -> None:
+        counter = TokenCounter(
+            counter=character_counter,
+            count_mode="model_tokenizer",
+            provider="openai",
+            model="gpt-a",
+            endpoint_type="official",
+            version="test-v1",
+            tokenizer="test-bpe",
+            model_is_known=True,
+        )
+
+        with self.assertRaises(ContextBudgetError) as raised:
+            ContextBudget(
+                provider="openai",
+                model="gpt-b",
+                endpoint_type="official",
+                model_context_window=10_000,
+                bound_token_counter=counter,
+            )
+
+        self.assertEqual("token_counter_binding_mismatch", raised.exception.code)
+
     def test_schema_reads_legacy_modes_but_new_measurements_never_write_them(self) -> None:
         current = self._budget().measure("history", stage="plan")
         for legacy_mode in ("exact", "estimate"):
@@ -277,10 +519,23 @@ class ContextBudgetTest(unittest.TestCase):
                 "NOVELAGENT_MAX_INPUT_TOKENS": "64000",
             },
         ):
-            budget = default_context_budget()
+            budget = default_context_budget(enable_model_tokenizer=False)
 
         self.assertEqual(64_000, budget.max_input_tokens)
         self.assertEqual(64_000, budget.hard_input_limit)
+
+    def test_default_budget_binds_configured_model_and_endpoint(self) -> None:
+        config = SimpleNamespace(
+            openai_model="gpt-configured",
+            openai_base_url="https://gateway.invalid/v1",
+            claude_model=None,
+            claude_base_url=None,
+        )
+        with patch("core.config.get_config", return_value=config):
+            budget = default_context_budget(enable_model_tokenizer=False)
+
+        self.assertEqual("gpt-configured", budget.model)
+        self.assertEqual("openai_compatible", budget.endpoint_type)
 
     def test_mandatory_context_over_budget_fails_before_provider(self) -> None:
         input_pack = "# Story State\n" + ("必须事实" * 300) + "\n\n# Requirements\nReturn prose."
@@ -472,7 +727,7 @@ class ContextBudgetTest(unittest.TestCase):
                 "total-only-fails-closed",
                 {"total_tokens": 14},
                 14,
-                14,
+                30,
             ),
         )
         for ordinal, (name, usage, expected_input, expected_output) in enumerate(

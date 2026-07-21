@@ -1,0 +1,442 @@
+{
+  "allowed_roots": [
+    "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+    "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime"
+  ],
+  "book_id": "68ee0d8e-762c-4dc3-96c5-abdf3084c4e9",
+  "candidate_result_path": "candidate_result.json",
+  "candidate_sha256": "a61b7b01042237f96a623d9c86e893c5b666a071788cf78bd51b5e8a38dd15a1",
+  "commit_marker": "commit.marker",
+  "created_at": "2026-07-14T05:35:06.720718+00:00",
+  "errors": [],
+  "read_set_declared_writes": [
+    {
+      "action": "create",
+      "after_sha256": "dc9a320bc9d84f3829d2804d10a5bd5168dcace33453a9914d9ef1c80a21ea55",
+      "after_size": 12560,
+      "relative_path": "正文/第008章_第八章：回收程序.md"
+    },
+    {
+      "action": "replace",
+      "after_sha256": "7cc896a12baf30b05eccafd177ea7aeb0bc7ee2efe74c7999b58ef3b96cd1881",
+      "after_size": 7620,
+      "relative_path": "追踪/上下文.md"
+    },
+    {
+      "action": "replace",
+      "after_sha256": "8e966466d678eaf2945abd9418ffe812b78c18795da3ff0393270eda73016dd5",
+      "after_size": 7019,
+      "relative_path": "追踪/伏笔.md"
+    },
+    {
+      "action": "replace",
+      "after_sha256": "9414bb8d157943e9bb5523a9ccf37265fe6ad8cac1fedc9273454b39af4bc45c",
+      "after_size": 10004,
+      "relative_path": "追踪/时间线.md"
+    },
+    {
+      "action": "replace",
+      "after_sha256": "ce40f9f2c4112076314e71beee247286a11447c52a4d7f5fdc3b2e7900e41547",
+      "after_size": 7108,
+      "relative_path": "追踪/角色状态.md"
+    }
+  ],
+  "run_id": "chapter_8_20260714T053329909657Z",
+  "schema_version": 1,
+  "state": "completed",
+  "story_project_read_set": {
+    "book_id": "68ee0d8e-762c-4dc3-96c5-abdf3084c4e9",
+    "candidate_fingerprints": {
+      "outline": {
+        "fingerprint": "a043e605dc7ca9daafc85f355e3169d147223d665a175ef1da7c4a178204dd22",
+        "members": [
+          "大纲/细纲_第008章.md"
+        ]
+      },
+      "previous_prose": {
+        "fingerprint": "738302adcf1c6253564cef65acfbf30b6842be27cba882476d30424314620054",
+        "members": [
+          "正文/第007章_第七章：门后三长两短.md"
+        ]
+      }
+    },
+    "chapter_index": 8,
+    "context_digest": "348bc7945a072fa4d99ff4072a695bd4712ddf0248d03f8a5e71e4a4b685367e",
+    "entries": [
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "大纲/细纲_第008章.md",
+          "root_id": "story_project"
+        },
+        "role": "outline",
+        "sha256": "4cf1524a25b223c5f46586904478f7183e33b4d73c1c47bee13a262f2f872c98",
+        "size": 3046
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "正文/第007章_第七章：门后三长两短.md",
+          "root_id": "story_project"
+        },
+        "role": "previous_prose",
+        "sha256": "ef75d6e096ca68af71faf55bbfe15a3a141462f22fb2b1e5e78f47c5d540e7d0",
+        "size": 15807
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "追踪/上下文.md",
+          "root_id": "story_project"
+        },
+        "role": "追踪",
+        "sha256": "500563b274ff96fea54af2dd1d27f51dbe5ea312a239a266a370f7e8327b40a5",
+        "size": 6627
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "追踪/伏笔.md",
+          "root_id": "story_project"
+        },
+        "role": "追踪",
+        "sha256": "2ccd3344671318d6e338873d19f23aac67e749712702e8e8532283efe6dafac3",
+        "size": 6125
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "追踪/时间线.md",
+          "root_id": "story_project"
+        },
+        "role": "追踪",
+        "sha256": "43e47f2c27347b16d14f53e80a933a6c33d3e387cf4b77df4f1546161bed2437",
+        "size": 8948
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "追踪/角色状态.md",
+          "root_id": "story_project"
+        },
+        "role": "追踪",
+        "sha256": "46fcd3dfcc79fbdf0cc4eb5a8c1d9b90d445c23664805fa2d8c363222bf87daf",
+        "size": 6042
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "设定/作品设定.md",
+          "root_id": "story_project"
+        },
+        "role": "设定",
+        "sha256": "f9465e44318e82f65b55cf0c9074f5cf5a6efe5a6bb89ac02eb691ba72cc30a6",
+        "size": 2555
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "设定/地点/临江市地下商超.md",
+          "root_id": "story_project"
+        },
+        "role": "设定",
+        "sha256": "8d9f191f7225dc866a9755e1f10da074afe15883ffbc515bbe08817251f65fa2",
+        "size": 2746
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "设定/能力体系.md",
+          "root_id": "story_project"
+        },
+        "role": "设定",
+        "sha256": "9d8082b1b1268f0de85f6d95c668c3b4dbea3f46aa325c56a00ff1ddc2272a2f",
+        "size": 1630
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "设定/角色/苏晴.md",
+          "root_id": "story_project"
+        },
+        "role": "设定",
+        "sha256": "68e95eb0e302aae551d9bda7712f2b9c72d8987aeeb91ebdce001a86a62aed1a",
+        "size": 506
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "设定/角色/赵铁.md",
+          "root_id": "story_project"
+        },
+        "role": "设定",
+        "sha256": "bec0edb2cb6d7d05c243f2b1b37416b12a28a27ef5dee3173c106091be90c3ba",
+        "size": 488
+      },
+      {
+        "exists": true,
+        "path_ref": {
+          "relative_path": "设定/角色/陆沉.md",
+          "root_id": "story_project"
+        },
+        "role": "设定",
+        "sha256": "a95f395f7022a11a4b555d924de2cee2190f90913853c2ee8bdc2bf046e3387a",
+        "size": 786
+      }
+    ],
+    "identity_revision": "790fbdcf6829cffb35e96ebc40589e8355a9ca35f0b4557786ca78600307f75a",
+    "membership": [
+      {
+        "relative_path": "大纲/总纲.md",
+        "sha256": "5008154c4162ad017b93f17ce1e81ed744b29d3b8bae2841dbef5da71938f067",
+        "size": 927
+      },
+      {
+        "relative_path": "大纲/细纲_第001章.md",
+        "sha256": "70258e0de93870117a9a20c7eb23a05e989b6f91fc4d417ff47d5b6b3479a258",
+        "size": 1177
+      },
+      {
+        "relative_path": "大纲/细纲_第002章.md",
+        "sha256": "c8eef9471cf048638719739a498cfc7f11f4dae34e1b155022561232b37f08ea",
+        "size": 1934
+      },
+      {
+        "relative_path": "大纲/细纲_第003章.md",
+        "sha256": "5a057e759f48adc44ad2772b36410f6c7d1c18d8effebd4070c7463454f211bd",
+        "size": 3215
+      },
+      {
+        "relative_path": "大纲/细纲_第004章.md",
+        "sha256": "b4ce7d630b82c6c7258f75f52b4eae917654becd6f229175d14da59b14b049f4",
+        "size": 4234
+      },
+      {
+        "relative_path": "大纲/细纲_第005章.md",
+        "sha256": "ceb04f3e71b0d165589b9428343c83628f1fa05fda5654a1089c5016f8f899e9",
+        "size": 2621
+      },
+      {
+        "relative_path": "大纲/细纲_第006章.md",
+        "sha256": "e6f8747c15cff2d678c0b86343e94c01609a08b5eb7ac6639798978a2427d2de",
+        "size": 2785
+      },
+      {
+        "relative_path": "大纲/细纲_第007章.md",
+        "sha256": "1972de949809f0440d964a9a673e3910168232ec7dc27870d6ed25aabedc7268",
+        "size": 3203
+      },
+      {
+        "relative_path": "大纲/细纲_第008章.md",
+        "sha256": "4cf1524a25b223c5f46586904478f7183e33b4d73c1c47bee13a262f2f872c98",
+        "size": 3046
+      },
+      {
+        "relative_path": "正文/第001章_第一章：断电后的第十二分钟.md",
+        "sha256": "0a9f0ccba9b627547ccf3f7057a6d9c10a07442ed487a284f3ef3bd1dcfc8acc",
+        "size": 13554
+      },
+      {
+        "relative_path": "正文/第002章_第二章：十七分钟倒计时.md",
+        "sha256": "2d71351c6e5550c6a9b8406884f85215e839c4016876cb55b7f12ec058533fd6",
+        "size": 15674
+      },
+      {
+        "relative_path": "正文/第003章_第三章：黑暗中的柴油.md",
+        "sha256": "9f3ec1ad89e12e019f1140ddf5404101013e1e1cbe15d0ae4f15a64375d9792f",
+        "size": 15462
+      },
+      {
+        "relative_path": "正文/第004章_第四章：不开主门，也要救人.md",
+        "sha256": "5ba7805ba77d08d512a34c1a1bf534eb86544b8c2d7c2080b0c080dabe631bf0",
+        "size": 13400
+      },
+      {
+        "relative_path": "正文/第005章_第五章：最后一扇门.md",
+        "sha256": "79de2df667fb623db1276adb163284ddb4de9e33210e2c3e4b935236ad7a8e21",
+        "size": 13640
+      },
+      {
+        "relative_path": "正文/第006章_第六章：红灯运输线.md",
+        "sha256": "87cf4e1e8c08a6795956248caeacb93b673068e329771fc12a7d5287a9beb9a8",
+        "size": 14958
+      },
+      {
+        "relative_path": "正文/第007章_第七章：门后三长两短.md",
+        "sha256": "ef75d6e096ca68af71faf55bbfe15a3a141462f22fb2b1e5e78f47c5d540e7d0",
+        "size": 15807
+      },
+      {
+        "relative_path": "追踪/上下文.md",
+        "sha256": "500563b274ff96fea54af2dd1d27f51dbe5ea312a239a266a370f7e8327b40a5",
+        "size": 6627
+      },
+      {
+        "relative_path": "追踪/伏笔.md",
+        "sha256": "2ccd3344671318d6e338873d19f23aac67e749712702e8e8532283efe6dafac3",
+        "size": 6125
+      },
+      {
+        "relative_path": "追踪/时间线.md",
+        "sha256": "43e47f2c27347b16d14f53e80a933a6c33d3e387cf4b77df4f1546161bed2437",
+        "size": 8948
+      },
+      {
+        "relative_path": "追踪/角色状态.md",
+        "sha256": "46fcd3dfcc79fbdf0cc4eb5a8c1d9b90d445c23664805fa2d8c363222bf87daf",
+        "size": 6042
+      },
+      {
+        "relative_path": "设定/作品设定.md",
+        "sha256": "f9465e44318e82f65b55cf0c9074f5cf5a6efe5a6bb89ac02eb691ba72cc30a6",
+        "size": 2555
+      },
+      {
+        "relative_path": "设定/地点/临江市地下商超.md",
+        "sha256": "8d9f191f7225dc866a9755e1f10da074afe15883ffbc515bbe08817251f65fa2",
+        "size": 2746
+      },
+      {
+        "relative_path": "设定/能力体系.md",
+        "sha256": "9d8082b1b1268f0de85f6d95c668c3b4dbea3f46aa325c56a00ff1ddc2272a2f",
+        "size": 1630
+      },
+      {
+        "relative_path": "设定/角色/苏晴.md",
+        "sha256": "68e95eb0e302aae551d9bda7712f2b9c72d8987aeeb91ebdce001a86a62aed1a",
+        "size": 506
+      },
+      {
+        "relative_path": "设定/角色/赵铁.md",
+        "sha256": "bec0edb2cb6d7d05c243f2b1b37416b12a28a27ef5dee3173c106091be90c3ba",
+        "size": 488
+      },
+      {
+        "relative_path": "设定/角色/陆沉.md",
+        "sha256": "a95f395f7022a11a4b555d924de2cee2190f90913853c2ee8bdc2bf046e3387a",
+        "size": 786
+      }
+    ],
+    "membership_fingerprint": "3328af0adfb6a67eccb3f4c5364ea5268eb0ff7c7f58726b0475bffbc39fb45f",
+    "parse_status": "warning",
+    "parser_version": "shadow-1.0",
+    "root_identity": {
+      "device": 361016655130288304,
+      "inode": 562949954458871,
+      "resolved_path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条",
+      "root_id": "story_project"
+    },
+    "schema_version": "1.0"
+  },
+  "targets": [
+    {
+      "after_sha256": "dc9a320bc9d84f3829d2804d10a5bd5168dcace33453a9914d9ef1c80a21ea55",
+      "after_size": 12560,
+      "backup_path": null,
+      "before_sha256": null,
+      "before_size": null,
+      "error": null,
+      "existed": false,
+      "id": "target-000",
+      "index": 0,
+      "kind": "prose",
+      "metadata": {
+        "story_target_index": 0
+      },
+      "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\正文\\第008章_第八章：回收程序.md",
+      "staged_path": "staged/000.bin",
+      "status": "verified"
+    },
+    {
+      "after_sha256": "7cc896a12baf30b05eccafd177ea7aeb0bc7ee2efe74c7999b58ef3b96cd1881",
+      "after_size": 7620,
+      "backup_path": "backups/001.bin",
+      "before_sha256": "500563b274ff96fea54af2dd1d27f51dbe5ea312a239a266a370f7e8327b40a5",
+      "before_size": 6627,
+      "error": null,
+      "existed": true,
+      "id": "target-001",
+      "index": 1,
+      "kind": "context",
+      "metadata": {
+        "story_target_index": 1
+      },
+      "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\上下文.md",
+      "staged_path": "staged/001.bin",
+      "status": "verified"
+    },
+    {
+      "after_sha256": "8e966466d678eaf2945abd9418ffe812b78c18795da3ff0393270eda73016dd5",
+      "after_size": 7019,
+      "backup_path": "backups/002.bin",
+      "before_sha256": "2ccd3344671318d6e338873d19f23aac67e749712702e8e8532283efe6dafac3",
+      "before_size": 6125,
+      "error": null,
+      "existed": true,
+      "id": "target-002",
+      "index": 2,
+      "kind": "foreshadowing",
+      "metadata": {
+        "story_target_index": 2
+      },
+      "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\伏笔.md",
+      "staged_path": "staged/002.bin",
+      "status": "verified"
+    },
+    {
+      "after_sha256": "9414bb8d157943e9bb5523a9ccf37265fe6ad8cac1fedc9273454b39af4bc45c",
+      "after_size": 10004,
+      "backup_path": "backups/003.bin",
+      "before_sha256": "43e47f2c27347b16d14f53e80a933a6c33d3e387cf4b77df4f1546161bed2437",
+      "before_size": 8948,
+      "error": null,
+      "existed": true,
+      "id": "target-003",
+      "index": 3,
+      "kind": "timeline",
+      "metadata": {
+        "story_target_index": 3
+      },
+      "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\时间线.md",
+      "staged_path": "staged/003.bin",
+      "status": "verified"
+    },
+    {
+      "after_sha256": "ce40f9f2c4112076314e71beee247286a11447c52a4d7f5fdc3b2e7900e41547",
+      "after_size": 7108,
+      "backup_path": "backups/004.bin",
+      "before_sha256": "46fcd3dfcc79fbdf0cc4eb5a8c1d9b90d445c23664805fa2d8c363222bf87daf",
+      "before_size": 6042,
+      "error": null,
+      "existed": true,
+      "id": "target-004",
+      "index": 4,
+      "kind": "character_state",
+      "metadata": {
+        "story_target_index": 4
+      },
+      "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\追踪\\角色状态.md",
+      "staged_path": "staged/004.bin",
+      "status": "verified"
+    },
+    {
+      "after_sha256": "e31376cbfd1d4e57ec53c1c0aab0bcd87674e64ca4a39b51ac6041e65511f85d",
+      "after_size": 50602,
+      "backup_path": "backups/005.bin",
+      "before_sha256": "31d0b750ca4e778ad4566f842fb9b3e7ba16f783ecc7fc38479367fa7a3242ef",
+      "before_size": 44768,
+      "error": null,
+      "existed": true,
+      "id": "target-005",
+      "index": 5,
+      "kind": "snapshot",
+      "metadata": {
+        "chapter_index": 8
+      },
+      "path": "D:\\Pycharm\\PythonProject\\NovelAgent\\books\\尸潮之下_我能提取进化词条\\.novelagent\\runtime\\snapshot.json",
+      "staged_path": "staged/005.bin",
+      "status": "verified"
+    }
+  ],
+  "updated_at": "2026-07-14T05:35:07.259848+00:00"
+}

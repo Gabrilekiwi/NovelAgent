@@ -8,6 +8,7 @@ import unittest
 from core.context_budget import (
     DEFAULT_CALIBRATED_ESTIMATOR,
     ESTIMATOR_CALIBRATION_MANIFEST_HASH,
+    ESTIMATOR_ASCII_FLOOR_TOKENS_PER_BYTE,
     ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS,
     ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE,
     ESTIMATOR_HOLDOUT_MANIFEST_HASH,
@@ -113,12 +114,20 @@ class TokenCalibrationTest(unittest.TestCase):
             baseline["split"]["holdout_manifest_hash"],
             changed["split"]["holdout_manifest_hash"],
         )
-        self.assertEqual(1.0, ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE)
-        self.assertEqual(64, ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS)
-        payload = '{"hex":"' + ("deadbeef" * 50) + '"}'
+        self.assertEqual(0.0, ESTIMATOR_ENFORCEMENT_FLOOR_TOKENS_PER_UTF8_BYTE)
         self.assertEqual(
-            len(payload.encode("utf-8")) + 64,
+            1.0,
+            ESTIMATOR_ASCII_FLOOR_TOKENS_PER_BYTE,
+        )
+        self.assertEqual(64, ESTIMATOR_ENFORCEMENT_FIXED_OVERHEAD_TOKENS)
+        payload = "字" * 3_000
+        self.assertEqual(
+            4_089,
             conservative_calibrated_token_estimate(payload),
+        )
+        self.assertLess(
+            conservative_calibrated_token_estimate(payload),
+            len(payload.encode("utf-8")) + 64,
         )
 
     def test_compatible_and_unknown_references_are_never_labelled_exact(self) -> None:
