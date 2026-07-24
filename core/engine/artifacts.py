@@ -251,6 +251,8 @@ def prepare_chapter_pipeline_artifacts(
                             "scene_state_before",
                             "scene_state_after",
                             "boundary_validation",
+                            "evidence_revision",
+                            "evidence_alignment",
                         )
                     }
                     for scene in pipeline.get("scene_drafts") or []
@@ -258,6 +260,7 @@ def prepare_chapter_pipeline_artifacts(
                 ],
                 "boundary_validations": pipeline.get("scene_boundary_validations") or [],
                 "final_state": pipeline.get("scene_state_final") or {},
+                "evidence_history": pipeline.get("scene_evidence_history") or [],
             },
             ensure_ascii=False,
             indent=2,
@@ -373,6 +376,21 @@ def prepare_review_repair_artifacts(
             targets,
             path / f"review_repair_delta_attempt_{attempt:02d}.json",
             json.dumps(delta, ensure_ascii=False, indent=2),
+            "json",
+        )
+    patches = (
+        review_repair.get("repair_patches")
+        if isinstance(review_repair.get("repair_patches"), list)
+        else []
+    )
+    for position, patch in enumerate(patches, start=1):
+        if not isinstance(patch, dict):
+            continue
+        attempt = int(patch.get("attempt") or position)
+        artifacts[f"patch_attempt_{attempt:02d}"] = _append_prepared_artifact(
+            targets,
+            path / f"review_repair_patch_attempt_{attempt:02d}.json",
+            json.dumps(patch, ensure_ascii=False, indent=2),
             "json",
         )
     final_chapter = review_repair.get("final_chapter")

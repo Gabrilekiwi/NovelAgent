@@ -546,6 +546,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "patch": {
+            "type": "object"
           }
         },
         "additionalProperties": false

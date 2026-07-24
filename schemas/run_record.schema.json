@@ -1876,6 +1876,12 @@
             "scene_state_final": {
               "type": "object"
             },
+            "scene_evidence_history": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
             "integrity": {
               "type": "object"
             },
@@ -2896,6 +2902,9 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "patch": {
+                  "type": "object"
                 }
               },
               "additionalProperties": false

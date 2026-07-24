@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import inspect
@@ -38,6 +39,12 @@ from core.quality.final_artifact_integrity import (
     merge_integrity_reports_for_artifact,
     merge_integrity_report_into_validation,
 )
+from core.quality.repair_patch import (
+    apply_repair_patch,
+    build_repair_patch_from_texts,
+    coerce_repair_patch,
+)
+from core.quality.scene_evidence import realign_scene_evidence
 from core.quality_decision import (
     QualityPolicy,
     resolve_quality_policy,
@@ -155,7 +162,7 @@ from workflows.dynamic_flow import build_dynamic_flow_plan
 
 ChapterGenerator = Callable[[str], str]
 ChapterPolisher = Callable[[str], str]
-ChapterRepairer = Callable[..., str]
+ChapterRepairer = Callable[..., Any]
 ChapterAnalyzer = Callable[[str, dict[str, Any]], dict[str, Any]]
 ChapterValidator = Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any]]
 Director = Callable[[dict[str, Any], dict[str, Any] | None], dict[str, Any]]
@@ -777,12 +784,48 @@ class AgentExecutor:
             )
         )
         if self.story_project_writeback.enabled:
+            before_canonical = chapter
             chapter = _canonical_story_project_prose(chapter)
             if isinstance(chapter_pipeline, dict):
-                chapter_pipeline["merged_chapter"] = chapter
+                canonical_patch = build_repair_patch_from_texts(
+                    before_canonical,
+                    chapter,
+                    mode="stage_text_diff",
+                )
+                chapter_pipeline = self._realign_chapter_pipeline(
+                    chapter_pipeline,
+                    before_chapter=before_canonical,
+                    after_chapter=chapter,
+                    patch=canonical_patch,
+                    stage="writeback_canonicalization",
+                )
+        final_scene_drafts = (
+            chapter_pipeline.get("scene_drafts")
+            if isinstance(chapter_pipeline, dict)
+            else None
+        )
+        final_scene_spans = (
+            chapter_pipeline.get("scene_spans")
+            if isinstance(chapter_pipeline, dict)
+            else None
+        )
+        final_scene_events = (
+            [
+                event
+                for scene in final_scene_drafts or []
+                if isinstance(scene, dict)
+                for event in scene.get("events") or []
+                if isinstance(event, dict)
+            ]
+            if isinstance(final_scene_drafts, list)
+            else None
+        )
         final_artifact_report = self.final_artifact_integrity_gate.evaluate(
             artifact_text=chapter,
             stage="final_gate",
+            scene_events=final_scene_events,
+            scene_drafts=final_scene_drafts,
+            scene_spans=final_scene_spans,
         )
         pipeline_integrity = (
             (chapter_pipeline.get("integrity") or {}).values()
@@ -1398,6 +1441,7 @@ class AgentExecutor:
             "repair_attempts": 0,
             "repair_plan": None,
             "repair_deltas": [],
+            "repair_patches": [],
             "repair_validation_history": [],
             "best_repair_chapter": None,
             "best_repair_validation": None,
@@ -1592,7 +1636,20 @@ class AgentExecutor:
             )
         else:
             polished = self._polish(chapter)
-        state["chapter"] = str(polished)
+        polished_text = str(polished)
+        polish_patch = build_repair_patch_from_texts(
+            chapter,
+            polished_text,
+            mode="stage_text_diff",
+        )
+        state["chapter"] = polished_text
+        state["chapter_pipeline"] = self._realign_chapter_pipeline(
+            state.get("chapter_pipeline"),
+            before_chapter=chapter,
+            after_chapter=polished_text,
+            patch=polish_patch,
+            stage="polish",
+        )
         self._record_integrity_transition(
             state,
             stage="polish",
@@ -1669,6 +1726,7 @@ class AgentExecutor:
         if state["validation"] is None:
             self._handle_validate(state, snapshot, decision)
         state["repair_deltas"] = []
+        state["repair_patches"] = []
         max_repair_attempts = int(decision.get("max_repair_attempts", 0))
 
         if state["validation"]["ok"]:
@@ -1718,7 +1776,25 @@ class AgentExecutor:
                 )
             else:
                 repaired = repair_operation()
-            state["chapter"] = str(repaired)
+            repair_patch = coerce_repair_patch(
+                before_chapter,
+                repaired,
+                problem_codes=_problem_codes(before_validation),
+            )
+            repaired_text, patch_audit = apply_repair_patch(
+                before_chapter,
+                repair_patch,
+            )
+            patch_audit["attempt"] = attempt
+            state["repair_patches"].append(patch_audit)
+            state["chapter_pipeline"] = self._realign_chapter_pipeline(
+                state.get("chapter_pipeline"),
+                before_chapter=before_chapter,
+                after_chapter=repaired_text,
+                patch=repair_patch,
+                stage="repair",
+            )
+            state["chapter"] = repaired_text
             self._record_integrity_transition(
                 state,
                 stage="repair",
@@ -1744,6 +1820,7 @@ class AgentExecutor:
                     attempt=attempt,
                     before=before_validation,
                     after=state["validation"],
+                    patch=patch_audit,
                 )
             )
             self._raise_if_repair_not_converging(state)
@@ -2039,6 +2116,7 @@ class AgentExecutor:
             )
 
         review_provider_attempts: list[dict[str, Any]] = []
+        review_repair_patches: list[dict[str, Any]] = []
 
         def repair(current_chapter: str, current_validation: dict[str, Any], repair_plan: dict[str, Any]) -> str:
             reset_retry_telemetry()
@@ -2052,7 +2130,17 @@ class AgentExecutor:
                     project_language(snapshot),
                     _repair_context_for_snapshot(snapshot),
                 )
-                repaired_text = str(repaired)
+                repair_patch = coerce_repair_patch(
+                    current_chapter,
+                    repaired,
+                    problem_codes=_problem_codes(current_validation),
+                )
+                repaired_text, patch_audit = apply_repair_patch(
+                    current_chapter,
+                    repair_patch,
+                )
+                patch_audit["attempt"] = int(repair_plan.get("attempt") or len(review_repair_patches) + 1)
+                review_repair_patches.append(patch_audit)
                 report = self.final_artifact_integrity_gate.evaluate(
                     artifact_text=repaired_text,
                     stage="repair",
@@ -2112,6 +2200,8 @@ class AgentExecutor:
         )
         if review_provider_attempts:
             review_repair["provider_attempts"] = review_provider_attempts
+        if review_repair_patches:
+            review_repair["repair_patches"] = review_repair_patches
         if not review_repair.get("attempted"):
             return (
                 chapter,
@@ -2274,8 +2364,19 @@ class AgentExecutor:
     ) -> dict[str, Any] | None:
         if not isinstance(chapter_pipeline, dict):
             return None
-        updated = dict(chapter_pipeline)
-        updated["merged_chapter"] = chapter
+        before_chapter = str(chapter_pipeline.get("merged_chapter") or "")
+        patch = build_repair_patch_from_texts(
+            before_chapter,
+            chapter,
+            mode="stage_text_diff",
+        )
+        updated = self._realign_chapter_pipeline(
+            chapter_pipeline,
+            before_chapter=before_chapter,
+            after_chapter=chapter,
+            patch=patch,
+            stage="review_repair",
+        )
         blueprint = self._story_project_chapter_blueprint()
         if isinstance(blueprint, dict):
             updated["blueprint_coverage"] = build_blueprint_coverage(
@@ -2284,6 +2385,27 @@ class AgentExecutor:
                 chapter,
             )
         return updated
+
+    def _realign_chapter_pipeline(
+        self,
+        chapter_pipeline: dict[str, Any] | None,
+        *,
+        before_chapter: str,
+        after_chapter: str,
+        patch: dict[str, Any],
+        stage: str,
+    ) -> dict[str, Any] | None:
+        if not isinstance(chapter_pipeline, dict):
+            return None
+        if before_chapter == after_chapter:
+            return chapter_pipeline
+        return realign_scene_evidence(
+            chapter_pipeline,
+            before_chapter=before_chapter,
+            after_chapter=after_chapter,
+            patch=patch,
+            stage=stage,
+        )
 
     def _attach_precomputed_runtime_review(
         self,
@@ -4373,12 +4495,18 @@ def _has_generated_chapter(state: dict[str, Any]) -> bool:
     return isinstance(chapter, str) and bool(chapter.strip())
 
 
-def _repair_delta(*, attempt: int, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+def _repair_delta(
+    *,
+    attempt: int,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    patch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     before_codes = _problem_codes(before)
     after_codes = _problem_codes(after)
     before_set = set(before_codes)
     after_set = set(after_codes)
-    return {
+    result = {
         "attempt": attempt,
         "before_ok": bool(before.get("ok")),
         "after_ok": bool(after.get("ok")),
@@ -4390,6 +4518,9 @@ def _repair_delta(*, attempt: int, before: dict[str, Any], after: dict[str, Any]
         "new_problem_codes": sorted(after_set - before_set),
         "remaining_problem_codes": sorted(before_set & after_set),
     }
+    if isinstance(patch, dict):
+        result["patch"] = copy.deepcopy(patch)
+    return result
 
 
 def _problem_count(validation: dict[str, Any]) -> int:

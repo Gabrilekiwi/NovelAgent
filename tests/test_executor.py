@@ -1412,6 +1412,15 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertIn("chapter_too_short", repair_deltas[0]["resolved_problem_codes"])
         self.assertIn("missing_conflict_marker", repair_deltas[0]["resolved_problem_codes"])
         self.assertEqual([], repair_deltas[0]["new_problem_codes"])
+        self.assertEqual(
+            "controlled_full_text_fallback",
+            repair_deltas[0]["patch"]["mode"],
+        )
+        self.assertEqual(
+            repair_deltas[0]["patch"]["output_chapter_sha256"],
+            result["run"]["chapter"]["final_artifact"]["artifact_sha256"],
+        )
+        self.assertGreater(repair_deltas[0]["patch"]["operation_count"], 0)
         self.assertFalse(result["run"]["trace"][-1]["skipped"])
 
     def test_repair_loop_stops_on_stalled_validation_and_persists_best_draft(self) -> None:

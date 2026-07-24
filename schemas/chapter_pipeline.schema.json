@@ -70,6 +70,12 @@
         "type": "object"
       }
     },
+    "scene_evidence_history": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "plan": {
       "type": "object",
       "required": ["goal", "scenes"],
@@ -214,6 +220,13 @@
             "type": "object"
           },
           "boundary_validation": {
+            "type": "object"
+          },
+          "evidence_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "evidence_alignment": {
             "type": "object"
           }
         },

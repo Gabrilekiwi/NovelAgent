@@ -10,6 +10,7 @@ from api.contracts import REPAIR_CONTRACT, validate_text_output
 from api.openai_client import chat_completion
 from core.context_budget import default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
+from core.quality.repair_patch import coerce_repair_patch
 from core.schema import validate_schema
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_json_items, sha256_text
@@ -37,7 +38,7 @@ def repair_scene(
     recovery_context: dict[str, Any] | None = None,
     language: str = "en",
     repair_context: RepairContext | None = None,
-) -> str:
+) -> str | dict[str, Any]:
     context = repair_context or RepairContext(language=language or "en")
     effective_plan = validate_schema(
         repair_plan if repair_plan is not None else build_repair_plan(validation, recovery_context=recovery_context),
@@ -55,7 +56,7 @@ def _repair_with_model(
     repair_plan: dict[str, Any],
     recovery_context: dict[str, Any] | None,
     repair_context: RepairContext,
-) -> str:
+) -> str | dict[str, Any]:
     repair_query = json.dumps(
         {
             "problem_codes": [str(item.get("code") or "") for item in validation.get("problems") or [] if isinstance(item, dict)],
@@ -71,6 +72,7 @@ def _repair_with_model(
     payload = json.dumps(
         {
             "chapter": chapter_text,
+            "base_chapter_sha256": sha256_text(chapter_text),
             "validation": _compact_validation(validation),
             "repair_plan": repair_plan,
             "recovery_context": recovery_context or {"available": False},
@@ -80,6 +82,20 @@ def _repair_with_model(
                 "known_conflict_hint": repair_context.known_conflict_hint,
             },
             "context_digest_and_excerpts": compact_context,
+            "response_contract": {
+                "preferred": "RepairPatch JSON",
+                "schema_version": "1.0",
+                "operation": "replace",
+                "model_required_hashes": [
+                    "base_chapter_sha256",
+                    "expected_text_sha256",
+                ],
+                "runtime_bound_hashes": [
+                    "output_chapter_sha256",
+                    "patch_sha256",
+                ],
+                "fallback": "complete replacement chapter prose",
+            },
         },
         ensure_ascii=False,
         indent=2,
@@ -100,6 +116,20 @@ def _repair_with_model(
         temperature=0.2,
         stage="scene_repair",
     )
+    stripped = str(output).strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            return coerce_repair_patch(
+                chapter_text,
+                stripped,
+                problem_codes=[
+                    str(item.get("code") or "")
+                    for item in validation.get("problems") or []
+                    if isinstance(item, dict)
+                ],
+            )
+        except ValueError:
+            pass
     return validate_text_output(output, REPAIR_CONTRACT)
 
 
@@ -189,6 +219,7 @@ def _compact_repair_context(
             "Project Profile",
             "Story State",
             "Spatial State",
+            "Authoritative State",
             "StoryProject Chapter Blueprint",
             "Requirements",
             "灏忚鐢熸垚瑙勫垯濂戠害",

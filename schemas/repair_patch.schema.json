@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepairPatch",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "base_chapter_sha256",
+    "output_chapter_sha256",
+    "patch_sha256",
+    "mode",
+    "operations"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "base_chapter_sha256": {"type": "string", "minLength": 64},
+    "output_chapter_sha256": {"type": "string", "minLength": 64},
+    "patch_sha256": {"type": "string", "minLength": 64},
+    "mode": {
+      "type": "string",
+      "enum": ["patch", "controlled_full_text_fallback", "stage_text_diff"]
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "operation",
+          "start_char",
+          "end_char",
+          "expected_text_sha256",
+          "replacement",
+          "problem_codes"
+        ],
+        "properties": {
+          "operation": {"type": "string", "enum": ["replace"]},
+          "start_char": {"type": "integer", "minimum": 0},
+          "end_char": {"type": "integer", "minimum": 0},
+          "expected_text_sha256": {"type": "string", "minLength": 64},
+          "replacement": {"type": "string"},
+          "problem_codes": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

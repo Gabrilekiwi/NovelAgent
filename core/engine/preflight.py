@@ -39,6 +39,7 @@ PROMPT_ASSETS = (
 SCHEMA_ASSETS = (
     Path("core/director/schema.json"),
     Path("schemas/analysis_result.schema.json"),
+    Path("schemas/repair_patch.schema.json"),
     Path("schemas/attempt_context.schema.json"),
     Path("schemas/autonomy_session_event.schema.json"),
     Path("schemas/autonomy_session_genesis.schema.json"),
