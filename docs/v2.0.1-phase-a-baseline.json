@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "phase": "A",
+  "baseline_version": "2.0",
+  "baseline_commit": "f3280656abdd95cc5cdcb64f409c306fb0e9867b",
+  "baseline_ref": "origin/feature",
+  "captured_at": "2026-07-24T13:23:16+08:00",
+  "existing_regression_subset": {
+    "command": "python -m pytest -p no:cacheprovider tests/test_chapter_pipeline.py tests/test_executor.py tests/test_quality_decision.py tests/test_story_project_writer.py tests/test_memory_v2_v22.py tests/test_review_repair_loop.py -q",
+    "result": "passed",
+    "tests_passed": 108,
+    "subtests_passed": 6,
+    "duration_seconds": 13.38
+  },
+  "direct_probes": [
+    {
+      "id": "duplicate_rescue_scene",
+      "current_behavior": "merge_scenes retained all three rescue versions and repetition_or_stalling returned pass",
+      "expected_behavior": "blocking duplicate_scene_event and near_duplicate_scene_text"
+    },
+    {
+      "id": "stale_scene_evidence",
+      "current_behavior": "_chapter_pipeline_after_repair changed merged_chapter while retaining old scene_drafts and scene_spans",
+      "expected_behavior": "blocking stale_scene_evidence"
+    }
+  ],
+  "known_gap_tests": {
+    "command": "python -m pytest -p no:cacheprovider tests/test_v201_regression_fixtures.py -q",
+    "result": "1 passed, 8 xfailed, 8 subtests passed in 0.26s",
+    "reason": "The fixtures encode desired 2.0.1 behavior; expected failures preserve the 2.0 baseline without treating gaps as passes."
+  }
+}

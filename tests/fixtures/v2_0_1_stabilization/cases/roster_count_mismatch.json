@@ -1,0 +1,71 @@
+{
+  "id": "roster_count_mismatch",
+  "base_state": {
+    "characters": {},
+    "relationships": {},
+    "roster": {
+      "main_survivor_group": {
+        "roster_id": "main_survivor_group",
+        "members": [
+          {"member_id": "survivor_001", "character_id": null, "descriptor": "成年男性一", "status": "active"},
+          {"member_id": "survivor_002", "character_id": null, "descriptor": "成年男性二", "status": "active"},
+          {"member_id": "survivor_003", "character_id": null, "descriptor": "成年女性一", "status": "active"},
+          {"member_id": "survivor_004", "character_id": null, "descriptor": "成年女性二", "status": "active"},
+          {"member_id": "survivor_005", "character_id": null, "descriptor": "老人", "status": "active"},
+          {"member_id": "survivor_006", "character_id": null, "descriptor": "男童", "status": "active"},
+          {"member_id": "survivor_007", "character_id": null, "descriptor": "女童", "status": "active"}
+        ],
+        "declared_count": 7,
+        "computed_count": 7
+      }
+    },
+    "numeric_counters": {},
+    "inventory": {},
+    "locations": {},
+    "events": {}
+  },
+  "state_delta": {
+    "character_changes": [],
+    "relationship_changes": [],
+    "roster_changes": [
+      {
+        "roster_id": "main_survivor_group",
+        "operation": "join",
+        "member_ids": [
+          "survivor_008",
+          "survivor_009",
+          "survivor_010",
+          "survivor_011",
+          "survivor_012"
+        ],
+        "members": [
+          {"member_id": "survivor_008", "character_id": null, "descriptor": "成年男性三", "status": "active"},
+          {"member_id": "survivor_009", "character_id": null, "descriptor": "成年女性三", "status": "active"},
+          {"member_id": "survivor_010", "character_id": null, "descriptor": "护士", "status": "active"},
+          {"member_id": "survivor_011", "character_id": null, "descriptor": "保安", "status": "active"}
+        ],
+        "delta": 5,
+        "declared_count": 11,
+        "reason_event_id": "chapter-002-scene-002-event-001"
+      }
+    ],
+    "numeric_changes": [],
+    "inventory_changes": [],
+    "location_changes": [],
+    "events": [
+      {
+        "event_id": "chapter-002-scene-002-event-001",
+        "type": "roster_join",
+        "status": "completed"
+      }
+    ]
+  },
+  "chapter_text": "原来的七人与新加入的五人汇合后，队伍现在共有十一人。",
+  "expected": {
+    "accepted": false,
+    "blocking": true,
+    "problem_codes": [
+      "roster_count_mismatch"
+    ]
+  }
+}

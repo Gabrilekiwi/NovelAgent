@@ -1,0 +1,72 @@
+{
+  "id": "character_identity_role_drift",
+  "base_state": {
+    "characters": {
+      "char_qian_ming": {
+        "character_id": "char_qian_ming",
+        "canonical_name": "钱明",
+        "aliases": ["王主管"],
+        "identity": "商场主管",
+        "status": "alive",
+        "current_location": "员工通道",
+        "active_motivations": ["营救妻子"]
+      },
+      "char_qian_ming_wife": {
+        "character_id": "char_qian_ming_wife",
+        "canonical_name": "周岚",
+        "aliases": [],
+        "identity": "钱明的妻子",
+        "status": "alive",
+        "current_location": "待救援区",
+        "active_motivations": []
+      }
+    },
+    "relationships": {
+      "rel_qian_ming_spouse": {
+        "relationship_id": "rel_qian_ming_spouse",
+        "source_character_id": "char_qian_ming",
+        "target_character_id": "char_qian_ming_wife",
+        "type": "spouse",
+        "status": "active",
+        "introduced_chapter": 1
+      }
+    },
+    "roster": {},
+    "numeric_counters": {},
+    "inventory": {},
+    "locations": {},
+    "events": {}
+  },
+  "state_delta": {
+    "character_changes": [
+      {
+        "character_id": "char_new_manager",
+        "canonical_name": "王主管",
+        "identity": "商场主管"
+      }
+    ],
+    "relationship_changes": [
+      {
+        "relationship_id": "rel_qian_ming_cousin",
+        "source_character_id": "char_qian_ming",
+        "target_character_id": "char_qian_ming_wife",
+        "type": "cousin",
+        "operation": "replace"
+      }
+    ],
+    "roster_changes": [],
+    "numeric_changes": [],
+    "inventory_changes": [],
+    "location_changes": [],
+    "events": []
+  },
+  "chapter_text": "王主管是刚刚加入队伍的另一个人。钱明坚持进入待救援区寻找自己的表妹周岚。",
+  "expected": {
+    "accepted": false,
+    "blocking": true,
+    "problem_codes": [
+      "character_identity_drift",
+      "character_relationship_drift"
+    ]
+  }
+}

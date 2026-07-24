@@ -1,0 +1,14 @@
+{
+  "id": "repair_append_original_and_revision",
+  "stage": "repair",
+  "source_text": "警报响起后，顾晨推开检修门。十二名幸存者在员工通道等待。他登记人员，命令队伍沿缓冲走廊撤离。缓冲门在他们身后关闭，远处又传来撞击声。",
+  "revision_text": "刺耳警报压过了通道里的呼吸声。顾晨撬开检修门，迅速清点十二名幸存者，随即让主队护送他们穿过缓冲走廊。最后一人越过门槛时，缓冲门轰然闭合，新的撞击从黑暗深处逼近。",
+  "output_template": "{source_text}\n\n{revision_text}",
+  "expected": {
+    "accepted": false,
+    "blocking": true,
+    "problem_codes": [
+      "repair_append_instead_of_replace"
+    ]
+  }
+}

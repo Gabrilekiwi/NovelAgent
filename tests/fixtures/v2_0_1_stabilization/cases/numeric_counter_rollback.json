@@ -1,0 +1,50 @@
+{
+  "id": "numeric_counter_rollback",
+  "base_state": {
+    "characters": {},
+    "relationships": {},
+    "roster": {},
+    "numeric_counters": {
+      "erosion": {
+        "counter_id": "erosion",
+        "owner_id": "char_protagonist",
+        "current_value": 7,
+        "minimum": 0,
+        "maximum": 100,
+        "rule": "monotonic_non_decreasing",
+        "last_updated_chapter": 1,
+        "last_event_id": "chapter-001-event-009"
+      }
+    },
+    "inventory": {},
+    "locations": {},
+    "events": {}
+  },
+  "state_delta": {
+    "character_changes": [],
+    "relationship_changes": [],
+    "roster_changes": [],
+    "numeric_changes": [
+      {
+        "counter_id": "erosion",
+        "previous_value": 7,
+        "delta": -5,
+        "expected_value": 2,
+        "declared_value": 2,
+        "reason": "",
+        "source_event_id": ""
+      }
+    ],
+    "inventory_changes": [],
+    "location_changes": [],
+    "events": []
+  },
+  "chapter_text": "能力面板上清楚写着：侵蚀值 2/100。",
+  "expected": {
+    "accepted": false,
+    "blocking": true,
+    "problem_codes": [
+      "numeric_counter_rollback"
+    ]
+  }
+}

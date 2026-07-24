@@ -1,0 +1,14 @@
+{
+  "id": "polish_append_original_and_revision",
+  "stage": "polish",
+  "source_text": "顾晨把药品分成三份，留下最少的一份应急。他确认钱明仍在队尾，然后带人进入员工通道。门外的脚步越来越近。",
+  "revision_text": "顾晨将药品仔细拆成三份，只把最少的那包留作应急。他回头确认钱明守在队尾，才领着众人钻进员工通道；门板之外，密集脚步正一层层逼近。",
+  "output_template": "{source_text}\n\n{revision_text}",
+  "expected": {
+    "accepted": false,
+    "blocking": true,
+    "problem_codes": [
+      "polish_append_instead_of_replace"
+    ]
+  }
+}

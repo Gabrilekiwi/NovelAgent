@@ -1,0 +1,10 @@
+{
+  "id": "legitimate_repetition_not_blocked",
+  "stage": "final_gate",
+  "artifact_text": "“顾晨？”钱明低声问。\n\n顾晨没有回答，只盯着员工通道尽头。警报又响了一次。\n\n“顾晨？”钱明再次问，这次声音更轻。\n\n他们仍在员工通道，门外脚步逼近。顾晨终于抬手，示意所有人保持安静。\n\n回忆里，那句“别开门”曾在旧广播中重复；此刻他清楚那只是过去的录音，不是新的命令。",
+  "expected": {
+    "accepted": true,
+    "blocking": false,
+    "problem_codes": []
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "stale_scene_evidence",
+  "final_text": "修复后的第一场景已经改变。\n\n修复后的第二场景也改变了。",
+  "scene_drafts": [
+    {
+      "index": 1,
+      "goal": "打开检修门",
+      "text": "旧的第一场景。"
+    },
+    {
+      "index": 2,
+      "goal": "转移幸存者",
+      "text": "旧的第二场景。"
+    }
+  ],
+  "scene_spans": [
+    {
+      "index": 1,
+      "start_char": 0,
+      "end_char": 8,
+      "chars": 8
+    },
+    {
+      "index": 2,
+      "start_char": 10,
+      "end_char": 18,
+      "chars": 8
+    }
+  ],
+  "expected": {
+    "accepted": false,
+    "blocking": true,
+    "problem_codes": [
+      "stale_scene_evidence"
+    ]
+  }
+}

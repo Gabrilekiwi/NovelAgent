@@ -1,0 +1,43 @@
+{
+  "id": "duplicate_rescue_scene",
+  "stage": "merge",
+  "scene_texts": [
+    "顾晨推开员工通道的检修门，发现十二名幸存者挤在配电柜旁。钱明的妻子抱着一个男孩，另外的人守着两个伤员。顾晨逐一登记身份，完成分诊，随后宣布这十二人正式接入主队，沿缓冲走廊向安全区转移。",
+    "队伍穿过缓冲走廊后，顾晨又在检修门后的员工通道找到同一批十二名被困者。钱明的爱人仍抱着那个男孩，两名伤员躺在配电柜边。他重新清点身份、完成分诊，再次把十二人编入主队并下令向安全区转移。",
+    "抵达安全区前，顾晨第三次发现那十二名幸存者，重新确认钱明的妻子、男孩和两名伤员。他再次登记众人、完成分诊，宣布同一批人加入队伍，然后启动向安全区的转移。"
+  ],
+  "scene_events": [
+    {
+      "event_id": "chapter-002-scene-001-event-001",
+      "type": "rescue_completed",
+      "subjects": ["char_gu_chen"],
+      "objects": ["survivor_group_a"],
+      "location": "员工通道",
+      "status": "completed"
+    },
+    {
+      "event_id": "chapter-002-scene-002-event-001",
+      "type": "rescue_completed",
+      "subjects": ["char_gu_chen"],
+      "objects": ["survivor_group_a"],
+      "location": "员工通道",
+      "status": "completed"
+    },
+    {
+      "event_id": "chapter-002-scene-003-event-001",
+      "type": "triage_completed",
+      "subjects": ["char_gu_chen"],
+      "objects": ["survivor_group_a"],
+      "location": "员工通道",
+      "status": "completed"
+    }
+  ],
+  "expected": {
+    "accepted": false,
+    "blocking": true,
+    "problem_codes": [
+      "duplicate_scene_event",
+      "near_duplicate_scene_text"
+    ]
+  }
+}

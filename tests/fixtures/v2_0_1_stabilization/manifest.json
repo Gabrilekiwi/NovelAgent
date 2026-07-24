@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "baseline_version": "2.0",
+  "cases": [
+    {
+      "id": "duplicate_rescue_scene",
+      "path": "cases/duplicate_rescue_scene.json",
+      "expected_accepted": false,
+      "expected_problem_codes": [
+        "duplicate_scene_event",
+        "near_duplicate_scene_text"
+      ]
+    },
+    {
+      "id": "character_identity_role_drift",
+      "path": "cases/character_identity_role_drift.json",
+      "expected_accepted": false,
+      "expected_problem_codes": [
+        "character_identity_drift",
+        "character_relationship_drift"
+      ]
+    },
+    {
+      "id": "numeric_counter_rollback",
+      "path": "cases/numeric_counter_rollback.json",
+      "expected_accepted": false,
+      "expected_problem_codes": [
+        "numeric_counter_rollback"
+      ]
+    },
+    {
+      "id": "roster_count_mismatch",
+      "path": "cases/roster_count_mismatch.json",
+      "expected_accepted": false,
+      "expected_problem_codes": [
+        "roster_count_mismatch"
+      ]
+    },
+    {
+      "id": "repair_append_original_and_revision",
+      "path": "cases/repair_append_original_and_revision.json",
+      "expected_accepted": false,
+      "expected_problem_codes": [
+        "repair_append_instead_of_replace"
+      ]
+    },
+    {
+      "id": "polish_append_original_and_revision",
+      "path": "cases/polish_append_original_and_revision.json",
+      "expected_accepted": false,
+      "expected_problem_codes": [
+        "polish_append_instead_of_replace"
+      ]
+    },
+    {
+      "id": "stale_scene_evidence",
+      "path": "cases/stale_scene_evidence.json",
+      "expected_accepted": false,
+      "expected_problem_codes": [
+        "stale_scene_evidence"
+      ]
+    },
+    {
+      "id": "legitimate_repetition_not_blocked",
+      "path": "cases/legitimate_repetition_not_blocked.json",
+      "expected_accepted": true,
+      "expected_problem_codes": []
+    }
+  ]
+}
