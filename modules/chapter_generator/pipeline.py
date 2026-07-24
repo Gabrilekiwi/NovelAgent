@@ -9,6 +9,10 @@ from api.contracts import CHAPTER_CONTRACT, validate_language_output, validate_t
 from api.openai_client import chat_completion
 from core.context_budget import default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
+from core.quality.final_artifact_integrity import (
+    FinalArtifactIntegrityGate,
+    build_integrity_stage_record,
+)
 from core.schema import validate_schema
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_text_blocks
@@ -71,6 +75,19 @@ def run_chapter_pipeline(
     )
     merged, scene_spans = _merge_scene_texts(scenes)
     merged = validate_language_output(merged, CHAPTER_CONTRACT, language=language)
+    scene_events = [
+        event
+        for scene in scenes
+        for event in (scene.get("events") or [])
+        if isinstance(event, dict)
+    ]
+    merge_integrity = FinalArtifactIntegrityGate().evaluate(
+        artifact_text=merged,
+        stage="merge",
+        scene_events=scene_events,
+        scene_drafts=scenes,
+        scene_spans=scene_spans,
+    )
     blueprint_coverage = build_blueprint_coverage(blueprint, scenes, merged) if blueprint is not None else None
     return validate_schema(
         {
@@ -81,6 +98,15 @@ def run_chapter_pipeline(
             "scene_drafts": scenes,
             "merged_chapter": merged,
             "scene_spans": scene_spans,
+            "integrity": {"merge": merge_integrity},
+            "integrity_records": [
+                build_integrity_stage_record(
+                    stage="merge",
+                    input_text=None,
+                    output_text=merged,
+                    report=merge_integrity,
+                )
+            ],
             "blueprint_coverage": blueprint_coverage,
             "context_budget": {
                 "context_digest": prompt_contexts.context_digest,

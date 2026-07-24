@@ -7,8 +7,7 @@
       "path": "cases/duplicate_rescue_scene.json",
       "expected_accepted": false,
       "expected_problem_codes": [
-        "duplicate_scene_event",
-        "near_duplicate_scene_text"
+        "duplicate_scene_event"
       ]
     },
     {

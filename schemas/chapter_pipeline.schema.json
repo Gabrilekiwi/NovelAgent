@@ -60,6 +60,16 @@
     "context_budget": {
       "type": "object"
     },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "integrity_records": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "plan": {
       "type": "object",
       "required": ["goal", "scenes"],

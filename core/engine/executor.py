@@ -31,6 +31,13 @@ from core.delivery_intents import (
 )
 from core.director import decide_next_step, validate_decision
 from core.project_profile import project_language
+from core.quality.final_artifact_integrity import (
+    FinalArtifactIntegrityConfig,
+    FinalArtifactIntegrityGate,
+    build_integrity_stage_record,
+    merge_integrity_reports_for_artifact,
+    merge_integrity_report_into_validation,
+)
 from core.quality_decision import (
     QualityPolicy,
     resolve_quality_policy,
@@ -188,6 +195,7 @@ class AgentExecutor:
         story_project_oh_story_report: dict[str, Any] | None = None,
         story_project_writeback: StoryProjectWritebackConfig | None = None,
         quality_policy: str | QualityPolicy | None = None,
+        final_artifact_integrity_config: FinalArtifactIntegrityConfig | None = None,
         repository_root: str | Path | None = None,
         enable_execution_provenance: bool = True,
         run_budget_limits: RunBudgetLimits | None = None,
@@ -226,6 +234,9 @@ class AgentExecutor:
         self.story_project_oh_story_report = story_project_oh_story_report
         self.story_project_writeback = story_project_writeback or StoryProjectWritebackConfig()
         self.quality_policy = resolve_quality_policy(quality_policy) if quality_policy is not None else None
+        self.final_artifact_integrity_gate = FinalArtifactIntegrityGate(
+            final_artifact_integrity_config
+        )
         self.repository_root = (
             Path(repository_root)
             if repository_root is not None
@@ -656,7 +667,14 @@ class AgentExecutor:
         )
         recovery_context = build_recovery_context(memory_context)
         try:
-            chapter, validation, repair_attempts, workflow_trace, chapter_pipeline = self._execute_workflow(
+            (
+                chapter,
+                validation,
+                repair_attempts,
+                workflow_trace,
+                chapter_pipeline,
+                workflow_integrity_reports,
+            ) = self._execute_workflow(
                 workflow=workflow,
                 workflow_plan=workflow_plan,
                 snapshot=snapshot,
@@ -758,6 +776,43 @@ class AgentExecutor:
                 base_quality_decision=quality_decision,
             )
         )
+        if self.story_project_writeback.enabled:
+            chapter = _canonical_story_project_prose(chapter)
+            if isinstance(chapter_pipeline, dict):
+                chapter_pipeline["merged_chapter"] = chapter
+        final_artifact_report = self.final_artifact_integrity_gate.evaluate(
+            artifact_text=chapter,
+            stage="final_gate",
+        )
+        pipeline_integrity = (
+            (chapter_pipeline.get("integrity") or {}).values()
+            if isinstance(chapter_pipeline, dict)
+            and isinstance(chapter_pipeline.get("integrity"), dict)
+            else ()
+        )
+        final_artifact_report = merge_integrity_reports_for_artifact(
+            final_artifact_report,
+            [*workflow_integrity_reports.values(), *pipeline_integrity],
+        )
+        _append_pipeline_integrity(
+            chapter_pipeline,
+            stage="final_gate",
+            input_text=None,
+            output_text=chapter,
+            report=final_artifact_report,
+        )
+        validation = merge_integrity_report_into_validation(validation, final_artifact_report)
+        quality_decision = self.quality_coordinator.decide(
+            policy=quality_policy,
+            validation=validation,
+            review=review_pipeline,
+            chapter_index=int(decision["chapter_index"]),
+        )
+        accepted = bool(quality_decision["accepted"]) and _review_gate_allows_commit(review_gate)
+        if isinstance(review_repair, dict):
+            review_repair["final_validation"] = validation
+            review_repair["final_quality_decision"] = quality_decision
+            review_repair["accepted"] = accepted
         committed = bool(accepted and persist)
         try:
             analysis = (
@@ -874,6 +929,7 @@ class AgentExecutor:
             state_update_audit=state_update_audit,
             chapter_pipeline=chapter_pipeline,
             quality_decision=quality_decision,
+            final_artifact=final_artifact_report,
             accepted=accepted,
             status="preview" if accepted and not persist else None,
         )
@@ -1187,6 +1243,58 @@ class AgentExecutor:
             return self.polisher(chapter)
         return polish_chapter(chapter, dry_run=self.dry_run)
 
+    def _record_integrity_transition(
+        self,
+        state: dict[str, Any],
+        *,
+        stage: str,
+        input_text: str | None,
+        output_text: str,
+        expected_artifact_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        report = self.final_artifact_integrity_gate.evaluate(
+            artifact_text=output_text,
+            stage=stage,
+            source_text=input_text if stage in {"polish", "repair"} else None,
+            expected_artifact_sha256=expected_artifact_sha256,
+        )
+        state.setdefault("integrity_reports", {})[stage] = report
+        state["active_integrity_report"] = report
+        state.setdefault("integrity_records", []).append(
+            build_integrity_stage_record(
+                stage=stage,
+                input_text=input_text,
+                output_text=output_text,
+                report=report,
+            )
+        )
+        _append_pipeline_integrity(
+            state.get("chapter_pipeline"),
+            stage=stage,
+            input_text=input_text,
+            output_text=output_text,
+            report=report,
+        )
+        return report
+
+    def _require_merge_integrity(self, state: dict[str, Any]) -> None:
+        pipeline = state.get("chapter_pipeline")
+        report = (
+            (pipeline.get("integrity") or {}).get("merge")
+            if isinstance(pipeline, dict)
+            else None
+        )
+        if not isinstance(report, dict):
+            report = self._record_integrity_transition(
+                state,
+                stage="merge",
+                input_text=None,
+                output_text=_require_chapter(state),
+            )
+        else:
+            state.setdefault("integrity_reports", {})["merge"] = report
+            state["active_integrity_report"] = report
+
     def _repair(
         self,
         chapter: str,
@@ -1228,7 +1336,14 @@ class AgentExecutor:
         decision: dict[str, Any],
         input_pack: str,
         recovery_context: dict[str, Any],
-    ) -> tuple[str, dict[str, Any], int, list[dict[str, Any]], dict[str, Any] | None]:
+    ) -> tuple[
+        str,
+        dict[str, Any],
+        int,
+        list[dict[str, Any]],
+        dict[str, Any] | None,
+        dict[str, dict[str, Any]],
+    ]:
         chapter_index = int(decision.get("chapter_index") or 1)
         locked_checkpoint = self._locked_chapter_checkpoint(chapter_index)
         complete_draft = (
@@ -1363,7 +1478,14 @@ class AgentExecutor:
                 )
             )
 
-        return state["chapter"], state["validation"], state["repair_attempts"], trace, state.get("chapter_pipeline")
+        return (
+            state["chapter"],
+            state["validation"],
+            state["repair_attempts"],
+            trace,
+            state.get("chapter_pipeline"),
+            dict(state.get("integrity_reports") or {}),
+        )
 
     def _handle_generate(self, state: dict[str, Any], input_pack: str, snapshot: dict[str, Any]) -> None:
         if state.get("locked_chapter_action") == "repair_draft" and state.get("chapter"):
@@ -1410,6 +1532,7 @@ class AgentExecutor:
             state["chapter"] = str(generated["chapter"])
             state["chapter_pipeline"] = generated.get("pipeline")
             state["validation"] = None
+            self._require_merge_integrity(state)
             return
         if self.generator:
             state["chapter"] = self._generate(input_pack)
@@ -1427,6 +1550,7 @@ class AgentExecutor:
             state["chapter"] = str(pipeline["merged_chapter"])
             state["chapter_pipeline"] = pipeline
         state["validation"] = None
+        self._require_merge_integrity(state)
 
     def _handle_build_snapshot(self, state: dict[str, Any]) -> None:
         state["snapshot_ready"] = True
@@ -1453,14 +1577,21 @@ class AgentExecutor:
             state["validation"] = None
             return
         if self.autonomy_run_context is not None:
-            state["chapter"] = self._execute_autonomy_stage(
+            polished = self._execute_autonomy_stage(
                 stage="polish",
                 input_value={"chapter_sha256": hashlib.sha256(chapter.encode("utf-8")).hexdigest()},
                 operation=lambda: self._polish(chapter),
                 default_model=not self.dry_run,
             )
         else:
-            state["chapter"] = self._polish(chapter)
+            polished = self._polish(chapter)
+        state["chapter"] = str(polished)
+        self._record_integrity_transition(
+            state,
+            stage="polish",
+            input_text=chapter,
+            output_text=state["chapter"],
+        )
         state["validation"] = None
 
     def _handle_validate(
@@ -1507,6 +1638,16 @@ class AgentExecutor:
             )
         else:
             state["validation"] = run_validation()
+        active_integrity = state.get("active_integrity_report")
+        if (
+            isinstance(active_integrity, dict)
+            and active_integrity.get("artifact_sha256")
+            == hashlib.sha256(chapter.encode("utf-8")).hexdigest()
+        ):
+            state["validation"] = merge_integrity_report_into_validation(
+                state["validation"],
+                active_integrity,
+            )
         self._record_repair_validation(state)
 
     def _handle_repair_if_needed(
@@ -1556,7 +1697,7 @@ class AgentExecutor:
                 _repair_context_for_snapshot(snapshot),
             )
             if self.autonomy_run_context is not None:
-                state["chapter"] = self._execute_autonomy_stage(
+                repaired = self._execute_autonomy_stage(
                     stage="repair",
                     input_value={
                         "chapter_sha256": hashlib.sha256(
@@ -1569,7 +1710,14 @@ class AgentExecutor:
                     default_model=not self.dry_run,
                 )
             else:
-                state["chapter"] = repair_operation()
+                repaired = repair_operation()
+            state["chapter"] = str(repaired)
+            self._record_integrity_transition(
+                state,
+                stage="repair",
+                input_text=before_chapter,
+                output_text=state["chapter"],
+            )
             state["pending_revalidation"] = _focused_revalidation_context(
                 before_chapter=before_chapter,
                 after_chapter=state["chapter"],
@@ -1888,7 +2036,7 @@ class AgentExecutor:
         def repair(current_chapter: str, current_validation: dict[str, Any], repair_plan: dict[str, Any]) -> str:
             reset_retry_telemetry()
             try:
-                return self._repair(
+                repaired = self._repair(
                     current_chapter,
                     current_validation,
                     input_pack,
@@ -1897,6 +2045,21 @@ class AgentExecutor:
                     project_language(snapshot),
                     _repair_context_for_snapshot(snapshot),
                 )
+                repaired_text = str(repaired)
+                report = self.final_artifact_integrity_gate.evaluate(
+                    artifact_text=repaired_text,
+                    stage="repair",
+                    source_text=current_chapter,
+                )
+                _append_pipeline_integrity(
+                    chapter_pipeline,
+                    stage="repair",
+                    input_text=current_chapter,
+                    output_text=repaired_text,
+                    report=report,
+                )
+                self.final_artifact_integrity_gate.require_accepted(report)
+                return repaired_text
             finally:
                 review_provider_attempts.extend(consume_retry_telemetry())
 
@@ -4245,6 +4408,41 @@ def _trace_repair_deltas(workflow_trace: list[dict[str, Any]]) -> list[dict[str,
             continue
         deltas.extend(delta for delta in raw_deltas if isinstance(delta, dict))
     return deltas
+
+
+def _canonical_story_project_prose(chapter: str) -> str:
+    return str(chapter).rstrip() + "\n"
+
+
+def _append_pipeline_integrity(
+    chapter_pipeline: dict[str, Any] | None,
+    *,
+    stage: str,
+    input_text: str | None,
+    output_text: str,
+    report: dict[str, Any],
+) -> None:
+    if not isinstance(chapter_pipeline, dict):
+        return
+    integrity = chapter_pipeline.setdefault("integrity", {})
+    if not isinstance(integrity, dict):
+        integrity = {}
+        chapter_pipeline["integrity"] = integrity
+    integrity[str(stage)] = report
+    records = chapter_pipeline.setdefault("integrity_records", [])
+    if not isinstance(records, list):
+        records = []
+        chapter_pipeline["integrity_records"] = records
+    records.append(
+        build_integrity_stage_record(
+            stage=stage,
+            input_text=input_text,
+            output_text=output_text,
+            report=report,
+        )
+    )
+    if stage in {"polish", "repair", "final_gate"}:
+        chapter_pipeline["merged_chapter"] = output_text
 
 
 def _finalize_chapter_pipeline(

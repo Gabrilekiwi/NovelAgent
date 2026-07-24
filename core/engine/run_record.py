@@ -134,6 +134,7 @@ def build_run_record(
     state_update_audit: dict[str, Any] | None = None,
     chapter_pipeline: dict[str, Any] | None = None,
     quality_decision: dict[str, Any] | None = None,
+    final_artifact: dict[str, Any] | None = None,
     accepted: bool | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
@@ -176,7 +177,7 @@ def build_run_record(
         "workflow": workflow,
         "workflow_plan": _workflow_plan_summary(workflow_plan),
         "input_pack": _input_pack_summary(input_pack, input_pack_metadata),
-        "chapter": _chapter_summary(chapter, chapter_pipeline),
+        "chapter": _chapter_summary(chapter, chapter_pipeline, final_artifact=final_artifact),
         "validation": {
             "ok": bool(validation.get("ok")),
             "problem_codes": [problem.get("code") for problem in problems],
@@ -509,10 +510,20 @@ def _input_pack_summary(input_pack: str, input_pack_metadata: dict[str, Any] | N
     return summary
 
 
-def _chapter_summary(chapter: str, chapter_pipeline: dict[str, Any] | None = None) -> dict[str, Any]:
+def _chapter_summary(
+    chapter: str,
+    chapter_pipeline: dict[str, Any] | None = None,
+    *,
+    final_artifact: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     summary = {
         "chars": len(chapter),
     }
+    if isinstance(final_artifact, dict):
+        summary["final_artifact"] = validate_schema(
+            final_artifact,
+            "final_artifact_integrity.schema.json",
+        )
     if chapter_pipeline is not None:
         summary["pipeline"] = _chapter_pipeline_summary(chapter_pipeline)
     return summary
@@ -528,6 +539,13 @@ def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any
         "scene_spans": pipeline.get("scene_spans", []),
         "stages": pipeline.get("stages", []),
     }
+    if pipeline.get("integrity") is not None:
+        summary["integrity"] = pipeline.get("integrity")
+    if pipeline.get("integrity_records") is not None:
+        summary["integrity_records"] = pipeline.get("integrity_records")
+    final_artifact = (pipeline.get("integrity") or {}).get("final_gate")
+    if isinstance(final_artifact, dict):
+        summary["final_artifact"] = final_artifact
     if pipeline.get("chapter_blueprint") is not None:
         summary["chapter_blueprint"] = pipeline.get("chapter_blueprint")
     if pipeline.get("blueprint_coverage") is not None:

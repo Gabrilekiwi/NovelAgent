@@ -212,6 +212,19 @@ def prepare_chapter_pipeline_artifacts(
         json.dumps(repair_deltas or [], ensure_ascii=False, indent=2),
         "json",
     )
+    integrity_artifact = _append_prepared_artifact(
+        targets,
+        path / f"integrity_{chapter_index:04d}_{run_id}.json",
+        json.dumps(
+            {
+                "reports": pipeline.get("integrity") or {},
+                "records": pipeline.get("integrity_records") or [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        "json",
+    )
     return {
         "metadata": {
             "plan": plan_artifact,
@@ -219,6 +232,7 @@ def prepare_chapter_pipeline_artifacts(
             "merged_chapter": merged_artifact,
             "validation_report": validation_artifact,
             "repair_deltas": repair_artifact,
+            "integrity": integrity_artifact,
         },
         "targets": targets,
     }

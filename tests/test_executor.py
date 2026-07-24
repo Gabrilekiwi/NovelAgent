@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 import uuid
@@ -806,7 +807,14 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual([], coverage["missing_beat_indexes"])
         self.assertTrue(coverage["ending_pressure_covered"])
         prose = canonical_prose_path(book, 2, "Audit")
-        self.assertEqual(chapter + "\n", prose.read_text(encoding="utf-8"))
+        expected_bytes = (chapter + "\n").encode("utf-8")
+        self.assertEqual(expected_bytes, prose.read_bytes())
+        final_artifact = result["run"]["chapter"]["final_artifact"]
+        self.assertTrue(final_artifact["accepted"])
+        self.assertEqual(hashlib.sha256(expected_bytes).hexdigest(), final_artifact["artifact_sha256"])
+        writeback = result["run"]["story_project"]["writeback"]
+        self.assertEqual(final_artifact["artifact_sha256"], writeback["final_artifact_sha256"])
+        self.assertEqual(final_artifact["artifact_sha256"], writeback["writeback_artifact_sha256"])
 
     def test_story_project_snapshot_identity_mismatch_fails_before_provider(self) -> None:
         tmp_path = self._case_dir("story_project_identity_mismatch")
@@ -1700,6 +1708,50 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertTrue(repair_trace["skipped"])
         self.assertEqual("max_repair_attempts_exhausted", repair_trace["skip_reason"])
         self.assertFalse(result["committed"])
+
+    def test_polish_append_is_rejected_through_quality_decision(self) -> None:
+        tmp_path = self._case_dir("polish_append_integrity")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        source = "The crew crossed the gate under pressure. " * 4
+        appended = source + "\n\n" + ("A rewritten version follows with different wording. " * 4)
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "reject_appended_revision",
+                "actions": ["generate_chapter", "polish", "validate", "repair_if_needed"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 0,
+                "notes": [],
+            }
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            dry_run=True,
+            director=director,
+            generator=lambda _input_pack: source,
+            polisher=lambda _chapter: appended,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+        ).run_once(persist=False)
+
+        codes = {
+            code
+            for finding in result["quality_decision"]["findings"]
+            for code in finding["codes"]
+        }
+        self.assertFalse(result["accepted"])
+        self.assertIn("polish_append_instead_of_replace", codes)
+        self.assertFalse(result["run"]["chapter"]["final_artifact"]["accepted"])
+        self.assertIn(
+            "polish_append_instead_of_replace",
+            {
+                finding["code"]
+                for finding in result["run"]["chapter"]["final_artifact"]["findings"]
+            },
+        )
 
     def test_director_actions_skip_polish_handler(self) -> None:
         tmp_path = self._case_dir("skip_polish")

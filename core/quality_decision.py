@@ -27,7 +27,7 @@ class QualityPolicy:
     llm_validator_required: bool
 
     def to_dict(self) -> dict[str, Any]:
-        producers = ["base_validation", "blueprint_coverage"]
+        producers = ["base_validation", "blueprint_coverage", "final_artifact_integrity"]
         if self.include_review:
             producers.extend(["deterministic_review", "narrative_rules"])
         if self.llm_validator_required:
@@ -110,6 +110,8 @@ def build_quality_decision(
         executed_producers.add("base_validation")
         if "story_project" in coverage["executed_checks"]:
             executed_producers.add("blueprint_coverage")
+        if "final_artifact_integrity" in coverage["executed_checks"]:
+            executed_producers.add("final_artifact_integrity")
         if "llm" in coverage["executed_checks"]:
             executed_producers.add("llm_validator")
         candidates.extend(_validation_candidates(validation, chapter_index=chapter_index))
@@ -259,6 +261,8 @@ def _validation_candidates(validation: dict[str, Any], *, chapter_index: int | N
         producer = (
             "blueprint_coverage"
             if validator == "story_project" or code.startswith("missing_required_beat") or code == "missing_ending_pressure"
+            else "final_artifact_integrity"
+            if validator == "final_artifact_integrity"
             else "llm_validator"
             if validator == "llm"
             else "base_validation"

@@ -40,7 +40,6 @@ class V201FixtureContractTests(unittest.TestCase):
 
 
 class V20KnownGapRegressionTests(unittest.TestCase):
-    @unittest.expectedFailure
     def test_duplicate_rescue_scene_is_blocked(self) -> None:
         from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
 
@@ -92,7 +91,6 @@ class V20KnownGapRegressionTests(unittest.TestCase):
         self.assertFalse(report["accepted"])
         self.assertIn("roster_count_mismatch", _problem_codes(report))
 
-    @unittest.expectedFailure
     def test_repair_append_original_and_revision_is_blocked(self) -> None:
         from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
 
@@ -106,7 +104,6 @@ class V20KnownGapRegressionTests(unittest.TestCase):
         self.assertFalse(report["accepted"])
         self.assertIn("repair_append_instead_of_replace", _problem_codes(report))
 
-    @unittest.expectedFailure
     def test_polish_append_original_and_revision_is_blocked(self) -> None:
         from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
 
@@ -120,7 +117,6 @@ class V20KnownGapRegressionTests(unittest.TestCase):
         self.assertFalse(report["accepted"])
         self.assertIn("polish_append_instead_of_replace", _problem_codes(report))
 
-    @unittest.expectedFailure
     def test_stale_scene_evidence_is_blocked(self) -> None:
         from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
 
@@ -134,7 +130,6 @@ class V20KnownGapRegressionTests(unittest.TestCase):
         self.assertFalse(report["accepted"])
         self.assertIn("stale_scene_evidence", _problem_codes(report))
 
-    @unittest.expectedFailure
     def test_legitimate_short_repetition_is_not_blocked(self) -> None:
         from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
 

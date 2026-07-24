@@ -10,6 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.quality.final_artifact_integrity import (
+    FinalArtifactIntegrityConfig,
+    FinalArtifactIntegrityGate,
+)
 from core.story_project.model import CORE_DIRECTORY_NAMES
 from core.story_project.paths import PROSE_DIR_NAME, UNTITLED_CHAPTER, canonical_prose_path, resolve_prose
 from core.story_project.managed_block import (
@@ -87,6 +91,9 @@ class StoryProjectWritebackPlan:
     story_state_mode: str = "compatible"
     project_identity: dict[str, Any] | None = None
     semantic_state: dict[str, Any] | None = None
+    final_artifact_sha256: str | None = None
+    writeback_artifact_sha256: str | None = None
+    integrity: dict[str, Any] | None = None
 
     @property
     def blocked(self) -> bool:
@@ -104,6 +111,9 @@ class StoryProjectWritebackPlan:
             "blocked_reasons": list(self.blocked_reasons),
             "errors": list(self.errors),
             "story_state_mode": self.story_state_mode,
+            "final_artifact_sha256": self.final_artifact_sha256,
+            "writeback_artifact_sha256": self.writeback_artifact_sha256,
+            "integrity": self.integrity,
         }
 
 
@@ -121,6 +131,9 @@ class StoryProjectWritebackResult:
     diff_summary: dict[str, Any] = field(default_factory=dict)
     artifacts: dict[str, Any] = field(default_factory=dict)
     transaction: dict[str, Any] = field(default_factory=dict)
+    final_artifact_sha256: str | None = None
+    writeback_artifact_sha256: str | None = None
+    integrity: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -136,6 +149,9 @@ class StoryProjectWritebackResult:
             "diff_summary": dict(self.diff_summary),
             "artifacts": dict(self.artifacts),
             "transaction": dict(self.transaction),
+            "final_artifact_sha256": self.final_artifact_sha256,
+            "writeback_artifact_sha256": self.writeback_artifact_sha256,
+            "integrity": self.integrity,
         }
 
 
@@ -163,6 +179,9 @@ def default_story_project_writeback() -> dict[str, Any]:
         "diff_summary": _diff_summary([]),
         "artifacts": {},
         "transaction": {},
+        "final_artifact_sha256": None,
+        "writeback_artifact_sha256": None,
+        "integrity": None,
     }
 
 
@@ -531,6 +550,41 @@ def _apply_gate(
         _block(plan, "chapter_text_empty", "Chapter text is empty.")
     if not isinstance((context or {}).get("chapter_blueprint"), dict):
         _block(plan, "chapter_blueprint_missing", "StoryProject chapter blueprint is missing.")
+    canonical_text = _canonical_prose(chapter_text)
+    accepted_artifact = _accepted_final_artifact(run)
+    expected_sha256 = (
+        str(accepted_artifact.get("artifact_sha256"))
+        if isinstance(accepted_artifact, dict) and accepted_artifact.get("artifact_sha256")
+        else None
+    )
+    plan.final_artifact_sha256 = expected_sha256
+    plan.writeback_artifact_sha256 = hashlib.sha256(canonical_text.encode("utf-8")).hexdigest()
+    integrity_config = (
+        FinalArtifactIntegrityConfig(**accepted_artifact["config"])
+        if isinstance(accepted_artifact, dict)
+        and isinstance(accepted_artifact.get("config"), dict)
+        else None
+    )
+    plan.integrity = FinalArtifactIntegrityGate(integrity_config).evaluate(
+        artifact_text=canonical_text,
+        stage="writeback",
+        expected_artifact_sha256=expected_sha256,
+    )
+    if _requires_final_artifact_binding(run) and expected_sha256 is None:
+        _block(
+            plan,
+            "final_artifact_gate_missing",
+            "Standard and strict StoryProject writeback require an accepted final artifact binding.",
+        )
+    if isinstance(accepted_artifact, dict) and not accepted_artifact.get("accepted"):
+        _block(
+            plan,
+            "final_artifact_not_accepted",
+            "The run's final artifact gate did not accept the chapter.",
+        )
+    for finding in plan.integrity.get("findings") or []:
+        if finding.get("blocking"):
+            _block(plan, str(finding["code"]), str(finding["message"]))
     if (context or {}).get("story_state_mode") == "strict":
         identity = (context or {}).get("project_identity")
         if not isinstance(identity, dict) or identity.get("story_state_mode") != "strict" or identity.get("ephemeral"):
@@ -549,11 +603,11 @@ def _apply_gate(
 
 def _write_target(target: StoryProjectWriteTarget, content: str) -> None:
     before = target.path.read_text(encoding="utf-8") if target.path.exists() else ""
-    _atomic_write_text(target.path, content.rstrip() + "\n")
+    _atomic_write_text(target.path, _canonical_prose(content))
     target.existed = bool(before)
     target.chars_before = len(before)
-    target.chars_after = len(content.rstrip() + "\n")
-    target.changed = before != content.rstrip() + "\n"
+    target.chars_after = len(_canonical_prose(content))
+    target.changed = before != _canonical_prose(content)
     target.status = "updated" if before else "created"
 
 
@@ -784,6 +838,26 @@ def _blueprint_coverage(run: dict[str, Any]) -> dict[str, Any] | None:
     return coverage if isinstance(coverage, dict) else None
 
 
+def _canonical_prose(chapter_text: str) -> str:
+    return str(chapter_text).rstrip() + "\n"
+
+
+def _accepted_final_artifact(run: dict[str, Any]) -> dict[str, Any] | None:
+    chapter = run.get("chapter") if isinstance(run.get("chapter"), dict) else {}
+    direct = chapter.get("final_artifact") if isinstance(chapter, dict) else None
+    if isinstance(direct, dict):
+        return direct
+    pipeline = chapter.get("pipeline") if isinstance(chapter.get("pipeline"), dict) else {}
+    nested = pipeline.get("final_artifact") if isinstance(pipeline, dict) else None
+    return nested if isinstance(nested, dict) else None
+
+
+def _requires_final_artifact_binding(run: dict[str, Any]) -> bool:
+    quality = run.get("quality_decision") if isinstance(run.get("quality_decision"), dict) else {}
+    policy = quality.get("policy") if isinstance(quality.get("policy"), dict) else {}
+    return str(policy.get("name") or "") in {"standard", "strict"}
+
+
 def _read_text_len(path: Path) -> int:
     if not path.exists() or not path.is_file():
         return 0
@@ -814,6 +888,9 @@ def _result(
         errors=list(plan.errors),
         failed_targets=[],
         diff_summary=_diff_summary(targets),
+        final_artifact_sha256=plan.final_artifact_sha256,
+        writeback_artifact_sha256=plan.writeback_artifact_sha256,
+        integrity=plan.integrity,
     )
 
 

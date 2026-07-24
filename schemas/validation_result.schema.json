@@ -40,7 +40,8 @@
             "spatial",
             "logic",
             "story_project",
-            "llm"
+            "llm",
+            "final_artifact_integrity"
           ]
       }
     },

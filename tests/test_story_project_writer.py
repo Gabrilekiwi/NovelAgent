@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 import uuid
 from pathlib import Path
@@ -13,6 +14,7 @@ from core.story_project.writer import (
     StoryProjectWritebackConfig,
     run_story_project_writeback,
 )
+from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
 from core.story_project.managed_block import parse_managed_block
 
 
@@ -325,6 +327,74 @@ class StoryProjectWriterTest(unittest.TestCase):
         self.assertIn("run_not_committed", payload["blocked_reasons"])
         self.assertEqual([], list((root / PROSE_DIR_NAME).iterdir()))
         self.assertEqual([], list((root / TRACKING_DIR_NAME).iterdir()))
+
+    def test_standard_writeback_requires_final_gate_binding(self) -> None:
+        root = self._story_project_root("binding_required")
+        run = self._run()
+        run["quality_decision"] = {"policy": {"name": "standard"}}
+
+        _plan, result = run_story_project_writeback(
+            context=self._context(root),
+            run=run,
+            chapter_text="# Chapter\n\ntext",
+            validation={"ok": True},
+            analysis={},
+            config=StoryProjectWritebackConfig(mode="apply"),
+        )
+
+        self.assertFalse(result.applied)
+        self.assertIn("final_artifact_gate_missing", result.blocked_reasons)
+        self.assertEqual([], list((root / PROSE_DIR_NAME).iterdir()))
+
+    def test_writeback_bytes_must_match_final_gate_hash(self) -> None:
+        root = self._story_project_root("binding_mismatch")
+        accepted_text = "# Chapter\n\nThe accepted ending holds.\n"
+        run = self._run()
+        run["quality_decision"] = {"policy": {"name": "standard"}}
+        run["chapter"]["final_artifact"] = FinalArtifactIntegrityGate().evaluate(
+            artifact_text=accepted_text,
+            stage="final_gate",
+        )
+
+        _plan, result = run_story_project_writeback(
+            context=self._context(root),
+            run=run,
+            chapter_text="# Chapter\n\nA different ending was substituted.",
+            validation={"ok": True},
+            analysis={},
+            config=StoryProjectWritebackConfig(mode="apply"),
+        )
+
+        self.assertFalse(result.applied)
+        self.assertIn("final_artifact_hash_mismatch", result.blocked_reasons)
+        self.assertEqual([], list((root / PROSE_DIR_NAME).iterdir()))
+
+    def test_writeback_persists_exact_final_gate_bytes(self) -> None:
+        root = self._story_project_root("binding_exact")
+        chapter = "# Chapter\n\nThe accepted ending holds."
+        canonical = chapter + "\n"
+        expected_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        run = self._run()
+        run["quality_decision"] = {"policy": {"name": "standard"}}
+        run["chapter"]["final_artifact"] = FinalArtifactIntegrityGate().evaluate(
+            artifact_text=canonical,
+            stage="final_gate",
+        )
+
+        _plan, result = run_story_project_writeback(
+            context=self._context(root),
+            run=run,
+            chapter_text=chapter,
+            validation={"ok": True},
+            analysis={},
+            config=StoryProjectWritebackConfig(mode="apply"),
+        )
+
+        prose = next(target.path for target in result.targets if target.kind == "prose")
+        self.assertTrue(result.applied)
+        self.assertEqual(canonical.encode("utf-8"), prose.read_bytes())
+        self.assertEqual(expected_hash, result.final_artifact_sha256)
+        self.assertEqual(expected_hash, result.writeback_artifact_sha256)
 
 
 if __name__ == "__main__":

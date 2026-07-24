@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FinalArtifactIntegrityReport",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "gate_version",
+    "stage",
+    "artifact_sha256",
+    "artifact_chars",
+    "artifact_bytes",
+    "accepted",
+    "findings",
+    "metrics",
+    "config",
+    "timestamp"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "gate_version": {"type": "string", "minLength": 1},
+    "stage": {"type": "string", "minLength": 1},
+    "artifact_sha256": {"type": "string", "minLength": 64},
+    "artifact_chars": {"type": "integer", "minimum": 0},
+    "artifact_bytes": {"type": "integer", "minimum": 0},
+    "accepted": {"type": "boolean"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "severity",
+          "blocking",
+          "message",
+          "locations",
+          "similarity",
+          "summary",
+          "evidence"
+        ],
+        "properties": {
+          "code": {"type": "string", "minLength": 1},
+          "severity": {"type": "string", "enum": ["warning", "blocking"]},
+          "blocking": {"type": "boolean"},
+          "message": {"type": "string", "minLength": 1},
+          "locations": {"type": "array", "items": {"type": "object"}},
+          "similarity": {"type": "object"},
+          "summary": {"type": "string"},
+          "evidence": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "metrics": {"type": "object"},
+    "config": {
+      "type": "object",
+      "required": [
+        "gate_version",
+        "min_exact_paragraph_chars",
+        "min_exact_line_chars",
+        "min_near_duplicate_chars",
+        "min_source_comparison_chars",
+        "char_ngram_size",
+        "near_sequence_threshold",
+        "near_jaccard_threshold",
+        "near_combined_threshold",
+        "append_length_ratio_threshold",
+        "append_prefix_ratio_threshold",
+        "append_source_retained_ratio_threshold",
+        "opening_ending_similarity_threshold",
+        "opening_ending_min_chars",
+        "summary_chars"
+      ],
+      "properties": {
+        "gate_version": {"type": "string", "minLength": 1},
+        "min_exact_paragraph_chars": {"type": "integer", "minimum": 1},
+        "min_exact_line_chars": {"type": "integer", "minimum": 1},
+        "min_near_duplicate_chars": {"type": "integer", "minimum": 1},
+        "min_source_comparison_chars": {"type": "integer", "minimum": 1},
+        "char_ngram_size": {"type": "integer", "minimum": 1},
+        "near_sequence_threshold": {"type": "number", "minimum": 0},
+        "near_jaccard_threshold": {"type": "number", "minimum": 0},
+        "near_combined_threshold": {"type": "number", "minimum": 0},
+        "append_length_ratio_threshold": {"type": "number", "minimum": 1},
+        "append_prefix_ratio_threshold": {"type": "number", "minimum": 0},
+        "append_source_retained_ratio_threshold": {"type": "number", "minimum": 0},
+        "opening_ending_similarity_threshold": {"type": "number", "minimum": 0},
+        "opening_ending_min_chars": {"type": "integer", "minimum": 1},
+        "summary_chars": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "timestamp": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
