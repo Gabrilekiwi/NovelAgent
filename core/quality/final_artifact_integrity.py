@@ -262,19 +262,50 @@ class FinalArtifactIntegrityGate:
         matched_source_chars = sum(block.size for block in matcher.get_matching_blocks())
         retained_ratio = min(1.0, matched_source_chars / max(1, len(source)))
         exact_source_contained = bool(source and source in output)
+        source_position = output.find(source) if exact_source_contained else -1
+        source_prefix_chars = source_position if source_position >= 0 else 0
+        source_suffix_chars = (
+            len(output) - source_position - len(source)
+            if source_position >= 0
+            else 0
+        )
+        source_prefix_ratio = source_prefix_chars / max(1, len(source))
+        source_suffix_ratio = source_suffix_chars / max(1, len(source))
+        outside_source = (
+            output[:source_position] + output[source_position + len(source) :]
+            if source_position >= 0
+            else ""
+        )
+        outside_source_similarity = (
+            SequenceMatcher(
+                None,
+                source,
+                outside_source,
+                autojunk=False,
+            ).ratio()
+            if outside_source
+            else 0.0
+        )
+        source_at_append_boundary = bool(
+            exact_source_contained
+            and (
+                (source_prefix_ratio <= 0.15 and source_suffix_ratio >= 0.30)
+                or (
+                    source_prefix_ratio >= 0.30
+                    and source_suffix_ratio <= 0.15
+                    and outside_source_similarity >= 0.34
+                )
+            )
+        )
         suspect = False
         if len(source) >= self.config.min_source_comparison_chars:
             suspect = (
                 (
-                    exact_source_contained
+                    source_at_append_boundary
                     and length_ratio >= self.config.append_length_ratio_threshold
                 )
                 or (
                     prefix_ratio >= self.config.append_prefix_ratio_threshold
-                    and length_ratio >= self.config.append_length_ratio_threshold
-                )
-                or (
-                    retained_ratio >= self.config.append_source_retained_ratio_threshold
                     and length_ratio >= self.config.append_length_ratio_threshold
                 )
             )
@@ -285,6 +316,10 @@ class FinalArtifactIntegrityGate:
             "source_prefix_retained_ratio": round(prefix_ratio, 6),
             "source_subsequence_ratio": round(retained_ratio, 6),
             "source_exactly_contained": exact_source_contained,
+            "source_prefix_chars": source_prefix_chars,
+            "source_suffix_chars": source_suffix_chars,
+            "outside_source_similarity": round(outside_source_similarity, 6),
+            "source_at_append_boundary": source_at_append_boundary,
             "suspected_append_instead_of_replace": suspect,
         }
         if not suspect:
@@ -527,6 +562,33 @@ def merge_integrity_report_into_validation(
     validated_report = validate_schema(report, "final_artifact_integrity.schema.json")
     problems = [_integrity_problem(item) for item in validated_report["findings"]]
     checks = [dict(item) for item in base.get("checks") or [] if isinstance(item, dict)]
+    if not checks and isinstance(base.get("problems"), list):
+        checks.append(
+            {
+                "name": "custom_validator",
+                "ok": bool(base.get("ok")),
+                "problems": [
+                    _normalize_external_problem(item, validation_ok=bool(base.get("ok")))
+                    for item in base["problems"]
+                    if isinstance(item, dict)
+                ],
+            }
+        )
+    else:
+        checks = [
+            {
+                **check,
+                "problems": [
+                    _normalize_external_problem(
+                        item,
+                        validation_ok=bool(check.get("ok")),
+                    )
+                    for item in check.get("problems") or []
+                    if isinstance(item, dict)
+                ],
+            }
+            for check in checks
+        ]
     checks = [item for item in checks if item.get("name") != "final_artifact_integrity"]
     checks.append(
         {
@@ -550,7 +612,13 @@ def merge_integrity_report_into_validation(
     base.update(
         {
             "ok": not any(item.get("blocking") for item in all_problems),
+            "requested_focus": [
+                str(item) for item in base.get("requested_focus") or []
+            ],
             "executed_checks": executed,
+            "skipped_checks": [
+                str(item) for item in base.get("skipped_checks") or []
+            ],
             "checks": checks,
             "problems": all_problems,
             "blocking_problem_count": sum(1 for item in all_problems if item.get("blocking")),
@@ -566,6 +634,49 @@ def merge_integrity_report_into_validation(
         }
     )
     return validate_schema(base, "validation_result.schema.json")
+
+
+def _normalize_external_problem(
+    problem: dict[str, Any],
+    *,
+    validation_ok: bool,
+) -> dict[str, Any]:
+    normalized = dict(problem)
+    blocking = bool(normalized.get("blocking", not validation_ok))
+    normalized.update(
+        {
+            "code": str(normalized.get("code") or "custom_validation_problem"),
+            "message": str(normalized.get("message") or "Custom validator reported a problem."),
+            "validator": str(normalized.get("validator") or "custom"),
+            "severity": str(
+                normalized.get("severity")
+                or ("critical" if blocking else "medium")
+            ),
+            "blocking": blocking,
+            "category": str(
+                normalized.get("category")
+                or ("blocking" if blocking else "warning")
+            ),
+            "repair_hint": str(
+                normalized.get("repair_hint")
+                or "Inspect the custom validator evidence before commit."
+            ),
+            "repair_action": str(
+                normalized.get("repair_action") or "manual_review"
+            ),
+            "repair_parameters": (
+                dict(normalized.get("repair_parameters"))
+                if isinstance(normalized.get("repair_parameters"), dict)
+                else {}
+            ),
+            "evidence": [
+                dict(item)
+                for item in normalized.get("evidence") or []
+                if isinstance(item, dict)
+            ],
+        }
+    )
+    return normalized
 
 
 def merge_integrity_reports_for_artifact(

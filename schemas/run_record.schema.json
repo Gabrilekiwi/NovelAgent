@@ -1774,6 +1774,15 @@
         "final_artifact": {
           "type": "object"
         },
+        "integrity_records": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "integrity_audit": {
+          "type": "object"
+        },
         "pipeline": {
           "type": "object",
           "required": [

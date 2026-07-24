@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -135,6 +136,7 @@ def build_run_record(
     chapter_pipeline: dict[str, Any] | None = None,
     quality_decision: dict[str, Any] | None = None,
     final_artifact: dict[str, Any] | None = None,
+    integrity_records: list[dict[str, Any]] | None = None,
     accepted: bool | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
@@ -177,7 +179,12 @@ def build_run_record(
         "workflow": workflow,
         "workflow_plan": _workflow_plan_summary(workflow_plan),
         "input_pack": _input_pack_summary(input_pack, input_pack_metadata),
-        "chapter": _chapter_summary(chapter, chapter_pipeline, final_artifact=final_artifact),
+        "chapter": _chapter_summary(
+            chapter,
+            chapter_pipeline,
+            final_artifact=final_artifact,
+            integrity_records=integrity_records,
+        ),
         "validation": {
             "ok": bool(validation.get("ok")),
             "problem_codes": [problem.get("code") for problem in problems],
@@ -228,6 +235,7 @@ def build_failed_run_record(
     snapshot_pack: str = "",
     snapshot_audit: dict[str, Any] | None = None,
     chapter_pipeline: dict[str, Any] | None = None,
+    integrity_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     chapter_index = int(decision["chapter_index"])
     validation_payload = validation or {
@@ -270,7 +278,11 @@ def build_failed_run_record(
         "workflow": workflow,
         "workflow_plan": _workflow_plan_summary(workflow_plan),
         "input_pack": _input_pack_summary(input_pack, input_pack_metadata),
-        "chapter": _chapter_summary(chapter, chapter_pipeline),
+        "chapter": _chapter_summary(
+            chapter,
+            chapter_pipeline,
+            integrity_records=integrity_records,
+        ),
         "validation": {
             "ok": False,
             "problem_codes": [problem.get("code") for problem in problems],
@@ -515,6 +527,7 @@ def _chapter_summary(
     chapter_pipeline: dict[str, Any] | None = None,
     *,
     final_artifact: dict[str, Any] | None = None,
+    integrity_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     summary = {
         "chars": len(chapter),
@@ -524,9 +537,80 @@ def _chapter_summary(
             final_artifact,
             "final_artifact_integrity.schema.json",
         )
+    records = (
+        [dict(item) for item in integrity_records if isinstance(item, dict)]
+        if isinstance(integrity_records, list)
+        else []
+    )
+    if not records and isinstance(chapter_pipeline, dict):
+        records = [
+            dict(item)
+            for item in chapter_pipeline.get("integrity_records") or []
+            if isinstance(item, dict)
+        ]
+    if records:
+        summary["integrity_records"] = records
+        summary["integrity_audit"] = _integrity_audit(
+            chapter=chapter,
+            records=records,
+            final_artifact=final_artifact,
+        )
     if chapter_pipeline is not None:
         summary["pipeline"] = _chapter_pipeline_summary(chapter_pipeline)
     return summary
+
+
+def _integrity_audit(
+    *,
+    chapter: str,
+    records: list[dict[str, Any]],
+    final_artifact: dict[str, Any] | None,
+) -> dict[str, Any]:
+    earliest = next(
+        (
+            record
+            for record in records
+            if any(
+                bool(finding.get("blocking"))
+                for finding in record.get("integrity_findings") or []
+                if isinstance(finding, dict)
+            )
+        ),
+        None,
+    )
+    final_sha256 = hashlib.sha256(chapter.encode("utf-8")).hexdigest()
+    gate_sha256 = (
+        str(final_artifact.get("artifact_sha256"))
+        if isinstance(final_artifact, dict) and final_artifact.get("artifact_sha256")
+        else None
+    )
+    return {
+        "record_count": len(records),
+        "earliest_blocking_stage": (
+            str(earliest.get("stage")) if isinstance(earliest, dict) else None
+        ),
+        "earliest_blocking_problem_codes": (
+            [
+                str(finding.get("code"))
+                for finding in earliest.get("integrity_findings") or []
+                if isinstance(finding, dict) and finding.get("blocking")
+            ]
+            if isinstance(earliest, dict)
+            else []
+        ),
+        "stage_hashes": [
+            {
+                "stage": record.get("stage"),
+                "input_sha256": record.get("input_sha256"),
+                "output_sha256": record.get("output_sha256"),
+                "accepted": bool(record.get("accepted")),
+            }
+            for record in records
+        ],
+        "final_chapter_sha256": final_sha256,
+        "final_gate_sha256": gate_sha256,
+        "final_hash_matches_gate": gate_sha256 == final_sha256 if gate_sha256 else None,
+    }
 
 
 def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any]:

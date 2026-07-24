@@ -86,6 +86,28 @@ class FinalArtifactIntegrityGateTests(unittest.TestCase):
         self.assertGreaterEqual(report["metrics"]["source_prefix_retained_ratio"], 0.99)
         self.assertTrue(report["metrics"]["suspected_append_instead_of_replace"])
 
+    def test_scoped_prefix_and_suffix_insertions_do_not_look_like_two_drafts(self) -> None:
+        source = (
+            "The crew crossed the sealed gate while the alarm kept rising. "
+            "They protected the serum and held their formation under pressure. "
+            "No one restarted the evacuation or rediscovered the same survivors."
+        )
+        output = (
+            "At the service corridor, Mira signaled the team forward. "
+            + source
+            + " The gate locked behind them, leaving one unresolved choice."
+        )
+
+        report = self.gate.evaluate(
+            artifact_text=output,
+            source_text=source,
+            stage="repair",
+        )
+
+        self.assertTrue(report["accepted"])
+        self.assertFalse(report["metrics"]["source_at_append_boundary"])
+        self.assertFalse(report["metrics"]["suspected_append_instead_of_replace"])
+
     def test_hash_binding_mismatch_is_blocking(self) -> None:
         accepted = self.gate.evaluate(artifact_text="唯一的最终正文。", stage="final_gate")
         self.assertTrue(accepted["accepted"])

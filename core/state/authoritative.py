@@ -372,7 +372,7 @@ def _apply_roster_changes(
                 )
             )
         change_ids = declared_member_ids or member_ids
-        if operation == "join":
+        if operation in {"join", "replace"}:
             for member in members:
                 member_id = str(member["member_id"])
                 prior = existing_members.get(member_id)
@@ -389,6 +389,7 @@ def _apply_roster_changes(
                             {"before": prior, "after": member},
                         )
                     )
+        if operation == "join":
             next_members = {**existing_members, **{str(item["member_id"]): item for item in members}}
             expected_delta = len(set(change_ids) - set(existing_members))
         elif operation in {"leave", "dead", "missing"}:
@@ -449,25 +450,38 @@ def _apply_numeric_changes(
         if current is not None and previous != current:
             findings.append(
                 _finding(
-                    "numeric_counter_stale_before",
+                    "numeric_counter_mismatch",
                     f"Counter {counter_id} starts from stale value.",
-                    {"expected_previous": current, "declared_previous": previous},
+                    {
+                        "kind": "stale_previous_value",
+                        "expected_previous": current,
+                        "declared_previous": previous,
+                    },
                 )
             )
         if _number(previous) and _number(delta) and previous + delta != expected:
             findings.append(
                 _finding(
-                    "numeric_counter_arithmetic_mismatch",
+                    "numeric_counter_mismatch",
                     f"Counter {counter_id} arithmetic is inconsistent.",
-                    {"previous": previous, "delta": delta, "expected": expected},
+                    {
+                        "kind": "arithmetic_mismatch",
+                        "previous": previous,
+                        "delta": delta,
+                        "expected": expected,
+                    },
                 )
             )
         if expected != declared:
             findings.append(
                 _finding(
-                    "numeric_counter_arithmetic_mismatch",
+                    "numeric_counter_mismatch",
                     f"Counter {counter_id} declared value differs from expected value.",
-                    {"expected": expected, "declared": declared},
+                    {
+                        "kind": "declared_value_mismatch",
+                        "expected": expected,
+                        "declared": declared,
+                    },
                 )
             )
         rule = str((existing or {}).get("rule") or raw.get("rule") or "")

@@ -1761,6 +1761,17 @@ class AgentExecutorTest(unittest.TestCase):
                 for finding in result["run"]["chapter"]["final_artifact"]["findings"]
             },
         )
+        audit = result["run"]["chapter"]["integrity_audit"]
+        self.assertEqual("polish", audit["earliest_blocking_stage"])
+        self.assertIn(
+            "polish_append_instead_of_replace",
+            audit["earliest_blocking_problem_codes"],
+        )
+        self.assertTrue(audit["final_hash_matches_gate"])
+        self.assertEqual(
+            ["merge", "polish", "final_gate"],
+            [record["stage"] for record in result["run"]["chapter"]["integrity_records"]],
+        )
 
     def test_director_actions_skip_polish_handler(self) -> None:
         tmp_path = self._case_dir("skip_polish")

@@ -340,6 +340,11 @@ class AutonomyChapterRuntime:
             )
         if self._last_receipt["stage"] == "polish":
             return self._last_receipt
+        # Revalidation after a repair must advance repair -> validator.  A
+        # synthetic polish receipt here would corrupt the immutable stage
+        # chain and make crash recovery impossible.
+        if self._last_receipt["stage"] == "repair":
+            return self._last_receipt
         token = self.before_stage(
             stage="polish",
             input_value={"chapter_sha256": _digest_value(chapter)},

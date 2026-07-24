@@ -12,4 +12,4 @@ When `repair_plan.recovery.available` or `recovery_context.available` is true, u
 
 Prefer returning one RepairPatch JSON object using the supplied `base_chapter_sha256`. Each operation must be `replace` with non-overlapping `start_char`/`end_char`, the selected text's `expected_text_sha256`, a `replacement`, and the relevant `problem_codes`. You may omit `output_chapter_sha256` and `patch_sha256`; the runtime computes and binds both after validating the ranges.
 
-If exact character ranges cannot be produced, return only one complete replacement chapter as the controlled fallback. Never append the revision after the original. Do not add Markdown, headings, labels such as `Repaired chapter:`, notes, or commentary.
+If exact character ranges cannot be produced, return only one complete replacement chapter of prose as the controlled fallback. Never append the revision after the original. Do not add Markdown, headings, labels such as `Repaired chapter:`, notes, or commentary.

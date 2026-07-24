@@ -437,7 +437,12 @@ def generate_scenes(
                 ],
                 stage="chapter_generation",
             )
-            scene_result = _load_scene_response(payload)
+            try:
+                scene_result = _load_scene_response(payload)
+            except ValueError:
+                if _looks_like_structured_response(payload):
+                    raise
+                scene_result = _legacy_prose_scene_result(payload, scene=scene)
         boundary, state_after = validate_scene_transition(
             scene_index=scene_index,
             state_before=state_before,
@@ -753,13 +758,19 @@ def _dry_run_scene_result(
         beat_indexes = _scene_beat_indexes(scene)
         beat_texts = _beat_texts_for_indexes(chapter_blueprint, beat_indexes)
         text_parts = [
-            f"StoryProject beat {beat_index}: {beat_text}"
-            for beat_index, beat_text in beat_texts
+            (
+                f"StoryProject beat {beat_index}: {beat_text}"
+                if scene_index == 1 and position == 0
+                else f"StoryProject beat {beat_index}: {_dry_run_unique_requirement(beat_text)}"
+            )
+            for position, (beat_index, beat_text) in enumerate(beat_texts)
         ]
         if scene_index == _last_scene_index(plan):
             ending_pressure = str(chapter_blueprint.get("ending_pressure") or "").strip()
             if ending_pressure:
-                text_parts.append(f"Ending pressure: {ending_pressure}")
+                text_parts.append(
+                    f"Ending pressure: {_dry_run_unique_requirement(ending_pressure)}"
+                )
         prose = " ".join(text_parts) or str(scene.get("goal") or f"Scene {scene_index}")
     else:
         sentences = [
@@ -777,6 +788,47 @@ def _dry_run_scene_result(
         ],
         "deltas": _empty_scene_deltas(),
         "continuity_note": "deterministic dry-run continuation",
+    }
+
+
+def _dry_run_unique_requirement(value: str) -> str:
+    text = str(value or "").strip()
+    for separator in ("：", ":"):
+        if separator in text:
+            suffix = text.rsplit(separator, 1)[-1].strip()
+            if suffix:
+                return suffix
+    return text
+
+
+def _looks_like_structured_response(payload: str) -> bool:
+    text = str(payload or "").lstrip()
+    return text.startswith("{") or text.startswith("```")
+
+
+def _legacy_prose_scene_result(
+    payload: str,
+    *,
+    scene: dict[str, Any],
+) -> dict[str, Any]:
+    """Compatibility bridge for pre-2.0.1 providers that still return prose.
+
+    The prose is still contract-validated, while events are taken only from
+    the already validated deterministic scene plan. No state delta is inferred
+    from natural language.
+    """
+
+    return {
+        "prose": validate_text_output(payload, CHAPTER_CONTRACT),
+        "events": [
+            _normalize_scene_event(item)
+            for item in scene.get("planned_events") or []
+            if isinstance(item, dict)
+        ],
+        "deltas": _empty_scene_deltas(),
+        "continuity_note": (
+            "legacy prose response; structured events synthesized from the validated scene plan"
+        ),
     }
 
 

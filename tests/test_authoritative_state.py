@@ -324,3 +324,23 @@ class AuthoritativeStateTests(unittest.TestCase):
 
         with self.assertRaisesRegex(MemoryReducerError, "numeric_counter_rollback"):
             apply_memory_patch(memory, patch, event_context=_context())
+
+    def test_numeric_arithmetic_mismatch_uses_unified_blocking_code(self) -> None:
+        report = validate_authoritative_state_delta(
+            base_state=empty_authoritative_state(),
+            chapter_text="",
+            state_delta={
+                "numeric_changes": [
+                    {
+                        "counter_id": "erosion",
+                        "previous_value": 7,
+                        "delta": 2,
+                        "expected_value": 8,
+                        "declared_value": 9,
+                    }
+                ]
+            },
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertEqual({"numeric_counter_mismatch"}, _codes(report))

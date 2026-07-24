@@ -1,0 +1,142 @@
+{
+  "schema_version": "1.0",
+  "release": "2.0.1",
+  "branch": "fix/v2.0.1-final-artifact-integrity",
+  "baseline_commit": "f3280656abdd95cc5cdcb64f409c306fb0e9867b",
+  "completed_on": "2026-07-24",
+  "root_cause": {
+    "summary": "The final chapter artifact was not treated as a single audited authority across scene generation, merge, polish, repair, and memory commit.",
+    "contributing_factors": [
+      "Scene generation did not always carry the immediately preceding scene's terminal state into the next scene.",
+      "Final integrity checks were weaker than intermediate validation and could miss duplicate drafts, stale scene evidence, or state drift.",
+      "Run Records did not retain an independent, ordered integrity audit for every chapter path.",
+      "Repair and compatibility paths could preserve obsolete evidence or construct state updates from the wrong contract version."
+    ]
+  },
+  "phases": [
+    {
+      "phase": "A",
+      "result": "passed",
+      "evidence": "docs/v2.0.1-phase-a-baseline.json",
+      "baseline_gap_fixture_result": "1 passed, 8 xfailed"
+    },
+    {
+      "phase": "B",
+      "result": "passed",
+      "commit": "d476565",
+      "delivered": [
+        "final artifact integrity gate",
+        "duplicate and near-duplicate scene detection",
+        "append-instead-of-replace detection",
+        "final artifact hash verification"
+      ]
+    },
+    {
+      "phase": "C",
+      "result": "passed",
+      "commit": "3336d2e",
+      "delivered": [
+        "sequential scene generation",
+        "previous-scene terminal state handoff",
+        "scene boundary validation"
+      ]
+    },
+    {
+      "phase": "D",
+      "result": "passed",
+      "commit": "27a20a4",
+      "delivered": [
+        "character identity and relationship checks",
+        "roster member and count checks",
+        "numeric rollback and arithmetic checks"
+      ]
+    },
+    {
+      "phase": "E",
+      "result": "passed",
+      "commit": "7a66dff",
+      "delivered": [
+        "repair evidence rebuild",
+        "stale scene evidence rejection"
+      ]
+    },
+    {
+      "phase": "F",
+      "result": "passed",
+      "delivered": [
+        "ten-chapter deterministic authoritative-state replay",
+        "chapter-eleven conflict blocking without memory mutation",
+        "independent integrity audit in Run Record",
+        "full regression and smoke validation"
+      ]
+    }
+  ],
+  "validation": {
+    "full_pytest": {
+      "command": "python -m pytest -p no:cacheprovider tests",
+      "result": "1424 passed, 7 skipped, 0 failed",
+      "duration_seconds": 245.31
+    },
+    "smoke": {
+      "command": "python -B scripts/smoke_v1.py --skip-tests",
+      "result": "Smoke v1: OK; preflight 21 passed, 0 failed"
+    },
+    "regression_fixtures": {
+      "command": "python -m pytest -p no:cacheprovider tests/test_v201_regression_fixtures.py",
+      "result": "9 passed"
+    },
+    "multichapter_state_chain": {
+      "command": "python -m pytest -p no:cacheprovider tests/test_v201_multichapter_regression.py",
+      "result": "2 passed"
+    }
+  },
+  "phase_f_corrections": [
+    {
+      "problem": "Legacy Memory 2.0 and reducer 2.1 received a Memory 2.2-only authoritative-state operation.",
+      "correction": "Gate update_authoritative_state by memory contract version."
+    },
+    {
+      "problem": "Append detection could reject a legitimate scoped prefix or suffix insertion.",
+      "correction": "Compare only material outside the source span and preserve blocking for a genuine appended second draft."
+    },
+    {
+      "problem": "Autonomy repair could synthesize a polish receipt for a stage that never ran.",
+      "correction": "Preserve the repair-to-validator transition without fabricating polish evidence."
+    },
+    {
+      "problem": "Windows CRLF normalization changed previous-prose character counts.",
+      "correction": "Normalize context text while retaining the raw source hash."
+    },
+    {
+      "problem": "Dry-run scenes repeated a shared blueprint prefix and triggered real duplicate detection.",
+      "correction": "Keep full global coverage in the first beat and remove repeated boilerplate from later beats."
+    },
+    {
+      "problem": "The real-autonomy provider mock still returned the obsolete scene contract.",
+      "correction": "Return structured Scene JSON with unique prose and validated terminal state."
+    }
+  ],
+  "acceptance": {
+    "single_final_artifact_authority": true,
+    "sequential_scene_state_handoff": true,
+    "duplicate_scene_blocking": true,
+    "near_duplicate_scene_blocking": true,
+    "append_instead_of_replace_blocking": true,
+    "stale_scene_evidence_blocking": true,
+    "character_identity_drift_blocking": true,
+    "relationship_drift_blocking": true,
+    "roster_identity_drift_blocking": true,
+    "roster_count_mismatch_blocking": true,
+    "numeric_rollback_blocking": true,
+    "numeric_arithmetic_mismatch_blocking": true,
+    "memory_commit_only_after_final_gate": true,
+    "run_record_integrity_audit": true,
+    "full_regression_and_smoke_green": true
+  },
+  "residual_risks": [
+    "The paid or external-model first-ten-chapter literary-quality experiment has not been run; this release is ready for that experiment.",
+    "Near-duplicate thresholds are deterministic and may require calibration against additional writing genres.",
+    "A controlled legacy plain-prose scene bridge remains for backward compatibility; events come only from the validated plan, state deltas remain empty, and malformed JSON still fails closed."
+  ],
+  "ready_for_first_ten_chapter_experiment": true
+}

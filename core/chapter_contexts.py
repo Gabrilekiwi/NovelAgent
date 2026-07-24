@@ -152,7 +152,7 @@ def resolve_story_project_previous_chapter(
             f"no prose file matched chapter {previous_index}; earlier prose exists at {sorted(earlier_chapters)}",
         )
     raw = resolution.path.read_bytes()
-    text = raw.decode("utf-8-sig")
+    text = _normalize_newlines(raw.decode("utf-8-sig"))
     return _previous_context_from_text(
         text=text,
         chapter_index=chapter_index - 1,
@@ -207,7 +207,10 @@ def resolve_committed_previous_chapter_artifact(
         raw = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != expected_hash:
             continue
-        valid[path] = (_markdown_body(raw.decode("utf-8-sig")), expected_hash)
+        valid[path] = (
+            _markdown_body(_normalize_newlines(raw.decode("utf-8-sig"))),
+            expected_hash,
+        )
     if not valid:
         if not claimed_earlier_commit:
             return None
@@ -380,6 +383,10 @@ def _excerpt(selection: TextSelection) -> dict[str, Any]:
 def _markdown_body(text: str) -> str:
     marker = "\n---\n\n"
     return text.split(marker, 1)[1].strip() if marker in text else text.strip()
+
+
+def _normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _text_sha256(text: str) -> str:

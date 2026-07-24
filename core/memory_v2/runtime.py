@@ -70,7 +70,11 @@ def prepare_chapter_memory_commit(
         patch_id=f"patch_chapter_{chapter_index:06d}_{_safe_id(run_id)}",
         source_kind="committed_chapter",
         source_path=f"chapter:{chapter_index}",
-        operations=_chapter_operations(chapter_index, analysis),
+        operations=_chapter_operations(
+            chapter_index,
+            analysis,
+            include_authoritative_state=False,
+        ),
         metadata={"source_item_count": _source_item_count(analysis), "run_id": run_id},
     )
     has_batches = any((event_store / "batches").glob("*.json"))
@@ -462,10 +466,17 @@ def _projection_targets(
     }
 
 
-def _chapter_operations(chapter_index: int, analysis: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _chapter_operations(
+    chapter_index: int,
+    analysis: Mapping[str, Any],
+    *,
+    include_authoritative_state: bool = True,
+) -> list[dict[str, Any]]:
     operations: list[dict[str, Any]] = []
     authority_delta = analysis.get("authoritative_state_delta")
-    has_structured_authority = isinstance(authority_delta, Mapping)
+    has_structured_authority = (
+        include_authoritative_state and isinstance(authority_delta, Mapping)
+    )
     if has_structured_authority:
         operations.append(
             {

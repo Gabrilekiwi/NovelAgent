@@ -681,6 +681,7 @@ class AgentExecutor:
                 workflow_trace,
                 chapter_pipeline,
                 workflow_integrity_reports,
+                workflow_integrity_records,
             ) = self._execute_workflow(
                 workflow=workflow,
                 workflow_plan=workflow_plan,
@@ -719,6 +720,7 @@ class AgentExecutor:
                     snapshot_pack=snapshot_pack,
                     snapshot_audit=snapshot_audit,
                     chapter_pipeline=failed_chapter_pipeline,
+                    integrity_records=exc.integrity_records,
                 )
                 failed_result = {
                     "run": failed_run,
@@ -837,6 +839,14 @@ class AgentExecutor:
             final_artifact_report,
             [*workflow_integrity_reports.values(), *pipeline_integrity],
         )
+        workflow_integrity_records.append(
+            build_integrity_stage_record(
+                stage="final_gate",
+                input_text=None,
+                output_text=chapter,
+                report=final_artifact_report,
+            )
+        )
         _append_pipeline_integrity(
             chapter_pipeline,
             stage="final_gate",
@@ -917,6 +927,7 @@ class AgentExecutor:
                     snapshot_pack=snapshot_pack,
                     snapshot_audit=snapshot_audit,
                     chapter_pipeline=failed_chapter_pipeline,
+                    integrity_records=workflow_integrity_records,
                 )
                 failed_result = {
                     "run": failed_run,
@@ -980,6 +991,7 @@ class AgentExecutor:
             chapter_pipeline=chapter_pipeline,
             quality_decision=quality_decision,
             final_artifact=final_artifact_report,
+            integrity_records=workflow_integrity_records,
             accepted=accepted,
             status="preview" if accepted and not persist else None,
         )
@@ -1500,6 +1512,11 @@ class AgentExecutor:
                     chapter_pipeline=state["chapter_pipeline"] if isinstance(state.get("chapter_pipeline"), dict) else None,
                     validation=state["validation"] if isinstance(state.get("validation"), dict) else None,
                     repair_attempts=int(state.get("repair_attempts") or 0),
+                    integrity_records=[
+                        dict(item)
+                        for item in state.get("integrity_records") or []
+                        if isinstance(item, dict)
+                    ],
                 ) from exc
             else:
                 provider_attempts = consume_retry_telemetry()
@@ -1536,6 +1553,11 @@ class AgentExecutor:
             trace,
             state.get("chapter_pipeline"),
             dict(state.get("integrity_reports") or {}),
+            [
+                dict(item)
+                for item in state.get("integrity_records") or []
+                if isinstance(item, dict)
+            ],
         )
 
     def _handle_generate(self, state: dict[str, Any], input_pack: str, snapshot: dict[str, Any]) -> None:
@@ -4857,6 +4879,7 @@ class WorkflowExecutionError(RuntimeError):
         chapter_pipeline: dict[str, Any] | None,
         validation: dict[str, Any] | None,
         repair_attempts: int,
+        integrity_records: list[dict[str, Any]],
     ) -> None:
         super().__init__(str(original))
         self.original = original
@@ -4865,3 +4888,4 @@ class WorkflowExecutionError(RuntimeError):
         self.chapter_pipeline = chapter_pipeline
         self.validation = validation
         self.repair_attempts = repair_attempts
+        self.integrity_records = integrity_records

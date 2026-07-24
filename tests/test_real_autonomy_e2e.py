@@ -51,13 +51,60 @@ class _FakeCompletions:
             ]
             ending = str(request.get("story_project_ending_pressure") or "")
             required = "。".join(item for item in [*beats, ending] if item)
-            content = (
-                "警报响起后，主角沿着封闭通道继续前进。"
-                + required
-                + "。队伍在压力中核对线索、承担代价，并在新的危险逼近时作出明确选择。"
-                + "他们没有回避冲突，而是把证据逐项确认后继续行动。" * 45
-                + ending
-            )
+            if isinstance(request.get("response_schema"), dict) and isinstance(
+                request.get("scene"), dict
+            ):
+                scene = request["scene"]
+                scene_index = int(scene.get("index") or 1)
+                scene_count = len(
+                    (request.get("chapter_plan") or {}).get("scenes") or []
+                )
+                step_templates = (
+                    "第{step}次核验中，林川比对门禁编号与队伍名单，确认没有陌生身份混入；",
+                    "推进到第{step}个标记点时，周岚清点药品与弹匣，并把余量写入物资账本；",
+                    "处理第{step}处障碍后，众人沿维护梯改变位置，同时留下撤退路线和伤员次序；",
+                )
+                step_template = step_templates[
+                    (scene_index - 1) % len(step_templates)
+                ]
+                progression = "".join(
+                    step_template.format(step=step)
+                    for step in range(1, 28)
+                )
+                scene_required = "。".join(item for item in beats if item)
+                prose = (
+                    f"第{scene_index}场的警报改变了节奏。{scene_required}。"
+                    f"{progression}"
+                    "他们没有重启已经完成的行动，也没有重新发现同一批幸存者。"
+                )
+                if scene_index == scene_count and ending:
+                    prose += ending
+                content = json.dumps(
+                    {
+                        "prose": prose,
+                        "events": scene.get("planned_events") or [],
+                        "deltas": {
+                            "characters": [],
+                            "relationships": [],
+                            "rosters": [],
+                            "locations": [],
+                            "inventory": [],
+                            "counters": [],
+                        },
+                        "continuity_note": (
+                            f"scene {scene_index} continues validated state"
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            else:
+                content = (
+                    "警报响起后，主角沿着封闭通道继续前进。"
+                    + required
+                    + "。队伍在压力中核对线索、承担代价，并在新的危险逼近时作出明确选择。"
+                    + "他们没有回避冲突，而是把证据逐项确认后继续行动。" * 45
+                    + ending
+                )
         choice = SimpleNamespace(
             message=SimpleNamespace(content=content),
             finish_reason="stop",
