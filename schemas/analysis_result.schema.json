@@ -139,6 +139,35 @@
     },
     "validation_ok": {
       "type": "boolean"
+    },
+    "authoritative_state_delta": {
+      "type": "object",
+      "required": [
+        "source_tier",
+        "baseline_state",
+        "character_changes",
+        "relationship_changes",
+        "roster_changes",
+        "numeric_changes",
+        "inventory_changes",
+        "location_changes",
+        "events"
+      ],
+      "properties": {
+        "source_tier": {
+          "type": "string",
+          "enum": ["story_project_standard", "chapter_event", "model_inference"]
+        },
+        "baseline_state": {"type": "object"},
+        "character_changes": {"type": "array", "items": {"type": "object"}},
+        "relationship_changes": {"type": "array", "items": {"type": "object"}},
+        "roster_changes": {"type": "array", "items": {"type": "object"}},
+        "numeric_changes": {"type": "array", "items": {"type": "object"}},
+        "inventory_changes": {"type": "array", "items": {"type": "object"}},
+        "location_changes": {"type": "array", "items": {"type": "object"}},
+        "events": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from core.state.authoritative import AuthoritativeStateError, validate_authoritative_state
+
 
 TYPED_COLLECTIONS = (
     "characters",
@@ -152,6 +154,22 @@ def validate_typed_canonical_memory(memory: dict[str, Any]) -> dict[str, Any]:
     if isinstance(story_time, dict):
         for key in ("elapsed_minutes", "chapter_index", "scene_index"):
             _nonnegative_integer(story_time, key, "story_time", errors)
+
+    authoritative_state = memory.get("authoritative_state")
+    if authoritative_state is not None:
+        if not isinstance(authoritative_state, dict):
+            errors.append("authoritative_state must be an object")
+        else:
+            try:
+                validate_authoritative_state(authoritative_state)
+            except AuthoritativeStateError as exc:
+                codes = [
+                    str(item.get("code") or "unknown")
+                    for item in exc.report.get("findings") or []
+                ]
+                errors.append(
+                    "authoritative_state is invalid: " + ", ".join(codes)
+                )
 
     _validate_timeline(memory.get("timeline"), errors)
     if errors:

@@ -143,6 +143,9 @@ def _render_context(memory: dict[str, Any], marker: str) -> str:
         "current_state": memory["current_state"],
         "resources": memory["resources"],
         "corruption": memory["corruption"],
+        "roster": (memory.get("authoritative_state") or {}).get("roster", {}),
+        "numeric_counters": (memory.get("authoritative_state") or {}).get("numeric_counters", {}),
+        "locations": (memory.get("authoritative_state") or {}).get("locations", {}),
     }
     return _json_document("上下文", marker, payload)
 
@@ -153,6 +156,9 @@ def _render_characters(memory: dict[str, Any], marker: str) -> str:
         "relationships": memory["relationships"],
         "injuries": memory["injuries"],
         "inventories": memory["inventories"],
+        "authoritative_characters": (memory.get("authoritative_state") or {}).get("characters", {}),
+        "authoritative_relationships": (memory.get("authoritative_state") or {}).get("relationships", {}),
+        "authoritative_inventory": (memory.get("authoritative_state") or {}).get("inventory", {}),
     }
     return _json_document("角色状态", marker, payload)
 

@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 
 SCENE_CONTINUITY_SCHEMA_VERSION = "1.0"
-_DELTA_KINDS = ("characters", "relationships", "locations", "inventory", "counters")
+_DELTA_KINDS = ("characters", "relationships", "rosters", "locations", "inventory", "counters")
 
 
 class SceneBoundaryValidationError(ValueError):
@@ -22,6 +22,7 @@ def empty_scene_state() -> dict[str, Any]:
         "schema_version": SCENE_CONTINUITY_SCHEMA_VERSION,
         "characters": {},
         "relationships": {},
+        "rosters": {},
         "locations": {},
         "inventories": {},
         "counters": {},
@@ -161,6 +162,7 @@ def validate_scene_transition(
     after = copy.deepcopy(before)
     findings.extend(_apply_character_deltas(after, normalized_deltas["characters"]))
     findings.extend(_apply_relationship_deltas(after, normalized_deltas["relationships"]))
+    findings.extend(_apply_roster_deltas(after, normalized_deltas["rosters"]))
     findings.extend(_apply_location_deltas(after, normalized_deltas["locations"]))
     findings.extend(_apply_numeric_deltas(after, normalized_deltas["inventory"], inventory=True))
     findings.extend(_apply_numeric_deltas(after, normalized_deltas["counters"], inventory=False))
@@ -201,6 +203,7 @@ def scene_state_summary(state: dict[str, Any]) -> dict[str, Any]:
         "schema_version": normalized["schema_version"],
         "characters": copy.deepcopy(normalized["characters"]),
         "relationships": copy.deepcopy(normalized["relationships"]),
+        "rosters": copy.deepcopy(normalized["rosters"]),
         "locations": copy.deepcopy(normalized["locations"]),
         "inventories": copy.deepcopy(normalized["inventories"]),
         "counters": copy.deepcopy(normalized["counters"]),
@@ -213,7 +216,7 @@ def _normalize_state(value: dict[str, Any] | None) -> dict[str, Any]:
     base = empty_scene_state()
     if not isinstance(value, dict):
         return base
-    for key in ("characters", "relationships", "locations", "inventories", "counters"):
+    for key in ("characters", "relationships", "rosters", "locations", "inventories", "counters"):
         if isinstance(value.get(key), dict):
             base[key] = copy.deepcopy(value[key])
     for key in ("completed_event_ids", "completed_events"):
@@ -279,6 +282,87 @@ def _apply_relationship_deltas(
         fields = state["relationships"].setdefault(relation_key, {})
         findings.extend(_check_before_value("relationship_state_rollback", fields, field, delta))
         fields[field] = copy.deepcopy(delta["after"])
+    return findings
+
+
+def _apply_roster_deltas(
+    state: dict[str, Any],
+    deltas: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for delta in deltas:
+        roster_id = str(delta.get("roster_id") or "").strip()
+        operation = str(delta.get("operation") or "replace").strip()
+        if not roster_id:
+            findings.append(_finding("invalid_roster_delta", "Roster delta is incomplete.", delta))
+            continue
+        existing = state["rosters"].get(roster_id)
+        existing_members = _roster_members(existing)
+        declared_ids = _string_list(delta.get("member_ids"))
+        members = [
+            copy.deepcopy(item)
+            for item in delta.get("members") or []
+            if isinstance(item, dict) and str(item.get("member_id") or "")
+        ]
+        member_ids = [str(item["member_id"]) for item in members]
+        if operation in {"join", "replace"} and declared_ids and set(declared_ids) != set(member_ids):
+            findings.append(
+                _finding(
+                    "roster_count_mismatch",
+                    f"Roster {roster_id} member ids do not match its member records.",
+                    {"member_ids": declared_ids, "record_member_ids": member_ids},
+                )
+            )
+        change_ids = set(declared_ids or member_ids)
+        if operation == "join":
+            for member in members:
+                member_id = str(member["member_id"])
+                prior = existing_members.get(member_id)
+                if isinstance(prior, dict) and any(
+                    prior.get(field) not in (None, "")
+                    and member.get(field) not in (None, "")
+                    and prior.get(field) != member.get(field)
+                    for field in ("character_id", "descriptor")
+                ):
+                    findings.append(
+                        _finding(
+                            "roster_member_identity_drift",
+                            f"Roster member {member_id} changed identity fields.",
+                            {"before": prior, "after": member},
+                        )
+                    )
+            next_members = {**existing_members, **{str(item["member_id"]): item for item in members}}
+            expected_delta = len(change_ids - set(existing_members))
+        elif operation in {"leave", "dead", "missing"}:
+            next_members = {key: item for key, item in existing_members.items() if key not in change_ids}
+            expected_delta = -len(change_ids & set(existing_members))
+        else:
+            next_members = {str(item["member_id"]): item for item in members}
+            expected_delta = len(next_members) - len(existing_members)
+        declared_delta = delta.get("delta")
+        declared_count = delta.get("declared_count")
+        if declared_delta is not None and declared_delta != expected_delta:
+            findings.append(
+                _finding(
+                    "roster_count_mismatch",
+                    f"Roster {roster_id} declared delta is inconsistent.",
+                    {"declared_delta": declared_delta, "computed_delta": expected_delta},
+                )
+            )
+        if declared_count is not None and declared_count != len(next_members):
+            findings.append(
+                _finding(
+                    "roster_count_mismatch",
+                    f"Roster {roster_id} declared count is inconsistent.",
+                    {"declared_count": declared_count, "computed_count": len(next_members)},
+                )
+            )
+        state["rosters"][roster_id] = {
+            "roster_id": roster_id,
+            "members": list(next_members.values()),
+            "declared_count": len(next_members),
+            "computed_count": len(next_members),
+        }
     return findings
 
 
@@ -412,6 +496,16 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item)]
+
+
+def _roster_members(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(item["member_id"]): copy.deepcopy(item)
+        for item in value.get("members") or []
+        if isinstance(item, dict) and str(item.get("member_id") or "")
+    }
 
 
 def _is_number(value: Any) -> bool:

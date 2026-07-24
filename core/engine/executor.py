@@ -816,7 +816,14 @@ class AgentExecutor:
         committed = bool(accepted and persist)
         try:
             analysis = (
-                validate_schema(self._analyze(chapter, validation, snapshot), "analysis_result.schema.json")
+                validate_schema(
+                    _attach_authoritative_scene_delta(
+                        self._analyze(chapter, validation, snapshot),
+                        chapter_pipeline,
+                        snapshot,
+                    ),
+                    "analysis_result.schema.json",
+                )
                 if accepted
                 else _empty_analysis(validation)
             )
@@ -4170,6 +4177,66 @@ def _empty_analysis(validation: dict[str, Any]) -> dict[str, Any]:
         "validation_ok": bool(validation.get("ok")),
         "summary": "",
     }, "analysis_result.schema.json")
+
+
+def _attach_authoritative_scene_delta(
+    analysis: dict[str, Any],
+    chapter_pipeline: dict[str, Any] | None,
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = dict(analysis)
+    if not isinstance(chapter_pipeline, dict):
+        return result
+    scenes = [
+        item
+        for item in chapter_pipeline.get("scene_drafts") or []
+        if isinstance(item, dict)
+    ]
+    if not scenes:
+        return result
+    authority_delta: dict[str, Any] = {
+        "source_tier": "chapter_event",
+        "baseline_state": (
+            dict(snapshot["authoritative_state"])
+            if isinstance(snapshot, dict)
+            and isinstance(snapshot.get("authoritative_state"), dict)
+            else {}
+        ),
+        "character_changes": [],
+        "relationship_changes": [],
+        "roster_changes": [],
+        "numeric_changes": [],
+        "inventory_changes": [],
+        "location_changes": [],
+        "events": [],
+    }
+    key_map = {
+        "characters": "character_changes",
+        "relationships": "relationship_changes",
+        "rosters": "roster_changes",
+        "counters": "numeric_changes",
+        "inventory": "inventory_changes",
+        "locations": "location_changes",
+    }
+    for scene in scenes:
+        scene_index = int(scene.get("index") or 0)
+        for event in scene.get("events") or []:
+            if isinstance(event, dict):
+                authority_delta["events"].append(
+                    {**dict(event), "scene_index": scene_index}
+                )
+        deltas = scene.get("deltas")
+        if not isinstance(deltas, dict):
+            continue
+        for source_key, target_key in key_map.items():
+            for item in deltas.get(source_key) or []:
+                if not isinstance(item, dict):
+                    continue
+                authority_delta[target_key].append(
+                    {**dict(item), "scene_index": scene_index}
+                )
+    result["authoritative_state_delta"] = authority_delta
+    return result
 
 
 def _require_chapter(state: dict[str, Any]) -> str:

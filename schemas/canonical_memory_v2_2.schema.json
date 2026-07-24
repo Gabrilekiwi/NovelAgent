@@ -61,6 +61,7 @@
       "additionalProperties": false
     },
     "foreshadowing": {"type": "object", "additionalProperties": true},
+    "authoritative_state": {"type": "object", "additionalProperties": true},
     "timeline": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
     "open_threads": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
     "chapter_states": {"type": "object", "additionalProperties": true},

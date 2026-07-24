@@ -1,4 +1,11 @@
 from core.state.builder import build_snapshot_state, build_snapshot_state_with_audit
+from core.state.authoritative import (
+    AuthoritativeStateError,
+    empty_authoritative_state,
+    require_authoritative_state_delta,
+    validate_authoritative_state,
+    validate_authoritative_state_delta,
+)
 from core.state.input_pack import (
     build_input_pack,
     build_input_pack_metadata,
@@ -26,6 +33,7 @@ __all__ = [
     "build_snapshot_state",
     "build_snapshot_state_with_audit",
     "build_state_update_audit",
+    "empty_authoritative_state",
     "load_memory_context",
     "load_notion_memory_context",
     "MemoryError",
@@ -35,5 +43,9 @@ __all__ = [
     "save_snapshot",
     "update_snapshot",
     "SnapshotError",
+    "AuthoritativeStateError",
+    "require_authoritative_state_delta",
+    "validate_authoritative_state",
+    "validate_authoritative_state_delta",
     "validate_snapshot",
 ]

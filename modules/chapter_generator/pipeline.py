@@ -372,7 +372,7 @@ def _load_scene_response(payload: str) -> dict[str, Any]:
                 for item in raw_deltas.get(key) or []
                 if isinstance(item, dict)
             ]
-            for key in ("characters", "relationships", "locations", "inventory", "counters")
+            for key in ("characters", "relationships", "rosters", "locations", "inventory", "counters")
         },
         "continuity_note": str(value.get("continuity_note") or ""),
     }
@@ -559,6 +559,7 @@ def _scene_request_payload(
                 "deltas": {
                     "characters": [],
                     "relationships": [],
+                    "rosters": [],
                     "locations": [],
                     "inventory": [],
                     "counters": [],
@@ -575,7 +576,9 @@ def _scene_request_payload(
                 "bound as a hard limit and stop the scene before exceeding it. "
                 "Every required_event_id must appear exactly once in events. Do not restart, duplicate, or retell "
                 "a completed event; never use a forbidden_event_id or roll state back. "
-                "Deltas must declare before, change, after, and reason "
+                "Deltas must declare stable entity ids, before, delta, after, and reason. New characters must "
+                "declare canonical_name and aliases; relationships must declare relationship_id and type; "
+                "roster changes must declare stable member_ids and member records "
                 "where applicable. Continue directly from previous_scene_tail and current_scene_state."
             ),
         },
@@ -609,6 +612,7 @@ def _compact_scene_context(
             "Director Decision",
             "Story State",
             "Spatial State",
+            "Authoritative State",
             "StoryProject Chapter Blueprint",
             "Requirements",
             "灏忚鐢熸垚瑙勫垯濂戠害",
@@ -631,6 +635,36 @@ def _compact_scene_context(
 
 def _initial_scene_state(input_pack: str) -> dict[str, Any]:
     state = empty_scene_state()
+    authority = _input_pack_json_section(input_pack, "Authoritative State")
+    if isinstance(authority, dict):
+        for character_id, record in (authority.get("characters") or {}).items():
+            if isinstance(record, dict):
+                state["characters"][str(character_id)] = dict(record)
+        for relationship_id, record in (authority.get("relationships") or {}).items():
+            if isinstance(record, dict):
+                source_id = str(record.get("source_character_id") or "")
+                target_id = str(record.get("target_character_id") or "")
+                key = f"{source_id}->{target_id}" if source_id and target_id else str(relationship_id)
+                state["relationships"][key] = dict(record)
+        for roster_id, record in (authority.get("roster") or {}).items():
+            if isinstance(record, dict):
+                state["rosters"][str(roster_id)] = dict(record)
+        for counter_id, record in (authority.get("numeric_counters") or {}).items():
+            if isinstance(record, dict) and isinstance(record.get("current_value"), (int, float)):
+                state["counters"][str(counter_id)] = record["current_value"]
+        for inventory_id, record in (authority.get("inventory") or {}).items():
+            if isinstance(record, dict) and isinstance(record.get("quantity"), (int, float)):
+                state["inventories"][str(inventory_id)] = record["quantity"]
+        for entity_id, record in (authority.get("locations") or {}).items():
+            if isinstance(record, dict) and record.get("location_id") not in (None, ""):
+                state["locations"][str(entity_id)] = record["location_id"]
+        for event_id, record in (authority.get("events") or {}).items():
+            if not isinstance(record, dict):
+                continue
+            normalized = str(event_id).strip()
+            if normalized and normalized not in state["completed_event_ids"]:
+                state["completed_event_ids"].append(normalized)
+            state["completed_events"].append(dict(record))
     match = re.search(
         r"(?ms)^# Story State[ \t]*\r?\n(.*?)(?=^# |\Z)",
         str(input_pack or ""),
@@ -662,6 +696,25 @@ def _initial_scene_state(input_pack: str) -> dict[str, Any]:
     return state
 
 
+def _input_pack_json_section(input_pack: str, section: str) -> dict[str, Any] | None:
+    match = re.search(
+        rf"(?ms)^# {re.escape(section)}[ \t]*\r?\n(.*?)(?=^# |\Z)",
+        str(input_pack or ""),
+    )
+    if not match:
+        return None
+    body = match.group(1).strip()
+    start = body.find("{")
+    end = body.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        value = json.loads(body[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _recovered_scene_result(
     recovered: dict[str, Any],
     *,
@@ -680,7 +733,7 @@ def _recovered_scene_result(
         "deltas": (
             {
                 key: [dict(item) for item in raw_deltas.get(key) or [] if isinstance(item, dict)]
-                for key in ("characters", "relationships", "locations", "inventory", "counters")
+                for key in ("characters", "relationships", "rosters", "locations", "inventory", "counters")
             }
             if isinstance(raw_deltas, dict)
             else _empty_scene_deltas()
@@ -731,6 +784,7 @@ def _empty_scene_deltas() -> dict[str, list[dict[str, Any]]]:
     return {
         "characters": [],
         "relationships": [],
+        "rosters": [],
         "locations": [],
         "inventory": [],
         "counters": [],

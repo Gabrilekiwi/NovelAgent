@@ -23,6 +23,7 @@ MANDATORY_SECTIONS = frozenset(
         "Director Decision",
         "Story State",
         "Spatial State",
+        "Authoritative State",
         "StoryProject Chapter Blueprint",
         "Requirements",
         "小说生成规则契约",
@@ -32,6 +33,7 @@ SCENE_SECTIONS = MANDATORY_SECTIONS | {"Memory Index"}
 REPAIR_SECTIONS = frozenset(
     {"Project Profile", "Story State", "Spatial State", "StoryProject Chapter Blueprint", "Requirements", "小说生成规则契约"}
 )
+REPAIR_SECTIONS = REPAIR_SECTIONS | {"Authoritative State"}
 
 
 @dataclass(frozen=True)

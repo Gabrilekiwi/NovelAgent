@@ -52,7 +52,6 @@ class V20KnownGapRegressionTests(unittest.TestCase):
         self.assertFalse(report["accepted"])
         self.assertTrue(set(case["expected"]["problem_codes"]) <= _problem_codes(report))
 
-    @unittest.expectedFailure
     def test_character_identity_and_relationship_drift_are_blocked(self) -> None:
         from core.state.authoritative import validate_authoritative_state_delta
 
@@ -65,7 +64,6 @@ class V20KnownGapRegressionTests(unittest.TestCase):
         self.assertFalse(report["accepted"])
         self.assertTrue(set(case["expected"]["problem_codes"]) <= _problem_codes(report))
 
-    @unittest.expectedFailure
     def test_numeric_counter_rollback_is_blocked(self) -> None:
         from core.state.authoritative import validate_authoritative_state_delta
 
@@ -78,7 +76,6 @@ class V20KnownGapRegressionTests(unittest.TestCase):
         self.assertFalse(report["accepted"])
         self.assertIn("numeric_counter_rollback", _problem_codes(report))
 
-    @unittest.expectedFailure
     def test_roster_arithmetic_mismatch_is_blocked(self) -> None:
         from core.state.authoritative import validate_authoritative_state_delta
 

@@ -193,10 +193,11 @@
           },
           "deltas": {
             "type": "object",
-            "required": ["characters", "relationships", "locations", "inventory", "counters"],
+            "required": ["characters", "relationships", "rosters", "locations", "inventory", "counters"],
             "properties": {
               "characters": {"type": "array", "items": {"type": "object"}},
               "relationships": {"type": "array", "items": {"type": "object"}},
+              "rosters": {"type": "array", "items": {"type": "object"}},
               "locations": {"type": "array", "items": {"type": "object"}},
               "inventory": {"type": "array", "items": {"type": "object"}},
               "counters": {"type": "array", "items": {"type": "object"}}

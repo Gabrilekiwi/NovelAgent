@@ -8,6 +8,7 @@ from core.memory_v2.storage import load_canonical_memory
 from core.memory_v2.validator import validate_canonical_memory
 from core.state.snapshot import normalize_snapshot, validate_snapshot
 from core.story_project.semantic_contracts import validate_story_project_semantic_state
+from core.state.authoritative import empty_authoritative_state, validate_authoritative_state
 
 
 PROMOTED_CHARACTER_DATA_FIELDS = ("role", "identity", "status", "current_goal")
@@ -25,8 +26,21 @@ def canonical_memory_to_snapshot(canonical_memory: dict[str, Any]) -> dict[str, 
     world_state = _world_state(memory)
     characters = _characters(memory.get("characters", {}))
     locations = _locations(memory.get("locations", {}))
+    authoritative_state = (
+        validate_authoritative_state(memory["authoritative_state"])
+        if isinstance(memory.get("authoritative_state"), dict)
+        else empty_authoritative_state()
+    )
+    characters = _authority_characters(characters, authoritative_state)
     story_state = _story_state(memory)
     spatial_state = _spatial_state(memory, characters, locations)
+    spatial_state["character_positions"].update(
+        {
+            str(entity_id): copy.deepcopy(record.get("location_id"))
+            for entity_id, record in authoritative_state["locations"].items()
+            if isinstance(record, dict) and record.get("location_id") not in (None, "")
+        }
+    )
 
     snapshot = {
         "chapter_index": _chapter_index(memory),
@@ -41,6 +55,7 @@ def canonical_memory_to_snapshot(canonical_memory: dict[str, Any]) -> dict[str, 
         "style_rules": copy.deepcopy(memory.get("style_rules", [])),
         "story_state": story_state,
         "spatial_state": spatial_state,
+        "authoritative_state": copy.deepcopy(authoritative_state),
         "memory_v2": {
             "schema_version": memory["schema_version"],
             "revision": memory["revision"],
@@ -67,6 +82,10 @@ def canonical_memory_to_snapshot(canonical_memory: dict[str, Any]) -> dict[str, 
             "foreshadowing",
         ):
             snapshot[field] = copy.deepcopy(memory[field])
+        if authoritative_state["relationships"]:
+            snapshot["relationships"] = copy.deepcopy(authoritative_state["relationships"])
+        snapshot["roster"] = copy.deepcopy(authoritative_state["roster"])
+        snapshot["numeric_counters"] = copy.deepcopy(authoritative_state["numeric_counters"])
     return validate_snapshot(normalize_snapshot(snapshot))
 
 
@@ -101,6 +120,14 @@ def rebuild_semantic_snapshot(
     snapshot["constraints"] = _merge_records_by_id(snapshot.get("constraints", []), story["constraints"])
     snapshot["active_constraints"] = _active_constraints(snapshot["constraints"])
     snapshot["foreshadowing"] = copy.deepcopy(story["foreshadowing"])
+    snapshot["authoritative_state"] = _story_project_authoritative_state(
+        snapshot.get("authoritative_state"),
+        story,
+    )
+    snapshot["characters"] = _authority_characters(
+        snapshot["characters"],
+        snapshot["authoritative_state"],
+    )
     snapshot["story_project_semantics"] = {
         "source_digest": story["source_digest"],
         "parser_version": story["parser_version"],
@@ -109,6 +136,41 @@ def rebuild_semantic_snapshot(
         "conflicts": copy.deepcopy(story["conflicts"]),
     }
     return validate_snapshot(normalize_snapshot(snapshot))
+
+
+def _story_project_authoritative_state(
+    current: Any,
+    story: dict[str, Any],
+) -> dict[str, Any]:
+    authority = (
+        copy.deepcopy(validate_authoritative_state(current))
+        if isinstance(current, dict)
+        else empty_authoritative_state()
+    )
+    for character_id, raw in story.get("characters", {}).items():
+        if not isinstance(raw, dict):
+            continue
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+        existing = authority["characters"].get(str(character_id), {})
+        authority["characters"][str(character_id)] = {
+            **copy.deepcopy(existing),
+            "character_id": str(character_id),
+            "canonical_name": str(raw.get("name") or raw.get("canonical_name") or character_id),
+            "aliases": list(raw.get("aliases") or data.get("aliases") or []),
+            "identity": str(raw.get("identity") or raw.get("role") or data.get("identity") or data.get("role") or ""),
+            "status": str(raw.get("status") or data.get("status") or existing.get("status") or "unknown"),
+            "source_tier": "story_project_standard",
+        }
+    spatial = story.get("spatial_state") if isinstance(story.get("spatial_state"), dict) else {}
+    for entity_id, location_id in (spatial.get("character_positions") or {}).items():
+        if location_id in (None, ""):
+            continue
+        authority["locations"][str(entity_id)] = {
+            "entity_id": str(entity_id),
+            "location_id": copy.deepcopy(location_id),
+            "source_tier": "story_project_standard",
+        }
+    return validate_authoritative_state(authority)
 
 
 def _chapter_index(memory: dict[str, Any]) -> int:
@@ -177,6 +239,26 @@ def _locations(raw_locations: Any) -> dict[str, dict[str, Any]]:
                 snapshot_record[key] = copy.deepcopy(value)
         locations[str(location_id)] = snapshot_record
     return locations
+
+
+def _authority_characters(
+    legacy: dict[str, dict[str, Any]],
+    authority: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    characters = copy.deepcopy(legacy)
+    for character_id, raw in authority.get("characters", {}).items():
+        if not isinstance(raw, dict):
+            continue
+        existing = characters.get(str(character_id), {})
+        record = {
+            **copy.deepcopy(existing),
+            **copy.deepcopy(raw),
+            "id": str(character_id),
+            "name": str(raw.get("canonical_name") or raw.get("name") or character_id),
+        }
+        record.setdefault("data", {})
+        characters[str(character_id)] = record
+    return characters
 
 
 def _story_state(memory: dict[str, Any]) -> dict[str, Any]:

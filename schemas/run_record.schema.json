@@ -1460,6 +1460,7 @@
                   "world_state",
                   "story_state",
                   "spatial_state",
+                  "authoritative_state",
                   "characters",
                   "timeline",
                   "constraints",

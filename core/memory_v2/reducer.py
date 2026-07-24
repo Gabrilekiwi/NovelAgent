@@ -22,6 +22,12 @@ from core.memory_v2.versions import (
     UnsupportedMemoryVersionError,
     require_supported_reducer_version,
 )
+from core.state.authoritative import (
+    AuthoritativeStateError,
+    empty_authoritative_state,
+    validate_authoritative_state,
+    validate_authoritative_state_delta,
+)
 
 
 class MemoryReducerError(ValueError):
@@ -49,6 +55,7 @@ TYPED_REDUCER_OPS = SUPPORTED_REDUCER_OPS | {
     "upsert_inventory",
     "upsert_relationship",
     "upsert_resource",
+    "update_authoritative_state",
 }
 
 
@@ -563,6 +570,29 @@ def _mutate_operation_v22(
     revision: int,
 ) -> tuple[str | None, str, Any, Any]:
     op = str(operation["op"])
+    if op == "update_authoritative_state":
+        before = copy.deepcopy(memory.get("authoritative_state"))
+        base = _seed_authoritative_state(memory)
+        value = _operation_value_object(operation)
+        baseline = value.pop("baseline_state", None)
+        if isinstance(baseline, dict) and baseline:
+            base = _merge_authoritative_baseline(base, baseline)
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            state_delta=value,
+            chapter_text="",
+        )
+        if not report["accepted"]:
+            codes = ", ".join(
+                str(item.get("code") or "unknown")
+                for item in report.get("findings") or []
+            )
+            raise MemoryReducerError(
+                f"authoritative state conflict: {codes or 'unknown'}"
+            )
+        after = copy.deepcopy(report["state_after"])
+        memory["authoritative_state"] = after
+        return None, "authoritative_state", before, after
     collection_by_op = {
         "upsert_character": "characters",
         "upsert_location": "locations",
@@ -659,6 +689,117 @@ def _mutate_operation_v22(
             records[index] = copy.deepcopy(after)
         return record_id, f"{collection}.{record_id}", before, after
     raise MemoryReducerError(f"unsupported memory operation for {CURRENT_REDUCER_VERSION}: {op}")
+
+
+def _seed_authoritative_state(memory: dict[str, Any]) -> dict[str, Any]:
+    existing = memory.get("authoritative_state")
+    if isinstance(existing, dict) and any(
+        existing.get(key)
+        for key in (
+            "characters",
+            "relationships",
+            "roster",
+            "numeric_counters",
+            "inventory",
+            "locations",
+            "events",
+        )
+    ):
+        return validate_authoritative_state(existing)
+
+    state = empty_authoritative_state()
+    source_tier = _legacy_seed_source_tier(memory)
+    for character_id, raw in (memory.get("characters") or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+        record = {
+            "character_id": str(character_id),
+            "canonical_name": str(raw.get("name") or character_id),
+            "aliases": list(data.get("aliases") or []),
+            "identity": str(data.get("identity") or data.get("role") or ""),
+            "status": str(raw.get("status") or data.get("status") or "unknown"),
+            "source_tier": source_tier,
+        }
+        state["characters"][str(character_id)] = record
+        character_state = raw.get("state") if isinstance(raw.get("state"), dict) else {}
+        current_location = character_state.get("current_location", data.get("current_location"))
+        if current_location not in (None, ""):
+            state["locations"][str(character_id)] = {
+                "entity_id": str(character_id),
+                "location_id": current_location,
+                "source_tier": source_tier,
+            }
+    for relationship_id, raw in (memory.get("relationships") or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        source_id = str(raw.get("source_character_id") or "")
+        target_id = str(raw.get("target_character_id") or "")
+        relation_type = str(raw.get("type") or raw.get("kind") or "")
+        if source_id and target_id and relation_type:
+            state["relationships"][str(relationship_id)] = {
+                **copy.deepcopy(raw),
+                "relationship_id": str(relationship_id),
+                "source_character_id": source_id,
+                "target_character_id": target_id,
+                "type": relation_type,
+                "source_tier": source_tier,
+            }
+    for inventory_id, raw in (memory.get("inventories") or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        owner_id = str(raw.get("owner_id") or "world")
+        for item_id, item in (raw.get("items") or {}).items():
+            if not isinstance(item, dict):
+                continue
+            key = f"{owner_id}:{item_id}"
+            state["inventory"][key] = {
+                "inventory_id": key,
+                "owner_id": owner_id,
+                "item_id": str(item_id),
+                "quantity": item.get("quantity", 0),
+                "source_tier": source_tier,
+            }
+    return validate_authoritative_state(state)
+
+
+def _merge_authoritative_baseline(
+    current: dict[str, Any],
+    baseline: dict[str, Any],
+) -> dict[str, Any]:
+    merged = copy.deepcopy(validate_authoritative_state(current))
+    validated_baseline = validate_authoritative_state(baseline)
+    for collection in (
+        "characters",
+        "relationships",
+        "roster",
+        "numeric_counters",
+        "inventory",
+        "locations",
+        "events",
+    ):
+        merged[collection].update(copy.deepcopy(validated_baseline[collection]))
+    try:
+        return validate_authoritative_state(merged)
+    except AuthoritativeStateError as exc:
+        codes = ", ".join(
+            str(item.get("code") or "unknown")
+            for item in exc.report.get("findings") or []
+        )
+        raise MemoryReducerError(
+            f"authoritative StoryProject baseline conflict: {codes or 'unknown'}"
+        ) from exc
+
+
+def _legacy_seed_source_tier(memory: dict[str, Any]) -> str:
+    source_kinds = {
+        str(item.get("kind") or "")
+        for item in (memory.get("source_index") or {}).values()
+        if isinstance(item, dict)
+    }
+    if source_kinds & {"story_project", "source_sync", "migration"}:
+        return "story_project_standard"
+    return "model_inference"
 
 
 def _typed_record_defaults(collection: str, record_id: str, revision: int) -> dict[str, Any]:

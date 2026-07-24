@@ -18,6 +18,7 @@ INPUT_PACK_SECTIONS = [
     "world_state",
     "story_state",
     "spatial_state",
+    "authoritative_state",
     "characters",
     "timeline",
     "constraints",
@@ -79,6 +80,9 @@ def build_input_pack(
 # Spatial State
 {_dump(snapshot.get("spatial_state", {}))}
 
+# Authoritative State
+{_dump(snapshot.get("authoritative_state", {}))}
+
 # Characters
 {_dump(snapshot.get("characters", {}))}
 
@@ -103,6 +107,8 @@ def build_input_pack(
 - Preserve character, location, and timeline continuity from the Snapshot.
 - If Project Profile sets a language, write the chapter only in that language.
 - Continue directly from Story State and explain Spatial State transitions before changing locations.
+- Treat Authoritative State stable IDs, aliases, relationships, rosters, counters, inventory, locations, and events as binding.
+- Express every state change as a structured Scene delta; never infer a replacement identity or reset a counter.
 - Introduce or intensify at least one concrete conflict.
 - Treat Snapshot and Memory Index as read-only runtime context.
 - If Recovery Context is available, address its problem codes and validation coverage gaps without contradicting the Snapshot.

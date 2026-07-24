@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from core.state.authoritative import empty_authoritative_state
+
 
 CANONICAL_MEMORY_SCHEMA_VERSION = "2.0"
 TYPED_CANONICAL_MEMORY_SCHEMA_VERSION = "2.2"
@@ -84,6 +86,7 @@ def create_empty_typed_canonical_memory(
             "scene_index": 0,
         },
         "foreshadowing": {},
+        "authoritative_state": empty_authoritative_state(),
         "timeline": [],
         "open_threads": [],
         "chapter_states": {},

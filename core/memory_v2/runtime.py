@@ -464,6 +464,19 @@ def _projection_targets(
 
 def _chapter_operations(chapter_index: int, analysis: Mapping[str, Any]) -> list[dict[str, Any]]:
     operations: list[dict[str, Any]] = []
+    authority_delta = analysis.get("authoritative_state_delta")
+    has_structured_authority = isinstance(authority_delta, Mapping)
+    if has_structured_authority:
+        operations.append(
+            {
+                "op": "update_authoritative_state",
+                "value": copy.deepcopy(dict(authority_delta)),
+                "data": {
+                    "authority_source": "chapter_event",
+                    "chapter_index": chapter_index,
+                },
+            }
+        )
     story_state = analysis.get("story_state")
     spatial_state = analysis.get("spatial_state")
     # Runtime snapshots point at the next chapter to generate.  Event and
@@ -478,7 +491,7 @@ def _chapter_operations(chapter_index: int, analysis: Mapping[str, Any]) -> list
         current["spatial_state"] = copy.deepcopy(dict(spatial_state))
     operations.append({"op": "update_current_state", "value": current})
 
-    for change in analysis.get("character_changes") or []:
+    for change in [] if has_structured_authority else analysis.get("character_changes") or []:
         if not isinstance(change, Mapping) or not str(change.get("name") or "").strip():
             continue
         name = str(change["name"]).strip()
@@ -492,7 +505,7 @@ def _chapter_operations(chapter_index: int, analysis: Mapping[str, Any]) -> list
                 },
             }
         )
-    for location in analysis.get("new_locations") or []:
+    for location in [] if has_structured_authority else analysis.get("new_locations") or []:
         if not isinstance(location, str) or not location.strip():
             continue
         name = location.strip()

@@ -15,6 +15,7 @@ def _empty_deltas() -> dict[str, list[dict]]:
     return {
         "characters": [],
         "relationships": [],
+        "rosters": [],
         "locations": [],
         "inventory": [],
         "counters": [],

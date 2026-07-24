@@ -229,6 +229,7 @@ class ChapterPipelineTest(unittest.TestCase):
                     "deltas": {
                         "characters": [],
                         "relationships": [],
+                        "rosters": [],
                         "locations": [],
                         "inventory": [],
                         "counters": [],
@@ -364,6 +365,7 @@ class ChapterPipelineTest(unittest.TestCase):
                     "deltas": {
                         "characters": [],
                         "relationships": [],
+                        "rosters": [],
                         "locations": [],
                         "inventory": [],
                         "counters": [],
