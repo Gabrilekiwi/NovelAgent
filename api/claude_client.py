@@ -266,7 +266,24 @@ def _stream_message_text(
                     endpoint_type=endpoint_type,
                 )
     except Exception as exc:
-        raise PartialResponseError(exc, partial_content_received=bool(parts)) from exc
+        partial_text = "".join(parts)
+        partial_response = (
+            ModelResponse(
+                partial_text,
+                usage=usage,
+                finish_reason="stream_interrupted",
+                request_id=request_id,
+                actual_model=actual_model,
+                endpoint_type=endpoint_type,
+            )
+            if partial_text
+            else None
+        )
+        raise PartialResponseError(
+            exc,
+            partial_content_received=bool(partial_text),
+            partial_response=partial_response,
+        ) from exc
 
     raise ModelCallError(
         "Claude streamed response did not include text content.",

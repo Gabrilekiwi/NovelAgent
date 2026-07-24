@@ -117,6 +117,12 @@ python main.py --llm-validator
 
 This uses OpenAI and is never enabled implicitly by dry-run or CI. Preflight requires `OPENAI_API_KEY` and the OpenAI package before this stage can run. LLM validation output is schema-checked and merged as `validator="llm"` problems with evidence, severity, repair hints, and an `area` enum covering complex plot logic, character motivation consistency, timeline causality, setup/payoff, and emotional/theme drift.
 
+Repeated chapter repair uses convergence-gated elastic token budgeting. After every successful repair validation, the runtime compares total problem count, stable problem fingerprints, and severity with the previous validation. A strict decrease with no newly introduced critical or more-severe problem authorizes only the exact input/output token deficit needed by the next repair cycle (`scene_repair` plus its `llm_validation`). Provider-call count, elapsed-time, and cost ceilings never expand. An authorization is stage-bounded and each stage can consume it only once; a newer improvement supersedes an older unused authorization. The base and effective token limits, convergence evidence, authorizations, and actual grants are recorded under `run.execution_evidence.budget.elastic_budget` for both successful and failed persisted runs.
+
+If a repair leaves the problem count unchanged, increases it, or introduces a critical/more-severe problem, the run stops with `chapter_repair_not_converging` instead of spending another model call. The failed run preserves the best validated draft seen in the current repair loop. A repair output is counted and saved immediately before its follow-up validation, so a later budget or validator failure cannot erase that completed draft or under-report the repair attempt. With only one validation checkpoint there is no trend evidence, so the runtime does not grant elasticity yet.
+
+For failures created before this convergence policy existed, `--recover-locked-chapter` also inspects newer terminal failed runs even when no unresolved provider intent remains. If the newest current-chapter failure contains contract-valid complete prose and is newer than the active partial checkpoint, recovery writes a superseding append-only `repair_draft` checkpoint with no forged provider resolution. The next normal generation command reuses that draft and starts at validation/repair instead of regenerating scenes.
+
 If local proxy variables point provider SDK traffic at an unavailable proxy, add `--no-proxy` to `main.py` commands or set `NOVELAGENT_NO_PROXY=1` in `.env`. This clears `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lowercase variants before OpenAI, Claude, or Notion calls run.
 
 Input-token admission uses the configured provider model and endpoint. A recognized OpenAI model on the official endpoint uses `tiktoken==0.13.0` only when its mapped BPE asset is already present locally and passes the pinned SHA-256/rank validation; it reports `count_mode="model_tokenizer"`, is never described as Provider-exact usage, and the admission path never downloads a missing asset. OpenAI-compatible endpoints, unknown models, cache misses, and providers without a trusted local tokenizer use a split fallback with a fixed 64-token input framing allowance: all ASCII bytes retain a one-token floor, while non-ASCII UTF-8 bytes use the versioned calibration with 15% margin. This preserves protection for JSON syntax, escapes, punctuation, and high-entropy ASCII without recreating the former roughly three-token-per-Chinese-character reservation. Provider-reported usage replaces the input estimate after a successful call. If output usage is absent, settlement keeps at least the full output reservation or the visible-text UTF-8-byte fallback, whichever is larger.
@@ -268,6 +274,27 @@ python main.py --recover-latest --run-dir .tmp/runtime/runs --chapter-dir .tmp/r
 
 This writes `chapter_XXXX_recovered_<run_id>.md` to the chapter directory. It is intentionally separate from normal commit logic, so it cannot silently advance chapter state.
 
+Handle the current StoryProject chapter when an interrupted provider call has locked subsequent execution:
+
+```bash
+python main.py --story-project "books/your-book" --recover-locked-chapter
+
+# Use this only when preserved output is known to be semantically wrong. It
+# discards the current chapter's uncommitted draft/scenes and keeps formal prose
+# plus the committed snapshot unchanged.
+python main.py --story-project "books/your-book" --recover-locked-chapter --locked-chapter-reset
+```
+
+When a non-converging repair needs a small human edit, keep the corrected UTF-8
+draft inside the StoryProject and stage it without another generation or polish
+call:
+
+```powershell
+python main.py --story-project "books/your-book" --recover-locked-chapter --locked-chapter-draft "books/your-book/.novelagent/runtime/manual_drafts/chapter_0007.md"
+```
+
+This command makes no provider calls. It verifies the current chapter, run evidence, response artifacts, and hashes, then writes an append-only recovery checkpoint. A usable complete draft is routed to the normal validation/repair stages on the next run. A contiguous scene prefix is reused and only missing scenes are generated. If no trustworthy content exists, uncommitted failed history for the current chapter is reset. Formal StoryProject prose is never modified, and rerunning the recovery command is idempotent. After recovery reports `READY`, rerun the original chapter-generation command.
+
 Recovery context includes validation problem codes plus blocking/warning counts, severity counts, validation coverage, compact validation evidence, compact repair plan summaries, compact repair evidence, and compact repair delta summaries from the last run. The rule Director uses that structured summary to choose validation focus and repair budget, model-backed Director receives the same compact `last_run` payload, chapter generation receives a first-class `# Recovery Context` section in the runtime input pack, and scene repair receives the same structure as explicit model payload context. Each run record stores which last run was attached under `recovery_context`; loop sessions collect those edges under `recovery_links` so multi-step recovery can be audited after the fact. If the previous run skipped continuity, spatial, or logic checks, the next recovery decision prioritizes those skipped checks before commit. If the previous repair plan carried critical risk, needed manual review, or exhausted its budget without a commit, the next recovery budget is raised before polish. If the previous repair stalled or introduced new problem codes, recovery budget is also raised and validation focus is derived from remaining/new problem codes. The current run's `snapshot_builder_audit` is also attached before Director executes; it includes applied/skipped memory type counts, skipped reason/severity counts, blocking skipped counts, and source mapping samples. Medium-or-higher skipped memory quality issues can raise the repair budget, prioritize continuity/spatial validation, and skip polish before repair.
 
 Non-dry-run preflight requires the `openai` package and `OPENAI_API_KEY`. Use `--require-claude` to also require the `anthropic` package, a Claude key (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`), and a Claude model (`CLAUDE_MODEL` or `ANTHROPIC_MODEL`).
@@ -289,6 +316,8 @@ Common variables:
 - `OPENAI_MODEL`
 - `OPENAI_TIMEOUT_SECONDS`
 - `OPENAI_MAX_OUTPUT_TOKENS`
+- `OPENAI_VALIDATION_MAX_OUTPUT_TOKENS` (defaults to 10,000 and never exceeds the general OpenAI output limit)
+- `OPENAI_REVALIDATION_MAX_OUTPUT_TOKENS` (defaults to 6,000, never exceeds the validation limit, and is used only for focused post-repair verification)
 - `OPENAI_MAX_RETRIES`
 - `OPENAI_STREAM`
 - `ANTHROPIC_API_KEY`

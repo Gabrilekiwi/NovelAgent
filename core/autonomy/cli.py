@@ -27,6 +27,7 @@ _INCOMPATIBLE_TOP_LEVEL_COMMANDS = (
     ("check_memory_v2", "--check-memory-v2"),
     ("report_runs", "--report-runs"),
     ("recover_latest", "--recover-latest"),
+    ("recover_locked_chapter", "--recover-locked-chapter"),
     ("reconcile_persistence", "--reconcile-persistence"),
     ("reconcile_deliveries", "--reconcile-deliveries"),
     ("inspect_delivery", "--inspect-delivery"),

@@ -109,6 +109,46 @@ class StructuredContextTest(unittest.TestCase):
         self.assertEqual(len(source), manifest["original_chars"])
         self.assertEqual(64, len(manifest["source_sha256"]))
 
+    def test_section_override_and_json_allowlist_remove_prompt_only_audit_fields(self) -> None:
+        story_state = {
+            "last_chapter_ending": "The alarm started.",
+            "last_scene_location": "control room",
+            "last_scene_characters": ["Mira"],
+            "open_threads": ["Reach the generator."],
+            "required_opening_bridge": "Continue from the control room.",
+            "source": "tracking/character-state.md",
+            "path": "D:/book/tracking/character-state.md",
+            "text": "historical audit excerpt " * 80,
+        }
+        source = "# Story State\n" + json.dumps(story_state, ensure_ascii=False, indent=2)
+        semantic_keys = {
+            "last_chapter_ending",
+            "last_scene_location",
+            "last_scene_characters",
+            "open_threads",
+            "required_opening_bridge",
+        }
+
+        selection = compact_markdown_context(
+            source,
+            max_chars=5_000,
+            per_section_max_chars=100,
+            required_sections={"Story State"},
+            required_json_keys={"Story State": semantic_keys},
+            allowed_json_keys={"Story State": semantic_keys},
+            section_max_chars={"Story State": 4_096},
+        )
+
+        body = selection.text.split("# Story State\n", 1)[1].split(
+            "\n\n# Structured Context Manifest\n",
+            1,
+        )[0]
+        retained = json.loads(body)
+        self.assertEqual(semantic_keys, set(retained))
+        self.assertEqual("The alarm started.", retained["last_chapter_ending"])
+        self.assertNotIn("historical audit excerpt", selection.text)
+        self.assertLessEqual(len("# Story State\n" + body), 4_096)
+
     def test_prompt_compiler_keeps_required_blueprint_json_parseable_with_thousand_chapter_history(self) -> None:
         history = [
             {"chapter": index, "summary": f"chapter {index} completed event " + ("detail " * 8)}

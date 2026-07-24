@@ -1,8 +1,10 @@
 # NovelAgent
 
-Version: 1.5 compatibility baseline with opt-in reliable semantic production
+Version: 2.0 stabilization baseline
 
-NovelAgent keeps the v1.5-compatible agent loop and adds an opt-in reliable semantic production path for StoryProject: calibrated semantic authority, field provenance, managed tracking projections, Memory V2.1 replay, receipt-backed persistence, durable delivery, and unified provider retry policy.
+NovelAgent 2.0 freezes the current feature set as the baseline for the next stabilization cycle. It retains the v1.5-compatible agent loop and the opt-in reliable semantic production path for StoryProject: calibrated semantic authority, field provenance, managed tracking projections, Memory V2.1 replay, receipt-backed persistence, durable delivery, unified provider retry policy, locked-chapter recovery, convergence-gated repair, and chapter-scoped context budgeting.
+
+This tag is a feature-complete stage baseline, not a claim that unattended long-form production is already reliable. A real old-versus-rewrite ten-chapter comparison found stronger local prose and tactical detail alongside regressions in final-artifact integrity, cross-chapter state consistency, and delivery-level quality gating. The following 2.x iterations are intentionally limited to optimizing and hardening existing functionality. See the [v2.0 baseline and stabilization charter](docs/v2.0-baseline.md).
 
 Reliability/autonomy claims are tracked by four separate levels—code exists, main-path integration, default enablement, and real verification—in the [Reliability and autonomy capability status](docs/reliability-autonomy-capability-status.md). Synthetic evidence is listed separately and is never treated as real-provider evidence. A complete 50-chapter deterministic simulation passed against code commit `bfa3d04` in 1298.864 seconds; the [retained evidence report](docs/reliability-autonomy-50-chapter-evidence.json) closes only the synthetic long-run gate and does not enable autonomy by default. The same clean commit passed 1317 unit tests (7 platform skips) and v1 smoke with 21/21 preflight checks. The billable real single-chapter, four-chapter, ten-chapter, and 20-or-more-chapter checks are retained as [operator-run post-goal validation](docs/real-autonomy-e2e.md), not as current Codex goal work or completion conditions. The operator will run them manually after the goal and give Codex only the redacted reports for analysis. The first single-chapter attempt on 2026-07-15 failed before chapter completion; no successful real report exists, so real verification remains absent and autonomy remains opt-in. No Notion call was made in this upgrade run.
 
@@ -88,7 +90,7 @@ Run multiple StoryProject chapters with real transactional writeback:
 python main.py --story-project auto --chapter 2 --steps 2 --story-project-writeback
 ```
 
-StoryProject multi-step mode requires real writeback. Context, previous prose, settings, and tracking files are reloaded for every step, and the chapter cursor advances only after a complete commit.
+StoryProject multi-step mode requires real writeback. Context, previous prose, settings, and tracking files are reloaded for every step, and the chapter cursor advances only after a complete commit. Model-call, token, elastic, and elapsed-time budgets reset for every chapter; the loop session only coordinates and summarizes those chapter runs. The default per-chapter input budget is 256,000 tokens so a complex multi-scene draft still has normal capacity for its mandatory initial validation and one repair/revalidation cycle; later repair-only expansion remains subject to convergence evidence.
 
 StoryProject remains in non-authoritative shadow mode unless a target-book calibration report passes every strict gate and is explicitly activated. See [Story State Calibration and Strict Activation](docs/story-state-activation.md). Persistent strict runs require `--story-project-writeback`; parser/schema/layout drift fails closed. The opt-in, billable two-chapter real OpenAI gate is documented in [Real StoryProject Two-Chapter E2E](docs/real-storyproject-e2e.md).
 
@@ -113,6 +115,17 @@ Recover the latest failed or rejected pre-polish draft without advancing the sna
 ```bash
 python main.py --recover-latest --run-dir .tmp/runtime/runs --chapter-dir .tmp/runtime/chapters
 ```
+
+If a StoryProject chapter is locked by an interrupted provider call, classify and unlock it without making another model call:
+
+```bash
+python main.py --story-project "books/your-book" --recover-locked-chapter
+
+# Discard known-bad, uncommitted output for the locked chapter and restart it.
+python main.py --story-project "books/your-book" --recover-locked-chapter --locked-chapter-reset
+```
+
+The command preserves a complete draft for validation/repair, preserves a contiguous scene prefix so the next normal generation starts at the first missing scene, or resets the uncommitted chapter when no output is trustworthy. It also promotes a newer complete failed draft (for example, a terminal local budget rejection with no unresolved provider call) over an older partial recovery checkpoint, so a repaired chapter is not regenerated merely because the final validation did not run. When a hash-verified Claude polish response already has a successful durable receipt, recovery prefers that response and the next run skips duplicate polishing before validation. It never changes committed prose or advances the snapshot. After it reports `READY`, rerun the original generation command.
 
 Inspect and normalize a snapshot with explicit UTF-8 JSON handling:
 

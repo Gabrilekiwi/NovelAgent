@@ -18,6 +18,8 @@ from core.context_budget import (
 from core.engine.persistence import atomic_create_json, atomic_create_text
 from core.memory_v2.canonical import canonical_json_bytes
 from core.model_calls import (
+    PROVIDER_PARTIAL_RESPONSE_FAILED,
+    PROVIDER_REQUEST_NOT_SENT,
     ModelCallConflictError,
     ModelCallEvidenceError,
     ModelCallIntegrityError,
@@ -58,6 +60,91 @@ class ProviderCallUncertainError(ModelCallEvidenceError):
         self.attempt_id = attempt_id
         self.cause = cause
         self.partial_content_received = bool(partial_content_received)
+
+
+class ProviderPartialResponseError(ModelCallEvidenceError):
+    """A streamed call stopped after a partial response was durably recorded."""
+
+    failure_category = "provider_partial_response"
+    retryable = False
+    partial_content_received = True
+
+    def __init__(
+        self,
+        *,
+        call_id: str,
+        attempt_id: str,
+        receipt_hash: str,
+        response_artifact_ref: str,
+        cause: BaseException | None = None,
+    ) -> None:
+        super().__init__(
+            "provider_partial_response: streamed attempt "
+            f"{attempt_id} stopped after partial content; durable failure receipt exists"
+        )
+        self.call_id = call_id
+        self.attempt_id = attempt_id
+        self.receipt_hash = receipt_hash
+        self.response_artifact_ref = response_artifact_ref
+        self.cause = cause
+
+
+class ProviderRequestNotSentError(ModelCallEvidenceError):
+    """A connection failed before an HTTP request could be dispatched."""
+
+    failure_category = "connection"
+    retryable = True
+    partial_content_received = False
+
+    def __init__(
+        self,
+        *,
+        call_id: str,
+        attempt_id: str,
+        receipt_hash: str,
+        cause: BaseException | None = None,
+    ) -> None:
+        super().__init__(
+            "provider_request_not_sent: connection setup failed before dispatch "
+            f"for attempt {attempt_id}; durable terminal receipt exists"
+        )
+        self.call_id = call_id
+        self.attempt_id = attempt_id
+        self.receipt_hash = receipt_hash
+        self.cause = cause
+
+
+class ProviderRejectedError(ModelCallEvidenceError):
+    """The provider definitively rejected the request without a model result."""
+
+    failure_category = "configuration"
+    retryable = False
+    partial_content_received = False
+
+    def __init__(
+        self,
+        *,
+        call_id: str,
+        attempt_id: str,
+        receipt_hash: str,
+        cause: BaseException | None = None,
+    ) -> None:
+        super().__init__(
+            "provider_rejected: provider definitively rejected attempt "
+            f"{attempt_id}; durable terminal receipt exists"
+        )
+        self.call_id = call_id
+        self.attempt_id = attempt_id
+        self.receipt_hash = receipt_hash
+        self.cause = cause
+
+
+_CHARGED_TERMINAL_FAILURE_STATUSES = frozenset(
+    {"provider_rejected", PROVIDER_PARTIAL_RESPONSE_FAILED}
+)
+_UNCHARGED_TERMINAL_FAILURE_STATUSES = frozenset(
+    {"budget_rejected", PROVIDER_REQUEST_NOT_SENT}
+)
 
 
 @dataclass
@@ -168,9 +255,10 @@ class ModelCallRuntimeContext:
 
         A terminal local budget rejection never crossed the provider boundary
         and is therefore not charged. Every succeeded receipt is reserved and
-        settled exactly once in the fresh in-memory tracker. An Intent without
-        a Receipt crossed the durable provider boundary, so its full output
-        reservation remains charged while the attempt stays uncertain.
+        settled exactly once in the fresh in-memory tracker. Terminal provider
+        failures keep their full reservation charged. An Intent without a
+        Receipt crossed the durable provider boundary, so its full output
+        reservation also remains charged while the attempt stays uncertain.
         """
 
         hydrated: list[str] = []
@@ -185,14 +273,21 @@ class ModelCallRuntimeContext:
         for path in sorted(self.store.intents_dir.glob("*.json")):
             intent = self.store.load_intent(path.stem)
             receipt = receipts.get(intent["attempt_id"])
-            if receipt is not None and receipt["status"] == "budget_rejected":
+            if (
+                receipt is not None
+                and receipt["status"] in _UNCHARGED_TERMINAL_FAILURE_STATUSES
+            ):
                 continue
-            if receipt is not None and receipt["status"] != "succeeded":
+            if (
+                receipt is not None
+                and receipt["status"] != "succeeded"
+                and receipt["status"] not in _CHARGED_TERMINAL_FAILURE_STATUSES
+            ):
                 raise ModelCallIntegrityError(
                     f"unsupported terminal model receipt status: {receipt['status']}"
                 )
             self._restore_tracker_reservation(intent)
-            if receipt is not None:
+            if receipt is not None and receipt["status"] == "succeeded":
                 response = self._response_from_receipt(receipt["attempt_id"])
                 self._record_tracker_response(
                     response,
@@ -316,6 +411,7 @@ class ModelCallRuntimeContext:
                 max_output_tokens=max_output_tokens,
                 call_id=call_id,
                 attempt_id=attempt_id,
+                stage=stage,
             )
         except Exception:
             # The durable Intent exists, but the provider was provably never
@@ -373,6 +469,133 @@ class ModelCallRuntimeContext:
         except ProviderCallUncertainError:
             raise
         except Exception as exc:
+            partial_response = getattr(exc, "partial_response", None)
+            if isinstance(partial_response, ModelResponse) and partial_response.text:
+                relative_ref = f"responses/{attempt_id}.txt"
+                artifact_path = _resolve_artifact(self.store.root, relative_ref)
+                try:
+                    self._inject_fault(
+                        "after_provider_response_before_artifact",
+                        attempt_id,
+                        artifact_path,
+                    )
+                    self._persist_response_artifact(relative_ref, partial_response.text)
+                    self._inject_fault(
+                        "after_response_artifact_before_receipt",
+                        attempt_id,
+                        artifact_path,
+                    )
+                    failed_receipt = build_model_call_receipt(
+                        intent,
+                        response=partial_response,
+                        response_artifact_ref=relative_ref,
+                        status=PROVIDER_PARTIAL_RESPONSE_FAILED,
+                        received_at=self.clock(),
+                    )
+                    self.store.record_receipt(failed_receipt)
+                except Exception as evidence_error:
+                    raise ProviderCallUncertainError(
+                        call_id=call_id,
+                        attempt_id=attempt_id,
+                        cause=evidence_error,
+                        partial_content_received=True,
+                    ) from evidence_error
+                raise ProviderPartialResponseError(
+                    call_id=call_id,
+                    attempt_id=attempt_id,
+                    receipt_hash=failed_receipt["receipt_hash"],
+                    response_artifact_ref=relative_ref,
+                    cause=exc,
+                ) from exc
+            if _is_request_not_sent_connection_failure(exc):
+                failed_response = ModelResponse(
+                    "",
+                    usage={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                    finish_reason=PROVIDER_REQUEST_NOT_SENT,
+                    actual_model=model,
+                    endpoint_type=endpoint_type,
+                )
+                relative_ref = f"responses/{attempt_id}.txt"
+                artifact_path = _resolve_artifact(self.store.root, relative_ref)
+                try:
+                    self._inject_fault(
+                        "after_provider_response_before_artifact",
+                        attempt_id,
+                        artifact_path,
+                    )
+                    self._persist_response_artifact(relative_ref, failed_response.text)
+                    self._inject_fault(
+                        "after_response_artifact_before_receipt",
+                        attempt_id,
+                        artifact_path,
+                    )
+                    failed_receipt = build_model_call_receipt(
+                        intent,
+                        response=failed_response,
+                        response_artifact_ref=relative_ref,
+                        status=PROVIDER_REQUEST_NOT_SENT,
+                        received_at=self.clock(),
+                    )
+                    self.store.record_receipt(failed_receipt)
+                except Exception as evidence_error:
+                    raise ProviderCallUncertainError(
+                        call_id=call_id,
+                        attempt_id=attempt_id,
+                        cause=evidence_error,
+                    ) from evidence_error
+                self._record_tracker_response(
+                    failed_response,
+                    call_id=call_id,
+                    attempt_id=attempt_id,
+                )
+                raise ProviderRequestNotSentError(
+                    call_id=call_id,
+                    attempt_id=attempt_id,
+                    receipt_hash=failed_receipt["receipt_hash"],
+                    cause=exc,
+                ) from exc
+            if _is_definitive_provider_rejection(exc):
+                failed_response = ModelResponse(
+                    "",
+                    usage={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                    finish_reason="provider_rejected",
+                    actual_model=model,
+                    endpoint_type=endpoint_type,
+                )
+                relative_ref = f"responses/{attempt_id}.txt"
+                artifact_path = _resolve_artifact(self.store.root, relative_ref)
+                try:
+                    self._inject_fault(
+                        "after_provider_response_before_artifact",
+                        attempt_id,
+                        artifact_path,
+                    )
+                    self._persist_response_artifact(relative_ref, failed_response.text)
+                    self._inject_fault(
+                        "after_response_artifact_before_receipt",
+                        attempt_id,
+                        artifact_path,
+                    )
+                    failed_receipt = build_model_call_receipt(
+                        intent,
+                        response=failed_response,
+                        response_artifact_ref=relative_ref,
+                        status="provider_rejected",
+                        received_at=self.clock(),
+                    )
+                    self.store.record_receipt(failed_receipt)
+                except Exception as evidence_error:
+                    raise ProviderCallUncertainError(
+                        call_id=call_id,
+                        attempt_id=attempt_id,
+                        cause=evidence_error,
+                    ) from evidence_error
+                raise ProviderRejectedError(
+                    call_id=call_id,
+                    attempt_id=attempt_id,
+                    receipt_hash=failed_receipt["receipt_hash"],
+                    cause=exc,
+                ) from exc
             raise ProviderCallUncertainError(
                 call_id=call_id,
                 attempt_id=attempt_id,
@@ -475,12 +698,37 @@ class ModelCallRuntimeContext:
             max_output_tokens=reservation["reserved_output_tokens"],
             call_id=intent["call_id"],
             attempt_id=intent["attempt_id"],
+            stage=str(intent.get("stage") or ""),
+            restore=True,
         )
 
     def _replay_receipt(self, intent: dict[str, Any]) -> ModelResponse:
         receipt = self.store.load_receipt(intent["attempt_id"])
         # Local budget rejection is terminal but never crossed the provider
         # boundary and must remain uncharged.
+        if receipt["status"] == PROVIDER_PARTIAL_RESPONSE_FAILED:
+            self._restore_tracker_reservation(intent)
+            self._load_response_from_receipt(receipt)
+            raise ProviderPartialResponseError(
+                call_id=intent["call_id"],
+                attempt_id=intent["attempt_id"],
+                receipt_hash=receipt["receipt_hash"],
+                response_artifact_ref=receipt["response_artifact_ref"],
+            )
+        if receipt["status"] == PROVIDER_REQUEST_NOT_SENT:
+            self._load_response_from_receipt(receipt)
+            raise ProviderRequestNotSentError(
+                call_id=intent["call_id"],
+                attempt_id=intent["attempt_id"],
+                receipt_hash=receipt["receipt_hash"],
+            )
+        if receipt["status"] == "provider_rejected":
+            self._load_response_from_receipt(receipt)
+            raise ProviderRejectedError(
+                call_id=intent["call_id"],
+                attempt_id=intent["attempt_id"],
+                receipt_hash=receipt["receipt_hash"],
+            )
         if receipt["status"] != "succeeded":
             return self._response_from_receipt(intent["attempt_id"])
         self._restore_tracker_reservation(intent)
@@ -510,6 +758,15 @@ class ModelCallRuntimeContext:
 
     def _response_from_receipt(self, attempt_id: str) -> ModelResponse:
         receipt = self.store.load_receipt(attempt_id)
+        response = self._load_response_from_receipt(receipt)
+        if receipt["status"] != "succeeded":
+            raise ModelCallIntegrityError(
+                f"cannot replay model receipt with status {receipt['status']}"
+            )
+        self._record_operation_receipt(receipt["receipt_hash"])
+        return response
+
+    def _load_response_from_receipt(self, receipt: dict[str, Any]) -> ModelResponse:
         relative_ref = receipt.get("response_artifact_ref")
         if not isinstance(relative_ref, str) or not relative_ref:
             raise ModelCallIntegrityError(
@@ -527,10 +784,6 @@ class ModelCallRuntimeContext:
             raise ModelCallIntegrityError(
                 "durable model response artifact hash mismatch"
             )
-        if receipt["status"] != "succeeded":
-            raise ModelCallIntegrityError(
-                f"cannot replay model receipt with status {receipt['status']}"
-            )
         response = ModelResponse(
             text,
             usage=receipt["usage"],
@@ -539,7 +792,6 @@ class ModelCallRuntimeContext:
             actual_model=receipt["actual_model"],
             endpoint_type=receipt["endpoint_type"],
         )
-        self._record_operation_receipt(receipt["receipt_hash"])
         return response
 
     def _record_operation_receipt(self, receipt_hash: str) -> None:
@@ -557,10 +809,23 @@ class ModelCallRuntimeContext:
         max_output_tokens: int,
         call_id: str,
         attempt_id: str,
+        stage: str | None = None,
+        restore: bool = False,
     ) -> None:
         tracker = self.tracker
         if tracker is None:
             return
+        if restore:
+            restore_attempt = getattr(tracker, "restore_model_call", None)
+            if callable(restore_attempt):
+                restore_attempt(
+                    input_tokens=input_tokens,
+                    max_output_tokens=max_output_tokens,
+                    call_id=call_id,
+                    attempt_id=attempt_id,
+                    stage=stage,
+                )
+                return
         ensure_attempt = getattr(tracker, "ensure_model_call", None)
         if callable(ensure_attempt):
             ensure_attempt(
@@ -568,6 +833,7 @@ class ModelCallRuntimeContext:
                 max_output_tokens=max_output_tokens,
                 call_id=call_id,
                 attempt_id=attempt_id,
+                stage=stage,
             )
             return
         reserve_attempt = getattr(tracker, "reserve_model_call", None)
@@ -577,6 +843,7 @@ class ModelCallRuntimeContext:
                 max_output_tokens=max_output_tokens,
                 call_id=call_id,
                 attempt_id=attempt_id,
+                stage=stage,
             )
             return
 
@@ -613,6 +880,53 @@ class ModelCallRuntimeContext:
 
 def current_model_call_runtime() -> ModelCallRuntimeContext | None:
     return _ACTIVE_MODEL_CALL_RUNTIME.get()
+
+
+def _is_request_not_sent_connection_failure(error: BaseException) -> bool:
+    """Recognize transport failures that occur before any request body is sent.
+
+    Read/write/protocol errors deliberately remain uncertain because the
+    provider may already have accepted the request.  HTTPX/HTTPCore use the
+    ConnectError and ConnectTimeout types only while establishing a connection.
+    """
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if bool(getattr(current, "partial_content_received", False)):
+            return False
+        module = type(current).__module__.split(".", 1)[0]
+        if module in {"httpx", "httpcore"} and type(current).__name__ in {
+            "ConnectError",
+            "ConnectTimeout",
+        }:
+            return True
+        nested = getattr(current, "cause", None)
+        if not isinstance(nested, BaseException):
+            nested = current.__cause__ or current.__context__
+        current = nested if isinstance(nested, BaseException) else None
+    return False
+
+
+def _is_definitive_provider_rejection(error: BaseException) -> bool:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status = getattr(current, "status_code", None)
+        response = getattr(current, "response", None)
+        if status is None and response is not None:
+            status = getattr(response, "status_code", None)
+        if status in {400, 401, 403, 404, 405, 410, 422}:
+            return True
+        if type(current).__name__ == "BadRequestError":
+            return True
+        nested = getattr(current, "cause", None)
+        if not isinstance(nested, BaseException):
+            nested = current.__cause__ or current.__context__
+        current = nested if isinstance(nested, BaseException) else None
+    return False
 
 
 def resolve_model_call_runtime(
@@ -675,6 +989,9 @@ __all__ = [
     "ModelCallOperationScope",
     "ModelCallRuntimeContext",
     "ProviderCallUncertainError",
+    "ProviderPartialResponseError",
+    "ProviderRequestNotSentError",
+    "ProviderRejectedError",
     "current_model_call_runtime",
     "reset_model_call_runtime",
     "resolve_model_call_runtime",

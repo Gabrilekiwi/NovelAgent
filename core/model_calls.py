@@ -19,6 +19,8 @@ from core.schema import SchemaValidationError, validate_schema
 
 MODEL_CALL_SCHEMA_VERSION = "1.0"
 PROVIDER_CALL_UNCERTAIN = "provider_call_uncertain"
+PROVIDER_PARTIAL_RESPONSE_FAILED = "partial_response_failed"
+PROVIDER_REQUEST_NOT_SENT = "request_not_sent"
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$")
 _SAFE_STATUS = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
@@ -749,6 +751,8 @@ def _parse_time(name: str, value: Any) -> datetime:
 __all__ = [
     "MODEL_CALL_SCHEMA_VERSION",
     "PROVIDER_CALL_UNCERTAIN",
+    "PROVIDER_PARTIAL_RESPONSE_FAILED",
+    "PROVIDER_REQUEST_NOT_SENT",
     "ModelCallConflictError",
     "ModelCallEvidenceError",
     "ModelCallEvidenceStore",

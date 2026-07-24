@@ -107,6 +107,114 @@ class CliTest(unittest.TestCase):
         self.assertEqual("auto", args.story_project)
         self.assertEqual("21", args.chapter)
 
+    def test_parse_args_accepts_locked_chapter_recovery(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--story-project", "book", "--recover-locked-chapter"],
+        ):
+            args = cli.parse_args()
+
+        self.assertTrue(args.recover_locked_chapter)
+
+    def test_parse_args_accepts_manual_locked_chapter_draft(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                "book",
+                "--recover-locked-chapter",
+                "--locked-chapter-draft",
+                "book/.novelagent/runtime/manual.md",
+            ],
+        ):
+            args = cli.parse_args()
+
+        self.assertEqual(
+            "book/.novelagent/runtime/manual.md",
+            args.locked_chapter_draft,
+        )
+
+    def test_parse_args_accepts_explicit_locked_chapter_reset(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--story-project",
+                "book",
+                "--recover-locked-chapter",
+                "--locked-chapter-reset",
+            ],
+        ):
+            args = cli.parse_args()
+
+        self.assertTrue(args.locked_chapter_reset)
+
+    def test_locked_chapter_recovery_summary_hides_model_call_ids(self) -> None:
+        summary = cli.format_locked_chapter_recovery_summary(
+            {
+                "ok": True,
+                "status": "recovered",
+                "chapter_index": 1,
+                "action": "resume_scenes",
+                "reusable_scene_count": 2,
+                "expected_scene_count": 6,
+                "next_scene_index": 3,
+                "checkpoint_path": "runtime/checkpoint.json",
+            }
+        )
+
+        self.assertIn("2/6", summary)
+        self.assertIn("next scene: 3", summary)
+        self.assertNotIn("attempt", summary)
+        self.assertNotIn("intent", summary)
+
+    def test_recover_locked_chapter_command_routes_to_recovery_service(self) -> None:
+        output = io.StringIO()
+        identity = SimpleNamespace(book_id="book-1")
+
+        def apply_runtime_defaults(args):
+            args._resolved_story_project_root = Path("book")
+            return None
+
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--story-project", "book", "--recover-locked-chapter"],
+        ), patch.object(
+            cli,
+            "_apply_story_project_runtime_defaults",
+            side_effect=apply_runtime_defaults,
+        ), patch.object(
+            cli,
+            "_load_story_project_identity_for_read_command",
+            return_value=identity,
+        ), patch.object(
+            cli,
+            "load_snapshot",
+            return_value={"chapter_index": 1},
+        ), patch.object(
+            cli,
+            "recover_locked_chapter",
+            return_value={
+                "ok": True,
+                "status": "recovered",
+                "chapter_index": 1,
+                "action": "reset",
+                "checkpoint_path": "checkpoint.json",
+            },
+        ) as recover, contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_context:
+                cli.main()
+
+        self.assertEqual(0, exit_context.exception.code)
+        recover.assert_called_once()
+        self.assertFalse(recover.call_args.kwargs["force_reset"])
+        self.assertIn("READY", output.getvalue())
+
     def test_story_state_cli_help_matches_snapshot(self) -> None:
         wanted = {
             "--story-state-shadow-report",

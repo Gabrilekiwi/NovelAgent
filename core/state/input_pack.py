@@ -6,6 +6,7 @@ from typing import Any
 
 from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
+from core.state.story_state_context import project_story_state_for_model
 from core.structured_context import select_text_blocks
 
 
@@ -73,7 +74,7 @@ def build_input_pack(
 {_dump(snapshot.get("world_state", {}))}
 
 # Story State
-{_dump(snapshot.get("story_state", {}))}
+{_dump(project_story_state_for_model(snapshot.get("story_state")))}
 
 # Spatial State
 {_dump(snapshot.get("spatial_state", {}))}

@@ -10,6 +10,7 @@ from api.openai_client import chat_completion
 from core.context_budget import default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
 from core.schema import validate_schema
+from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_text_blocks
 from core.story_project.coverage import (
     blueprint_to_dict,
@@ -28,6 +29,7 @@ PIPELINE_STAGE_NAMES = (
     "repair",
     "commit",
 )
+_STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS = 4_096
 
 
 def run_chapter_pipeline(
@@ -38,6 +40,7 @@ def run_chapter_pipeline(
     scene_limit: int | None = None,
     language: str | None = None,
     chapter_blueprint: dict[str, Any] | None = None,
+    recovered_scene_drafts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     blueprint = blueprint_to_dict(chapter_blueprint)
     prompt_contexts = compile_prompt_contexts(
@@ -58,7 +61,14 @@ def run_chapter_pipeline(
             chapter_blueprint=blueprint,
             scene_limit=scene_limit,
         )
-    scenes = generate_scenes(scene_input, plan, dry_run=dry_run, language=language, chapter_blueprint=blueprint)
+    scenes = generate_scenes(
+        scene_input,
+        plan,
+        dry_run=dry_run,
+        language=language,
+        chapter_blueprint=blueprint,
+        recovered_scene_drafts=recovered_scene_drafts,
+    )
     merged, scene_spans = _merge_scene_texts(scenes)
     merged = validate_language_output(merged, CHAPTER_CONTRACT, language=language)
     blueprint_coverage = build_blueprint_coverage(blueprint, scenes, merged) if blueprint is not None else None
@@ -216,7 +226,13 @@ def _request_chapter_plan_json_repair(
         },
         excluded_sections={"Memory Index", "Structured Context Manifest"},
         required_json_keys={
+            "Story State": STORY_STATE_CONTEXT_KEYS,
             "StoryProject Chapter Blueprint": {"chapter_blueprint", "read_set_context_digest"},
+        },
+        allowed_json_keys={"Story State": STORY_STATE_CONTEXT_KEYS},
+        section_max_chars={
+            "Story State": STORY_STATE_SECTION_MAX_CHARS,
+            "StoryProject Chapter Blueprint": _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS,
         },
         policy="plan_json_repair_input_v1",
     )
@@ -285,11 +301,13 @@ def generate_scenes(
     dry_run: bool = False,
     language: str | None = None,
     chapter_blueprint: dict[str, Any] | None = None,
+    recovered_scene_drafts: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     blueprint = blueprint_to_dict(chapter_blueprint)
-    if dry_run:
+    if dry_run and not recovered_scene_drafts:
         return _dry_run_scene_drafts(plan, chapter_blueprint=blueprint)
 
+    recovered = _recovered_scene_prefix(recovered_scene_drafts, plan)
     scene_drafts: list[dict[str, Any]] = []
     for scene in plan.get("scenes", []):
         required_beat_indexes = _scene_beat_indexes(scene)
@@ -298,25 +316,31 @@ def generate_scenes(
             for beat in (blueprint or {}).get("required_beats", [])
             if isinstance(beat, dict) and int(beat.get("index") or 0) in required_beat_indexes
         ]
-        scene_text = chat_completion(
-            [
-                {"role": "system", "content": _load_prompt()},
-                {
-                    "role": "user",
-                    "content": _scene_request_payload(
-                        input_pack=input_pack,
-                        plan=plan,
-                        scene=scene,
-                        scene_required_beats=scene_required_beats,
-                        blueprint=blueprint,
-                    ),
-                },
-            ],
-            stage="chapter_generation",
-        )
+        scene_index = int(scene["index"])
+        if scene_index in recovered:
+            scene_text = recovered[scene_index]
+        elif dry_run:
+            scene_text = _DRY_RUN_CHAPTER
+        else:
+            scene_text = chat_completion(
+                [
+                    {"role": "system", "content": _load_prompt()},
+                    {
+                        "role": "user",
+                        "content": _scene_request_payload(
+                            input_pack=input_pack,
+                            plan=plan,
+                            scene=scene,
+                            scene_required_beats=scene_required_beats,
+                            blueprint=blueprint,
+                        ),
+                    },
+                ],
+                stage="chapter_generation",
+            )
         scene_drafts.append(
             {
-                "index": int(scene["index"]),
+                "index": scene_index,
                 "goal": str(scene["goal"]),
                 **({"covered_beat_indexes": required_beat_indexes} if required_beat_indexes else {}),
                 **(
@@ -328,6 +352,27 @@ def generate_scenes(
             }
         )
     return _validate_scene_drafts(scene_drafts)
+
+
+def _recovered_scene_prefix(
+    scene_drafts: list[dict[str, Any]] | None,
+    plan: dict[str, Any],
+) -> dict[int, str]:
+    if not scene_drafts:
+        return {}
+    plan_indexes = [
+        int(scene["index"])
+        for scene in plan.get("scenes", [])
+        if isinstance(scene, dict) and isinstance(scene.get("index"), int)
+    ]
+    recovered: dict[int, str] = {}
+    for position, draft in enumerate(scene_drafts, start=1):
+        if not isinstance(draft, dict) or int(draft.get("index") or 0) != position:
+            raise ValueError("recovered scenes must form a contiguous prefix starting at scene 1")
+        if position not in plan_indexes:
+            raise ValueError("recovered scene count exceeds the current chapter plan")
+        recovered[position] = validate_text_output(draft.get("text"), CHAPTER_CONTRACT)
+    return recovered
 
 
 def _scene_request_payload(
@@ -405,7 +450,13 @@ def _compact_scene_context(
         },
         excluded_sections={"Memory Index", "Structured Context Manifest"},
         required_json_keys={
+            "Story State": STORY_STATE_CONTEXT_KEYS,
             "StoryProject Chapter Blueprint": {"chapter_blueprint", "read_set_context_digest"},
+        },
+        allowed_json_keys={"Story State": STORY_STATE_CONTEXT_KEYS},
+        section_max_chars={
+            "Story State": STORY_STATE_SECTION_MAX_CHARS,
+            "StoryProject Chapter Blueprint": _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS,
         },
         prefer_recent=True,
         policy="scene_markdown_json_retrieval_v1",

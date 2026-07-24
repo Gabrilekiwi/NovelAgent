@@ -55,6 +55,7 @@ Report path:
 Phase 5, real-novel stability hardening, is complete. Problems found while advancing the riftwalker novel were addressed in code without changing the default execution path:
 
 - Failed or rejected runs can recover the latest pre-polish draft with `python main.py --recover-latest`; recovery writes a separate chapter artifact and does not advance the snapshot.
+- Interrupted StoryProject chapters can be handled with `python main.py --story-project <book> --recover-locked-chapter`; the command makes no provider calls, preserves a verified complete draft or contiguous scene prefix when available, otherwise resets only the uncommitted current chapter, and leaves formal prose plus the snapshot untouched.
 - Snapshot `project_profile.language` drives language-aware output contracts. For `zh-CN` projects, generated scenes and Claude polish output must remain Chinese before they can be committed.
 - Snapshot `project_profile.known_characters` and `project_profile.known_locations` feed the analyzer so new novels can initialize their own names and places instead of relying only on hardcoded terms.
 - `scripts/snapshot_utf8.py` validates and normalizes snapshots through Python UTF-8 JSON handling, reducing the risk of PowerShell encoding corruption.
@@ -67,6 +68,8 @@ Phase 6, v1.5 operational usability, is complete. Problems found during real mul
 - Multi-step loops emit progress lines to stderr for concise runs and record `duration_ms` in trace events plus `step_timings[]` in loop sessions.
 - `--report-runs` surfaces loop step timing summaries for provider latency and stall triage.
 - `--notion-memory` and `--notion-sync` reduce the command surface for live Notion memory input and writeback/readback workflows.
+
+Phase 7 freezes the current repository as the NovelAgent 2.0 stabilization baseline. This is a feature baseline rather than an unattended-production readiness claim. The next 2.x releases are scoped to hardening existing behavior: final-artifact integrity, cross-chapter semantic state, trustworthy delivery-level validation, provider/failure recovery, long-horizon context behavior, and operator-visible cost and latency. The release boundaries and known limitations are recorded in `docs/v2.0-baseline.md`.
 
 ## Current Baseline Capabilities
 

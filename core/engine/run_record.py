@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from core.engine.workflow import validate_workflow_plan
+from core.engine.locked_chapter_state import discarded_run_ids
 from core.memory_v2.canonical import canonical_json_hash
 from core.schema import validate_schema
 from core.quality_decision import build_quality_decision, quality_decision_accepted
@@ -1123,6 +1124,7 @@ def load_latest_run_summary(run_dir: str | Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
 
+    discarded = discarded_run_ids(path)
     candidates = sorted(path.glob("chapter_*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
     for candidate in candidates:
         try:
@@ -1134,6 +1136,8 @@ def load_latest_run_summary(run_dir: str | Path) -> dict[str, Any] | None:
 
         run = payload.get("run")
         if isinstance(run, dict):
+            if str(run.get("id") or "") in discarded:
+                continue
             validation = run.get("validation") or {}
             decision = run.get("decision") or {}
             error = run.get("error") or {}

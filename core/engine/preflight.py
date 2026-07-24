@@ -57,6 +57,7 @@ SCHEMA_ASSETS = (
     Path("schemas/instruction_plan.schema.json"),
     Path("schemas/execution_provenance.schema.json"),
     Path("schemas/llm_validation.schema.json"),
+    Path("schemas/locked_chapter_resolution.schema.json"),
     Path("schemas/loop_session.schema.json"),
     Path("schemas/memory_context.schema.json"),
     Path("schemas/memory_writeback.schema.json"),

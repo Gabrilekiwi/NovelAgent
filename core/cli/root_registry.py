@@ -74,6 +74,7 @@ def root_remap_command_requested(
         "preview_event_authority_migration": "--preview-event-authority-migration",
         "reconcile_persistence": "--reconcile-persistence",
         "recover_latest": "--recover-latest",
+        "recover_locked_chapter": "--recover-locked-chapter",
         "report_runs": "--report-runs",
         "review_dashboard": "--review-dashboard",
         "review_latest": "--review-latest",

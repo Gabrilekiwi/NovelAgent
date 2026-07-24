@@ -58,4 +58,47 @@ def format_persistence_reconcile_summary(result: dict) -> str:
     )
 
 
-__all__ = ["format_delivery_command_summary", "format_loop_progress_event", "format_persistence_reconcile_summary"]
+def format_locked_chapter_recovery_summary(result: dict) -> str:
+    if not result.get("ok"):
+        error = result.get("error") if isinstance(result.get("error"), dict) else {}
+        return f"Locked chapter recovery failed: {error.get('message') or 'unknown error'}"
+
+    status = str(result.get("status") or "recovered")
+    action = str(result.get("action") or "none")
+    chapter = result.get("chapter_index")
+    if status == "not_locked":
+        return f"Locked chapter recovery: NOT NEEDED\n- chapter: {chapter}\n- result: no locked execution found"
+
+    action_labels = {
+        "repair_draft": "reuse the complete draft and enter validation/repair",
+        "resume_scenes": "keep the trustworthy scenes and generate only the missing scenes",
+        "reset": "discard the failed chapter attempt and start the chapter fresh",
+    }
+    lines = [
+        f"Locked chapter recovery: {'ALREADY READY' if status == 'already_recovered' else 'READY'}",
+        f"- chapter: {chapter}",
+        f"- decision: {action_labels.get(action, action)}",
+    ]
+    if action == "resume_scenes":
+        lines.extend(
+            [
+                f"- reusable scenes: {result.get('reusable_scene_count', 0)}/{result.get('expected_scene_count', 0)}",
+                f"- next scene: {result.get('next_scene_index')}",
+            ]
+        )
+    lines.extend(
+        [
+            "- model calls made: 0",
+            "- next step: rerun the original chapter-generation command",
+            f"- checkpoint: {result.get('checkpoint_path') or '-'}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+__all__ = [
+    "format_delivery_command_summary",
+    "format_locked_chapter_recovery_summary",
+    "format_loop_progress_event",
+    "format_persistence_reconcile_summary",
+]

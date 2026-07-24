@@ -205,6 +205,8 @@ def compact_markdown_context(
     required_sections: Iterable[str] = (),
     excluded_sections: Iterable[str] = (),
     required_json_keys: dict[str, Iterable[str]] | None = None,
+    allowed_json_keys: dict[str, Iterable[str]] | None = None,
+    section_max_chars: dict[str, int] | None = None,
     prefer_recent: bool = True,
     policy: str = "markdown_relevance_v1",
 ) -> TextSelection:
@@ -215,6 +217,9 @@ def compact_markdown_context(
     """
     _validate_limit(max_chars)
     _validate_limit(per_section_max_chars)
+    section_limits = {str(name): value for name, value in (section_max_chars or {}).items()}
+    for value in section_limits.values():
+        _validate_limit(value)
     required_names = {str(name) for name in required_sections}
     excluded_names = {str(name) for name in excluded_sections}
     sections = [section for section in _markdown_sections(text) if section.name not in excluded_names]
@@ -232,14 +237,20 @@ def compact_markdown_context(
 
     compacted: list[_CompactedSection] = []
     key_map = required_json_keys or {}
+    allowed_key_map = allowed_json_keys or {}
     for section in sections:
         compacted.append(
             _compact_section(
                 section,
-                max_chars=per_section_max_chars,
+                max_chars=section_limits.get(section.name, per_section_max_chars),
                 query=query,
                 required=section.name in required_names,
                 required_json_keys={str(key) for key in key_map.get(section.name, ())},
+                allowed_json_keys=(
+                    {str(key) for key in allowed_key_map[section.name]}
+                    if section.name in allowed_key_map
+                    else None
+                ),
             )
         )
 
@@ -280,6 +291,11 @@ def compact_markdown_context(
                     query=query,
                     required=True,
                     required_json_keys={str(key) for key in key_map.get(sections[index].name, ())},
+                    allowed_json_keys=(
+                        {str(key) for key in allowed_key_map[sections[index].name]}
+                        if sections[index].name in allowed_key_map
+                        else None
+                    ),
                 )
             except StructuredContextError:
                 continue
@@ -379,8 +395,9 @@ def _compact_section(
     query: str,
     required: bool,
     required_json_keys: set[str],
+    allowed_json_keys: set[str] | None,
 ) -> _CompactedSection:
-    if len(section.text) <= max_chars:
+    if len(section.text) <= max_chars and allowed_json_keys is None:
         return _CompactedSection(section.name, section.text, section.ordinal, (), section.text)
     heading_match = re.match(r"(?m)^# [^\r\n]+\r?\n?", section.text)
     if heading_match is None:
@@ -415,6 +432,7 @@ def _compact_section(
             query=query,
             required=required,
             required_keys=required_json_keys,
+            allowed_keys=allowed_json_keys,
             section_name=section.name,
         )
         text = f"{heading}\n{compact_body}"
@@ -443,10 +461,11 @@ def _compact_json_value(
     query: str,
     required: bool,
     required_keys: set[str],
+    allowed_keys: set[str] | None,
     section_name: str,
 ) -> tuple[str, tuple[str, ...]]:
     if isinstance(value, dict):
-        keys = list(value)
+        keys = [key for key in value if allowed_keys is None or key in allowed_keys]
         entries = [
             StructuredEntry(
                 item_id=f"json:{key}",

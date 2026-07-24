@@ -25,6 +25,7 @@ def validate_chapter(
     *,
     enable_llm: bool = False,
     llm_validator=validate_llm,
+    llm_context: dict[str, Any] | None = None,
     chapter_blueprint: dict[str, Any] | None = None,
     blueprint_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -37,7 +38,17 @@ def validate_chapter(
         checks.append(enrich_check(validate_blueprint_coverage(chapter_blueprint, blueprint_coverage)))
         executed_focus = [*executed_focus, "story_project"]
     if enable_llm:
-        checks.append(llm_validator(snapshot, chapter_text, decision))
+        if llm_context is None:
+            checks.append(llm_validator(snapshot, chapter_text, decision))
+        else:
+            checks.append(
+                llm_validator(
+                    snapshot,
+                    chapter_text,
+                    decision,
+                    validation_context=llm_context,
+                )
+            )
         executed_focus = [*executed_focus, "llm"]
     problems = [problem for check in checks for problem in check.get("problems", [])]
     repair_counts = _repair_action_counts(problems)

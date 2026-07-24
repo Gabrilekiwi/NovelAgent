@@ -16,7 +16,12 @@ from api.openai_client import (
     _extract_streamed_message_content,
     chat_completion,
 )
-from api.retry import CLAUDE_POLISH, MODEL_READ_GENERATION, RetryPolicy
+from api.retry import (
+    CLAUDE_POLISH,
+    MODEL_READ_GENERATION,
+    PartialResponseError,
+    RetryPolicy,
+)
 from core.context_budget import (
     conservative_calibrated_token_estimate,
     ContextBudgetError,
@@ -30,6 +35,9 @@ from core.memory_v2.canonical import canonical_json_bytes
 from core.model_call_runtime import (
     ModelCallRuntimeContext,
     ProviderCallUncertainError,
+    ProviderPartialResponseError,
+    ProviderRequestNotSentError,
+    ProviderRejectedError,
     use_model_call_runtime,
 )
 from core.model_calls import ModelCallConflictError, ModelCallIntegrityError, ModelCallStore
@@ -386,6 +394,157 @@ class ModelCallRuntimeTest(unittest.TestCase):
         uncertain = self.store.list_uncertain_calls()
         self.assertEqual("provider_call_uncertain", uncertain[0]["status"])
 
+    def test_connect_failure_writes_terminal_receipt_and_can_advance_attempt(self) -> None:
+        calls = 0
+
+        class ConnectError(Exception):
+            pass
+
+        ConnectError.__module__ = "httpx"
+
+        def connection_setup() -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            raise ConnectError("connection setup failed")
+
+        arguments = {
+            "call_id": "connect-call",
+            "attempt_number": 1,
+            "provider": "openai",
+            "model": "gpt-test",
+            "stage": "draft",
+            "endpoint_type": "official",
+            "request": {"messages": []},
+            "max_output_tokens": 10,
+            "input_tokens": 2,
+        }
+        with self.assertRaises(ProviderRequestNotSentError) as raised:
+            self.runtime.execute_attempt(operation=connection_setup, **arguments)
+
+        receipt = self.store.load_receipt("connect-call-a1")
+        self.assertEqual("connection", raised.exception.failure_category)
+        self.assertTrue(raised.exception.retryable)
+        self.assertEqual("request_not_sent", receipt["status"])
+        self.assertEqual([], self.store.list_uncertain_calls())
+
+        with self.assertRaises(ProviderRequestNotSentError):
+            self.runtime.execute_attempt(
+                operation=lambda: self.fail("terminal attempt must not be resent"),
+                **arguments,
+            )
+        self.assertEqual(1, calls)
+
+        response = self.runtime.execute_attempt(
+            operation=lambda: ModelResponse("retry succeeded"),
+            **{**arguments, "attempt_number": 2},
+        )
+        self.assertEqual("retry succeeded", response.text)
+        self.assertEqual("succeeded", self.store.load_receipt("connect-call-a2")["status"])
+
+    def test_bad_request_writes_terminal_rejection_receipt(self) -> None:
+        calls = 0
+
+        class BadRequestError(Exception):
+            status_code = 400
+
+        def rejected() -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            raise BadRequestError("invalid request")
+
+        arguments = {
+            "call_id": "rejected-call",
+            "attempt_number": 1,
+            "provider": "anthropic",
+            "model": "claude-test",
+            "stage": "claude_polish",
+            "endpoint_type": "compatible",
+            "request": {"messages": []},
+            "max_output_tokens": 10,
+            "input_tokens": 2,
+        }
+        with self.assertRaises(ProviderRejectedError) as raised:
+            self.runtime.execute_attempt(operation=rejected, **arguments)
+
+        receipt = self.store.load_receipt("rejected-call-a1")
+        self.assertEqual("configuration", raised.exception.failure_category)
+        self.assertFalse(raised.exception.retryable)
+        self.assertEqual("provider_rejected", receipt["status"])
+        self.assertEqual([], self.store.list_uncertain_calls())
+
+        with self.assertRaises(ProviderRejectedError):
+            self.runtime.execute_attempt(
+                operation=lambda: self.fail("rejected request must not be resent"),
+                **arguments,
+            )
+        self.assertEqual(1, calls)
+
+    def test_partial_response_is_terminal_and_restart_never_reinvokes(self) -> None:
+        calls = 0
+        arguments = {
+            "call_id": "partial-call",
+            "attempt_number": 1,
+            "provider": "openai",
+            "model": "gpt-test",
+            "stage": "draft",
+            "endpoint_type": "official",
+            "request": {"messages": []},
+            "max_output_tokens": 10,
+            "input_tokens": 2,
+        }
+
+        def interrupted_stream() -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            cause = TimeoutError("stream stopped after content")
+            raise PartialResponseError(
+                cause,
+                partial_content_received=True,
+                partial_response=ModelResponse(
+                    "durable partial text",
+                    usage={"input_tokens": 2},
+                    finish_reason="stream_interrupted",
+                    actual_model="gpt-test",
+                    endpoint_type="official",
+                ),
+            ) from cause
+
+        with self.assertRaises(ProviderPartialResponseError) as raised:
+            self.runtime.execute_attempt(operation=interrupted_stream, **arguments)
+
+        attempt_id = "partial-call-a1"
+        receipt = self.store.load_receipt(attempt_id)
+        self.assertEqual("provider_partial_response", raised.exception.failure_category)
+        self.assertEqual("partial_response_failed", receipt["status"])
+        self.assertEqual("stream_interrupted", receipt["finish_reason"])
+        self.assertEqual(
+            "durable partial text",
+            (self.root / receipt["response_artifact_ref"]).read_text(encoding="utf-8"),
+        )
+        self.assertEqual([], self.store.list_uncertain_calls())
+
+        restarted_tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=5,
+                max_total_input_tokens=100,
+                max_total_output_tokens=100,
+                max_elapsed_seconds=30,
+            )
+        )
+        restarted = ModelCallRuntimeContext(self.store, tracker=restarted_tracker)
+        self.assertEqual([], restarted.hydrate_tracker_from_store())
+        self.assertEqual(1, restarted_tracker.provider_calls)
+        self.assertEqual(2, restarted_tracker.total_input_tokens)
+        self.assertEqual(10, restarted_tracker.reserved_output_tokens)
+
+        replay_runtime = ModelCallRuntimeContext(self.store)
+        with self.assertRaises(ProviderPartialResponseError):
+            replay_runtime.execute_attempt(
+                operation=lambda: self.fail("provider must never be reinvoked"),
+                **arguments,
+            )
+        self.assertEqual(1, calls)
+
     def test_response_boundary_faults_leave_intent_only_and_restart_never_resends(self) -> None:
         fault_points = (
             ("after_provider_response_before_artifact", False),
@@ -544,6 +703,61 @@ class ModelCallRuntimeTest(unittest.TestCase):
         self.assertEqual(0, fresh_tracker.provider_calls)
         self.assertEqual(0, fresh_tracker.total_input_tokens)
         self.assertEqual(0, fresh_tracker.reserved_output_tokens)
+
+    def test_converging_repair_elasticity_crosses_runtime_boundary_and_rehydrates(self) -> None:
+        limits = RunBudgetLimits(
+            max_provider_calls=2,
+            max_total_input_tokens=100,
+            max_total_output_tokens=5,
+            max_elapsed_seconds=30,
+        )
+        tracker = RunBudgetTracker(limits)
+        tracker.authorize_elastic_tokens(
+            authorization_id="errors-3-to-1",
+            reason="repair_validation_problem_count_reduced",
+            evidence={"problem_counts": [3, 1]},
+            stages=("llm_validation",),
+        )
+        runtime = ModelCallRuntimeContext(self.store, tracker=tracker)
+        provider_calls = 0
+
+        def network() -> ModelResponse:
+            nonlocal provider_calls
+            provider_calls += 1
+            return ModelResponse(
+                "{}",
+                usage={"input_tokens": 1, "output_tokens": 2},
+                endpoint_type="official",
+            )
+
+        response = runtime.execute_attempt(
+            call_id="elastic-validator",
+            attempt_number=1,
+            provider="openai",
+            model="gpt-test",
+            stage="llm_validation",
+            endpoint_type="official",
+            request={"messages": []},
+            max_output_tokens=6,
+            input_tokens=1,
+            operation=network,
+        )
+
+        self.assertEqual("{}", response.text)
+        self.assertEqual(1, provider_calls)
+        self.assertEqual("succeeded", self.store.load_receipt("elastic-validator-a1")["status"])
+        self.assertEqual(1, tracker.report()["elastic_budget"]["output_tokens_added"])
+
+        fresh_tracker = RunBudgetTracker(limits)
+        receipt_hashes = ModelCallRuntimeContext(
+            self.store,
+            tracker=fresh_tracker,
+        ).hydrate_tracker_from_store()
+        self.assertEqual(1, len(receipt_hashes))
+        restored = fresh_tracker.report()
+        self.assertEqual(2, restored["total_output_tokens"])
+        self.assertEqual(1, restored["elastic_budget"]["output_tokens_added"])
+        self.assertTrue(restored["elastic_budget"]["grants"][0]["restored"])
 
     def test_hydration_restores_succeeded_and_uncertain_budget_without_charging_rejection(self) -> None:
         writer = ModelCallRuntimeContext(

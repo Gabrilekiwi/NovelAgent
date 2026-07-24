@@ -39,6 +39,7 @@ from core.cli.config import (
 )
 from core.cli.output import (
     format_delivery_command_summary,
+    format_locked_chapter_recovery_summary,
     format_loop_progress_event,
     format_persistence_reconcile_summary,
 )
@@ -56,11 +57,13 @@ from core.engine.persistence import (
 )
 from core.engine.persistence_v2 import reconcile_pending_persistence_v2
 from core.engine.preflight import run_preflight
+from core.engine.locked_chapter import LockedChapterRecoveryError, recover_locked_chapter
 from core.engine.recovery import RecoveryError, recover_latest_chapter_draft
 from core.engine.root_registry import RootRegistryError
 from core.engine.safe_paths import SafePathError
 from core.engine.report import build_run_report
 from core.engine.run_record import validate_run_result
+from core.project_profile import project_language
 from core.runtime_paths import (
     DEFAULT_CHAPTER_DIR,
     DEFAULT_RUN_DIR,
@@ -448,6 +451,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Recover the latest failed or rejected pre-polish chapter draft into chapter-dir and exit.",
     )
     parser.add_argument(
+        "--recover-locked-chapter",
+        action="store_true",
+        help=(
+            "Handle the current locked chapter without model calls: reuse a complete draft, "
+            "resume a trustworthy scene prefix, or reset when no output is safe to reuse."
+        ),
+    )
+    parser.add_argument(
+        "--locked-chapter-draft",
+        help=(
+            "With --recover-locked-chapter, stage a UTF-8 complete chapter draft "
+            "inside the StoryProject for validation without regenerating or polishing it."
+        ),
+    )
+    parser.add_argument(
+        "--locked-chapter-reset",
+        action="store_true",
+        help=(
+            "With --recover-locked-chapter, explicitly discard all uncommitted output "
+            "for the current chapter and restart it from the committed snapshot."
+        ),
+    )
+    parser.add_argument(
         "--reconcile-persistence",
         action="store_true",
         help="Reconcile incomplete local persistence transactions and publish durable candidates without generating.",
@@ -562,7 +588,25 @@ def _load_story_project_identity_for_read_command(args: argparse.Namespace):
 
 
 def _validate_story_project_read_command_identity(args: argparse.Namespace) -> None:
-    if bool(getattr(args, "report_runs", False)) or bool(getattr(args, "recover_latest", False)):
+    if getattr(args, "locked_chapter_draft", None) and not bool(
+        getattr(args, "recover_locked_chapter", False)
+    ):
+        raise ValueError("--locked-chapter-draft requires --recover-locked-chapter")
+    if getattr(args, "locked_chapter_reset", False) and not bool(
+        getattr(args, "recover_locked_chapter", False)
+    ):
+        raise ValueError("--locked-chapter-reset requires --recover-locked-chapter")
+    if getattr(args, "locked_chapter_reset", False) and getattr(
+        args, "locked_chapter_draft", None
+    ):
+        raise ValueError("--locked-chapter-reset cannot be combined with --locked-chapter-draft")
+    if (
+        bool(getattr(args, "report_runs", False))
+        or bool(getattr(args, "recover_latest", False))
+        or bool(getattr(args, "recover_locked_chapter", False))
+    ):
+        if bool(getattr(args, "recover_locked_chapter", False)) and getattr(args, "story_project", None) is None:
+            raise ValueError("--recover-locked-chapter requires --story-project")
         _load_story_project_identity_for_read_command(args)
 
 
@@ -802,6 +846,31 @@ def main() -> None:
             print(json.dumps(report, ensure_ascii=False, indent=2))
         else:
             print(format_story_project_compat_report(report))
+        raise SystemExit(0)
+
+    if args.recover_locked_chapter:
+        recovery_identity = _load_story_project_identity_for_read_command(args)
+        try:
+            result = recover_locked_chapter(
+                story_project_root=args._resolved_story_project_root,
+                run_dir=args.run_dir,
+                snapshot_path=args.snapshot,
+                expected_book_id=recovery_identity.book_id,
+                language=project_language(load_snapshot(args.snapshot)),
+                manual_draft_path=args.locked_chapter_draft,
+                force_reset=args.locked_chapter_reset,
+            )
+        except (LockedChapterRecoveryError, OSError, ValueError) as exc:
+            payload = {"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}
+            if args.output_json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(format_locked_chapter_recovery_summary(payload), file=sys.stderr)
+            raise SystemExit(1) from exc
+        if args.output_json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(format_locked_chapter_recovery_summary(result))
         raise SystemExit(0)
 
     if args.story_state_shadow_report:
@@ -1666,6 +1735,7 @@ def _validate_event_authority_migration_preview_args(args: argparse.Namespace) -
         "migrate_story_project_runtime_from": "--migrate-story-project-runtime-from",
         "reconcile_persistence": "--reconcile-persistence",
         "recover_latest": "--recover-latest",
+        "recover_locked_chapter": "--recover-locked-chapter",
         "report_runs": "--report-runs",
         "review_dashboard": "--review-dashboard",
         "review_latest": "--review-latest",

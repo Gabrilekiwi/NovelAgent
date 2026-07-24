@@ -257,7 +257,24 @@ def _extract_streamed_message_content(
             if isinstance(content, str):
                 parts.append(content)
     except Exception as exc:
-        raise PartialResponseError(exc, partial_content_received=bool(parts)) from exc
+        partial_text = "".join(parts)
+        partial_response = (
+            ModelResponse(
+                partial_text,
+                usage=usage,
+                finish_reason="stream_interrupted",
+                request_id=request_id,
+                actual_model=actual_model,
+                endpoint_type=endpoint_type,
+            )
+            if partial_text
+            else None
+        )
+        raise PartialResponseError(
+            exc,
+            partial_content_received=bool(partial_text),
+            partial_response=partial_response,
+        ) from exc
     text = "".join(parts)
     if not text:
         raise ModelCallError(

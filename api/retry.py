@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Generic, Mapping, TypeVar
 
-from api.contracts import classify_model_failure, is_retryable_failure
+from api.contracts import ModelResponse, classify_model_failure, is_retryable_failure
 from core.schema import validate_schema
 
 
@@ -38,10 +38,21 @@ _LAST_RETRY_REPORTS: ContextVar[tuple[dict[str, Any], ...]] = ContextVar(
 class PartialResponseError(RuntimeError):
     """Marks a streaming failure and whether any response content was observed."""
 
-    def __init__(self, cause: BaseException, *, partial_content_received: bool) -> None:
+    def __init__(
+        self,
+        cause: BaseException,
+        *,
+        partial_content_received: bool,
+        partial_response: ModelResponse | None = None,
+    ) -> None:
+        if partial_response is not None and not isinstance(partial_response, ModelResponse):
+            raise TypeError("partial_response must be a ModelResponse or None")
         super().__init__(f"{type(cause).__name__} during streamed response")
         self.cause = cause
-        self.partial_content_received = bool(partial_content_received)
+        self.partial_response = partial_response
+        self.partial_content_received = bool(
+            partial_content_received or (partial_response is not None and partial_response.text)
+        )
 
 
 class RetryOperationError(RuntimeError):

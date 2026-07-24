@@ -304,6 +304,59 @@ class ApiClientTest(unittest.TestCase):
         self.assertEqual(1, len(diagnostic["attempt_history"]))
         self.assertIsInstance(diagnostic["elapsed_ms"], int)
 
+    def test_openai_connect_error_is_safely_retried_without_uncertain_intent(self) -> None:
+        calls = 0
+
+        class ConnectError(Exception):
+            pass
+
+        ConnectError.__module__ = "httpx"
+
+        class FakeCompletions:
+            def create(self, **kwargs: object) -> object:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise ConnectError("connection setup failed")
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content="retry ok"))]
+                )
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        originals = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "OPENAI_MODEL": os.environ.get("OPENAI_MODEL"),
+            "OPENAI_STREAM": os.environ.get("OPENAI_STREAM"),
+        }
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["OPENAI_MODEL"] = "test-model"
+        os.environ["OPENAI_STREAM"] = "false"
+        try:
+            with patch.dict(sys.modules, {"openai": SimpleNamespace(OpenAI=FakeOpenAI)}):
+                result = chat_completion(
+                    [{"role": "user", "content": "hello"}],
+                    retry_policy=self._retry_policy(MODEL_READ_GENERATION),
+                )
+        finally:
+            for name, value in originals.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual("retry ok", result)
+        self.assertEqual(2, calls)
+        receipts = sorted(self._model_call_runtime.store.receipts_dir.glob("*.json"))
+        self.assertEqual(2, len(receipts))
+        self.assertEqual(
+            ["request_not_sent", "succeeded"],
+            [self._model_call_runtime.store.load_receipt(path.stem)["status"] for path in receipts],
+        )
+        self.assertEqual([], self._model_call_runtime.store.list_uncertain_calls())
+
     def test_openai_partial_stream_is_not_replayed(self) -> None:
         calls = 0
 
@@ -347,8 +400,23 @@ class ApiClientTest(unittest.TestCase):
                     os.environ[name] = value
 
         self.assertEqual(1, calls)
+        diagnostic = context.exception.to_dict()
+        self.assertEqual("provider_partial_response", diagnostic["failure_category"])
+        self.assertFalse(diagnostic["retryable"])
         self.assertTrue(context.exception.partial_content_received)
         self.assertEqual("partial_content_received", context.exception.retry_stop_reason)
+        receipts = list(self._model_call_runtime.store.receipts_dir.glob("*.json"))
+        self.assertEqual(1, len(receipts))
+        receipt = self._model_call_runtime.store.load_receipt(receipts[0].stem)
+        self.assertEqual("partial_response_failed", receipt["status"])
+        self.assertEqual(
+            "partial",
+            (
+                self._model_call_runtime.store.root
+                / receipt["response_artifact_ref"]
+            ).read_text(encoding="utf-8"),
+        )
+        self.assertEqual([], self._model_call_runtime.store.list_uncertain_calls())
 
     def test_openai_empty_failed_stream_pauses_after_durable_intent(self) -> None:
         calls = 0
@@ -653,8 +721,23 @@ class ApiClientTest(unittest.TestCase):
                     os.environ[name] = value
 
         self.assertEqual(1, calls)
+        diagnostic = context.exception.to_dict()
+        self.assertEqual("provider_partial_response", diagnostic["failure_category"])
+        self.assertFalse(diagnostic["retryable"])
         self.assertTrue(context.exception.partial_content_received)
         self.assertEqual("partial_content_received", context.exception.retry_stop_reason)
+        receipts = list(self._model_call_runtime.store.receipts_dir.glob("*.json"))
+        self.assertEqual(1, len(receipts))
+        receipt = self._model_call_runtime.store.load_receipt(receipts[0].stem)
+        self.assertEqual("partial_response_failed", receipt["status"])
+        self.assertEqual(
+            "partial",
+            (
+                self._model_call_runtime.store.root
+                / receipt["response_artifact_ref"]
+            ).read_text(encoding="utf-8"),
+        )
+        self.assertEqual([], self._model_call_runtime.store.list_uncertain_calls())
 
     def test_claude_response_extraction_wraps_missing_content_blocks(self) -> None:
         with self.assertRaises(ModelCallError) as context:

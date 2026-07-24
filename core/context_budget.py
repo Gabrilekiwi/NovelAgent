@@ -640,7 +640,10 @@ class ContextBudget:
 @dataclass(frozen=True)
 class RunBudgetLimits:
     max_provider_calls: int = 20
-    max_total_input_tokens: int = 160_000
+    # A complex chapter can legitimately use about 150k input tokens while
+    # drafting its scenes.  Keep enough normal (non-elastic) capacity for the
+    # mandatory initial validation and one complete repair/revalidation cycle.
+    max_total_input_tokens: int = 256_000
     max_total_output_tokens: int = 40_000
     max_elapsed_seconds: float = 900.0
     max_estimated_cost: float | None = None
@@ -662,19 +665,83 @@ class RunBudgetTracker:
         self.reserved_output_tokens = 0
         self.estimated_cost = 0.0
         self._model_reservations: dict[str, dict[str, Any]] = {}
+        self._elastic_input_tokens = 0
+        self._elastic_output_tokens = 0
+        self._elastic_authorizations: dict[str, dict[str, Any]] = {}
+        self._active_elastic_authorization_id: str | None = None
+        self._elastic_grants: list[dict[str, Any]] = []
+
+    def authorize_elastic_tokens(
+        self,
+        *,
+        authorization_id: str,
+        reason: str,
+        evidence: dict[str, Any],
+        stages: tuple[str, ...] | list[str],
+    ) -> None:
+        """Permit exact token-budget deficits for one converging repair cycle.
+
+        An authorization is inert until a model reservation would exceed the
+        normal input/output token ceiling. Each permitted stage can consume it
+        at most once. Call-count, elapsed-time, and cost limits never expand.
+        """
+
+        key = str(authorization_id).strip()
+        if not key:
+            raise ContextBudgetError(
+                "elastic_budget_authorization_invalid",
+                "authorization_id must be non-empty",
+            )
+        normalized_stages = tuple(dict.fromkeys(str(stage).strip() for stage in stages if str(stage).strip()))
+        if not normalized_stages:
+            raise ContextBudgetError(
+                "elastic_budget_authorization_invalid",
+                "stages must contain at least one non-empty stage",
+            )
+        normalized_reason = str(reason).strip()
+        if not normalized_reason:
+            raise ContextBudgetError(
+                "elastic_budget_authorization_invalid",
+                "reason must be non-empty",
+            )
+        existing = self._elastic_authorizations.get(key)
+        immutable = {
+            "authorization_id": key,
+            "reason": normalized_reason,
+            "evidence": dict(evidence),
+            "stages": list(normalized_stages),
+        }
+        if existing is not None:
+            if any(existing.get(field) != value for field, value in immutable.items()):
+                raise ContextBudgetError(
+                    "elastic_budget_authorization_conflict",
+                    f"authorization {key} conflicts with existing evidence",
+                )
+        else:
+            self._elastic_authorizations[key] = {
+                **immutable,
+                "consumed_stages": [],
+                "status": "active",
+            }
+        previous_key = self._active_elastic_authorization_id
+        if previous_key and previous_key != key:
+            previous = self._elastic_authorizations.get(previous_key)
+            if previous is not None and previous.get("status") == "active":
+                previous["status"] = "superseded"
+        self._active_elastic_authorization_id = key
 
     def reserve_call(self, input_tokens: int, *, estimated_cost: float = 0.0) -> None:
         self._check_elapsed()
         self._require_non_negative(input_tokens, "input_tokens")
         if self.provider_calls + 1 > self.limits.max_provider_calls:
             raise ContextBudgetError("run_provider_call_budget_exceeded", "max_provider_calls exceeded")
-        if self.total_input_tokens + input_tokens > self.limits.max_total_input_tokens:
-            raise ContextBudgetError("run_input_token_budget_exceeded", "max_total_input_tokens exceeded")
         if (
             self.limits.max_estimated_cost is not None
             and self.estimated_cost + estimated_cost > self.limits.max_estimated_cost
         ):
             raise ContextBudgetError("run_estimated_cost_budget_exceeded", "max_estimated_cost exceeded")
+        if self.total_input_tokens + input_tokens > self.limits.max_total_input_tokens:
+            raise ContextBudgetError("run_input_token_budget_exceeded", "max_total_input_tokens exceeded")
         self.provider_calls += 1
         self.total_input_tokens += input_tokens
         self.estimated_cost += estimated_cost
@@ -699,6 +766,7 @@ class RunBudgetTracker:
         max_output_tokens: int,
         call_id: str,
         attempt_id: str,
+        stage: str | None = None,
         estimated_cost: float = 0.0,
     ) -> None:
         """Reserve one physical attempt, including its timeout upper bound."""
@@ -717,13 +785,32 @@ class RunBudgetTracker:
             )
         if self.provider_calls + 1 > self.limits.max_provider_calls:
             raise ContextBudgetError("run_provider_call_budget_exceeded", "max_provider_calls exceeded")
-        if self.total_input_tokens + input_tokens > self.limits.max_total_input_tokens:
+        input_deficit = max(
+            0,
+            self.total_input_tokens
+            + input_tokens
+            - self._effective_input_limit(),
+        )
+        output_deficit = max(
+            0,
+            self.total_output_tokens
+            + self.reserved_output_tokens
+            + max_output_tokens
+            - self._effective_output_limit(),
+        )
+        elastic_grant = self._consume_elastic_authorization(
+            stage=stage,
+            attempt_id=attempt_id,
+            input_tokens=input_deficit,
+            output_tokens=output_deficit,
+        )
+        if self.total_input_tokens + input_tokens > self._effective_input_limit():
             raise ContextBudgetError("run_input_token_budget_exceeded", "max_total_input_tokens exceeded")
         if (
             self.total_output_tokens
             + self.reserved_output_tokens
             + max_output_tokens
-            > self.limits.max_total_output_tokens
+            > self._effective_output_limit()
         ):
             raise ContextBudgetError(
                 "run_output_token_budget_exceeded",
@@ -742,6 +829,13 @@ class RunBudgetTracker:
             "call_id": call_id,
             "reserved_input_tokens": input_tokens,
             "max_output_tokens": max_output_tokens,
+            "stage": str(stage or ""),
+            "elastic_authorization_id": (
+                elastic_grant.get("authorization_id")
+                if isinstance(elastic_grant, dict)
+                else None
+            ),
+            "restored": False,
             "status": "reserved",
             "actual_input_tokens": None,
             "actual_output_tokens": None,
@@ -755,6 +849,7 @@ class RunBudgetTracker:
         max_output_tokens: int,
         call_id: str,
         attempt_id: str,
+        stage: str | None = None,
         estimated_cost: float = 0.0,
     ) -> bool:
         """Idempotently restore or create one immutable attempt reservation.
@@ -792,8 +887,57 @@ class RunBudgetTracker:
             max_output_tokens=max_output_tokens,
             call_id=call_id,
             attempt_id=attempt_id,
+            stage=stage,
             estimated_cost=estimated_cost,
         )
+        return True
+
+    def restore_model_call(
+        self,
+        *,
+        input_tokens: int,
+        max_output_tokens: int,
+        call_id: str,
+        attempt_id: str,
+        stage: str | None = None,
+    ) -> bool:
+        """Hydrate a durable non-rejected attempt even when it used elasticity."""
+
+        existing = self._model_reservations.get(attempt_id)
+        if existing is not None:
+            return self.ensure_model_call(
+                input_tokens=input_tokens,
+                max_output_tokens=max_output_tokens,
+                call_id=call_id,
+                attempt_id=attempt_id,
+                stage=stage,
+            )
+        input_deficit = max(
+            0,
+            self.total_input_tokens + input_tokens - self._effective_input_limit(),
+        )
+        output_deficit = max(
+            0,
+            self.total_output_tokens
+            + self.reserved_output_tokens
+            + max_output_tokens
+            - self._effective_output_limit(),
+        )
+        if input_deficit or output_deficit:
+            self._record_restored_elastic_grant(
+                attempt_id=attempt_id,
+                stage=stage,
+                input_tokens=input_deficit,
+                output_tokens=output_deficit,
+            )
+        self.reserve_model_call(
+            input_tokens=input_tokens,
+            max_output_tokens=max_output_tokens,
+            call_id=call_id,
+            attempt_id=attempt_id,
+            stage=stage,
+        )
+        self._model_reservations[attempt_id]["restored"] = True
         return True
 
     def record_model_response(
@@ -851,16 +995,27 @@ class RunBudgetTracker:
                 "run_budget_usage_invalid",
                 "provider token usage is malformed or internally contradictory",
             )
-        elif prospective_input > self.limits.max_total_input_tokens:
-            settlement_error = (
-                "run_input_token_budget_exceeded",
-                "provider input usage exceeds max_total_input_tokens",
-            )
-        elif prospective_output > self.limits.max_total_output_tokens:
-            settlement_error = (
-                "run_output_token_budget_exceeded",
-                "provider output exceeds remaining max_total_output_tokens",
-            )
+        else:
+            input_deficit = max(0, prospective_input - self._effective_input_limit())
+            output_deficit = max(0, prospective_output - self._effective_output_limit())
+            extended = False
+            if input_deficit or output_deficit:
+                extended = self._extend_settlement_elastic_grant(
+                    reservation,
+                    attempt_id=attempt_id,
+                    input_tokens=input_deficit,
+                    output_tokens=output_deficit,
+                )
+            if input_deficit and not extended:
+                settlement_error = (
+                    "run_input_token_budget_exceeded",
+                    "provider input usage exceeds max_total_input_tokens",
+                )
+            elif output_deficit and not extended:
+                settlement_error = (
+                    "run_output_token_budget_exceeded",
+                    "provider output exceeds remaining max_total_output_tokens",
+                )
         reservation["settlement_error"] = settlement_error
         if settlement_error is not None:
             raise ContextBudgetError(*settlement_error)
@@ -880,7 +1035,113 @@ class RunBudgetTracker:
             ),
             "elapsed_seconds": max(0.0, self._now() - self._started_at),
             "estimated_cost": self.estimated_cost,
+            "elastic_budget": {
+                "base_input_token_limit": self.limits.max_total_input_tokens,
+                "base_output_token_limit": self.limits.max_total_output_tokens,
+                "effective_input_token_limit": self._effective_input_limit(),
+                "effective_output_token_limit": self._effective_output_limit(),
+                "input_tokens_added": self._elastic_input_tokens,
+                "output_tokens_added": self._elastic_output_tokens,
+                "active_authorization_id": self._active_elastic_authorization_id,
+                "authorizations": [
+                    dict(item)
+                    for item in self._elastic_authorizations.values()
+                ],
+                "grants": [dict(item) for item in self._elastic_grants],
+            },
         }
+
+    def _effective_input_limit(self) -> int:
+        return self.limits.max_total_input_tokens + self._elastic_input_tokens
+
+    def _effective_output_limit(self) -> int:
+        return self.limits.max_total_output_tokens + self._elastic_output_tokens
+
+    def _consume_elastic_authorization(
+        self,
+        *,
+        stage: str | None,
+        attempt_id: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> dict[str, Any] | None:
+        if not input_tokens and not output_tokens:
+            return None
+        key = self._active_elastic_authorization_id
+        authorization = self._elastic_authorizations.get(key or "")
+        normalized_stage = str(stage or "")
+        if (
+            authorization is None
+            or authorization.get("status") != "active"
+            or normalized_stage not in authorization.get("stages", [])
+            or normalized_stage in authorization.get("consumed_stages", [])
+        ):
+            return None
+        authorization["consumed_stages"].append(normalized_stage)
+        grant = {
+            "authorization_id": authorization["authorization_id"],
+            "attempt_id": attempt_id,
+            "stage": normalized_stage,
+            "reason": authorization["reason"],
+            "input_tokens_added": int(input_tokens),
+            "output_tokens_added": int(output_tokens),
+            "restored": False,
+            "evidence": dict(authorization["evidence"]),
+        }
+        self._elastic_input_tokens += int(input_tokens)
+        self._elastic_output_tokens += int(output_tokens)
+        self._elastic_grants.append(grant)
+        return grant
+
+    def _record_restored_elastic_grant(
+        self,
+        *,
+        attempt_id: str,
+        stage: str | None,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> None:
+        self._elastic_input_tokens += int(input_tokens)
+        self._elastic_output_tokens += int(output_tokens)
+        self._elastic_grants.append(
+            {
+                "authorization_id": "durable-attempt-restore",
+                "attempt_id": attempt_id,
+                "stage": str(stage or ""),
+                "reason": "restore_durable_non_rejected_attempt",
+                "input_tokens_added": int(input_tokens),
+                "output_tokens_added": int(output_tokens),
+                "restored": True,
+                "evidence": {},
+            }
+        )
+
+    def _extend_settlement_elastic_grant(
+        self,
+        reservation: dict[str, Any],
+        *,
+        attempt_id: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> bool:
+        authorization_id = reservation.get("elastic_authorization_id")
+        if not authorization_id and not reservation.get("restored"):
+            return False
+        self._elastic_input_tokens += int(input_tokens)
+        self._elastic_output_tokens += int(output_tokens)
+        self._elastic_grants.append(
+            {
+                "authorization_id": str(authorization_id or "durable-attempt-restore"),
+                "attempt_id": attempt_id,
+                "stage": str(reservation.get("stage") or ""),
+                "reason": "settle_authorized_model_usage",
+                "input_tokens_added": int(input_tokens),
+                "output_tokens_added": int(output_tokens),
+                "restored": bool(reservation.get("restored")),
+                "evidence": {},
+            }
+        )
+        return True
 
     def _check_elapsed(self) -> None:
         if self._now() - self._started_at > self.limits.max_elapsed_seconds:
@@ -1030,7 +1291,7 @@ def _first_usage_integer(
                 selected = value
             elif selected != value:
                 invalid = True
-    elif nested_key in usage:
+    elif nested is not None:
         invalid = True
     return selected, invalid
 

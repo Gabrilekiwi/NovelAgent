@@ -9,9 +9,11 @@ from unittest.mock import patch
 
 from api.contracts import ModelCallError, ModelOutputError, ModelResponse
 from core.chapter_contexts import ChapterContextError
+from core.context_budget import ContextBudgetError, RunBudgetLimits
 from core.director import DirectorDecisionError
 from core.engine.artifacts import save_chapter_artifact
 from core.engine.executor import AgentExecutor, LoopExecutionError
+from core.engine.repair_convergence import RepairNotConvergingError
 from core.execution_provenance import validate_execution_provenance
 from core.model_call_runtime import ProviderCallUncertainError, current_model_call_runtime
 from core.model_calls import ModelCallStore
@@ -79,6 +81,52 @@ class AgentExecutorTest(unittest.TestCase):
             encoding="utf-8",
         )
         return path
+
+    def test_llm_validation_context_uses_previous_committed_prose_and_pending_repair(self) -> None:
+        executor = AgentExecutor(
+            story_project_context={
+                "chapter_index": 5,
+                "previous_chapter_context": {
+                    "chapter_index": 4,
+                    "sha256": "a" * 64,
+                    "original_chars": 1200,
+                    "generation_excerpt": {
+                        "text": "第四章已经确认主角当前持有的能力与侵蚀状态。",
+                        "truncated": False,
+                        "ranges": [{"start_char": 0, "end_char": 24}],
+                    },
+                    "committed_verified": True,
+                },
+            }
+        )
+        pending = {
+            "attempt": 1,
+            "prior_problem_count": 1,
+            "prior_problems": [{"code": "llm_timeline_gap", "area": "timeline_causality"}],
+        }
+
+        context = executor._llm_validation_context({"pending_revalidation": pending})
+
+        self.assertEqual(4, context["previous_chapter"]["chapter_index"])
+        self.assertTrue(context["previous_chapter"]["committed_verified"])
+        self.assertEqual(pending, context["revalidation"])
+
+    def test_recovered_scene_repair_enters_focused_revalidation(self) -> None:
+        executor = AgentExecutor()
+
+        context = executor._llm_validation_context(
+            {
+                "locked_chapter_action": "repair_draft",
+                "locked_chapter_draft_stage": "scene_repair",
+                "locked_chapter_problem_codes": ["llm_timeline_gap"],
+            }
+        )
+
+        self.assertEqual("recovered_scene_repair", context["revalidation"]["attempt"])
+        self.assertEqual(
+            [{"code": "llm_timeline_gap"}],
+            context["revalidation"]["prior_problems"],
+        )
 
     def _ok_validation(self, snapshot: dict, chapter: str, decision: dict) -> dict:
         return validate_schema(
@@ -154,6 +202,39 @@ class AgentExecutorTest(unittest.TestCase):
             chapter_dir=tmp_path / "runtime" / "chapters",
             story_project_context={"story_project_root": str(book)},
             enable_execution_provenance=False,
+        )
+
+    def _problem_validation(self, *codes: str, severity: str = "high") -> dict:
+        problems = [
+            {
+                "code": code,
+                "message": f"Problem {code} remains.",
+                "validator": "logic",
+                "severity": severity,
+                "blocking": True,
+                "category": "blocking",
+                "repair_hint": f"Repair {code}.",
+                "repair_action": "manual_review",
+                "repair_parameters": {},
+            }
+            for code in codes
+        ]
+        return validate_schema(
+            {
+                "ok": not problems,
+                "requested_focus": ["logic"],
+                "executed_checks": ["logic"],
+                "skipped_checks": [],
+                "checks": [{"name": "logic", "ok": not problems, "problems": problems}],
+                "problems": problems,
+                "blocking_problem_count": len(problems),
+                "warning_count": 0,
+                "severity_counts": ([{"severity": severity, "count": len(problems)}] if problems else []),
+                "deterministic_repair_count": 0,
+                "manual_review_count": len(problems),
+                "repair_action_counts": ([{"action": "manual_review", "count": len(problems)}] if problems else []),
+            },
+            "validation_result.schema.json",
         )
         executor._last_project_identity = {
             "book_id": "book-event",
@@ -668,6 +749,64 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertTrue(story_project["blueprint_coverage"]["ending_pressure_covered"])
         self.assertIn("story_project", saved_run["run"]["validation"]["executed_checks"])
         self.assertFalse((tmp_path / "runs" / "story_project_writebacks").exists())
+
+    def test_story_project_writeback_rebuilds_blueprint_coverage_without_chapter_pipeline(self) -> None:
+        tmp_path = self._case_dir("story_project_writeback_without_pipeline")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        outline = book / "大纲" / "细纲_第002章.md"
+        outline.write_text("# Audit", encoding="utf-8")
+        story_project_context = {
+            "story_project_root": str(book),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": {
+                "chapter_index": 2,
+                "outline_path": str(outline),
+                "title": "Audit",
+                "core_event": "danger forces the route choice",
+                "required_beats": [
+                    {"index": 1, "text": "danger forces the route choice"},
+                    {"index": 2, "text": "open conflict over the serum"},
+                ],
+                "ending_pressure": "the locked door starts a countdown",
+                "source_path": str(outline),
+                "missing_fields": [],
+            },
+            "source_paths": {"outline_path": str(outline)},
+            "source_resolution": {"entries": []},
+        }
+        chapter = (
+            "The sudden danger forces the route choice while the team enters open conflict over the serum. "
+            "They hold their ground and count the remaining supplies. "
+            "At the end, the locked door starts a countdown."
+        )
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            generator=lambda _input_pack: chapter,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            story_project_context=story_project_context,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy="minimal",
+        ).run_once(persist=True)
+
+        self.assertTrue(result["committed"])
+        self.assertNotIn("pipeline", result["run"]["chapter"])
+        coverage = result["run"]["story_project"]["blueprint_coverage"]
+        self.assertEqual([], coverage["missing_beat_indexes"])
+        self.assertTrue(coverage["ending_pressure_covered"])
+        prose = canonical_prose_path(book, 2, "Audit")
+        self.assertEqual(chapter + "\n", prose.read_text(encoding="utf-8"))
 
     def test_story_project_snapshot_identity_mismatch_fails_before_provider(self) -> None:
         tmp_path = self._case_dir("story_project_identity_mismatch")
@@ -1266,6 +1405,109 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertIn("missing_conflict_marker", repair_deltas[0]["resolved_problem_codes"])
         self.assertEqual([], repair_deltas[0]["new_problem_codes"])
         self.assertFalse(result["run"]["trace"][-1]["skipped"])
+
+    def test_repair_loop_stops_on_stalled_validation_and_persists_best_draft(self) -> None:
+        tmp_path = self._case_dir("repair_not_converging")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        run_dir = tmp_path / "runs"
+        validation_results = [
+            self._problem_validation("a", "b", "c"),
+            self._problem_validation("a", "b"),
+            self._problem_validation("a", "b"),
+        ]
+        repair_outputs = iter(
+            (
+                "First repaired draft with fewer remaining problems.",
+                "Second repaired draft that failed to reduce them.",
+            )
+        )
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "stop_stalled_repair",
+                "actions": ["generate_chapter", "validate", "repair_if_needed"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 3,
+                "notes": [],
+            }
+
+        def validator(snapshot, chapter, decision):
+            return validation_results.pop(0)
+
+        with self.assertRaises(RepairNotConvergingError) as raised:
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                run_dir=run_dir,
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                director=director,
+                generator=lambda input_pack: "Initial draft.",
+                validator=validator,
+                repairer=lambda chapter, validation, input_pack, repair_plan: next(repair_outputs),
+            ).run_once(persist=True)
+
+        self.assertEqual("chapter_repair_not_converging", raised.exception.code)
+        saved_path = max(run_dir.glob("chapter_*.json"), key=lambda path: path.stat().st_mtime_ns)
+        saved = json.loads(saved_path.read_text(encoding="utf-8"))
+        self.assertEqual("First repaired draft with fewer remaining problems.", saved["chapter"])
+        self.assertEqual(2, saved["repair_attempts"])
+        self.assertEqual("RepairNotConvergingError", saved["run"]["error"]["type"])
+        self.assertIn("problem_counts=3 -> 2 -> 2", saved["run"]["error"]["message"])
+        deltas = saved["run"]["trace"][-1]["repair_deltas"]
+        self.assertEqual([2, 2], [delta["after_problem_count"] for delta in deltas])
+        budget = saved["run"]["execution_evidence"]["budget"]
+        self.assertEqual(1, len(budget["elastic_budget"]["authorizations"]))
+        self.assertEqual([], budget["elastic_budget"]["grants"])
+
+    def test_completed_repair_is_counted_and_saved_when_followup_validation_hits_budget(self) -> None:
+        tmp_path = self._case_dir("repair_saved_before_budget_failure")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        run_dir = tmp_path / "runs"
+        validation_calls = 0
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "preserve_repair_before_validation_failure",
+                "actions": ["generate_chapter", "validate", "repair_if_needed"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 2,
+                "notes": [],
+            }
+
+        def validator(snapshot, chapter, decision):
+            nonlocal validation_calls
+            validation_calls += 1
+            if validation_calls == 1:
+                return self._problem_validation("remaining")
+            raise ContextBudgetError(
+                "run_output_token_budget_exceeded",
+                "reserved output exceeds remaining max_total_output_tokens",
+            )
+
+        with self.assertRaises(ContextBudgetError):
+            AgentExecutor(
+                snapshot_path=snapshot_path,
+                run_dir=run_dir,
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                director=director,
+                generator=lambda input_pack: "Initial draft.",
+                validator=validator,
+                repairer=lambda chapter, validation, input_pack, repair_plan: (
+                    "Repaired draft awaiting validation."
+                ),
+            ).run_once(persist=True)
+
+        saved_path = max(run_dir.glob("chapter_*.json"), key=lambda path: path.stat().st_mtime_ns)
+        saved = json.loads(saved_path.read_text(encoding="utf-8"))
+        self.assertEqual("Repaired draft awaiting validation.", saved["chapter"])
+        self.assertEqual(1, saved["repair_attempts"])
+        self.assertEqual("ContextBudgetError", saved["run"]["error"]["type"])
+        self.assertIn("execution_evidence", saved["run"])
 
     def test_executor_passes_trace_repair_plan_to_repairer(self) -> None:
         tmp_path = self._case_dir("repair_plan_passthrough")
@@ -2292,9 +2534,9 @@ class AgentExecutorTest(unittest.TestCase):
             run["run"]["execution_evidence"]["execution_id"]
             for run in loop_result["runs"]
         }
-        self.assertEqual(1, len(execution_ids))
+        self.assertEqual(2, len(execution_ids))
         self.assertEqual(
-            1,
+            2,
             len(list((tmp_path / "runs" / "executions").glob("*/provenance.json"))),
         )
         self.assertEqual(4, saved["chapter_index"])
@@ -2315,6 +2557,65 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual([1, 2], [item["step"] for item in saved_session["step_timings"]])
         self.assertEqual(["committed", "committed"], [item["status"] for item in saved_session["step_timings"]])
         self.assertTrue(all("duration_ms" in item for item in saved_session["step_timings"]))
+
+    def test_run_loop_resets_model_call_budget_for_each_chapter(self) -> None:
+        tmp_path = self._case_dir("loop_per_chapter_budget")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+
+        def generator(_: str) -> str:
+            runtime = current_model_call_runtime()
+            self.assertIsNotNone(runtime)
+            assert runtime is not None
+            return str(
+                runtime.execute_attempt(
+                    call_id="loop-generation",
+                    attempt_number=1,
+                    provider="openai",
+                    model="gpt-test",
+                    stage="chapter_generation",
+                    endpoint_type="official",
+                    request={"messages": [{"role": "user", "content": "generate"}]},
+                    max_output_tokens=8,
+                    input_tokens=4,
+                    operation=lambda: ModelResponse(
+                        "The shelter alarm failed, so the group crossed the flooded service tunnel.",
+                        usage={"input_tokens": 4, "output_tokens": 8},
+                        finish_reason="stop",
+                        request_id="req-loop",
+                        actual_model="gpt-test-actual",
+                    ),
+                )
+            )
+
+        loop_result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            dry_run=True,
+            generator=generator,
+            polisher=lambda chapter: chapter,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            run_budget_limits=RunBudgetLimits(
+                max_provider_calls=1,
+                max_total_input_tokens=4,
+                max_total_output_tokens=8,
+                max_elapsed_seconds=30,
+            ),
+        ).run_loop(steps=2, persist=True)
+
+        self.assertEqual(2, loop_result["completed_steps"])
+        self.assertEqual([True, True], [run["committed"] for run in loop_result["runs"]])
+        execution_ids = [
+            run["run"]["execution_evidence"]["execution_id"]
+            for run in loop_result["runs"]
+        ]
+        self.assertEqual(2, len(set(execution_ids)))
+        for run in loop_result["runs"]:
+            budget = run["run"]["execution_evidence"]["budget"]
+            self.assertEqual(1, budget["provider_calls"])
+            self.assertEqual(4, budget["total_input_tokens"])
+            self.assertEqual(8, budget["total_output_tokens"])
 
     def test_run_loop_notifies_observer_for_progress(self) -> None:
         tmp_path = self._case_dir("loop_observer")

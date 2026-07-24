@@ -65,6 +65,15 @@ class ContextBudgetTest(unittest.TestCase):
             endpoint_type=endpoint_type,
         )
 
+    def test_default_run_input_budget_covers_validation_after_complex_drafting(self) -> None:
+        limits = RunBudgetLimits()
+
+        self.assertEqual(256_000, limits.max_total_input_tokens)
+        self.assertGreaterEqual(
+            limits.max_total_input_tokens,
+            149_107 + 37_375 + 32_000 + 37_375,
+        )
+
     def _case_dir(self, name: str) -> Path:
         path = Path(".tmp") / "test_context_budget" / f"{name}_{uuid.uuid4().hex}"
         path.mkdir(parents=True)
@@ -701,6 +710,19 @@ class ContextBudgetTest(unittest.TestCase):
                 4,
             ),
             (
+                "anthropic-null-optional-details",
+                {
+                    "input_tokens": 2,
+                    "input_tokens_details": None,
+                    "cache_creation_input_tokens": 3,
+                    "cache_read_input_tokens": 11,
+                    "output_tokens": 4,
+                    "output_tokens_details": None,
+                },
+                16,
+                4,
+            ),
+            (
                 "openai-cached-subset",
                 {
                     "prompt_tokens": 20,
@@ -869,6 +891,131 @@ class ContextBudgetTest(unittest.TestCase):
             )
         self.assertEqual("run_output_token_budget_exceeded", caught.exception.code)
         self.assertEqual(0, tracker.report()["provider_calls"])
+
+    def test_converging_repair_authorization_adds_only_exact_token_deficit(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=5,
+                max_total_input_tokens=100,
+                max_total_output_tokens=10,
+                max_elapsed_seconds=30,
+            )
+        )
+        tracker.reserve_model_call(
+            input_tokens=1,
+            max_output_tokens=8,
+            call_id="baseline",
+            attempt_id="baseline-a1",
+            stage="scene_repair",
+        )
+        tracker.record_model_response(
+            response=ModelResponse("draft", usage={"input_tokens": 1, "output_tokens": 8}),
+            call_id="baseline",
+            attempt_id="baseline-a1",
+        )
+        tracker.authorize_elastic_tokens(
+            authorization_id="progress-4-to-3",
+            reason="repair_validation_problem_count_reduced",
+            evidence={"problem_counts": [4, 3]},
+            stages=("scene_repair", "llm_validation"),
+        )
+
+        tracker.reserve_model_call(
+            input_tokens=1,
+            max_output_tokens=5,
+            call_id="validator",
+            attempt_id="validator-a1",
+            stage="llm_validation",
+        )
+
+        report = tracker.report()
+        self.assertEqual(3, report["elastic_budget"]["output_tokens_added"])
+        self.assertEqual(13, report["elastic_budget"]["effective_output_token_limit"])
+        self.assertEqual("llm_validation", report["elastic_budget"]["grants"][0]["stage"])
+        self.assertEqual([4, 3], report["elastic_budget"]["grants"][0]["evidence"]["problem_counts"])
+
+    def test_elastic_authorization_cannot_be_reused_for_same_stage(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=5,
+                max_total_input_tokens=100,
+                max_total_output_tokens=10,
+                max_elapsed_seconds=30,
+            )
+        )
+        tracker.authorize_elastic_tokens(
+            authorization_id="single-cycle",
+            reason="repair_validation_problem_count_reduced",
+            evidence={"problem_counts": [3, 2]},
+            stages=("llm_validation",),
+        )
+        tracker.reserve_model_call(
+            input_tokens=1,
+            max_output_tokens=12,
+            call_id="first",
+            attempt_id="first-a1",
+            stage="llm_validation",
+        )
+
+        with self.assertRaises(ContextBudgetError) as raised:
+            tracker.reserve_model_call(
+                input_tokens=1,
+                max_output_tokens=1,
+                call_id="second",
+                attempt_id="second-a1",
+                stage="llm_validation",
+            )
+
+        self.assertEqual("run_output_token_budget_exceeded", raised.exception.code)
+
+    def test_elastic_authorization_never_expands_unrelated_stage(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=2,
+                max_total_input_tokens=10,
+                max_total_output_tokens=10,
+                max_elapsed_seconds=30,
+            )
+        )
+        tracker.authorize_elastic_tokens(
+            authorization_id="repair-only",
+            reason="repair_validation_problem_count_reduced",
+            evidence={"problem_counts": [2, 1]},
+            stages=("scene_repair", "llm_validation"),
+        )
+
+        with self.assertRaises(ContextBudgetError) as raised:
+            tracker.reserve_model_call(
+                input_tokens=1,
+                max_output_tokens=11,
+                call_id="draft",
+                attempt_id="draft-a1",
+                stage="chapter_generation",
+            )
+
+        self.assertEqual("run_output_token_budget_exceeded", raised.exception.code)
+
+    def test_durable_attempt_restore_rehydrates_elastic_token_reservation(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=3,
+                max_total_input_tokens=100,
+                max_total_output_tokens=10,
+                max_elapsed_seconds=30,
+            )
+        )
+        tracker.restore_model_call(
+            input_tokens=1,
+            max_output_tokens=12,
+            call_id="durable",
+            attempt_id="durable-a1",
+            stage="llm_validation",
+        )
+
+        report = tracker.report()
+        self.assertEqual(2, report["elastic_budget"]["output_tokens_added"])
+        self.assertTrue(report["elastic_budget"]["grants"][0]["restored"])
+        self.assertEqual(12, report["reserved_output_tokens"])
 
     def test_mapper_hashes_full_long_files_but_prompt_excerpt_keeps_latest_tail(self) -> None:
         root = self._case_dir("long_files") / "book"

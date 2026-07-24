@@ -9,6 +9,37 @@ from modules.scene_repair.repairer import _compact_repair_context, _compact_vali
 
 
 class SceneRepairTest(unittest.TestCase):
+    def test_repair_context_keeps_only_story_state_semantics(self) -> None:
+        story_state = {
+            "last_chapter_ending": "The generator failed.",
+            "last_scene_location": "control room",
+            "last_scene_characters": ["Mira"],
+            "open_threads": ["Restore power."],
+            "required_opening_bridge": "Continue from the control room.",
+            "relative_path": "tracking/character-state.md",
+            "text": "cumulative audit text " * 200,
+        }
+        context = "# Story State\n" + json.dumps(story_state, ensure_ascii=False, indent=2)
+
+        compact = _compact_repair_context(context)
+
+        body = compact.split("# Story State\n", 1)[1].split(
+            "\n\n# Structured Context Manifest\n",
+            1,
+        )[0]
+        retained = json.loads(body)
+        self.assertEqual(
+            {
+                "last_chapter_ending",
+                "last_scene_location",
+                "last_scene_characters",
+                "open_threads",
+                "required_opening_bridge",
+            },
+            set(retained),
+        )
+        self.assertNotIn("cumulative audit text", compact)
+
     def test_compact_repair_context_selects_complete_relevant_paragraphs(self) -> None:
         context = "\n\n".join(
             f"# Section {index}\nHEAD-{index}\n" + (str(index) * 200) + f"\nTAIL-{index}"

@@ -72,6 +72,10 @@ from core.engine.persistence import (
     persistence_run_lock,
 )
 from core.engine.persistence_coordinator import PersistenceCoordinator
+from core.engine.locked_chapter_state import (
+    active_locked_chapter_checkpoint,
+    resolved_execution_ids,
+)
 from core.engine.persistence_v2 import (
     PersistenceV2Target,
     bind_final_run_record_receipt,
@@ -84,6 +88,12 @@ from core.engine.delivery_intent_recovery import (
 )
 from core.engine.root_registry import RootRegistryService
 from core.engine.quality_coordinator import QualityCoordinator
+from core.engine.repair_convergence import (
+    RepairNotConvergingError,
+    build_validation_checkpoint,
+    compare_validation_checkpoints,
+    validation_quality_score,
+)
 from core.engine.story_project_context import (
     StoryProjectContextError,
     StoryProjectContextLoader,
@@ -331,6 +341,8 @@ class AgentExecutor:
                 "anthropic": config.claude_model,
             },
             "openai_max_output_tokens": config.openai_max_output_tokens,
+            "openai_validation_max_output_tokens": config.openai_validation_max_output_tokens,
+            "openai_revalidation_max_output_tokens": config.openai_revalidation_max_output_tokens,
             "claude_max_tokens": config.claude_max_tokens,
             "provider_max_attempts": config.provider_max_attempts,
             "provider_retry_deadline_seconds": config.provider_retry_deadline_seconds,
@@ -710,6 +722,7 @@ class AgentExecutor:
                     _trace_repair_deltas(exc.trace),
                 )
                 self._attach_chapter_artifact(failed_result)
+                self._attach_execution_evidence(failed_result)
                 self._save_run_record(failed_result)
             raise exc.original from exc
 
@@ -827,6 +840,7 @@ class AgentExecutor:
                     _trace_repair_deltas(workflow_trace),
                 )
                 self._attach_chapter_artifact(failed_result)
+                self._attach_execution_evidence(failed_result)
                 self._save_run_record(failed_result)
             raise
         finished_at = utc_now()
@@ -922,13 +936,12 @@ class AgentExecutor:
         stop_on_rejection: bool = True,
         observer: LoopObserver | None = None,
     ) -> dict[str, Any]:
-        with self._execution_scope(persist=persist):
-            return self._run_loop_impl(
-                steps=steps,
-                persist=persist,
-                stop_on_rejection=stop_on_rejection,
-                observer=observer,
-            )
+        return self._run_loop_impl(
+            steps=steps,
+            persist=persist,
+            stop_on_rejection=stop_on_rejection,
+            observer=observer,
+        )
 
     def _run_loop_impl(
         self,
@@ -960,12 +973,16 @@ class AgentExecutor:
             step_started_at = utc_now()
             _notify_loop(observer, {"event": "step_start", "step": step_number, "requested_steps": steps})
             try:
-                result = self._invoke_once(
-                    persist=persist,
-                    snapshot_override=loop_snapshot,
-                    previous_result=previous_result,
-                    chapter_hint=chapter_hint,
-                )
+                # A loop step is one chapter run. Give every chapter the same
+                # execution evidence and budget lifecycle as run_once(); the
+                # loop session itself only coordinates and summarizes steps.
+                with self._execution_scope(persist=persist):
+                    result = self._invoke_once(
+                        persist=persist,
+                        snapshot_override=loop_snapshot,
+                        previous_result=previous_result,
+                        chapter_hint=chapter_hint,
+                    )
             except Exception as exc:
                 if persist:
                     failed_result = _load_newest_persisted_result(self.run_dir, known_run_ids)
@@ -1212,10 +1229,46 @@ class AgentExecutor:
         input_pack: str,
         recovery_context: dict[str, Any],
     ) -> tuple[str, dict[str, Any], int, list[dict[str, Any]], dict[str, Any] | None]:
+        chapter_index = int(decision.get("chapter_index") or 1)
+        locked_checkpoint = self._locked_chapter_checkpoint(chapter_index)
+        complete_draft = (
+            locked_checkpoint.get("complete_draft")
+            if isinstance(locked_checkpoint, dict)
+            else None
+        )
         state: dict[str, Any] = {
-            "chapter": "",
+            "chapter": (
+                str(complete_draft["text"])
+                if isinstance(complete_draft, dict)
+                else ""
+            ),
             "chapter_pipeline": None,
-            "chapter_index": int(decision.get("chapter_index") or 1),
+            "chapter_index": chapter_index,
+            "locked_chapter_action": (
+                str(locked_checkpoint["action"])
+                if isinstance(locked_checkpoint, dict)
+                else None
+            ),
+            "locked_chapter_draft_stage": (
+                str(complete_draft.get("source_stage") or "chapter")
+                if isinstance(complete_draft, dict)
+                else None
+            ),
+            "locked_chapter_problem_codes": (
+                [str(code) for code in complete_draft.get("problem_codes") or []]
+                if isinstance(complete_draft, dict)
+                else []
+            ),
+            "recovered_scene_drafts": (
+                [dict(scene) for scene in locked_checkpoint.get("scenes", [])]
+                if isinstance(locked_checkpoint, dict)
+                else []
+            ),
+            "recovered_expected_scene_count": (
+                int(locked_checkpoint["expected_scene_count"])
+                if isinstance(locked_checkpoint, dict)
+                else None
+            ),
             "snapshot_ready": False,
             "bridge_prevalidated": False,
             "commit_snapshot_requested": False,
@@ -1223,6 +1276,10 @@ class AgentExecutor:
             "repair_attempts": 0,
             "repair_plan": None,
             "repair_deltas": [],
+            "repair_validation_history": [],
+            "best_repair_chapter": None,
+            "best_repair_validation": None,
+            "best_repair_score": None,
             "workflow_skip_reason": None,
         }
         trace: list[dict[str, Any]] = []
@@ -1309,6 +1366,16 @@ class AgentExecutor:
         return state["chapter"], state["validation"], state["repair_attempts"], trace, state.get("chapter_pipeline")
 
     def _handle_generate(self, state: dict[str, Any], input_pack: str, snapshot: dict[str, Any]) -> None:
+        if state.get("locked_chapter_action") == "repair_draft" and state.get("chapter"):
+            state["chapter_pipeline"] = None
+            state["validation"] = None
+            return
+        recovered_scene_drafts = state.get("recovered_scene_drafts") or []
+        if recovered_scene_drafts:
+            self._validate_recovered_scene_plan(
+                recovered_scene_drafts,
+                expected_scene_count=state.get("recovered_expected_scene_count"),
+            )
         if self.autonomy_run_context is not None:
             scene_receipt = self.autonomy_run_context.ensure_scene_plan(input_pack)
 
@@ -1322,6 +1389,7 @@ class AgentExecutor:
                     scene_limit=self.scene_limit,
                     language=project_language(snapshot),
                     chapter_blueprint=self._story_project_chapter_blueprint(),
+                    recovered_scene_drafts=recovered_scene_drafts,
                 )
                 return {
                     "chapter": str(pipeline["merged_chapter"]),
@@ -1354,6 +1422,7 @@ class AgentExecutor:
                 scene_limit=self.scene_limit,
                 language=project_language(snapshot),
                 chapter_blueprint=self._story_project_chapter_blueprint(),
+                recovered_scene_drafts=recovered_scene_drafts,
             )
             state["chapter"] = str(pipeline["merged_chapter"])
             state["chapter_pipeline"] = pipeline
@@ -1377,6 +1446,12 @@ class AgentExecutor:
 
     def _handle_polish(self, state: dict[str, Any]) -> None:
         chapter = _require_chapter(state)
+        if (
+            state.get("locked_chapter_action") == "repair_draft"
+            and state.get("locked_chapter_draft_stage") in {"claude_polish", "scene_repair"}
+        ):
+            state["validation"] = None
+            return
         if self.autonomy_run_context is not None:
             state["chapter"] = self._execute_autonomy_stage(
                 stage="polish",
@@ -1401,13 +1476,22 @@ class AgentExecutor:
         def run_validation() -> dict[str, Any]:
             if self.validator is validate_chapter:
                 pipeline = state.get("chapter_pipeline") if isinstance(state.get("chapter_pipeline"), dict) else {}
+                blueprint = self._story_project_chapter_blueprint()
+                coverage = pipeline.get("blueprint_coverage") if isinstance(pipeline, dict) else None
+                if coverage is None and isinstance(blueprint, dict):
+                    coverage = build_blueprint_coverage(
+                        blueprint,
+                        _synthetic_repaired_scene_drafts(blueprint),
+                        chapter,
+                    )
                 return validate_chapter(
                     snapshot,
                     chapter,
                     decision,
                     enable_llm=self.enable_llm_validator,
-                    chapter_blueprint=self._story_project_chapter_blueprint(),
-                    blueprint_coverage=pipeline.get("blueprint_coverage") if isinstance(pipeline, dict) else None,
+                    llm_context=self._llm_validation_context(state),
+                    chapter_blueprint=blueprint,
+                    blueprint_coverage=coverage,
                 )
             return self.validator(snapshot, chapter, decision)
 
@@ -1423,6 +1507,7 @@ class AgentExecutor:
             )
         else:
             state["validation"] = run_validation()
+        self._record_repair_validation(state)
 
     def _handle_repair_if_needed(
         self,
@@ -1450,7 +1535,10 @@ class AgentExecutor:
             not state["validation"]["ok"]
             and state["repair_attempts"] < max_repair_attempts
         ):
+            self._raise_if_repair_not_converging(state)
+            self._authorize_elastic_repair_budget(state)
             before_validation = state["validation"]
+            before_chapter = state["chapter"]
             attempt = int(state.get("repair_attempts") or 0) + 1
             state["repair_plan"] = build_repair_plan(
                 state["validation"],
@@ -1482,8 +1570,20 @@ class AgentExecutor:
                 )
             else:
                 state["chapter"] = repair_operation()
-            self._handle_validate(state, snapshot, decision)
+            state["pending_revalidation"] = _focused_revalidation_context(
+                before_chapter=before_chapter,
+                after_chapter=state["chapter"],
+                validation=before_validation,
+                repair_plan=state["repair_plan"],
+                attempt=attempt,
+            )
+            # The repair output is already a durable, reusable chapter result.
+            # Count it before validation so a later validator/budget failure
+            # cannot make the completed repair disappear from diagnostics.
             state["repair_attempts"] += 1
+            self._authorize_elastic_repair_budget(state)
+            self._handle_validate(state, snapshot, decision)
+            state["pending_revalidation"] = None
             state["repair_deltas"].append(
                 _repair_delta(
                     attempt=attempt,
@@ -1491,6 +1591,95 @@ class AgentExecutor:
                     after=state["validation"],
                 )
             )
+            self._raise_if_repair_not_converging(state)
+
+    def _llm_validation_context(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        context: dict[str, Any] = {}
+        story_context = self._story_project_context_dict() or {}
+        previous = _previous_chapter_for_validation(story_context)
+        if previous is not None:
+            context["previous_chapter"] = previous
+        revalidation = state.get("pending_revalidation")
+        if isinstance(revalidation, dict):
+            context["revalidation"] = revalidation
+        elif (
+            state.get("locked_chapter_action") == "repair_draft"
+            and state.get("locked_chapter_draft_stage") == "scene_repair"
+        ):
+            problem_codes = [
+                str(code)
+                for code in state.get("locked_chapter_problem_codes") or []
+                if str(code).strip()
+            ]
+            context["revalidation"] = {
+                "attempt": "recovered_scene_repair",
+                "prior_problem_count": len(problem_codes),
+                "prior_problems": [{"code": code} for code in problem_codes],
+                "repair_actions": [],
+            }
+        return context or None
+
+    def _record_repair_validation(self, state: dict[str, Any]) -> None:
+        validation = state.get("validation")
+        chapter = state.get("chapter")
+        if not isinstance(validation, dict) or not isinstance(chapter, str):
+            return
+        checkpoint = build_validation_checkpoint(validation, chapter_text=chapter)
+        history = state.setdefault("repair_validation_history", [])
+        if history and history[-1].get("checkpoint_id") == checkpoint["checkpoint_id"]:
+            return
+        history.append(checkpoint)
+        score = validation_quality_score(checkpoint)
+        best_score = state.get("best_repair_score")
+        if best_score is None or score < tuple(best_score):
+            state["best_repair_score"] = score
+            state["best_repair_chapter"] = chapter
+            state["best_repair_validation"] = validation
+
+    def _latest_repair_transition(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        history = state.get("repair_validation_history")
+        if not isinstance(history, list) or len(history) < 2:
+            return None
+        return compare_validation_checkpoints(history[-2], history[-1])
+
+    def _authorize_elastic_repair_budget(self, state: dict[str, Any]) -> None:
+        tracker = self._run_budget_tracker
+        transition = self._latest_repair_transition(state)
+        history = state.get("repair_validation_history")
+        if (
+            tracker is None
+            or transition is None
+            or not transition.get("eligible_for_elastic_budget")
+            or not isinstance(history, list)
+        ):
+            return
+        tracker.authorize_elastic_tokens(
+            authorization_id=str(transition["authorization_id"]),
+            reason="repair_validation_problem_count_reduced",
+            evidence={
+                "problem_counts": [int(item.get("problem_count") or 0) for item in history],
+                "before_problem_count": int(transition["before_problem_count"]),
+                "after_problem_count": int(transition["after_problem_count"]),
+                "new_critical_problem": bool(transition["new_critical_problem"]),
+                "new_more_severe_problem": bool(transition["new_more_severe_problem"]),
+            },
+            stages=("scene_repair", "llm_validation"),
+        )
+
+    def _raise_if_repair_not_converging(self, state: dict[str, Any]) -> None:
+        transition = self._latest_repair_transition(state)
+        if transition is None or transition.get("status") in {"improved", "passed"}:
+            return
+        best_chapter = state.get("best_repair_chapter")
+        best_validation = state.get("best_repair_validation")
+        if isinstance(best_chapter, str) and best_chapter:
+            state["chapter"] = best_chapter
+        if isinstance(best_validation, dict):
+            state["validation"] = best_validation
+        raise RepairNotConvergingError(
+            history=list(state.get("repair_validation_history") or []),
+            transition=transition,
+        )
 
     def _load_memory_context(self) -> dict[str, Any]:
         if self.memory_loader:
@@ -1551,6 +1740,42 @@ class AgentExecutor:
 
     def _story_project_chapter_blueprint(self) -> dict[str, Any] | None:
         return self.story_project_context_service.chapter_blueprint(self._story_project_context_dict())
+
+    def _locked_chapter_checkpoint(self, chapter_index: int) -> dict[str, Any] | None:
+        context = self._story_project_context_dict() or {}
+        identity = context.get("project_identity")
+        context_book_id = identity.get("book_id") if isinstance(identity, dict) else None
+        expected_book_id = self._expected_book_id or context_book_id
+        if not isinstance(expected_book_id, str) or not expected_book_id:
+            return None
+        return active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=chapter_index,
+            expected_book_id=expected_book_id,
+        )
+
+    def _validate_recovered_scene_plan(
+        self,
+        scenes: list[dict[str, Any]],
+        *,
+        expected_scene_count: Any,
+    ) -> None:
+        blueprint = self._story_project_chapter_blueprint()
+        if not isinstance(blueprint, dict):
+            raise ValueError("locked chapter scene recovery requires a StoryProject chapter blueprint")
+        expected = len(blueprint.get("required_beats") or [])
+        if self.scene_limit is not None:
+            expected = min(expected, max(1, int(self.scene_limit)))
+        if (
+            expected < 1
+            or isinstance(expected_scene_count, bool)
+            or not isinstance(expected_scene_count, int)
+            or expected_scene_count != expected
+            or len(scenes) >= expected
+        ):
+            raise ValueError(
+                "locked chapter scene checkpoint does not match the current chapter plan"
+            )
 
     def _require_strict_story_project_writeback(self, *, persist: bool) -> None:
         self.story_project_context_service.require_strict_writeback(
@@ -2092,6 +2317,20 @@ class AgentExecutor:
             return
         chapter = run.get("chapter") if isinstance(run.get("chapter"), dict) else {}
         pipeline_summary = chapter.get("pipeline") if isinstance(chapter.get("pipeline"), dict) else {}
+        chapter_blueprint = context.get("chapter_blueprint")
+        blueprint_coverage = pipeline_summary.get("blueprint_coverage")
+        chapter_text = result.get("chapter")
+        if (
+            not isinstance(blueprint_coverage, dict)
+            and isinstance(chapter_blueprint, dict)
+            and isinstance(chapter_text, str)
+            and chapter_text.strip()
+        ):
+            blueprint_coverage = build_blueprint_coverage(
+                chapter_blueprint,
+                _synthetic_repaired_scene_drafts(chapter_blueprint),
+                chapter_text,
+            )
         existing = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
         writeback = existing.get("writeback") if isinstance(existing.get("writeback"), dict) else default_story_project_writeback()
         run["story_project"] = {
@@ -2102,7 +2341,7 @@ class AgentExecutor:
             "project_identity": context.get("project_identity"),
             "chapter_index": context.get("chapter_index"),
             "chapter_resolution": context.get("chapter_resolution"),
-            "chapter_blueprint": context.get("chapter_blueprint"),
+            "chapter_blueprint": chapter_blueprint,
             "source_paths": context.get("source_paths"),
             "source_resolution": context.get("source_resolution"),
             "semantic_state": context.get("semantic_audit"),
@@ -2110,7 +2349,7 @@ class AgentExecutor:
                 key: (context.get("memory_v2") or {}).get(key)
                 for key in ("status", "canonical_path", "event_store", "revision", "projection_hash")
             },
-            "blueprint_coverage": pipeline_summary.get("blueprint_coverage"),
+            "blueprint_coverage": blueprint_coverage,
             "writeback": writeback,
         }
         if isinstance(self.story_project_oh_story_report, dict):
@@ -3291,7 +3530,10 @@ def _unresolved_provider_calls(run_dir: Path) -> list[dict[str, Any]]:
     if not executions_root.is_dir():
         return []
     unresolved: list[dict[str, Any]] = []
+    handled = resolved_execution_ids(run_dir)
     for execution_dir in sorted(executions_root.glob("execution_*")):
+        if execution_dir.name in handled:
+            continue
         model_root = execution_dir / "model_calls"
         if not model_root.is_dir():
             continue
@@ -3469,6 +3711,79 @@ def _repair_context_for_snapshot(snapshot: dict[str, Any]) -> RepairContext:
         language=project_language(snapshot) or "en",
         known_conflict_hint=hint,
     )
+
+
+def _previous_chapter_for_validation(
+    story_project_context: dict[str, Any],
+) -> dict[str, Any] | None:
+    current = story_project_context.get("previous_chapter_context")
+    if isinstance(current, dict):
+        excerpt = current.get("generation_excerpt")
+        if isinstance(excerpt, dict) and isinstance(excerpt.get("text"), str):
+            return {
+                "chapter_index": current.get("chapter_index"),
+                "sha256": current.get("sha256"),
+                "original_chars": current.get("original_chars"),
+                "text": excerpt["text"],
+                "truncated": bool(excerpt.get("truncated")),
+                "ranges": list(excerpt.get("ranges") or []),
+                "committed_verified": bool(current.get("committed_verified")),
+            }
+    legacy = story_project_context.get("previous_prose")
+    if isinstance(legacy, dict) and isinstance(legacy.get("text"), str):
+        return {
+            "chapter_index": int(story_project_context.get("chapter_index") or 1) - 1,
+            "sha256": legacy.get("sha256"),
+            "original_chars": legacy.get("chars"),
+            "text": legacy["text"],
+            "truncated": bool(legacy.get("truncated")),
+            "ranges": list(legacy.get("excerpt_ranges") or []),
+            "committed_verified": True,
+        }
+    return None
+
+
+def _focused_revalidation_context(
+    *,
+    before_chapter: str,
+    after_chapter: str,
+    validation: dict[str, Any],
+    repair_plan: dict[str, Any],
+    attempt: int,
+) -> dict[str, Any]:
+    problems = [
+        {
+            key: problem.get(key)
+            for key in (
+                "code",
+                "message",
+                "area",
+                "severity",
+                "blocking",
+                "repair_hint",
+                "evidence",
+            )
+            if problem.get(key) not in (None, [], {})
+        }
+        for problem in validation.get("problems") or []
+        if isinstance(problem, dict)
+    ]
+    return {
+        "attempt": attempt,
+        "before_chapter_sha256": hashlib.sha256(before_chapter.encode("utf-8")).hexdigest(),
+        "after_chapter_sha256": hashlib.sha256(after_chapter.encode("utf-8")).hexdigest(),
+        "prior_problem_count": len(problems),
+        "prior_problems": problems,
+        "repair_actions": [
+            {
+                key: step.get(key)
+                for key in ("code", "action", "strategy", "repair_hint")
+                if step.get(key) not in (None, "")
+            }
+            for step in repair_plan.get("steps") or []
+            if isinstance(step, dict)
+        ],
+    }
 
 
 def _previous_chapter_text(

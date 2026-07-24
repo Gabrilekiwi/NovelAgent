@@ -35,6 +35,8 @@ class RuntimeConfig:
     openai_model: str
     openai_timeout_seconds: int
     openai_max_output_tokens: int
+    openai_validation_max_output_tokens: int
+    openai_revalidation_max_output_tokens: int
     openai_max_retries: int
     openai_stream: bool
     anthropic_api_key: str | None
@@ -61,6 +63,15 @@ class RuntimeConfig:
 
 def get_config() -> RuntimeConfig:
     load_env()
+    openai_max_output_tokens = _int_env("OPENAI_MAX_OUTPUT_TOKENS", 16000)
+    openai_validation_max_output_tokens = min(
+        max(1, openai_max_output_tokens),
+        max(1, _int_env("OPENAI_VALIDATION_MAX_OUTPUT_TOKENS", 10000)),
+    )
+    openai_revalidation_max_output_tokens = min(
+        openai_validation_max_output_tokens,
+        max(1, _int_env("OPENAI_REVALIDATION_MAX_OUTPUT_TOKENS", 6000)),
+    )
     return RuntimeConfig(
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_base_url=_env("OPENAI_BASE_URL"),
@@ -69,7 +80,9 @@ def get_config() -> RuntimeConfig:
         # A full chapter target is 3,000-4,500 Chinese characters.  Keep the
         # cold-start default compatible even when the conservative estimator
         # has no model tokenizer or provider usage yet.
-        openai_max_output_tokens=_int_env("OPENAI_MAX_OUTPUT_TOKENS", 16000),
+        openai_max_output_tokens=openai_max_output_tokens,
+        openai_validation_max_output_tokens=openai_validation_max_output_tokens,
+        openai_revalidation_max_output_tokens=openai_revalidation_max_output_tokens,
         openai_max_retries=max(0, _int_env("OPENAI_MAX_RETRIES", 0)),
         openai_stream=_bool_env("OPENAI_STREAM", True),
         anthropic_api_key=_env("ANTHROPIC_API_KEY") or _env("ANTHROPIC_AUTH_TOKEN"),

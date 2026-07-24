@@ -81,6 +81,37 @@ class ConfigTest(unittest.TestCase):
 
         self.assertEqual(16000, config.openai_max_output_tokens)
 
+    def test_llm_validation_uses_a_smaller_configurable_output_limit(self) -> None:
+        original_general = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS")
+        original_validation = os.environ.get("OPENAI_VALIDATION_MAX_OUTPUT_TOKENS")
+        original_revalidation = os.environ.get("OPENAI_REVALIDATION_MAX_OUTPUT_TOKENS")
+        os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = "16000"
+        os.environ["OPENAI_VALIDATION_MAX_OUTPUT_TOKENS"] = "4321"
+        os.environ["OPENAI_REVALIDATION_MAX_OUTPUT_TOKENS"] = "3210"
+        try:
+            configured = get_config()
+            os.environ["OPENAI_VALIDATION_MAX_OUTPUT_TOKENS"] = ""
+            os.environ["OPENAI_REVALIDATION_MAX_OUTPUT_TOKENS"] = ""
+            defaulted = get_config()
+        finally:
+            if original_general is None:
+                os.environ.pop("OPENAI_MAX_OUTPUT_TOKENS", None)
+            else:
+                os.environ["OPENAI_MAX_OUTPUT_TOKENS"] = original_general
+            if original_validation is None:
+                os.environ.pop("OPENAI_VALIDATION_MAX_OUTPUT_TOKENS", None)
+            else:
+                os.environ["OPENAI_VALIDATION_MAX_OUTPUT_TOKENS"] = original_validation
+            if original_revalidation is None:
+                os.environ.pop("OPENAI_REVALIDATION_MAX_OUTPUT_TOKENS", None)
+            else:
+                os.environ["OPENAI_REVALIDATION_MAX_OUTPUT_TOKENS"] = original_revalidation
+
+        self.assertEqual(4321, configured.openai_validation_max_output_tokens)
+        self.assertEqual(3210, configured.openai_revalidation_max_output_tokens)
+        self.assertEqual(10000, defaulted.openai_validation_max_output_tokens)
+        self.assertEqual(6000, defaulted.openai_revalidation_max_output_tokens)
+
     def test_openai_max_retries_defaults_to_zero_and_parses_env(self) -> None:
         original_retries = os.environ.get("OPENAI_MAX_RETRIES")
         os.environ["OPENAI_MAX_RETRIES"] = "4"

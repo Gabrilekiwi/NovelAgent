@@ -11,6 +11,7 @@ from api.openai_client import chat_completion
 from core.context_budget import default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
 from core.schema import validate_schema
+from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_json_items, sha256_text
 from modules.scene_repair.plan import build_repair_plan
 
@@ -194,8 +195,11 @@ def _compact_repair_context(
         },
         excluded_sections={"Memory Index", "Structured Context Manifest"},
         required_json_keys={
+            "Story State": STORY_STATE_CONTEXT_KEYS,
             "StoryProject Chapter Blueprint": {"chapter_blueprint", "read_set_context_digest"},
         },
+        allowed_json_keys={"Story State": STORY_STATE_CONTEXT_KEYS},
+        section_max_chars={"Story State": STORY_STATE_SECTION_MAX_CHARS},
         prefer_recent=True,
         policy="repair_markdown_json_retrieval_v1",
     )

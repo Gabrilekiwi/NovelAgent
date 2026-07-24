@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +27,86 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertTrue(check["ok"])
 
+    def test_llm_validator_uses_stage_specific_output_limit(self) -> None:
+        with patch(
+            "core.validator.llm.chat_completion",
+            return_value='{"problems": []}',
+        ) as mocked, patch("core.validator.llm.get_config") as config:
+            config.return_value.openai_validation_max_output_tokens = 4321
+            check = validate_llm(
+                {"chapter_index": 2},
+                "A complete chapter.",
+                model="validator-test",
+            )
+
+        self.assertTrue(check["ok"])
+        self.assertEqual(4321, mocked.call_args.kwargs["max_tokens"])
+
+    def test_llm_revalidation_uses_focused_prompt_and_smaller_output_limit(self) -> None:
+        previous = "The previous committed chapter established the current mutable state."
+        with patch(
+            "core.validator.llm.chat_completion",
+            return_value='{"problems": []}',
+        ) as mocked, patch("core.validator.llm.get_config") as config:
+            config.return_value.openai_validation_max_output_tokens = 10000
+            config.return_value.openai_revalidation_max_output_tokens = 6000
+            check = validate_llm(
+                {
+                    "chapter_index": 5,
+                    "world_state": {"text": "stale source document", "danger": "high"},
+                    "timeline": [{"chapter_index": 4, "validation": {"large": "metadata"}}],
+                },
+                "The repaired chapter keeps the current state consistent.",
+                model="validator-test",
+                validation_context={
+                    "previous_chapter": {"chapter_index": 4, "text": previous},
+                    "revalidation": {
+                        "prior_problems": [
+                            {
+                                "code": "llm_timeline_gap",
+                                "area": "timeline_causality",
+                                "severity": "high",
+                            }
+                        ]
+                    },
+                },
+            )
+
+        self.assertTrue(check["ok"])
+        self.assertEqual("repair_revalidation", check["metadata"]["mode"])
+        self.assertEqual(6000, mocked.call_args.kwargs["max_tokens"])
+        messages = mocked.call_args.args[0]
+        self.assertIn("focused fiction repair verifier", messages[0]["content"])
+        payload = json.loads(messages[1]["content"])
+        self.assertEqual("repair_revalidation", payload["validation_mode"])
+        self.assertEqual(["timeline_causality"], payload["check_areas"])
+        self.assertEqual(previous, payload["previous_chapter"]["text"])
+        self.assertNotIn("text", payload["snapshot"]["world_state"])
+        self.assertNotIn("validation", payload["snapshot"]["timeline"][0])
+
+    def test_full_llm_validation_includes_previous_chapter_fact_precedence(self) -> None:
+        with patch(
+            "core.validator.llm.chat_completion",
+            return_value='{"problems": []}',
+        ) as mocked:
+            check = validate_llm(
+                {"chapter_index": 5},
+                "A complete current chapter.",
+                model="validator-test",
+                validation_context={
+                    "previous_chapter": {
+                        "chapter_index": 4,
+                        "text": "The protagonist already acquired the ability in chapter four.",
+                    }
+                },
+            )
+
+        self.assertTrue(check["ok"])
+        self.assertEqual("full_validation", check["metadata"]["mode"])
+        payload = json.loads(mocked.call_args.args[0][1]["content"])
+        self.assertEqual(4, payload["previous_chapter"]["chapter_index"])
+        self.assertIn("previous_committed_chapter_for_mutable_state", payload["fact_precedence"])
+
     def test_llm_validator_records_replay_audit_metadata(self) -> None:
         with patch("core.validator.llm.chat_completion", return_value='{"problems": []}'):
             check = validate_llm(
@@ -39,6 +120,85 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual("validator-test", check["metadata"]["model"])
         self.assertEqual(64, len(check["metadata"]["prompt_hash"]))
         self.assertEqual([{"attempt": 1, "status": "succeeded"}], check["metadata"]["attempt_history"])
+        self.assertEqual(
+            {"attempted": False, "succeeded": False, "dropped_problem_count": 0},
+            check["metadata"]["schema_repair"],
+        )
+
+    def test_llm_validator_repairs_schema_invalid_empty_evidence(self) -> None:
+        chapter = "Alpha alarm. Beta door."
+        fact_id = "chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest()
+        invalid = {
+            "problems": [
+                {
+                    "code": "llm_timeline_gap",
+                    "message": "The alarm and door transition lacks a causal bridge.",
+                    "area": "timeline_causality",
+                    "severity": "medium",
+                    "fact_id": fact_id,
+                    "evidence": [],
+                    "repair_hint": "Connect the alarm to the door action.",
+                }
+            ]
+        }
+        valid = {
+            "problems": [
+                {
+                    **invalid["problems"][0],
+                    "evidence": [
+                        {
+                            "kind": "chapter_span",
+                            "start_char": 0,
+                            "end_char": len("Alpha alarm."),
+                            "quote": "Alpha alarm.",
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch(
+            "core.validator.llm.chat_completion",
+            side_effect=[json.dumps(invalid), json.dumps(valid)],
+        ) as mocked:
+            check = validate_llm({"chapter_index": 1}, chapter, model="validator-test")
+
+        self.assertEqual(2, mocked.call_count)
+        self.assertEqual(["llm_timeline_gap"], [problem["code"] for problem in check["problems"]])
+        self.assertEqual(
+            {"attempted": True, "succeeded": True, "dropped_problem_count": 0},
+            check["metadata"]["schema_repair"],
+        )
+
+    def test_llm_validator_drops_evidence_free_findings_when_schema_repair_still_fails(self) -> None:
+        chapter = "Alpha alarm. Beta door."
+        invalid = {
+            "problems": [
+                {
+                    "code": "llm_timeline_gap",
+                    "message": "The alarm and door transition lacks a causal bridge.",
+                    "area": "timeline_causality",
+                    "severity": "medium",
+                    "fact_id": "chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest(),
+                    "evidence": [],
+                    "repair_hint": "Connect the alarm to the door action.",
+                }
+            ]
+        }
+
+        with patch(
+            "core.validator.llm.chat_completion",
+            side_effect=[json.dumps(invalid), json.dumps(invalid)],
+        ) as mocked:
+            check = validate_llm({"chapter_index": 1}, chapter, model="validator-test")
+
+        self.assertEqual(2, mocked.call_count)
+        self.assertTrue(check["ok"])
+        self.assertEqual([], check["problems"])
+        self.assertEqual(
+            {"attempted": True, "succeeded": False, "dropped_problem_count": 1},
+            check["metadata"]["schema_repair"],
+        )
 
     def test_rejects_short_chapter_without_conflict(self) -> None:
         snapshot = {
@@ -298,6 +458,38 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotIn("missing_opening_bridge", problem_codes)
         self.assertNotIn("missing_last_scene_continuity", problem_codes)
 
+    def test_accepts_two_character_chinese_opening_bridge_terms(self) -> None:
+        snapshot = {
+            "chapter_index": 9,
+            "world_state": {"locations": {"冷库": {}}},
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "短暂停顿后，她报出了病区坐标。",
+                "last_scene_location": "冷库",
+                "last_scene_characters": ["陆沉"],
+                "open_threads": [],
+                "required_opening_bridge": "冷库 陆沉",
+            },
+            "spatial_state": {
+                "spaces": {},
+                "connections": [],
+                "character_positions": {},
+                "blocked_paths": [],
+                "last_transition": {},
+            },
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "电台里的坐标钉进冷库的墙，陆沉站在控制台前，听见隔离仓再次传来撞击。",
+            {"validation_focus": ["spatial"]},
+        )
+
+        problem_codes = {problem["code"] for problem in result["problems"]}
+        self.assertNotIn("missing_opening_bridge", problem_codes)
+        self.assertNotIn("missing_last_scene_continuity", problem_codes)
+
     def test_rejects_invalid_spatial_transition_with_dedicated_code(self) -> None:
         snapshot = {
             "chapter_index": 2,
@@ -530,6 +722,26 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual([{"kind": "chapter_span", "value": quote}], problem["evidence"])
         self.assertEqual("chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest(), problem["fact_id"])
 
+    def test_validate_chapter_forwards_optional_llm_context(self) -> None:
+        captured: list[dict] = []
+
+        def fake_llm_validator(snapshot, chapter_text, decision, *, validation_context):
+            captured.append(validation_context)
+            return {"name": "llm", "ok": True, "problems": []}
+
+        context = {"previous_chapter": {"chapter_index": 1, "text": "Committed prose."}}
+        result = validate_chapter(
+            {"chapter_index": 2, "world_state": {}, "characters": {}, "timeline": []},
+            "The danger forced a difficult choice and created open conflict in the shelter.",
+            enable_llm=True,
+            llm_validator=fake_llm_validator,
+            llm_context=context,
+        )
+
+        llm_check = next(check for check in result["checks"] if check["name"] == "llm")
+        self.assertTrue(llm_check["ok"])
+        self.assertEqual([context], captured)
+
     def test_llm_payload_contract_rejects_missing_evidence(self) -> None:
         with self.assertRaisesRegex(Exception, "llm_validation.schema.json"):
             llm_payload_to_check(
@@ -572,7 +784,7 @@ class ValidatorTest(unittest.TestCase):
                 chapter_text="Effect appears before cause.",
             )
 
-    def test_llm_evidence_must_match_chapter_digest_and_exact_span(self) -> None:
+    def test_llm_evidence_with_wrong_span_is_corrected_when_quote_is_unique(self) -> None:
         chapter = "Alpha beta gamma."
         fact_id = "chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest()
         payload = {
@@ -588,7 +800,7 @@ class ValidatorTest(unittest.TestCase):
                             "kind": "chapter_span",
                             "start_char": 0,
                             "end_char": 5,
-                            "quote": "wrong",
+                            "quote": "beta",
                         }
                     ],
                     "repair_hint": "Repair the causal transition.",
@@ -596,7 +808,98 @@ class ValidatorTest(unittest.TestCase):
             ]
         }
 
-        with self.assertRaisesRegex(ValueError, "does not match"):
+        check = llm_payload_to_check(payload, chapter_text=chapter)
+
+        self.assertFalse(check["ok"])
+        self.assertEqual(
+            [{"kind": "chapter_span", "start_char": 6, "end_char": 10, "quote": "beta"}],
+            check["problems"][0]["evidence_spans"],
+        )
+
+    def test_llm_finding_is_dropped_when_no_evidence_quote_exists(self) -> None:
+        chapter = "Alpha beta gamma."
+        fact_id = "chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest()
+        check = llm_payload_to_check(
+            {
+                "problems": [
+                    {
+                        "code": "llm_timeline_gap",
+                        "message": "The evidence is inconsistent.",
+                        "area": "timeline_causality",
+                        "severity": "high",
+                        "fact_id": fact_id,
+                        "evidence": [
+                            {
+                                "kind": "chapter_span",
+                                "start_char": 0,
+                                "end_char": 5,
+                                "quote": "delta",
+                            }
+                        ],
+                        "repair_hint": "Repair the causal transition.",
+                    }
+                ]
+            },
+            chapter_text=chapter,
+        )
+
+        self.assertTrue(check["ok"])
+        self.assertEqual([], check["problems"])
+
+    def test_llm_finding_is_dropped_when_wrong_span_quote_is_ambiguous(self) -> None:
+        chapter = "The door opened, then the door closed."
+        fact_id = "chapter:sha256:" + hashlib.sha256(chapter.encode("utf-8")).hexdigest()
+        check = llm_payload_to_check(
+            {
+                "problems": [
+                    {
+                        "code": "llm_timeline_gap",
+                        "message": "The evidence is inconsistent.",
+                        "area": "timeline_causality",
+                        "severity": "medium",
+                        "fact_id": fact_id,
+                        "evidence": [
+                            {
+                                "kind": "chapter_span",
+                                "start_char": 0,
+                                "end_char": 4,
+                                "quote": "door",
+                            }
+                        ],
+                        "repair_hint": "Repair the causal transition.",
+                    }
+                ]
+            },
+            chapter_text=chapter,
+        )
+
+        self.assertTrue(check["ok"])
+        self.assertEqual([], check["problems"])
+
+    def test_llm_finding_with_wrong_chapter_digest_is_rejected(self) -> None:
+        chapter = "Alpha beta gamma."
+        payload = {
+            "problems": [
+                {
+                    "code": "llm_timeline_gap",
+                    "message": "The evidence is inconsistent.",
+                    "area": "timeline_causality",
+                    "severity": "high",
+                    "fact_id": "chapter:sha256:" + "0" * 64,
+                    "evidence": [
+                        {
+                            "kind": "chapter_span",
+                            "start_char": 0,
+                            "end_char": 5,
+                            "quote": "Alpha",
+                        }
+                    ],
+                    "repair_hint": "Repair the causal transition.",
+                }
+            ]
+        }
+
+        with self.assertRaisesRegex(ValueError, "fact_id does not match"):
             llm_payload_to_check(payload, chapter_text=chapter)
 
     def test_medium_llm_finding_is_advisory_before_calibration(self) -> None:

@@ -138,6 +138,15 @@ def _check_snapshot_compatibility(snapshot: Any) -> dict[str, Any]:
 
 
 def _check_continues_previous_ending(text: str, snapshot: dict, previous_chapter_text: str | None) -> dict[str, Any]:
+    chapter_index = snapshot.get("chapter_index")
+    if chapter_index == 1 and not previous_chapter_text:
+        return _check(
+            "continues_previous_ending",
+            "skip",
+            "high",
+            "The first chapter has no previous ending to continue.",
+            {},
+        )
     story_state = _dict(snapshot.get("story_state"))
     opening = _opening(text)
     bridge = _clean_text(story_state.get("required_opening_bridge"))

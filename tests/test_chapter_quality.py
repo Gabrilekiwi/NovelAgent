@@ -82,6 +82,20 @@ class ChapterQualityTest(unittest.TestCase):
 
         self.assertEqual("pass", self._check(report, "snapshot_compatibility")["status"])
 
+    def test_first_chapter_skips_previous_ending_check_without_previous_chapter(self) -> None:
+        snapshot = self._snapshot()
+        snapshot["chapter_index"] = 1
+
+        report = evaluate_chapter_quality(
+            chapter_text=self._chapter("good_chapter.md"),
+            snapshot=snapshot,
+            previous_chapter_text=None,
+        )
+
+        check = self._check(report, "continues_previous_ending")
+        self.assertEqual("skip", check["status"])
+        self.assertEqual("The first chapter has no previous ending to continue.", check["message"])
+
     def test_repetition_check_warns_on_repeated_paragraphs(self) -> None:
         repeated = "备用通道里，林雪停下脚步。\n\n" * 4 + "林雪看向陈岚，主控室阀门仍在震动。"
 

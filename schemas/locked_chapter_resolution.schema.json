@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LockedChapterResolution",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "created_at",
+    "book_id",
+    "chapter_index",
+    "action",
+    "source_run_id",
+    "resolved_execution_ids",
+    "resolved_attempt_ids",
+    "discarded_run_ids",
+    "expected_scene_count",
+    "complete_draft",
+    "scenes",
+    "reason",
+    "resolution_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "book_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "action": {
+      "type": "string",
+      "enum": ["repair_draft", "resume_scenes", "reset"]
+    },
+    "source_run_id": {"type": "string", "minLength": 1},
+    "resolved_execution_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "resolved_attempt_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "discarded_run_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "expected_scene_count": {"type": "integer", "minimum": 1},
+    "complete_draft": {
+      "type": ["object", "null"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "minLength": 64},
+        "problem_codes": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "source_stage": {
+          "type": "string",
+          "enum": ["chapter", "chapter_generation", "claude_polish", "scene_repair"]
+        },
+        "source_attempt_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "text", "sha256", "source_attempt_id"],
+        "properties": {
+          "index": {"type": "integer", "minimum": 1},
+          "text": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "minLength": 64},
+          "source_attempt_id": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "reason": {"type": "string", "minLength": 1},
+    "resolution_hash": {"type": "string", "minLength": 64}
+  },
+  "additionalProperties": false
+}

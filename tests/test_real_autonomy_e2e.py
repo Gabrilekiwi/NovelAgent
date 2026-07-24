@@ -241,8 +241,8 @@ class RealAutonomyE2ETest(unittest.TestCase):
         self.assertEqual("runner_execute", retained["diagnostics"]["phase"])
         self.assertEqual("direct", retained["gate"]["proxy_mode"])
         self.assertEqual(1, retained["diagnostics"]["intent_count"])
-        self.assertEqual(0, retained["diagnostics"]["receipt_count"])
-        self.assertEqual(1, retained["diagnostics"]["uncertain_intent_count"])
+        self.assertEqual(1, retained["diagnostics"]["receipt_count"])
+        self.assertEqual(0, retained["diagnostics"]["uncertain_intent_count"])
         self.assertIn(
             401,
             [

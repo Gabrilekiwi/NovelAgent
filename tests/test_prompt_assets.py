@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -52,6 +53,51 @@ class PromptAssetTest(unittest.TestCase):
         self.assertIn("# Requirements", input_pack)
         self.assertIn("Return only chapter prose", input_pack)
         self.assertNotIn("\ufffd", input_pack)
+
+    def test_input_pack_projects_bounded_semantic_story_state_without_mutating_snapshot(self) -> None:
+        story_state = {
+            "last_chapter_ending": "E" * 700,
+            "last_scene_location": "L" * 150,
+            "last_scene_characters": [f"character-{index}-" + ("C" * 80) for index in range(25)],
+            "open_threads": [f"thread-{index}-" + ("T" * 150) for index in range(20)],
+            "required_opening_bridge": "B" * 400,
+            "source": "tracking/character-state.md",
+            "path": "D:/book/tracking/character-state.md",
+            "text": "raw cumulative audit text " * 200,
+        }
+        snapshot = {
+            "chapter_index": 3,
+            "world_state": {},
+            "story_state": story_state,
+            "spatial_state": {},
+            "characters": {},
+            "timeline": [],
+        }
+
+        input_pack = build_input_pack(snapshot)
+
+        body = input_pack.split("# Story State\n", 1)[1].split("\n\n# Spatial State\n", 1)[0]
+        projected = json.loads(body)
+        self.assertEqual(
+            {
+                "last_chapter_ending",
+                "last_scene_location",
+                "last_scene_characters",
+                "open_threads",
+                "required_opening_bridge",
+            },
+            set(projected),
+        )
+        self.assertLessEqual(len(projected["last_chapter_ending"]), 500)
+        self.assertLessEqual(len(projected["last_scene_location"]), 100)
+        self.assertLessEqual(len(projected["last_scene_characters"]), 20)
+        self.assertTrue(all(len(item) <= 50 for item in projected["last_scene_characters"]))
+        self.assertLessEqual(len(projected["open_threads"]), 15)
+        self.assertTrue(all(len(item) <= 120 for item in projected["open_threads"]))
+        self.assertLessEqual(len(projected["required_opening_bridge"]), 300)
+        self.assertLessEqual(len(body), 2_500)
+        self.assertNotIn("raw cumulative audit text", input_pack)
+        self.assertIn("text", story_state)
 
     def test_input_pack_uses_memory_index_not_full_memory_payload(self) -> None:
         snapshot = {

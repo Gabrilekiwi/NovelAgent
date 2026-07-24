@@ -293,7 +293,11 @@ def _contains_bridge_signal(opening: str, bridge: str) -> bool:
         return True
     opening_terms = set(_word_terms(lowered))
     all_bridge_terms = _word_terms(bridge_lower)
-    bridge_terms = [term for term in all_bridge_terms if len(term) >= 3]
+    bridge_terms = [
+        term
+        for term in all_bridge_terms
+        if len(term) >= 3 or (_contains_cjk(term) and len(term) >= 2)
+    ]
     if not bridge_terms:
         return False
     source_terms = _bridge_source_terms(all_bridge_terms)

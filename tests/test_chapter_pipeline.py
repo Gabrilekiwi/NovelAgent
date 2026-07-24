@@ -11,6 +11,60 @@ import modules.chapter_generator.pipeline as pipeline_module
 
 
 class ChapterPipelineTest(unittest.TestCase):
+    def test_scene_context_keeps_only_bounded_story_state_semantics(self) -> None:
+        story_state = {
+            "last_chapter_ending": "The generator failed.",
+            "last_scene_location": "control room",
+            "last_scene_characters": ["Mira"],
+            "open_threads": ["Restore power."],
+            "required_opening_bridge": "Continue from the control room.",
+            "source": "tracking/character-state.md",
+            "text": "cumulative audit text " * 200,
+        }
+        blueprint = {
+            "chapter_blueprint": {
+                "chapter_index": 3,
+                "core_event": "restore the generator " + ("under pressure " * 120),
+            },
+            "read_set_context_digest": "a" * 64,
+            "tracking_excerpts": "unneeded source material " * 200,
+        }
+        input_pack = (
+            "# Story State\n"
+            + json.dumps(story_state, ensure_ascii=False, indent=2)
+            + "\n\n# StoryProject Chapter Blueprint\n"
+            + json.dumps(blueprint, ensure_ascii=False, indent=2)
+        )
+
+        compact = pipeline_module._compact_scene_context(input_pack)
+
+        body = compact.split("# Story State\n", 1)[1].split(
+            "\n\n# StoryProject Chapter Blueprint\n",
+            1,
+        )[0]
+        retained = json.loads(body)
+        self.assertEqual(
+            {
+                "last_chapter_ending",
+                "last_scene_location",
+                "last_scene_characters",
+                "open_threads",
+                "required_opening_bridge",
+            },
+            set(retained),
+        )
+        self.assertNotIn("cumulative audit text", compact)
+        blueprint_body = compact.split("# StoryProject Chapter Blueprint\n", 1)[1].split(
+            "\n\n# Structured Context Manifest\n",
+            1,
+        )[0]
+        retained_blueprint = json.loads(blueprint_body)
+        self.assertEqual(
+            {"chapter_blueprint", "read_set_context_digest"},
+            set(retained_blueprint),
+        )
+        self.assertNotIn("tracking_excerpts", retained_blueprint)
+
     def test_plan_chapter_is_compatibility_alias_for_plan_scenes(self) -> None:
         expected = pipeline_module.plan_scenes("input pack", chapter_index=7, dry_run=True)
 
@@ -147,6 +201,35 @@ class ChapterPipelineTest(unittest.TestCase):
 
         self.assertEqual("The crew enters the sealed station.", plan["goal"])
         self.assertEqual([1], plan["scenes"][0]["required_beat_indexes"])
+
+    def test_recovered_scene_prefix_generates_only_missing_scenes(self) -> None:
+        calls: list[str] = []
+        recovered = [
+            {"index": 1, "text": "The sealed door opened onto the abandoned station."},
+            {"index": 2, "text": "The crew found the missing signal pulsing below the platform."},
+        ]
+        original_chat_completion = pipeline_module.chat_completion
+
+        def completion(messages, **kwargs):
+            calls.append(kwargs.get("stage"))
+            return "Mara carried the serum as the countdown began."
+
+        pipeline_module.chat_completion = completion
+        try:
+            pipeline = run_chapter_pipeline(
+                "StoryProject input pack.",
+                chapter_index=3,
+                dry_run=False,
+                chapter_blueprint=self._blueprint(),
+                recovered_scene_drafts=recovered,
+            )
+        finally:
+            pipeline_module.chat_completion = original_chat_completion
+
+        self.assertEqual(["chapter_generation"], calls)
+        self.assertEqual(3, len(pipeline["scene_drafts"]))
+        self.assertEqual(recovered[0]["text"], pipeline["scene_drafts"][0]["text"])
+        self.assertIn("countdown began", pipeline["merged_chapter"])
 
     def test_story_project_generation_blocks_missing_ending_pressure(self) -> None:
         blueprint = self._blueprint()
