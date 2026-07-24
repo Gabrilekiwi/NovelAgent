@@ -4259,6 +4259,9 @@ def _trace_event(
     if error is not None:
         event["error_type"] = type(error).__name__
         event["error_message"] = str(error)
+        report = getattr(error, "report", None)
+        if isinstance(report, dict):
+            event["scene_boundary_validation"] = report
         if hasattr(error, "to_dict"):
             event["model_call"] = error.to_dict()
     return validate_schema(event, "trace_event.schema.json")

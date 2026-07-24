@@ -212,7 +212,30 @@ class ChapterPipelineTest(unittest.TestCase):
 
         def completion(messages, **kwargs):
             calls.append(kwargs.get("stage"))
-            return "Mara carried the serum as the countdown began."
+            request = json.loads(messages[-1]["content"])
+            return json.dumps(
+                {
+                    "prose": "Mara carried the serum as the countdown began.",
+                    "events": [
+                        {
+                            "event_id": request["required_event_ids"][0],
+                            "type": "required_beat_3_completed",
+                            "subjects": ["Mara"],
+                            "objects": ["serum"],
+                            "location": "station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "Continues from the missing signal.",
+                }
+            )
 
         pipeline_module.chat_completion = completion
         try:
@@ -322,7 +345,33 @@ class ChapterPipelineTest(unittest.TestCase):
 
     def test_scene_generation_respects_configured_chinese_language(self) -> None:
         original_chat_completion = pipeline_module.chat_completion
-        pipeline_module.chat_completion = lambda messages, **kwargs: "The ferry crossed the black water."
+
+        def english_scene(messages, **kwargs):
+            request = json.loads(messages[-1]["content"])
+            return json.dumps(
+                {
+                    "prose": "The ferry crossed the black water.",
+                    "events": [
+                        {
+                            "event_id": request["required_event_ids"][0],
+                            "type": "crossing",
+                            "subjects": ["crew"],
+                            "objects": ["ferry"],
+                            "location": "black_water",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                }
+            )
+
+        pipeline_module.chat_completion = english_scene
         try:
             with self.assertRaisesRegex(ModelOutputError, "Simplified Chinese"):
                 pipeline_module.generate_scenes(

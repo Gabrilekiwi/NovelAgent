@@ -225,6 +225,45 @@ def prepare_chapter_pipeline_artifacts(
         ),
         "json",
     )
+    continuity_artifact = _append_prepared_artifact(
+        targets,
+        path / f"scene_continuity_{chapter_index:04d}_{run_id}.json",
+        json.dumps(
+            {
+                "planned_scene_scopes": [
+                    {
+                        "index": scene.get("index"),
+                        "required_event_ids": scene.get("required_event_ids") or [],
+                        "forbidden_event_ids": scene.get("forbidden_event_ids") or [],
+                        "planned_events": scene.get("planned_events") or [],
+                    }
+                    for scene in (pipeline.get("plan") or {}).get("scenes") or []
+                    if isinstance(scene, dict)
+                ],
+                "scenes": [
+                    {
+                        key: scene.get(key)
+                        for key in (
+                            "index",
+                            "events",
+                            "deltas",
+                            "continuity_note",
+                            "scene_state_before",
+                            "scene_state_after",
+                            "boundary_validation",
+                        )
+                    }
+                    for scene in pipeline.get("scene_drafts") or []
+                    if isinstance(scene, dict)
+                ],
+                "boundary_validations": pipeline.get("scene_boundary_validations") or [],
+                "final_state": pipeline.get("scene_state_final") or {},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        "json",
+    )
     return {
         "metadata": {
             "plan": plan_artifact,
@@ -233,6 +272,7 @@ def prepare_chapter_pipeline_artifacts(
             "validation_report": validation_artifact,
             "repair_deltas": repair_artifact,
             "integrity": integrity_artifact,
+            "scene_continuity": continuity_artifact,
         },
         "targets": targets,
     }

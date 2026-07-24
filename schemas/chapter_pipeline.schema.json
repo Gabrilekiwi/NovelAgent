@@ -111,6 +111,32 @@
                   "type": "integer",
                   "minimum": 1
                 }
+              },
+              "planned_events": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["event_id", "type", "subjects", "objects", "location", "status"],
+                  "properties": {
+                    "event_id": {"type": "string", "minLength": 1},
+                    "type": {"type": "string", "minLength": 1},
+                    "subjects": {"type": "array", "items": {"type": "string"}},
+                    "objects": {"type": "array", "items": {"type": "string"}},
+                    "location": {"type": "string"},
+                    "status": {"type": "string", "minLength": 1}
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required_event_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "minLength": 1}
+              },
+              "forbidden_event_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
               }
             },
             "additionalProperties": false
@@ -147,6 +173,47 @@
           },
           "ending_pressure_covered": {
             "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["event_id", "type", "subjects", "objects", "location", "status"],
+              "properties": {
+                "event_id": {"type": "string", "minLength": 1},
+                "type": {"type": "string", "minLength": 1},
+                "subjects": {"type": "array", "items": {"type": "string"}},
+                "objects": {"type": "array", "items": {"type": "string"}},
+                "location": {"type": "string"},
+                "status": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            }
+          },
+          "deltas": {
+            "type": "object",
+            "required": ["characters", "relationships", "locations", "inventory", "counters"],
+            "properties": {
+              "characters": {"type": "array", "items": {"type": "object"}},
+              "relationships": {"type": "array", "items": {"type": "object"}},
+              "locations": {"type": "array", "items": {"type": "object"}},
+              "inventory": {"type": "array", "items": {"type": "object"}},
+              "counters": {"type": "array", "items": {"type": "object"}}
+            },
+            "additionalProperties": false
+          },
+          "continuity_note": {
+            "type": "string"
+          },
+          "scene_state_before": {
+            "type": "object"
+          },
+          "scene_state_after": {
+            "type": "object"
+          },
+          "boundary_validation": {
+            "type": "object"
           }
         },
         "additionalProperties": false
@@ -182,6 +249,13 @@
         },
         "additionalProperties": false
       }
+    },
+    "scene_boundary_validations": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "scene_state_final": {
+      "type": "object"
     },
     "stages": {
       "type": "array",

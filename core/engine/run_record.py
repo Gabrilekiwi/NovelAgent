@@ -537,6 +537,8 @@ def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any
         "plan_goal": (pipeline.get("plan") or {}).get("goal"),
         "merged_chars": len(str(pipeline.get("merged_chapter") or "")),
         "scene_spans": pipeline.get("scene_spans", []),
+        "scene_boundary_validations": pipeline.get("scene_boundary_validations", []),
+        "scene_state_final": pipeline.get("scene_state_final", {}),
         "stages": pipeline.get("stages", []),
     }
     if pipeline.get("integrity") is not None:

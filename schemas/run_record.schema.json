@@ -1868,6 +1868,13 @@
                 "additionalProperties": false
               }
             },
+            "scene_boundary_validations": {
+              "type": "array",
+              "items": {"type": "object"}
+            },
+            "scene_state_final": {
+              "type": "object"
+            },
             "integrity": {
               "type": "object"
             },
@@ -2467,6 +2474,9 @@
           },
           "error_message": {
             "type": "string"
+          },
+          "scene_boundary_validation": {
+            "type": "object"
           },
           "repair_plan": {
             "type": "object",

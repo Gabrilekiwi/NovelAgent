@@ -13,6 +13,12 @@ from core.quality.final_artifact_integrity import (
     FinalArtifactIntegrityGate,
     build_integrity_stage_record,
 )
+from core.scene_continuity import (
+    empty_scene_state,
+    require_scene_transition,
+    scene_state_summary,
+    validate_scene_transition,
+)
 from core.schema import validate_schema
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_text_blocks
@@ -89,6 +95,16 @@ def run_chapter_pipeline(
         scene_spans=scene_spans,
     )
     blueprint_coverage = build_blueprint_coverage(blueprint, scenes, merged) if blueprint is not None else None
+    boundary_validations = [
+        dict(scene["boundary_validation"])
+        for scene in scenes
+        if isinstance(scene.get("boundary_validation"), dict)
+    ]
+    final_scene_state = (
+        dict(scenes[-1]["scene_state_after"])
+        if scenes and isinstance(scenes[-1].get("scene_state_after"), dict)
+        else empty_scene_state()
+    )
     return validate_schema(
         {
             "chapter_index": int(chapter_index),
@@ -98,6 +114,8 @@ def run_chapter_pipeline(
             "scene_drafts": scenes,
             "merged_chapter": merged,
             "scene_spans": scene_spans,
+            "scene_boundary_validations": boundary_validations,
+            "scene_state_final": final_scene_state,
             "integrity": {"merge": merge_integrity},
             "integrity_records": [
                 build_integrity_stage_record(
@@ -165,15 +183,20 @@ def plan_scenes(
 ) -> dict[str, Any]:
     blueprint = blueprint_to_dict(chapter_blueprint)
     if blueprint is not None:
-        return _validate_plan(build_blueprint_plan(blueprint, scene_limit=scene_limit))
+        return _validate_plan(
+            build_blueprint_plan(blueprint, scene_limit=scene_limit),
+            chapter_index=chapter_index,
+        )
 
     if dry_run:
-        return _dry_run_plan(chapter_index)
+        return _validate_plan(_dry_run_plan(chapter_index), chapter_index=chapter_index)
 
     prompt = (
         "Create a compact chapter plan as JSON only. "
         "Schema: {\"goal\": string, \"scenes\": [{\"index\": int, \"type\": string, \"goal\": string, "
-        "\"required_beats\": [string]}]}. Keep it to 2-4 scenes. "
+        "\"required_beats\": [string], \"planned_events\": [{\"event_id\": string, \"type\": string, "
+        "\"subjects\": [string], \"objects\": [string], \"location\": string, \"status\": \"completed\"}]}]}. "
+        "Give every beat a stable event_id scoped to exactly one scene. Keep it to 2-4 scenes. "
         "Scene 1 must be type opening_bridge and continue directly from the last chapter ending."
     )
     payload = _request_chapter_plan(input_pack, prompt)
@@ -187,7 +210,7 @@ def plan_scenes(
             raise ValueError("Chapter plan response was not valid JSON") from exc
     if not isinstance(plan, dict):
         raise ValueError("Chapter plan response must be a JSON object")
-    return _validate_plan(plan)
+    return _validate_plan(plan, chapter_index=chapter_index)
 
 
 def plan_chapter(
@@ -291,7 +314,9 @@ def _request_chapter_plan_json_repair(
                     "Repair the chapter plan response into JSON only. "
                     "Return exactly one object with shape "
                     "{\"goal\": string, \"scenes\": [{\"index\": int, \"type\": string, "
-                    "\"goal\": string, \"required_beats\": [string]}]}. "
+                    "\"goal\": string, \"required_beats\": [string], \"planned_events\": "
+                    "[{\"event_id\": string, \"type\": string, \"subjects\": [string], "
+                    "\"objects\": [string], \"location\": string, \"status\": \"completed\"}]}]}. "
                     "No prose, no Markdown, no explanation."
                 ),
             },
@@ -320,6 +345,39 @@ def _load_plan_json(payload: str) -> Any:
         return json.loads(text[start : end + 1])
 
 
+def _load_scene_response(payload: str) -> dict[str, Any]:
+    try:
+        value = _load_plan_json(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Scene response was not valid structured JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("Scene response must be a JSON object")
+    prose = validate_text_output(value.get("prose"), CHAPTER_CONTRACT)
+    raw_events = value.get("events")
+    if not isinstance(raw_events, list):
+        raise ValueError("Scene response events must be an array")
+    raw_deltas = value.get("deltas")
+    if not isinstance(raw_deltas, dict):
+        raise ValueError("Scene response deltas must be an object")
+    return {
+        "prose": prose,
+        "events": [
+            _normalize_scene_event(item)
+            for item in raw_events
+            if isinstance(item, dict)
+        ],
+        "deltas": {
+            key: [
+                dict(item)
+                for item in raw_deltas.get(key) or []
+                if isinstance(item, dict)
+            ]
+            for key in ("characters", "relationships", "locations", "inventory", "counters")
+        },
+        "continuity_note": str(value.get("continuity_note") or ""),
+    }
+
+
 def generate_scenes(
     input_pack: str,
     plan: dict[str, Any],
@@ -330,11 +388,11 @@ def generate_scenes(
     recovered_scene_drafts: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     blueprint = blueprint_to_dict(chapter_blueprint)
-    if dry_run and not recovered_scene_drafts:
-        return _dry_run_scene_drafts(plan, chapter_blueprint=blueprint)
-
+    plan = _validate_plan(plan)
     recovered = _recovered_scene_prefix(recovered_scene_drafts, plan)
     scene_drafts: list[dict[str, Any]] = []
+    scene_state = _initial_scene_state(input_pack)
+    prior_scene_summaries: list[dict[str, Any]] = []
     for scene in plan.get("scenes", []):
         required_beat_indexes = _scene_beat_indexes(scene)
         scene_required_beats = [
@@ -343,12 +401,20 @@ def generate_scenes(
             if isinstance(beat, dict) and int(beat.get("index") or 0) in required_beat_indexes
         ]
         scene_index = int(scene["index"])
+        state_before = scene_state_summary(scene_state)
         if scene_index in recovered:
-            scene_text = recovered[scene_index]
+            scene_result = _recovered_scene_result(
+                recovered[scene_index],
+                scene=scene,
+            )
         elif dry_run:
-            scene_text = _DRY_RUN_CHAPTER
+            scene_result = _dry_run_scene_result(
+                plan,
+                scene,
+                chapter_blueprint=blueprint,
+            )
         else:
-            scene_text = chat_completion(
+            payload = chat_completion(
                 [
                     {"role": "system", "content": _load_prompt()},
                     {
@@ -359,22 +425,59 @@ def generate_scenes(
                             scene=scene,
                             scene_required_beats=scene_required_beats,
                             blueprint=blueprint,
+                            previous_scene_tail=(
+                                str(scene_drafts[-1]["text"])[-600:]
+                                if scene_drafts
+                                else ""
+                            ),
+                            prior_scene_summaries=prior_scene_summaries,
+                            scene_state=state_before,
                         ),
                     },
                 ],
                 stage="chapter_generation",
             )
-        scene_drafts.append(
+            scene_result = _load_scene_response(payload)
+        boundary, state_after = validate_scene_transition(
+            scene_index=scene_index,
+            state_before=state_before,
+            events=scene_result["events"],
+            deltas=scene_result["deltas"],
+            required_event_ids=scene.get("required_event_ids") or [],
+            forbidden_event_ids=scene.get("forbidden_event_ids") or [],
+            planned_events=scene.get("planned_events") or [],
+        )
+        scene_text = validate_language_output(
+            scene_result["prose"],
+            CHAPTER_CONTRACT,
+            language=language,
+        )
+        draft = {
+            "index": scene_index,
+            "goal": str(scene["goal"]),
+            **({"covered_beat_indexes": required_beat_indexes} if required_beat_indexes else {}),
+            **(
+                {"ending_pressure_covered": True}
+                if blueprint is not None and int(scene["index"]) == _last_scene_index(plan)
+                else {}
+            ),
+            "text": scene_text,
+            "events": scene_result["events"],
+            "deltas": scene_result["deltas"],
+            "continuity_note": str(scene_result.get("continuity_note") or ""),
+            "scene_state_before": state_before,
+            "scene_state_after": scene_state_summary(state_after),
+            "boundary_validation": boundary,
+        }
+        scene_drafts.append(draft)
+        require_scene_transition(boundary)
+        scene_state = state_after
+        prior_scene_summaries.append(
             {
                 "index": scene_index,
                 "goal": str(scene["goal"]),
-                **({"covered_beat_indexes": required_beat_indexes} if required_beat_indexes else {}),
-                **(
-                    {"ending_pressure_covered": True}
-                    if blueprint is not None and int(scene["index"]) == _last_scene_index(plan)
-                    else {}
-                ),
-                "text": validate_language_output(scene_text, CHAPTER_CONTRACT, language=language),
+                "tail": scene_text[-280:],
+                "event_ids": [str(event["event_id"]) for event in scene_result["events"]],
             }
         )
     return _validate_scene_drafts(scene_drafts)
@@ -383,7 +486,7 @@ def generate_scenes(
 def _recovered_scene_prefix(
     scene_drafts: list[dict[str, Any]] | None,
     plan: dict[str, Any],
-) -> dict[int, str]:
+) -> dict[int, dict[str, Any]]:
     if not scene_drafts:
         return {}
     plan_indexes = [
@@ -391,13 +494,16 @@ def _recovered_scene_prefix(
         for scene in plan.get("scenes", [])
         if isinstance(scene, dict) and isinstance(scene.get("index"), int)
     ]
-    recovered: dict[int, str] = {}
+    recovered: dict[int, dict[str, Any]] = {}
     for position, draft in enumerate(scene_drafts, start=1):
         if not isinstance(draft, dict) or int(draft.get("index") or 0) != position:
             raise ValueError("recovered scenes must form a contiguous prefix starting at scene 1")
         if position not in plan_indexes:
             raise ValueError("recovered scene count exceeds the current chapter plan")
-        recovered[position] = validate_text_output(draft.get("text"), CHAPTER_CONTRACT)
+        recovered[position] = {
+            **dict(draft),
+            "text": validate_text_output(draft.get("text"), CHAPTER_CONTRACT),
+        }
     return recovered
 
 
@@ -408,6 +514,9 @@ def _scene_request_payload(
     scene: dict[str, Any],
     scene_required_beats: list[dict[str, Any]],
     blueprint: dict[str, Any] | None,
+    previous_scene_tail: str = "",
+    prior_scene_summaries: list[dict[str, Any]] | None = None,
+    scene_state: dict[str, Any] | None = None,
 ) -> str:
     scene_count = max(1, len([item for item in plan.get("scenes", []) if isinstance(item, dict)]))
     target_min_chars = max(600, 3_000 // scene_count)
@@ -430,14 +539,44 @@ def _scene_request_payload(
             "scene": scene,
             "story_project_required_beats": scene_required_beats,
             "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
+            "previous_scene_tail": str(previous_scene_tail)[-600:],
+            "prior_scene_summaries": list(prior_scene_summaries or [])[-8:],
+            "current_scene_state": scene_state_summary(scene_state or empty_scene_state()),
+            "required_event_ids": list(scene.get("required_event_ids") or []),
+            "forbidden_event_ids": list(scene.get("forbidden_event_ids") or []),
+            "response_schema": {
+                "prose": "string",
+                "events": [
+                    {
+                        "event_id": "one required_event_id",
+                        "type": "string",
+                        "subjects": ["stable character ids"],
+                        "objects": ["stable entity ids"],
+                        "location": "stable location id",
+                        "status": "completed|started|ongoing",
+                    }
+                ],
+                "deltas": {
+                    "characters": [],
+                    "relationships": [],
+                    "locations": [],
+                    "inventory": [],
+                    "counters": [],
+                },
+                "continuity_note": "string",
+            },
             "instruction": (
-                "Draft only this scene as continuous prose. No heading. "
+                "Return JSON only and exactly one object matching response_schema. "
+                "prose must draft only this scene as continuous prose with no heading. "
                 "If story_project_required_beats are provided, cover each listed beat in the prose and preserve "
                 "its essential factual phrases closely enough for deterministic coverage checks. "
                 f"Target {target_min_chars}-{target_max_chars} Chinese characters for this scene when the project "
                 "language is zh-CN, so the merged chapter remains 3000-4500 Chinese characters; treat the upper "
                 "bound as a hard limit and stop the scene before exceeding it. "
-                "Do not restart, duplicate, or retell an event already completed earlier in the scene."
+                "Every required_event_id must appear exactly once in events. Do not restart, duplicate, or retell "
+                "a completed event; never use a forbidden_event_id or roll state back. "
+                "Deltas must declare before, change, after, and reason "
+                "where applicable. Continue directly from previous_scene_tail and current_scene_state."
             ),
         },
         ensure_ascii=False,
@@ -490,12 +629,196 @@ def _compact_scene_context(
     return selection.text
 
 
+def _initial_scene_state(input_pack: str) -> dict[str, Any]:
+    state = empty_scene_state()
+    match = re.search(
+        r"(?ms)^# Story State[ \t]*\r?\n(.*?)(?=^# |\Z)",
+        str(input_pack or ""),
+    )
+    if not match:
+        return state
+    body = match.group(1).strip()
+    start = body.find("{")
+    end = body.rfind("}")
+    if start < 0 or end <= start:
+        return state
+    try:
+        story_state = json.loads(body[start : end + 1])
+    except json.JSONDecodeError:
+        return state
+    if not isinstance(story_state, dict):
+        return state
+    location = str(story_state.get("last_scene_location") or "").strip()
+    characters = story_state.get("last_scene_characters")
+    if location and isinstance(characters, list):
+        for character in characters:
+            character_id = str(character).strip()
+            if character_id:
+                state["locations"][character_id] = location
+    for event_id in story_state.get("completed_event_ids") or []:
+        normalized = str(event_id).strip()
+        if normalized and normalized not in state["completed_event_ids"]:
+            state["completed_event_ids"].append(normalized)
+    return state
+
+
+def _recovered_scene_result(
+    recovered: dict[str, Any],
+    *,
+    scene: dict[str, Any],
+) -> dict[str, Any]:
+    raw_events = recovered.get("events")
+    events = (
+        [_normalize_scene_event(item) for item in raw_events if isinstance(item, dict)]
+        if isinstance(raw_events, list)
+        else [dict(item) for item in scene.get("planned_events") or [] if isinstance(item, dict)]
+    )
+    raw_deltas = recovered.get("deltas")
+    return {
+        "prose": validate_text_output(recovered.get("text"), CHAPTER_CONTRACT),
+        "events": events,
+        "deltas": (
+            {
+                key: [dict(item) for item in raw_deltas.get(key) or [] if isinstance(item, dict)]
+                for key in ("characters", "relationships", "locations", "inventory", "counters")
+            }
+            if isinstance(raw_deltas, dict)
+            else _empty_scene_deltas()
+        ),
+        "continuity_note": str(recovered.get("continuity_note") or "recovered scene"),
+    }
+
+
+def _dry_run_scene_result(
+    plan: dict[str, Any],
+    scene: dict[str, Any],
+    *,
+    chapter_blueprint: dict[str, Any] | None,
+) -> dict[str, Any]:
+    scene_index = int(scene.get("index") or 1)
+    if chapter_blueprint is not None:
+        beat_indexes = _scene_beat_indexes(scene)
+        beat_texts = _beat_texts_for_indexes(chapter_blueprint, beat_indexes)
+        text_parts = [
+            f"StoryProject beat {beat_index}: {beat_text}"
+            for beat_index, beat_text in beat_texts
+        ]
+        if scene_index == _last_scene_index(plan):
+            ending_pressure = str(chapter_blueprint.get("ending_pressure") or "").strip()
+            if ending_pressure:
+                text_parts.append(f"Ending pressure: {ending_pressure}")
+        prose = " ".join(text_parts) or str(scene.get("goal") or f"Scene {scene_index}")
+    else:
+        sentences = [
+            sentence.strip() + "."
+            for sentence in _DRY_RUN_CHAPTER.split(".")
+            if sentence.strip()
+        ]
+        prose = sentences[min(scene_index - 1, len(sentences) - 1)]
+    return {
+        "prose": validate_text_output(prose, CHAPTER_CONTRACT),
+        "events": [
+            dict(item)
+            for item in scene.get("planned_events") or []
+            if isinstance(item, dict)
+        ],
+        "deltas": _empty_scene_deltas(),
+        "continuity_note": "deterministic dry-run continuation",
+    }
+
+
+def _empty_scene_deltas() -> dict[str, list[dict[str, Any]]]:
+    return {
+        "characters": [],
+        "relationships": [],
+        "locations": [],
+        "inventory": [],
+        "counters": [],
+    }
+
+
+def _normalize_scene_event(value: dict[str, Any]) -> dict[str, Any]:
+    event_id = str(value.get("event_id") or "").strip()
+    event_type = str(value.get("type") or "").strip()
+    if not event_id or not event_type:
+        raise ValueError("scene response event requires event_id and type")
+    return {
+        "event_id": event_id,
+        "type": event_type,
+        "subjects": [
+            str(item) for item in value.get("subjects") or [] if str(item)
+        ],
+        "objects": [
+            str(item) for item in value.get("objects") or [] if str(item)
+        ],
+        "location": str(value.get("location") or ""),
+        "status": str(value.get("status") or "completed"),
+    }
+
+
+def _normalize_planned_events(
+    value: Any,
+    *,
+    chapter_index: int,
+    scene_index: int,
+    scene_type: str,
+    required_beats: list[Any],
+    required_beat_indexes: list[int],
+) -> list[dict[str, Any]]:
+    raw = [item for item in value or [] if isinstance(item, dict)] if isinstance(value, list) else []
+    target_count = max(1, len(required_beats))
+    events: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for offset in range(target_count):
+        source = raw[offset] if offset < len(raw) else {}
+        beat_index = (
+            required_beat_indexes[offset]
+            if offset < len(required_beat_indexes)
+            else None
+        )
+        default_id = (
+            f"chapter-{chapter_index:04d}-beat-{beat_index:03d}"
+            if beat_index is not None
+            else f"chapter-{chapter_index:04d}-scene-{scene_index:03d}-event-{offset + 1:03d}"
+        )
+        event_id = str(source.get("event_id") or default_id).strip()
+        if event_id in used_ids:
+            event_id = default_id
+        used_ids.add(event_id)
+        events.append(
+            {
+                "event_id": event_id,
+                "type": str(
+                    source.get("type")
+                    or (
+                        f"required_beat_{beat_index}_completed"
+                        if beat_index is not None
+                        else f"{scene_type}_advance_{scene_index}_{offset + 1}"
+                    )
+                ),
+                "subjects": [
+                    str(item)
+                    for item in source.get("subjects") or []
+                    if str(item)
+                ],
+                "objects": [
+                    str(item)
+                    for item in source.get("objects") or []
+                    if str(item)
+                ],
+                "location": str(source.get("location") or ""),
+                "status": str(source.get("status") or "completed"),
+            }
+        )
+    return events
+
+
 def merge_scenes(scene_drafts: list[dict[str, Any]]) -> str:
     merged, _scene_spans = _merge_scene_texts(scene_drafts)
     return validate_text_output(merged, CHAPTER_CONTRACT)
 
 
-def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
+def _validate_plan(plan: dict[str, Any], *, chapter_index: int = 1) -> dict[str, Any]:
     normalized = {
         "goal": str(plan.get("goal") or "Advance the chapter with clear conflict."),
         "scenes": [],
@@ -503,6 +826,7 @@ def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
     raw_scenes = plan.get("scenes")
     if not isinstance(raw_scenes, list) or not raw_scenes:
         raw_scenes = _dry_run_plan(1)["scenes"]
+    prior_event_ids: list[str] = []
     for index, raw_scene in enumerate(raw_scenes, start=1):
         scene = raw_scene if isinstance(raw_scene, dict) else {}
         beats = scene.get("required_beats")
@@ -519,6 +843,23 @@ def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
                 "show immediate consequence",
                 "explain transition before new scene",
             ]
+        planned_events = _normalize_planned_events(
+            scene.get("planned_events"),
+            chapter_index=chapter_index,
+            scene_index=index,
+            scene_type=scene_type,
+            required_beats=beats,
+            required_beat_indexes=story_project_beat_indexes,
+        )
+        required_event_ids = [str(item["event_id"]) for item in planned_events]
+        forbidden_event_ids = list(dict.fromkeys([
+            *prior_event_ids,
+            *[
+                str(item)
+                for item in scene.get("forbidden_event_ids") or []
+                if str(item)
+            ],
+        ]))
         normalized["scenes"].append(
             {
                 "index": int(scene.get("index") or index),
@@ -526,8 +867,12 @@ def _validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
                 "goal": goal,
                 "required_beats": [str(beat) for beat in beats if str(beat).strip()],
                 **({"required_beat_indexes": story_project_beat_indexes} if story_project_beat_indexes else {}),
+                "planned_events": planned_events,
+                "required_event_ids": required_event_ids,
+                "forbidden_event_ids": forbidden_event_ids,
             }
         )
+        prior_event_ids.extend(required_event_ids)
     pipeline = validate_schema(
         {
             "chapter_index": 1,
@@ -614,36 +959,12 @@ def _dry_run_scene_drafts(
     *,
     chapter_blueprint: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    blueprint = blueprint_to_dict(chapter_blueprint)
-    sentences = [sentence.strip() + "." for sentence in _DRY_RUN_CHAPTER.split(".") if sentence.strip()]
-    scenes = plan.get("scenes", [])
-    drafts: list[dict[str, Any]] = []
-    for index, scene in enumerate(scenes, start=1):
-        beat_indexes = _scene_beat_indexes(scene)
-        if blueprint is not None:
-            beat_texts = _beat_texts_for_indexes(blueprint, beat_indexes)
-            text_parts = [f"StoryProject beat {beat_index}: {beat_text}" for beat_index, beat_text in beat_texts]
-            if int(scene.get("index") or index) == _last_scene_index(plan):
-                ending_pressure = str(blueprint.get("ending_pressure") or "").strip()
-                if ending_pressure:
-                    text_parts.append(f"Ending pressure: {ending_pressure}")
-            text = " ".join(text_parts) or str(scene.get("goal") or f"Scene {index}")
-        else:
-            text = sentences[index - 1] if index - 1 < len(sentences) else sentences[-1]
-        drafts.append(
-            {
-                "index": int(scene.get("index") or index),
-                "goal": str(scene.get("goal") or f"Scene {index}"),
-                **({"covered_beat_indexes": beat_indexes} if beat_indexes else {}),
-                **(
-                    {"ending_pressure_covered": True}
-                    if blueprint is not None and int(scene.get("index") or index) == _last_scene_index(plan)
-                    else {}
-                ),
-                "text": validate_text_output(text, CHAPTER_CONTRACT),
-            }
-        )
-    return _validate_scene_drafts(drafts)
+    return generate_scenes(
+        "",
+        plan,
+        dry_run=True,
+        chapter_blueprint=chapter_blueprint,
+    )
 
 
 def _scene_beat_indexes(scene: dict[str, Any]) -> list[int]:

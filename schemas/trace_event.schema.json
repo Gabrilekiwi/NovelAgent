@@ -126,6 +126,9 @@
     "error_message": {
       "type": "string"
     },
+    "scene_boundary_validation": {
+      "type": "object"
+    },
     "repair_plan": {
       "type": "object",
       "required": [
