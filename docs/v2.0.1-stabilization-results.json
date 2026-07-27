@@ -1,16 +1,121 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "release": "2.0.1",
   "branch": "fix/v2.0.1-final-artifact-integrity",
   "baseline_commit": "f3280656abdd95cc5cdcb64f409c306fb0e9867b",
-  "completed_on": "2026-07-24",
+  "verified_code_commit": "a4717625a3373cfdf1aa4a128c9eb2bc3876363f",
+  "completed_on": "2026-07-27",
   "root_cause": {
-    "summary": "The final chapter artifact was not treated as a single audited authority across scene generation, merge, polish, repair, and memory commit.",
-    "contributing_factors": [
-      "Scene generation did not always carry the immediately preceding scene's terminal state into the next scene.",
-      "Final integrity checks were weaker than intermediate validation and could miss duplicate drafts, stale scene evidence, or state drift.",
-      "Run Records did not retain an independent, ordered integrity audit for every chapter path.",
-      "Repair and compatibility paths could preserve obsolete evidence or construct state updates from the wrong contract version."
+    "summary": "The chapter prose, scene evidence, and structured state were not consistently treated as one immutable audited artifact across generation, repair, final gating, StoryProject writeback, and legacy recovery.",
+    "confirmed_causes": [
+      "StoryProject canonicalization could create a new integrity report that lost blocking findings already proven against the pre-canonicalized text.",
+      "Scene recovery accepted partially structured payloads and could silently filter malformed event or delta items.",
+      "Legacy snapshots did not seed all authoritative character, relationship, roster, location, inventory, and counter state before validating new scene deltas.",
+      "Scene field deltas were not fully adapted to the authoritative ledger contract, so stale before-values and identity drift could evade the unified decision.",
+      "Completed events, open actions, current location, and present characters were not reconstructed with sufficiently distinct lifecycle semantics for the next scene.",
+      "Run Records could omit nested pipeline integrity attempts or lose the source model-call identity for individual scene drafts.",
+      "The final StoryProject persistence path did not always prove that the bytes written were the same bytes accepted by every preceding blocking gate.",
+      "A Windows Python 3.12 TemporaryDirectory ACL edge made the new end-to-end regression nondeterministic only when run late in the full suite."
+    ],
+    "incident_classification": {
+      "program_defects": [
+        "context assembly and recovery contracts",
+        "scene-boundary state adaptation",
+        "authoritative-state seeding and replay",
+        "canonicalization finding propagation",
+        "writeback hash binding",
+        "Run Record evidence completeness"
+      ],
+      "environment_or_provider_failures_observed_but_not_misclassified_as_program_acceptance": [
+        "provider partial responses",
+        "provider-side context-budget rejection",
+        "Windows restrictive temporary-directory ACL behavior"
+      ]
+    }
+  },
+  "modified_files": {
+    "runtime": [
+      "core/engine/executor.py",
+      "core/engine/run_record.py",
+      "core/quality/final_artifact_integrity.py",
+      "core/scene_continuity.py",
+      "core/state/__init__.py",
+      "core/state/authoritative.py",
+      "modules/chapter_generator/pipeline.py"
+    ],
+    "schemas": [
+      "schemas/chapter_pipeline.schema.json",
+      "schemas/run_record.schema.json",
+      "schemas/validation_result.schema.json"
+    ],
+    "tests": [
+      "tests/test_authoritative_state.py",
+      "tests/test_chapter_pipeline.py",
+      "tests/test_executor.py",
+      "tests/test_final_artifact_integrity.py",
+      "tests/test_run_record.py",
+      "tests/test_scene_continuity.py",
+      "tests/test_v201_multichapter_regression.py"
+    ]
+  },
+  "modules": {
+    "final_artifact_integrity": "Carries blocking findings only across a cryptographically and textually proven safe canonicalization, then binds the accepted hash to writeback.",
+    "sequential_scene_pipeline": "Requires structured JSON for live scenes, regenerates from the first incomplete recovered scene, and carries lifecycle-aware scene state.",
+    "authoritative_state": "Seeds legacy state, adapts scene deltas, validates identity, relationships, rosters, inventory, locations, counters, prose declarations, and event references, then persists state_after.",
+    "run_record": "Merges ordered integrity attempts, records distinct repair attempts, stage hashes, source call IDs, and authoritative validation evidence."
+  },
+  "problem_codes": [
+    "duplicate_scene_text",
+    "near_duplicate_scene_text",
+    "duplicate_scene_event",
+    "duplicate_opening",
+    "duplicate_ending_hook",
+    "polish_append_instead_of_replace",
+    "repair_append_instead_of_replace",
+    "scene_boundary_state_mismatch",
+    "open_action_restarted",
+    "character_identity_drift",
+    "character_relationship_drift",
+    "character_motivation_target_drift",
+    "relationship_state_rollback",
+    "numeric_counter_rollback",
+    "numeric_counter_mismatch",
+    "roster_count_mismatch",
+    "roster_member_identity_drift",
+    "final_artifact_hash_mismatch",
+    "stale_scene_evidence",
+    "missing_authority_event_reference",
+    "invalid_character_delta",
+    "invalid_relationship_delta",
+    "invalid_roster_change",
+    "invalid_location_delta",
+    "invalid_inventory_change",
+    "invalid_numeric_change"
+  ],
+  "fixtures_and_tests": {
+    "fixtures": [
+      "duplicate_rescue_scene",
+      "character_identity_role_drift",
+      "numeric_counter_rollback",
+      "roster_count_mismatch",
+      "repair_append_original_and_revision",
+      "polish_append_original_and_revision",
+      "stale_scene_evidence",
+      "legitimate_repetition_not_blocked"
+    ],
+    "new_or_extended_regressions": [
+      "legacy snapshot authority seeding",
+      "scene-field-delta to authority adaptation",
+      "chapter prose counter agreement and 7-to-2 rollback",
+      "5/6/12 roster arithmetic and stable member identity",
+      "wife/cousin relationship drift and stale cooperation-boundary before-value",
+      "alias ownership collisions",
+      "cross-chapter event replay without false positives from bookkeeping beats",
+      "structured recovered-scene completeness",
+      "StoryProject canonicalization preserving prior blocking findings",
+      "final-gate-to-writeback SHA equality",
+      "two-chapter Scene-to-Merge-to-Gate-to-Writeback replay",
+      "Run Record earliest-stage and source-call traceability"
     ]
   },
   "phases": [
@@ -18,125 +123,157 @@
       "phase": "A",
       "result": "passed",
       "evidence": "docs/v2.0.1-phase-a-baseline.json",
-      "baseline_gap_fixture_result": "1 passed, 8 xfailed"
+      "baseline_gap_fixture_result": "1 passed, 8 xfailed",
+      "commit": "304a622"
     },
     {
       "phase": "B",
       "result": "passed",
-      "commit": "d476565",
+      "commits": [
+        "d476565",
+        "a471762"
+      ],
       "delivered": [
         "final artifact integrity gate",
-        "duplicate and near-duplicate scene detection",
+        "duplicate and near-duplicate detection",
         "append-instead-of-replace detection",
+        "safe canonicalization finding propagation",
         "final artifact hash verification"
       ]
     },
     {
       "phase": "C",
       "result": "passed",
-      "commit": "3336d2e",
+      "commits": [
+        "3336d2e",
+        "8d9fcc7",
+        "697bb21",
+        "00193c9",
+        "2731044",
+        "69c9435",
+        "3da04d1",
+        "a471762"
+      ],
       "delivered": [
         "sequential scene generation",
-        "previous-scene terminal state handoff",
-        "scene boundary validation"
+        "bounded previous-scene context",
+        "structured scene response and recovery contract",
+        "event overlap and lifecycle-aware boundary validation",
+        "local rejected-scene regeneration"
       ]
     },
     {
       "phase": "D",
       "result": "passed",
-      "commit": "27a20a4",
+      "commits": [
+        "27a20a4",
+        "a471762"
+      ],
       "delivered": [
-        "character identity and relationship checks",
-        "roster member and count checks",
-        "numeric rollback and arithmetic checks"
+        "stable character IDs and aliases",
+        "relationship state and stale-before validation",
+        "roster member and count ledger",
+        "numeric and inventory arithmetic",
+        "legacy snapshot seeding",
+        "event-referenced authoritative replay"
       ]
     },
     {
       "phase": "E",
       "result": "passed",
-      "commit": "7a66dff",
+      "commits": [
+        "7a66dff",
+        "a471762"
+      ],
       "delivered": [
         "repair evidence rebuild",
-        "stale scene evidence rejection"
+        "stale scene evidence rejection",
+        "source-call IDs and ordered integrity attempts",
+        "accepted-state persistence and writeback SHA proof"
       ]
     },
     {
       "phase": "F",
       "result": "passed",
+      "commit": "a471762",
       "delivered": [
-        "ten-chapter deterministic authoritative-state replay",
-        "chapter-eleven conflict blocking without memory mutation",
-        "independent integrity audit in Run Record",
-        "full regression and smoke validation"
+        "real incident artifact replay",
+        "two-chapter deterministic StoryProject writeback chain",
+        "full regression and smoke validation",
+        "Windows test isolation correction"
       ]
     }
   ],
   "validation": {
+    "compile": {
+      "command": "python -B -m py_compile core/engine/executor.py core/engine/run_record.py core/quality/final_artifact_integrity.py core/scene_continuity.py core/state/authoritative.py modules/chapter_generator/pipeline.py",
+      "result": "passed"
+    },
+    "core_targeted": {
+      "result": "180 passed, 20 subtests passed, 0 failed",
+      "duration_seconds": 18.18
+    },
+    "memory_snapshot_schema": {
+      "result": "238 passed, 1 skipped, 14 subtests passed, 0 failed",
+      "duration_seconds": 13.42
+    },
     "full_pytest": {
       "command": "python -m pytest -p no:cacheprovider tests",
-      "result": "1424 passed, 7 skipped, 0 failed",
-      "duration_seconds": 245.31
+      "result": "1467 passed, 7 skipped, 0 failed",
+      "duration_seconds": 281.0
     },
     "smoke": {
       "command": "python -B scripts/smoke_v1.py --skip-tests",
       "result": "Smoke v1: OK; preflight 21 passed, 0 failed"
     },
-    "regression_fixtures": {
-      "command": "python -m pytest -p no:cacheprovider tests/test_v201_regression_fixtures.py",
-      "result": "9 passed"
+    "real_regressions": {
+      "command": "python -B -m pytest -p no:cacheprovider tests/test_v201_regression_fixtures.py tests/test_v201_multichapter_regression.py -q",
+      "result": "12 passed, 8 subtests passed, 0 failed",
+      "duration_seconds": 2.71
     },
-    "multichapter_state_chain": {
-      "command": "python -m pytest -p no:cacheprovider tests/test_v201_multichapter_regression.py",
-      "result": "2 passed"
-    }
+    "external_model_calls": "none"
   },
-  "phase_f_corrections": [
-    {
-      "problem": "Legacy Memory 2.0 and reducer 2.1 received a Memory 2.2-only authoritative-state operation.",
-      "correction": "Gate update_authoritative_state by memory contract version."
-    },
-    {
-      "problem": "Append detection could reject a legitimate scoped prefix or suffix insertion.",
-      "correction": "Compare only material outside the source span and preserve blocking for a genuine appended second draft."
-    },
-    {
-      "problem": "Autonomy repair could synthesize a polish receipt for a stage that never ran.",
-      "correction": "Preserve the repair-to-validator transition without fabricating polish evidence."
-    },
-    {
-      "problem": "Windows CRLF normalization changed previous-prose character counts.",
-      "correction": "Normalize context text while retaining the raw source hash."
-    },
-    {
-      "problem": "Dry-run scenes repeated a shared blueprint prefix and triggered real duplicate detection.",
-      "correction": "Keep full global coverage in the first beat and remove repeated boilerplate from later beats."
-    },
-    {
-      "problem": "The real-autonomy provider mock still returned the obsolete scene contract.",
-      "correction": "Return structured Scene JSON with unique prose and validated terminal state."
-    }
-  ],
   "acceptance": {
-    "single_final_artifact_authority": true,
-    "sequential_scene_state_handoff": true,
-    "duplicate_scene_blocking": true,
-    "near_duplicate_scene_blocking": true,
-    "append_instead_of_replace_blocking": true,
-    "stale_scene_evidence_blocking": true,
-    "character_identity_drift_blocking": true,
-    "relationship_drift_blocking": true,
-    "roster_identity_drift_blocking": true,
-    "roster_count_mismatch_blocking": true,
-    "numeric_rollback_blocking": true,
-    "numeric_arithmetic_mismatch_blocking": true,
-    "memory_commit_only_after_final_gate": true,
-    "run_record_integrity_audit": true,
-    "full_regression_and_smoke_green": true
+    "duplicate_rescue_scene_blocked": true,
+    "append_original_and_revision_blocked": true,
+    "wang_manager_qian_ming_identity_drift_blocked": true,
+    "cousin_wife_relationship_drift_blocked": true,
+    "erosion_7_to_2_blocked": true,
+    "five_six_twelve_roster_errors_blocked": true,
+    "stale_scene_spans_blocked": true,
+    "storyproject_writeback_sha_equals_final_gate_sha": true,
+    "legitimate_short_repetition_not_blocked": true,
+    "existing_tests_pass": true,
+    "new_tests_pass": true,
+    "smoke_pass": true,
+    "run_record_proves_earliest_stage_and_source_call": true,
+    "quality_thresholds_not_lowered": true,
+    "unrelated_features_not_added": true
   },
-  "residual_risks": [
-    "The paid or external-model first-ten-chapter literary-quality experiment has not been run; this release is ready for that experiment.",
-    "Near-duplicate thresholds are deterministic and may require calibration against additional writing genres.",
-    "A controlled legacy plain-prose scene bridge remains for backward compatibility; events come only from the validated plan, state deltas remain empty, and malformed JSON still fails closed."
+  "commits": [
+    "304a622 test: add v2.0 real-content regression fixtures",
+    "d476565 feat: add final artifact integrity gate",
+    "3336d2e feat: make scene generation stateful and sequential",
+    "27a20a4 feat: add roster and numeric state validation",
+    "7a66dff fix: rebuild scene evidence after patch repair",
+    "feb4ff0 test: verify v2.0.1 stabilization exit criteria",
+    "8d9fcc7 fix: bound sequential scene generation context",
+    "697bb21 fix: align scene delta prompt contract",
+    "00193c9 fix: adapt scene repair to remaining run budget",
+    "2731044 fix: bound long scene plans and recover terminal prefixes",
+    "69c9435 fix: compact nested prompt selection audit context",
+    "3da04d1 fix: retry and recover rejected scene boundaries",
+    "a471762 fix: close authoritative state and writeback audit gaps"
   ],
-  "ready_for_first_ten_chapter_experiment": true
+  "residual_risks": [
+    "No paid or external-model first-ten-chapter literary experiment was run during verification; provider availability and partial responses remain external variables.",
+    "Deterministic near-duplicate thresholds may need future calibration for genres with deliberate long refrains.",
+    "Legacy projects are seeded into the authority ledger, but ambiguous historical prose cannot be upgraded into facts without explicit structured evidence.",
+    "A ten-chapter generation should still be run incrementally with committed checkpoints so a provider failure does not discard earlier accepted chapters."
+  ],
+  "readiness": {
+    "ready_for_controlled_first_ten_chapter_experiment": true,
+    "recommended_mode": "incremental chapters with StoryProject writeback, strict quality policy, review gate, and checkpointed reruns",
+    "guarantee_boundary": "Program-level acceptance is proven; external provider uptime, latency, and model response completeness are not guaranteed."
+  }
 }
