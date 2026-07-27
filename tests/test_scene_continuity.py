@@ -93,9 +93,10 @@ class SceneContinuityTests(unittest.TestCase):
         self.assertEqual([1], [item["index"] for item in requests[1]["prior_scene_summaries"]])
         self.assertTrue(all(item["boundary_validation"]["accepted"] for item in drafts))
 
-    def test_second_scene_cannot_repeat_completed_event_id(self) -> None:
+    def test_second_scene_repeating_completed_event_id_is_regenerated_once(self) -> None:
         plan = pipeline_module.plan_scenes("input", chapter_index=2, dry_run=True)
         calls = 0
+        requests: list[dict] = []
         first_event_id = plan["scenes"][0]["required_event_ids"][0]
         original = pipeline_module.chat_completion
 
@@ -103,6 +104,7 @@ class SceneContinuityTests(unittest.TestCase):
             nonlocal calls
             calls += 1
             request = json.loads(messages[-1]["content"])
+            requests.append(request)
             planned_events = request["scene"]["planned_events"]
             return json.dumps(
                 {
@@ -127,15 +129,21 @@ class SceneContinuityTests(unittest.TestCase):
 
         pipeline_module.chat_completion = completion
         try:
-            with self.assertRaises(SceneBoundaryValidationError) as raised:
-                pipeline_module.generate_scenes("input", plan, dry_run=False)
+            drafts = pipeline_module.generate_scenes("input", plan, dry_run=False)
         finally:
             pipeline_module.chat_completion = original
 
-        codes = {item["code"] for item in raised.exception.report["findings"]}
-        self.assertEqual(2, calls)
+        retry_findings = requests[2]["boundary_retry"]["findings"]
+        codes = {item["code"] for item in retry_findings}
+        self.assertEqual(4, calls)
+        self.assertEqual(3, len(drafts))
+        self.assertEqual(2, requests[2]["scene"]["index"])
         self.assertIn("repeated_completed_event_id", codes)
         self.assertIn("missing_planned_event", codes)
+        self.assertEqual(
+            1,
+            drafts[1]["boundary_validation"]["local_regeneration_attempts"],
+        )
 
     def test_new_event_id_cannot_hide_semantic_event_repetition(self) -> None:
         state = empty_scene_state()

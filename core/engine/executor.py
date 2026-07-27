@@ -2025,7 +2025,7 @@ class AgentExecutor:
             or isinstance(expected_scene_count, bool)
             or not isinstance(expected_scene_count, int)
             or expected_scene_count != expected
-            or len(scenes) >= expected
+            or len(scenes) > expected
         ):
             raise ValueError(
                 "locked chapter scene checkpoint does not match the current chapter plan"

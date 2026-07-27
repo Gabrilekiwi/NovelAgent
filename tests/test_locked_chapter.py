@@ -11,7 +11,7 @@ from core.engine.executor import AgentExecutor, _unresolved_provider_calls
 from core.engine.locked_chapter import LockedChapterRecoveryError, recover_locked_chapter
 from core.engine.locked_chapter_state import active_locked_chapter_checkpoint
 from core.engine.run_record import build_failed_run_record, load_latest_run_summary, validate_run_result
-from core.model_calls import ModelCallStore
+from core.model_calls import ModelCallStore, build_scene_generation_call_id
 from core.state.snapshot import save_snapshot
 
 
@@ -366,6 +366,117 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             checkpoint["scenes"][1]["continuity_note"],
         )
 
+    def test_complete_structured_scene_sequence_is_replayed_instead_of_flattened(
+        self,
+    ) -> None:
+        execution_id = "execution_complete_structured_sequence"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        responses = [
+            json.dumps(
+                {
+                    "prose": f"第{index}个场景保留结构化事件和状态变化，等待恢复后重新校验。" * 8,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["char_lu_chen"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                },
+                ensure_ascii=False,
+            )
+            for index in range(1, 4)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+        )
+        self._write_failed_run(execution_id=execution_id, chapter="", scene_count=3)
+
+        result = self._recover()
+
+        self.assertEqual("resume_scenes", result["action"])
+        self.assertEqual("complete_scene_sequence_requires_revalidation", result["reason"])
+        self.assertEqual(3, result["reusable_scene_count"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertIsNone(checkpoint["complete_draft"])
+        self.assertEqual(3, len(checkpoint["scenes"]))
+
+    def test_scene_boundary_retry_receipt_replaces_primary_candidate(self) -> None:
+        execution_id = "execution_scene_boundary_retry"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+
+        def response(label: str, event_id: str) -> str:
+            return json.dumps(
+                {
+                    "prose": f"{label}，该场景正文长度足以进入恢复检查点。" * 12,
+                    "events": [
+                        {
+                            "event_id": event_id,
+                            "type": "scene_completed",
+                            "subjects": ["char_lu_chen"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                },
+                ensure_ascii=False,
+            )
+
+        self._write_execution(
+            execution_id,
+            successful=[
+                response("场景一的过期候选", "chapter-001-scene-001-event-001"),
+                response("场景一的修复候选", "chapter-001-scene-001-event-001"),
+                response("场景二的有效候选", "chapter-001-scene-002-event-001"),
+            ],
+            missing_stage=None,
+            call_ids=[
+                build_scene_generation_call_id(1),
+                build_scene_generation_call_id(1, boundary_retry=1),
+                build_scene_generation_call_id(2),
+            ],
+        )
+        self._write_failed_run(execution_id=execution_id, chapter="", scene_count=2)
+
+        result = self._recover()
+
+        self.assertEqual("resume_scenes", result["action"])
+        self.assertEqual(2, result["reusable_scene_count"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertIn("场景一的修复候选", checkpoint["scenes"][0]["text"])
+        self.assertNotIn("场景一的过期候选", checkpoint["scenes"][0]["text"])
+        self.assertIn("场景二的有效候选", checkpoint["scenes"][1]["text"])
+
     def test_no_trustworthy_output_resets_failed_chapter_history(self) -> None:
         execution_id = "execution_empty"
         self._write_execution(execution_id, successful=[], missing_stage="chapter_generation")
@@ -468,13 +579,16 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         *,
         successful: list[str],
         missing_stage: str | None,
+        call_ids: list[str] | None = None,
     ) -> None:
+        if call_ids is not None and len(call_ids) != len(successful):
+            raise ValueError("call_ids must match successful responses")
         store = ModelCallStore(self.run_dir / "executions" / execution_id / "model_calls")
         for index, text in enumerate(successful, start=1):
             attempt_id = f"attempt-{index}"
             created_at = self.now + timedelta(seconds=index)
             store.create_intent(
-                call_id=f"call-{index}",
+                call_id=(call_ids[index - 1] if call_ids is not None else f"call-{index}"),
                 attempt_id=attempt_id,
                 provider="openai",
                 model="gpt-test",

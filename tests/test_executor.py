@@ -129,6 +129,23 @@ class AgentExecutorTest(unittest.TestCase):
             context["revalidation"]["prior_problems"],
         )
 
+    def test_complete_recovered_scene_sequence_is_allowed_for_boundary_replay(self) -> None:
+        executor = AgentExecutor(
+            story_project_context={
+                "chapter_blueprint": {
+                    "required_beats": [
+                        {"index": 1, "text": "第一拍"},
+                        {"index": 2, "text": "第二拍"},
+                    ]
+                }
+            }
+        )
+
+        executor._validate_recovered_scene_plan(
+            [{"index": 1}, {"index": 2}],
+            expected_scene_count=2,
+        )
+
     def _ok_validation(self, snapshot: dict, chapter: str, decision: dict) -> dict:
         return validate_schema(
             {

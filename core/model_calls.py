@@ -26,6 +26,10 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$")
 _SAFE_STATUS = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
+_SCENE_GENERATION_CALL_ID = re.compile(
+    r"^openai-chapter_generation-scene-(?P<scene_index>[0-9]{4})-"
+    r"(?:(?P<primary>primary)|boundary-retry-(?P<boundary_retry>[0-9]{2}))$"
+)
 _UNSET = object()
 _Clock = Callable[[], datetime]
 
@@ -86,6 +90,47 @@ class ModelCallIntegrityError(ModelCallEvidenceError):
 
 class ModelCallSafetyError(ModelCallEvidenceError):
     """Evidence contains payload, credential, or path material that must not persist."""
+
+
+def build_scene_generation_call_id(
+    scene_index: int,
+    *,
+    boundary_retry: int = 0,
+) -> str:
+    """Build a durable call id that keeps logical scene identity across recovery."""
+
+    if isinstance(scene_index, bool) or not isinstance(scene_index, int):
+        raise ValueError("scene_index must be an integer")
+    if scene_index < 1 or scene_index > 9_999:
+        raise ValueError("scene_index must be between 1 and 9999")
+    if isinstance(boundary_retry, bool) or not isinstance(boundary_retry, int):
+        raise ValueError("boundary_retry must be an integer")
+    if boundary_retry < 0 or boundary_retry > 99:
+        raise ValueError("boundary_retry must be between 0 and 99")
+    suffix = (
+        "primary"
+        if boundary_retry == 0
+        else f"boundary-retry-{boundary_retry:02d}"
+    )
+    return f"openai-chapter_generation-scene-{scene_index:04d}-{suffix}"
+
+
+def parse_scene_generation_call_id(value: Any) -> dict[str, int] | None:
+    """Return persisted logical scene identity for current-format call ids."""
+
+    if not isinstance(value, str):
+        return None
+    match = _SCENE_GENERATION_CALL_ID.fullmatch(value)
+    if match is None:
+        return None
+    scene_index = int(match.group("scene_index"))
+    boundary_retry = int(match.group("boundary_retry") or 0)
+    if scene_index < 1:
+        return None
+    return {
+        "scene_index": scene_index,
+        "boundary_retry": boundary_retry,
+    }
 
 
 @dataclass(frozen=True)
@@ -763,6 +808,7 @@ __all__ = [
     "ModelCallStore",
     "build_model_call_intent",
     "build_model_call_receipt",
+    "build_scene_generation_call_id",
     "canonical_model_request_digest",
     "enumerate_provider_call_uncertain",
     "enumerate_uncertain_model_calls",
@@ -774,6 +820,7 @@ __all__ = [
     "model_response_artifact_hash",
     "persist_model_call_intent",
     "persist_model_call_receipt",
+    "parse_scene_generation_call_id",
     "validate_model_call_intent",
     "validate_model_call_receipt",
 ]

@@ -18,7 +18,11 @@ from core.engine.locked_chapter_state import (
 from core.engine.persistence import atomic_create_json, persistence_run_lock
 from core.engine.run_record import validate_run_result
 from core.memory_v2.canonical import canonical_json_hash
-from core.model_calls import ModelCallStore, model_response_artifact_hash
+from core.model_calls import (
+    ModelCallStore,
+    model_response_artifact_hash,
+    parse_scene_generation_call_id,
+)
 from core.state.snapshot import load_snapshot
 from core.story_project.paths import scan_prose_chapters
 
@@ -181,19 +185,13 @@ def recover_locked_chapter(
                     expected_scene_count=expected_scene_count,
                     language=language,
                 )
-            if len(recovered_scenes) >= expected_scene_count:
-                complete_draft = {
-                    "text": "\n\n".join(scene["text"] for scene in recovered_scenes),
-                    "problem_codes": [],
-                    "source_stage": "chapter_generation",
-                }
-                complete_draft["sha256"] = _content_sha256(complete_draft["text"])
-                recovered_scenes = []
-                action = "repair_draft"
-                reason = "complete_scene_prefix_available"
-            elif recovered_scenes:
+            if recovered_scenes:
                 action = "resume_scenes"
-                reason = "contiguous_scene_prefix_available"
+                reason = (
+                    "complete_scene_sequence_requires_revalidation"
+                    if len(recovered_scenes) >= expected_scene_count
+                    else "contiguous_scene_prefix_available"
+                )
             else:
                 action = "reset"
                 reason = "no_trustworthy_content"
@@ -541,6 +539,15 @@ def _recover_scene_prefix(
             if intent["stage"] == "chapter_generation":
                 intents.append(intent)
     intents.sort(key=lambda item: (str(item["created_at"]), str(item["attempt_id"])))
+    indexed_intents = [
+        intent
+        for intent in intents
+        if parse_scene_generation_call_id(intent.get("call_id")) is not None
+    ]
+    if indexed_intents:
+        # Current-format scene calls carry their logical scene identity. This
+        # excludes unrelated chapter-plan calls that share the legacy stage.
+        intents = indexed_intents
 
     for intent in intents:
         attempt_id = str(intent["attempt_id"])
@@ -561,17 +568,34 @@ def _recover_scene_prefix(
         text = response["text"]
         if len(text) < 100:
             break
-        scene_index = len(scenes) + 1
+        identity = parse_scene_generation_call_id(intent.get("call_id"))
+        scene_index = (
+            int(identity["scene_index"])
+            if identity is not None
+            else len(scenes) + 1
+        )
         if scene_index > expected_scene_count:
             break
-        scenes.append(
-            {
-                "index": scene_index,
-                **response,
-                "sha256": _content_sha256(text),
-                "source_attempt_id": attempt_id,
-            }
-        )
+        candidate = {
+            "index": scene_index,
+            **response,
+            "sha256": _content_sha256(text),
+            "source_attempt_id": attempt_id,
+        }
+        if identity is None:
+            scenes.append(candidate)
+        elif int(identity["boundary_retry"]) > 0:
+            if scene_index > len(scenes):
+                # A boundary retry is only meaningful when its rejected
+                # primary/recovered candidate is already present.
+                break
+            scenes[scene_index - 1] = candidate
+        elif scene_index == len(scenes) + 1:
+            scenes.append(candidate)
+        else:
+            # A primary call must advance the contiguous prefix exactly once.
+            # Replaying or backfilling a primary would make ownership unclear.
+            break
         seen_attempts.add(attempt_id)
     return scenes
 
@@ -714,6 +738,7 @@ def _run_sort_key(payload: dict[str, Any], path: Path) -> tuple[str, int]:
 
 def _public_result(marker: dict[str, Any], marker_path: Path) -> dict[str, Any]:
     scene_count = len(marker["scenes"])
+    expected_scene_count = int(marker["expected_scene_count"])
     return {
         "ok": True,
         "status": "recovered",
@@ -721,8 +746,12 @@ def _public_result(marker: dict[str, Any], marker_path: Path) -> dict[str, Any]:
         "action": marker["action"],
         "reason": marker["reason"],
         "reusable_scene_count": scene_count,
-        "expected_scene_count": marker["expected_scene_count"],
-        "next_scene_index": scene_count + 1 if marker["action"] == "resume_scenes" else None,
+        "expected_scene_count": expected_scene_count,
+        "next_scene_index": (
+            min(scene_count + 1, expected_scene_count)
+            if marker["action"] == "resume_scenes"
+            else None
+        ),
         "resolved_execution_count": len(marker["resolved_execution_ids"]),
         "source_run_id": marker["source_run_id"],
         "draft_stage": (

@@ -17,12 +17,14 @@ from core.model_calls import (
     ModelCallIntent,
     ModelCallSafetyError,
     ModelCallStore,
+    build_scene_generation_call_id,
     build_model_call_intent,
     build_model_call_receipt,
     canonical_model_request_digest,
     load_model_call_intent,
     load_model_call_receipt,
     model_response_artifact_hash,
+    parse_scene_generation_call_id,
 )
 from core.schema import validate_schema
 
@@ -79,6 +81,28 @@ class ModelCallEvidenceTest(unittest.TestCase):
         }
         values.update(overrides)
         return build_model_call_receipt(intent, **values)
+
+    def test_scene_generation_call_ids_preserve_logical_scene_identity(self) -> None:
+        primary = build_scene_generation_call_id(3)
+        retry = build_scene_generation_call_id(3, boundary_retry=1)
+
+        self.assertEqual(
+            "openai-chapter_generation-scene-0003-primary",
+            primary,
+        )
+        self.assertEqual(
+            {"scene_index": 3, "boundary_retry": 0},
+            parse_scene_generation_call_id(primary),
+        )
+        self.assertEqual(
+            {"scene_index": 3, "boundary_retry": 1},
+            parse_scene_generation_call_id(retry),
+        )
+        self.assertIsNone(
+            parse_scene_generation_call_id(
+                "openai-chapter_generation-5be3f874410245c1965d2c2398a77d94"
+            )
+        )
 
     def test_model_response_is_structured_and_matches_schema(self) -> None:
         response = self._response()

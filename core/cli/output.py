@@ -71,7 +71,9 @@ def format_locked_chapter_recovery_summary(result: dict) -> str:
 
     action_labels = {
         "repair_draft": "reuse the complete draft and enter validation/repair",
-        "resume_scenes": "keep the trustworthy scenes and generate only the missing scenes",
+        "resume_scenes": (
+            "replay the recovered scene evidence and generate only missing or rejected scenes"
+        ),
         "reset": "discard the failed chapter attempt and start the chapter fresh",
     }
     lines = [

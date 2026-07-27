@@ -654,6 +654,349 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertIn("never the whole chapter", captured_system_prompts[0])
         self.assertNotIn("Returns only chapter prose", captured_system_prompts[0])
 
+    def test_scene_boundary_relationship_rollback_regenerates_only_current_scene_once(
+        self,
+    ) -> None:
+        calls: list[tuple[dict, dict]] = []
+        established_boundary = (
+            "双方完成战后双向验伤并共享临时避险区，但消防站保留水池和枪械控制权，"
+            "组织未合并"
+        )
+        plan = {
+            "goal": "完成临时合作并隔离危险核心",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "完成双向验伤",
+                    "required_beats": ["完成双向验伤"],
+                    "required_beat_indexes": [1],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0017-beat-008",
+                            "type": "required_beat_8_completed",
+                            "subjects": ["陆沉", "韩野"],
+                            "objects": ["临时避险区"],
+                            "location": "消防站",
+                            "status": "completed",
+                        }
+                    ],
+                },
+                {
+                    "index": 2,
+                    "goal": "把危险核心转入隔离柜",
+                    "required_beats": ["隔离危险核心"],
+                    "required_beat_indexes": [2],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0017-beat-010",
+                            "type": "required_beat_10_completed",
+                            "subjects": ["陆沉", "韩野"],
+                            "objects": ["R-17铅盒"],
+                            "location": "消防站",
+                            "status": "completed",
+                        }
+                    ],
+                },
+            ],
+        }
+
+        def completion(messages, **kwargs):
+            request = json.loads(messages[-1]["content"])
+            calls.append((request, kwargs))
+            event = request["scene"]["planned_events"][0]
+            if len(calls) == 1:
+                relationships = [
+                    {
+                        "source_id": "陆沉",
+                        "target_id": "韩野",
+                        "field": "合作边界",
+                        "before": None,
+                        "after": established_boundary,
+                        "reason": "完成双向验伤",
+                    }
+                ]
+                prose = "陆沉与韩野完成双向验伤，划定临时避险区的合作边界。"
+            elif len(calls) == 2:
+                relationships = [
+                    {
+                        "source_id": "陆沉",
+                        "target_id": "韩野",
+                        "field": "合作边界",
+                        "before": None,
+                        "after": "危险核心进入独立隔离柜",
+                        "reason": "隔离危险核心",
+                    }
+                ]
+                prose = "双方把危险核心送进隔离柜，却错误声明此前没有合作边界。"
+            else:
+                relationships = [
+                    {
+                        "source_id": "陆沉",
+                        "target_id": "韩野",
+                        "field": "合作边界",
+                        "before": established_boundary,
+                        "after": "危险核心进入独立隔离柜，双方仍不合并组织",
+                        "reason": "隔离危险核心",
+                    }
+                ]
+                prose = "双方按既有合作边界把危险核心转入隔离柜，组织仍不合并。"
+            return json.dumps(
+                {
+                    "prose": prose,
+                    "events": [event],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": relationships,
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "沿用上一场的合作边界。",
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(pipeline_module, "chat_completion", side_effect=completion):
+            drafts = pipeline_module.generate_scenes(
+                "input pack",
+                plan,
+                dry_run=False,
+                language="zh-CN",
+            )
+
+        self.assertEqual(3, len(calls))
+        retry_request, retry_kwargs = calls[2]
+        self.assertEqual(0.0, retry_kwargs["temperature"])
+        self.assertEqual(
+            "openai-chapter_generation-scene-0002-boundary-retry-01",
+            retry_kwargs["call_id"],
+        )
+        self.assertEqual(
+            established_boundary,
+            retry_request["current_scene_state"]["relationships"]["陆沉->韩野"]["合作边界"],
+        )
+        self.assertEqual(
+            established_boundary,
+            retry_request["boundary_retry"]["findings"][0]["evidence"]["expected_before"],
+        )
+        self.assertEqual(
+            "危险核心进入独立隔离柜，双方仍不合并组织",
+            drafts[1]["deltas"]["relationships"][0]["after"],
+        )
+        self.assertEqual(1, drafts[1]["boundary_validation"]["local_regeneration_attempts"])
+
+    def test_scene_boundary_failure_raises_after_one_local_regeneration(self) -> None:
+        calls = 0
+        authority = {
+            "relationships": {
+                "rel_lu_han": {
+                    "source_character_id": "陆沉",
+                    "target_character_id": "韩野",
+                    "合作边界": "现有合作边界",
+                }
+            }
+        }
+        input_pack = "# Authoritative State\n" + json.dumps(authority, ensure_ascii=False)
+        plan = {
+            "goal": "继续合作",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "更新合作边界",
+                    "required_beats": ["更新合作边界"],
+                    "required_beat_indexes": [1],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0017-beat-010",
+                            "type": "required_beat_10_completed",
+                            "subjects": ["陆沉", "韩野"],
+                            "objects": [],
+                            "location": "消防站",
+                            "status": "completed",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        def stale_completion(messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            request = json.loads(messages[-1]["content"])
+            return json.dumps(
+                {
+                    "prose": "双方尝试更新合作边界，但仍提交了过期的起始状态。",
+                    "events": [request["scene"]["planned_events"][0]],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [
+                            {
+                                "source_id": "陆沉",
+                                "target_id": "韩野",
+                                "field": "合作边界",
+                                "before": None,
+                                "after": "新的合作边界",
+                                "reason": "继续合作",
+                            }
+                        ],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(pipeline_module, "chat_completion", side_effect=stale_completion):
+            with self.assertRaisesRegex(
+                ValueError,
+                "relationship_state_rollback",
+            ):
+                pipeline_module.generate_scenes(
+                    input_pack,
+                    plan,
+                    dry_run=False,
+                    language="zh-CN",
+                )
+
+        self.assertEqual(2, calls)
+
+    def test_recovered_invalid_scene_regenerates_without_recalling_valid_prefix(
+        self,
+    ) -> None:
+        established_boundary = "既有合作边界"
+        plan = {
+            "goal": "恢复后继续隔离危险核心",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "建立合作边界",
+                    "required_beats": ["建立合作边界"],
+                    "required_beat_indexes": [1],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0017-beat-008",
+                            "type": "required_beat_8_completed",
+                            "subjects": ["陆沉", "韩野"],
+                            "objects": [],
+                            "location": "消防站",
+                            "status": "completed",
+                        }
+                    ],
+                },
+                {
+                    "index": 2,
+                    "goal": "隔离危险核心",
+                    "required_beats": ["隔离危险核心"],
+                    "required_beat_indexes": [2],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0017-beat-010",
+                            "type": "required_beat_10_completed",
+                            "subjects": ["陆沉", "韩野"],
+                            "objects": ["R-17铅盒"],
+                            "location": "消防站",
+                            "status": "completed",
+                        }
+                    ],
+                },
+            ],
+        }
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        recovered = [
+            {
+                "index": 1,
+                "text": "陆沉与韩野完成验伤，建立了清晰的临时合作边界。",
+                "events": [plan["scenes"][0]["planned_events"][0]],
+                "deltas": {
+                    **empty_deltas,
+                    "relationships": [
+                        {
+                            "source_id": "陆沉",
+                            "target_id": "韩野",
+                            "field": "合作边界",
+                            "before": None,
+                            "after": established_boundary,
+                            "reason": "完成验伤",
+                        }
+                    ],
+                },
+            },
+            {
+                "index": 2,
+                "text": "双方准备隔离危险核心，但候选状态仍从空值开始。",
+                "events": [plan["scenes"][1]["planned_events"][0]],
+                "deltas": {
+                    **empty_deltas,
+                    "relationships": [
+                        {
+                            "source_id": "陆沉",
+                            "target_id": "韩野",
+                            "field": "合作边界",
+                            "before": None,
+                            "after": "核心已经隔离",
+                            "reason": "隔离危险核心",
+                        }
+                    ],
+                },
+            },
+        ]
+        calls: list[tuple[dict, dict]] = []
+
+        def repair_recovered_scene(messages, **kwargs):
+            request = json.loads(messages[-1]["content"])
+            calls.append((request, kwargs))
+            return json.dumps(
+                {
+                    "prose": "双方沿用既有合作边界，把危险核心转入独立隔离柜。",
+                    "events": [request["scene"]["planned_events"][0]],
+                    "deltas": {
+                        **empty_deltas,
+                        "relationships": [
+                            {
+                                "source_id": "陆沉",
+                                "target_id": "韩野",
+                                "field": "合作边界",
+                                "before": established_boundary,
+                                "after": "核心已经隔离",
+                                "reason": "隔离危险核心",
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(
+            pipeline_module,
+            "chat_completion",
+            side_effect=repair_recovered_scene,
+        ):
+            drafts = pipeline_module.generate_scenes(
+                "input pack",
+                plan,
+                dry_run=False,
+                language="zh-CN",
+                recovered_scene_drafts=recovered,
+            )
+
+        self.assertEqual(1, len(calls))
+        self.assertEqual(
+            "openai-chapter_generation-scene-0002-boundary-retry-01",
+            calls[0][1]["call_id"],
+        )
+        self.assertEqual(recovered[0]["text"], drafts[0]["text"])
+        self.assertEqual("核心已经隔离", drafts[1]["deltas"]["relationships"][0]["after"])
+
     def test_oversized_legacy_prose_scene_is_rejected_before_next_call(self) -> None:
         calls = 0
         original_chat_completion = pipeline_module.chat_completion

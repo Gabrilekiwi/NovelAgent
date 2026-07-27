@@ -13,6 +13,7 @@ from api.contracts import (
 )
 from api.openai_client import chat_completion
 from core.context_budget import ContextBudgetError, default_context_budget
+from core.model_calls import build_scene_generation_call_id
 from core.prompt_compiler import PROMPT_CONTEXT_SELECTION_KEYS, compile_prompt_contexts
 from core.quality.final_artifact_integrity import (
     FinalArtifactIntegrityGate,
@@ -47,6 +48,9 @@ PIPELINE_STAGE_NAMES = (
 )
 _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS = 4_096
 _SCENE_INPUT_HEADROOM_TOKENS = 2_000
+_SCENE_BOUNDARY_REGENERATION_LIMIT = 1
+_SCENE_BOUNDARY_FEEDBACK_FINDING_LIMIT = 4
+_SCENE_BOUNDARY_FEEDBACK_EVIDENCE_MAX_CHARS = 480
 _SCENE_CONTEXT_PAYLOAD_POLICIES = (
     {
         "previous_tail_chars": 600,
@@ -439,6 +443,11 @@ def generate_scenes(
         ]
         scene_index = int(scene["index"])
         state_before = scene_state_summary(scene_state)
+        previous_scene_tail = (
+            str(scene_drafts[-1]["text"])[-600:]
+            if scene_drafts
+            else ""
+        )
         if scene_index in recovered:
             scene_result = _recovered_scene_result(
                 recovered[scene_index],
@@ -451,58 +460,71 @@ def generate_scenes(
                 chapter_blueprint=blueprint,
             )
         else:
-            payload = chat_completion(
-                [
-                    {"role": "system", "content": _load_scene_prompt()},
-                    {
-                        "role": "user",
-                        "content": _scene_request_payload(
-                            input_pack=input_pack,
-                            plan=plan,
-                            scene=scene,
-                            scene_required_beats=scene_required_beats,
-                            blueprint=blueprint,
-                            previous_scene_tail=(
-                                str(scene_drafts[-1]["text"])[-600:]
-                                if scene_drafts
-                                else ""
-                            ),
-                            prior_scene_summaries=prior_scene_summaries,
-                            scene_state=state_before,
-                        ),
-                    },
-                ],
-                stage="chapter_generation",
+            scene_result = _request_scene_candidate(
+                input_pack=input_pack,
+                plan=plan,
+                scene=scene,
+                scene_required_beats=scene_required_beats,
+                blueprint=blueprint,
+                previous_scene_tail=previous_scene_tail,
+                prior_scene_summaries=prior_scene_summaries,
+                state_before=state_before,
+                language=language,
             )
-            try:
-                scene_result = _load_scene_response(payload)
-            except ValueError:
-                if _looks_like_structured_response(payload):
-                    raise
-                _, target_max_chars = _scene_target_char_range(plan)
-                scene_result = _legacy_prose_scene_result(
-                    payload,
-                    scene=scene,
-                    max_chars=(
-                        target_max_chars
-                        if str(language or "").strip().lower().startswith("zh")
-                        else None
-                    ),
-                )
-        boundary, state_after = validate_scene_transition(
-            scene_index=scene_index,
-            state_before=state_before,
-            events=scene_result["events"],
-            deltas=scene_result["deltas"],
-            required_event_ids=scene.get("required_event_ids") or [],
-            forbidden_event_ids=scene.get("forbidden_event_ids") or [],
-            planned_events=scene.get("planned_events") or [],
-        )
-        scene_text = validate_language_output(
-            scene_result["prose"],
-            CHAPTER_CONTRACT,
-            language=language,
-        )
+        local_regeneration_attempts = 0
+        rejected_boundaries: list[dict[str, Any]] = []
+        while True:
+            scene_text = validate_language_output(
+                scene_result["prose"],
+                CHAPTER_CONTRACT,
+                language=language,
+            )
+            boundary, state_after = validate_scene_transition(
+                scene_index=scene_index,
+                state_before=state_before,
+                events=scene_result["events"],
+                deltas=scene_result["deltas"],
+                required_event_ids=scene.get("required_event_ids") or [],
+                forbidden_event_ids=scene.get("forbidden_event_ids") or [],
+                planned_events=scene.get("planned_events") or [],
+            )
+            if boundary["accepted"]:
+                break
+            feedback = _scene_boundary_retry_feedback(
+                boundary,
+                attempt=local_regeneration_attempts + 1,
+            )
+            rejected_boundaries.append(feedback)
+            if (
+                dry_run
+                or local_regeneration_attempts >= _SCENE_BOUNDARY_REGENERATION_LIMIT
+            ):
+                boundary = {
+                    **boundary,
+                    "local_regeneration_attempts": local_regeneration_attempts,
+                    "local_regeneration_rejections": rejected_boundaries,
+                }
+                require_scene_transition(boundary)
+            local_regeneration_attempts += 1
+            scene_result = _request_scene_candidate(
+                input_pack=input_pack,
+                plan=plan,
+                scene=scene,
+                scene_required_beats=scene_required_beats,
+                blueprint=blueprint,
+                previous_scene_tail=previous_scene_tail,
+                prior_scene_summaries=prior_scene_summaries,
+                state_before=state_before,
+                language=language,
+                boundary_retry=feedback,
+                boundary_retry_attempt=local_regeneration_attempts,
+            )
+        if local_regeneration_attempts:
+            boundary = {
+                **boundary,
+                "local_regeneration_attempts": local_regeneration_attempts,
+                "local_regeneration_rejections": rejected_boundaries,
+            }
         draft = {
             "index": scene_index,
             "goal": str(scene["goal"]),
@@ -520,8 +542,8 @@ def generate_scenes(
             "scene_state_after": scene_state_summary(state_after),
             "boundary_validation": boundary,
         }
-        scene_drafts.append(draft)
         require_scene_transition(boundary)
+        scene_drafts.append(draft)
         scene_state = state_after
         prior_scene_summaries.append(
             {
@@ -532,6 +554,126 @@ def generate_scenes(
             }
         )
     return _validate_scene_drafts(scene_drafts)
+
+
+def _request_scene_candidate(
+    *,
+    input_pack: str,
+    plan: dict[str, Any],
+    scene: dict[str, Any],
+    scene_required_beats: list[dict[str, Any]],
+    blueprint: dict[str, Any] | None,
+    previous_scene_tail: str,
+    prior_scene_summaries: list[dict[str, Any]],
+    state_before: dict[str, Any],
+    language: str | None,
+    boundary_retry: dict[str, Any] | None = None,
+    boundary_retry_attempt: int = 0,
+) -> dict[str, Any]:
+    scene_index = int(scene["index"])
+    call_kwargs: dict[str, Any] = {
+        "stage": "chapter_generation",
+        "call_id": build_scene_generation_call_id(
+            scene_index,
+            boundary_retry=boundary_retry_attempt,
+        ),
+    }
+    if boundary_retry is not None:
+        call_kwargs["temperature"] = 0.0
+    payload = chat_completion(
+        [
+            {"role": "system", "content": _load_scene_prompt()},
+            {
+                "role": "user",
+                "content": _scene_request_payload(
+                    input_pack=input_pack,
+                    plan=plan,
+                    scene=scene,
+                    scene_required_beats=scene_required_beats,
+                    blueprint=blueprint,
+                    previous_scene_tail=previous_scene_tail,
+                    prior_scene_summaries=prior_scene_summaries,
+                    scene_state=state_before,
+                    boundary_retry=boundary_retry,
+                ),
+            },
+        ],
+        **call_kwargs,
+    )
+    try:
+        return _load_scene_response(payload)
+    except ValueError:
+        if _looks_like_structured_response(payload):
+            raise
+        _, target_max_chars = _scene_target_char_range(plan)
+        return _legacy_prose_scene_result(
+            payload,
+            scene=scene,
+            max_chars=(
+                target_max_chars
+                if str(language or "").strip().lower().startswith("zh")
+                else None
+            ),
+        )
+
+
+def _scene_boundary_retry_feedback(
+    report: dict[str, Any],
+    *,
+    attempt: int,
+) -> dict[str, Any]:
+    raw_findings = [
+        item
+        for item in report.get("findings") or []
+        if isinstance(item, dict)
+    ]
+    findings: list[dict[str, Any]] = []
+    for item in raw_findings[:_SCENE_BOUNDARY_FEEDBACK_FINDING_LIMIT]:
+        findings.append(
+            {
+                "code": str(item.get("code") or "unknown"),
+                "message": str(item.get("message") or "")[:320],
+                "evidence": _bounded_boundary_evidence(item.get("evidence")),
+            }
+        )
+    return {
+        "attempt": int(attempt),
+        "scene_index": int(report.get("scene_index") or 0),
+        "state_before_sha256": str(report.get("state_before_sha256") or ""),
+        "finding_count": len(raw_findings),
+        "omitted_finding_count": max(0, len(raw_findings) - len(findings)),
+        "findings": findings,
+        "instruction": (
+            "Regenerate this same scene only. Treat current_scene_state as authoritative. "
+            "Correct or remove every rejected delta; each before value must exactly equal "
+            "the current value. Do not repeat any earlier scene or event."
+        ),
+    }
+
+
+def _bounded_boundary_evidence(value: Any) -> Any:
+    if value is None:
+        return {}
+    try:
+        serialized = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError):
+        serialized = str(value)
+    if len(serialized) <= _SCENE_BOUNDARY_FEEDBACK_EVIDENCE_MAX_CHARS:
+        try:
+            return json.loads(serialized)
+        except json.JSONDecodeError:
+            return serialized
+    return {
+        "truncated_json": (
+            serialized[: _SCENE_BOUNDARY_FEEDBACK_EVIDENCE_MAX_CHARS - 3]
+            + "..."
+        )
+    }
 
 
 def _recovered_scene_prefix(
@@ -568,6 +710,7 @@ def _scene_request_payload(
     previous_scene_tail: str = "",
     prior_scene_summaries: list[dict[str, Any]] | None = None,
     scene_state: dict[str, Any] | None = None,
+    boundary_retry: dict[str, Any] | None = None,
 ) -> str:
     target_min_chars, target_max_chars = _scene_target_char_range(plan)
     chapter_plan_context = _compact_chapter_plan_context(plan)
@@ -619,6 +762,7 @@ def _scene_request_payload(
             "For roster join or replace, member_ids and members must describe the same stable member ids. "
             "Do not invent missing roster members just to satisfy a declared count.",
         ],
+        **({"boundary_retry": boundary_retry} if boundary_retry is not None else {}),
         "instruction": (
             "Return JSON only and exactly one object matching response_schema. "
             "prose must draft only this scene as continuous prose with no heading. "
