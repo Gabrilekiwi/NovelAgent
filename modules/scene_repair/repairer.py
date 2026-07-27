@@ -8,7 +8,14 @@ from typing import Any, Callable
 
 from api.contracts import REPAIR_CONTRACT, validate_text_output
 from api.openai_client import chat_completion
-from core.context_budget import default_context_budget
+from core.config import get_config
+from core.context_budget import (
+    ContextBudgetError,
+    conservative_calibrated_token_estimate,
+    default_context_budget,
+    preview_chinese_output_compatibility,
+)
+from core.model_call_runtime import current_model_call_runtime
 from core.prompt_compiler import compile_prompt_contexts
 from core.quality.repair_patch import coerce_repair_patch
 from core.schema import validate_schema
@@ -105,6 +112,10 @@ def _repair_with_model(
         stage="repair",
         protocol_texts=(_load_prompt(),),
     )
+    max_output_tokens = _repair_max_output_tokens(
+        chapter_text,
+        language=repair_context.language,
+    )
     output = chat_completion(
         [
             {"role": "system", "content": _load_prompt()},
@@ -115,6 +126,7 @@ def _repair_with_model(
         ],
         temperature=0.2,
         stage="scene_repair",
+        max_tokens=max_output_tokens,
     )
     stripped = str(output).strip()
     if stripped.startswith("{") and stripped.endswith("}"):
@@ -131,6 +143,43 @@ def _repair_with_model(
         except ValueError:
             pass
     return validate_text_output(output, REPAIR_CONTRACT)
+
+
+def _repair_max_output_tokens(
+    chapter_text: str,
+    *,
+    language: str = "zh-CN",
+) -> int:
+    requested = max(1, int(get_config().openai_max_output_tokens))
+    compatibility = (
+        preview_chinese_output_compatibility(requested)
+        if _normalized_language(language) == "zh-CN"
+        else {"maximum_required_tokens": 0}
+    )
+    minimum_required = max(
+        int(compatibility["maximum_required_tokens"]),
+        conservative_calibrated_token_estimate(chapter_text) + 1_024,
+    )
+    if requested < minimum_required:
+        raise ContextBudgetError(
+            "scene_repair_output_cap_incompatible",
+            "scene repair requires at least "
+            f"{minimum_required} output tokens for a complete replacement chapter; "
+            f"configured cap is {requested}",
+        )
+
+    runtime = current_model_call_runtime()
+    remaining = runtime.remaining_output_tokens() if runtime is not None else None
+    if remaining is None:
+        return requested
+    if remaining < minimum_required:
+        raise ContextBudgetError(
+            "scene_repair_output_budget_insufficient",
+            "scene repair requires at least "
+            f"{minimum_required} output tokens for a complete replacement chapter; "
+            f"run budget has {remaining} remaining",
+        )
+    return min(requested, remaining)
 
 
 def _compact_validation(validation: dict[str, Any]) -> dict[str, Any]:

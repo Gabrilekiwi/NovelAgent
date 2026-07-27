@@ -250,6 +250,36 @@ class ModelCallRuntimeContext:
         # provider usage. Unknown tokenizers use the calibrated fallback.
         return conservative_calibrated_token_estimate(canonical_request)
 
+    def remaining_output_tokens(self) -> int | None:
+        """Return the tracker's currently available output reservation capacity."""
+
+        tracker = self.tracker
+        if tracker is None:
+            return None
+        remaining = getattr(tracker, "remaining_output_tokens", None)
+        if callable(remaining):
+            value = remaining()
+        else:
+            report = getattr(tracker, "report", None)
+            if not callable(report):
+                return None
+            budget = report()
+            elastic = budget.get("elastic_budget") if isinstance(budget, dict) else None
+            maximum = (
+                elastic.get("effective_output_token_limit")
+                if isinstance(elastic, dict)
+                else None
+            )
+            charged = budget.get("charged_output_tokens") if isinstance(budget, dict) else None
+            if not isinstance(maximum, int) or not isinstance(charged, int):
+                return None
+            value = max(0, maximum - charged)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ModelCallEvidenceError(
+                "model-call tracker returned invalid remaining output capacity"
+            )
+        return value
+
     def hydrate_tracker_from_store(self) -> list[str]:
         """Rebuild charged budget usage from immutable attempt evidence.
 

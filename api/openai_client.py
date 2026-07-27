@@ -156,8 +156,13 @@ def chat_completion(
         execution = policy.execute(invoke, budget_remaining_seconds=retry_budget_remaining)
     except RetryOperationError as exc:
         report = exc.report
+        cause_summary = (
+            str(exc.cause)
+            if exc.failure_category == "local_budget"
+            else type(exc.cause).__name__
+        )
         raise ModelCallError(
-            f"OpenAI chat completion failed ({exc.failure_category}; {type(exc.cause).__name__}).",
+            f"OpenAI chat completion failed ({exc.failure_category}; {cause_summary}).",
             provider="openai",
             stage=stage,
             model=resolved_model,

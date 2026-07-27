@@ -188,6 +188,27 @@ class ModelCallRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(9, tracker.report()["total_input_tokens"])
 
+    def test_runtime_exposes_remaining_output_after_uncertain_reservation(self) -> None:
+        tracker = RunBudgetTracker(
+            RunBudgetLimits(
+                max_provider_calls=3,
+                max_total_input_tokens=100,
+                max_total_output_tokens=40_000,
+                max_elapsed_seconds=30,
+            )
+        )
+        tracker.record_output(14_391)
+        tracker.reserve_model_call(
+            input_tokens=1,
+            max_output_tokens=16_000,
+            call_id="uncertain-polish",
+            attempt_id="uncertain-polish-a1",
+            stage="claude_polish",
+        )
+        runtime = ModelCallRuntimeContext(self.store, tracker=tracker)
+
+        self.assertEqual(9_609, runtime.remaining_output_tokens())
+
     def test_long_chinese_default_reservation_no_longer_rejects_before_provider(self) -> None:
         tracker = RunBudgetTracker(
             RunBudgetLimits(

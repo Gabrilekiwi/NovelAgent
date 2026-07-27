@@ -124,6 +124,9 @@ ExactTokenCounter = TokenCounterCallable
 
 
 class ContextBudgetError(ValueError):
+    failure_category = "local_budget"
+    retryable = False
+
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         super().__init__(f"{code}: {message}")
@@ -1022,6 +1025,16 @@ class RunBudgetTracker:
 
     def remaining_seconds(self) -> float:
         return max(0.0, self.limits.max_elapsed_seconds - (self._now() - self._started_at))
+
+    def remaining_output_tokens(self) -> int:
+        """Return output capacity not already settled or conservatively reserved."""
+
+        return max(
+            0,
+            self._effective_output_limit()
+            - self.total_output_tokens
+            - self.reserved_output_tokens,
+        )
 
     def report(self) -> dict[str, Any]:
         return {

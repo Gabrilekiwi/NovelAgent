@@ -656,6 +656,16 @@ class ContextBudgetTest(unittest.TestCase):
         self.assertEqual(20, uncertain["reserved_output_tokens"])
         self.assertEqual(27, uncertain["charged_output_tokens"])
         self.assertEqual(1, uncertain["unsettled_attempt_count"])
+        self.assertEqual(23, tracker.remaining_output_tokens())
+
+    def test_context_budget_error_is_classified_as_local_budget(self) -> None:
+        error = ContextBudgetError(
+            "run_output_token_budget_exceeded",
+            "reserved output exceeds remaining max_total_output_tokens",
+        )
+
+        self.assertEqual("local_budget", error.failure_category)
+        self.assertFalse(error.retryable)
 
     def test_provider_input_usage_settles_estimate_and_overrun_is_charged(self) -> None:
         tracker = RunBudgetTracker(

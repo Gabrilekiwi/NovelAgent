@@ -164,8 +164,13 @@ def polish_chapter(
         execution = policy.execute(invoke, budget_remaining_seconds=retry_budget_remaining)
     except RetryOperationError as exc:
         report = exc.report
+        cause_summary = (
+            str(exc.cause)
+            if exc.failure_category == "local_budget"
+            else type(exc.cause).__name__
+        )
         raise ModelCallError(
-            f"Claude polish failed ({exc.failure_category}; {type(exc.cause).__name__}).",
+            f"Claude polish failed ({exc.failure_category}; {cause_summary}).",
             provider="anthropic",
             stage="claude_polish",
             model=model,

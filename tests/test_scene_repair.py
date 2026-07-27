@@ -1,14 +1,50 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
+from core.context_budget import ContextBudgetError
 from core.schema import validate_schema
 from modules.scene_repair import apply_repair_plan, build_repair_plan, repair_scene
-from modules.scene_repair.repairer import _compact_repair_context, _compact_validation
+from modules.scene_repair.repairer import (
+    _compact_repair_context,
+    _compact_validation,
+    _repair_max_output_tokens,
+)
 
 
 class SceneRepairTest(unittest.TestCase):
+    def test_repair_output_limit_adapts_to_remaining_run_capacity(self) -> None:
+        runtime = SimpleNamespace(remaining_output_tokens=lambda: 9_609)
+        config = SimpleNamespace(openai_max_output_tokens=16_000)
+
+        with (
+            patch("modules.scene_repair.repairer.current_model_call_runtime", return_value=runtime),
+            patch("modules.scene_repair.repairer.get_config", return_value=config),
+        ):
+            limit = _repair_max_output_tokens("字" * 4_126)
+
+        self.assertEqual(9_609, limit)
+
+    def test_repair_output_limit_fails_before_provider_when_capacity_is_unsafe(self) -> None:
+        runtime = SimpleNamespace(remaining_output_tokens=lambda: 6_000)
+        config = SimpleNamespace(openai_max_output_tokens=16_000)
+
+        with (
+            patch("modules.scene_repair.repairer.current_model_call_runtime", return_value=runtime),
+            patch("modules.scene_repair.repairer.get_config", return_value=config),
+            self.assertRaises(ContextBudgetError) as raised,
+        ):
+            _repair_max_output_tokens("字" * 4_126)
+
+        self.assertEqual(
+            "scene_repair_output_budget_insufficient",
+            raised.exception.code,
+        )
+        self.assertIn("run budget has 6000 remaining", str(raised.exception))
+
     def test_repair_context_keeps_only_story_state_semantics(self) -> None:
         story_state = {
             "last_chapter_ending": "The generator failed.",
