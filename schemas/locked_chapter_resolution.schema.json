@@ -69,7 +69,44 @@
           "index": {"type": "integer", "minimum": 1},
           "text": {"type": "string", "minLength": 1},
           "sha256": {"type": "string", "minLength": 64},
-          "source_attempt_id": {"type": "string", "minLength": 1}
+          "source_attempt_id": {"type": "string", "minLength": 1},
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["event_id", "type", "subjects", "objects", "location", "status"],
+              "properties": {
+                "event_id": {"type": "string", "minLength": 1},
+                "type": {"type": "string", "minLength": 1},
+                "subjects": {"type": "array", "items": {"type": "string"}},
+                "objects": {"type": "array", "items": {"type": "string"}},
+                "location": {"type": "string"},
+                "status": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            }
+          },
+          "deltas": {
+            "type": "object",
+            "required": [
+              "characters",
+              "relationships",
+              "rosters",
+              "locations",
+              "inventory",
+              "counters"
+            ],
+            "properties": {
+              "characters": {"type": "array", "items": {"type": "object"}},
+              "relationships": {"type": "array", "items": {"type": "object"}},
+              "rosters": {"type": "array", "items": {"type": "object"}},
+              "locations": {"type": "array", "items": {"type": "object"}},
+              "inventory": {"type": "array", "items": {"type": "object"}},
+              "counters": {"type": "array", "items": {"type": "object"}}
+            },
+            "additionalProperties": false
+          },
+          "continuity_note": {"type": "string"}
         },
         "additionalProperties": false
       }

@@ -103,8 +103,9 @@ def recover_locked_chapter(
             source_payload = source["payload"]
             complete_draft = None
         else:
-            terminal_source = _newer_complete_failed_run(
+            terminal_source = _newer_recoverable_failed_run(
                 runs,
+                run_dir=runtime_root,
                 chapter_index=chapter_index,
                 active_checkpoint=active_checkpoint,
                 language=language,
@@ -115,8 +116,8 @@ def recover_locked_chapter(
             source_payload = source["payload"]
             complete_draft = source["complete_draft"]
 
+        execution_dir = _source_execution_dir(runtime_root, source)
         if not force_reset:
-            execution_dir = _source_execution_dir(runtime_root, source)
             durable_transform = _latest_usable_complete_transform(
                 execution_dir,
                 language=language,
@@ -149,12 +150,18 @@ def recover_locked_chapter(
                 "the existing recovery checkpoint no longer matches the chapter outline; reset it before reusing output"
             )
 
-        recovered_scenes: list[dict[str, Any]] = []
+        recovered_scenes = [
+            dict(scene)
+            for scene in source.get("recovered_scenes", [])
+            if isinstance(scene, dict)
+        ]
         if force_reset:
             complete_draft = None
+            recovered_scenes = []
             action = "reset"
             reason = "operator_requested_reset"
         elif complete_draft is not None:
+            recovered_scenes = []
             action = "repair_draft"
             if manual_draft is not None:
                 reason = "manual_repaired_draft_provided"
@@ -167,12 +174,13 @@ def recover_locked_chapter(
                     else "complete_failed_draft_available"
                 )
         else:
-            recovered_scenes = _recover_scene_prefix(
-                source["execution_dir"],
-                active_checkpoint=active_checkpoint,
-                expected_scene_count=expected_scene_count,
-                language=language,
-            )
+            if not recovered_scenes and execution_dir is not None:
+                recovered_scenes = _recover_scene_prefix(
+                    execution_dir,
+                    active_checkpoint=active_checkpoint,
+                    expected_scene_count=expected_scene_count,
+                    language=language,
+                )
             if len(recovered_scenes) >= expected_scene_count:
                 complete_draft = {
                     "text": "\n\n".join(scene["text"] for scene in recovered_scenes),
@@ -315,9 +323,10 @@ def _load_runs(run_dir: Path, *, expected_book_id: str) -> list[dict[str, Any]]:
     return results
 
 
-def _newer_complete_failed_run(
+def _newer_recoverable_failed_run(
     runs: list[dict[str, Any]],
     *,
+    run_dir: Path,
     chapter_index: int,
     active_checkpoint: dict[str, Any] | None,
     language: str | None,
@@ -355,6 +364,22 @@ def _newer_complete_failed_run(
         complete_draft = _usable_complete_draft(item["payload"], language=language)
         if complete_draft is not None:
             return {**item, "complete_draft": complete_draft}
+        execution_dir = _source_execution_dir(run_dir, item)
+        if execution_dir is None:
+            continue
+        recovered_scenes = _recover_scene_prefix(
+            execution_dir,
+            active_checkpoint=active_checkpoint,
+            expected_scene_count=_expected_scene_count(run),
+            language=language,
+        )
+        if recovered_scenes:
+            return {
+                **item,
+                "complete_draft": None,
+                "execution_dir": execution_dir,
+                "recovered_scenes": recovered_scenes,
+            }
     return None
 
 
@@ -525,13 +550,15 @@ def _recover_scene_prefix(
         if receipt["status"] != "succeeded" or not receipt.get("response_artifact_ref"):
             continue
         try:
-            text = _read_verified_response(store, receipt)
+            response = _recover_scene_response(
+                _read_verified_response(store, receipt),
+                language=language,
+            )
         except (LockedChapterRecoveryError, OSError):
             break
-        try:
-            text = validate_language_output(text, CHAPTER_CONTRACT, language=language)
-        except ModelOutputError:
+        if response is None:
             break
+        text = response["text"]
         if len(text) < 100:
             break
         scene_index = len(scenes) + 1
@@ -540,13 +567,111 @@ def _recover_scene_prefix(
         scenes.append(
             {
                 "index": scene_index,
-                "text": text,
+                **response,
                 "sha256": _content_sha256(text),
                 "source_attempt_id": attempt_id,
             }
         )
         seen_attempts.add(attempt_id)
     return scenes
+
+
+def _recover_scene_response(
+    raw: str,
+    *,
+    language: str | None,
+) -> dict[str, Any] | None:
+    """Recover either the current structured scene contract or legacy prose."""
+
+    text = str(raw or "").strip()
+    fenced = None
+    if text.startswith("```"):
+        closing = text.rfind("```")
+        if closing > 3:
+            opening_end = text.find("\n")
+            if 0 <= opening_end < closing:
+                fenced = text[opening_end + 1 : closing].strip()
+    candidate = fenced if fenced is not None else text
+    value: Any = None
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if 0 <= start < end:
+            try:
+                value = json.loads(candidate[start : end + 1])
+            except json.JSONDecodeError:
+                value = None
+
+    if isinstance(value, dict):
+        if "prose" not in value:
+            return None
+        try:
+            prose = validate_language_output(
+                value.get("prose"),
+                CHAPTER_CONTRACT,
+                language=language,
+            )
+        except ModelOutputError:
+            return None
+        raw_events = value.get("events")
+        raw_deltas = value.get("deltas")
+        if not isinstance(raw_events, list) or not isinstance(raw_deltas, dict):
+            return None
+        events: list[dict[str, Any]] = []
+        for item in raw_events:
+            if not isinstance(item, dict):
+                return None
+            event_id = str(item.get("event_id") or "").strip()
+            event_type = str(item.get("type") or "").strip()
+            if not event_id or not event_type:
+                return None
+            events.append(
+                {
+                    "event_id": event_id,
+                    "type": event_type,
+                    "subjects": [
+                        str(subject)
+                        for subject in item.get("subjects") or []
+                        if str(subject).strip()
+                    ],
+                    "objects": [
+                        str(obj)
+                        for obj in item.get("objects") or []
+                        if str(obj).strip()
+                    ],
+                    "location": str(item.get("location") or ""),
+                    "status": str(item.get("status") or "completed"),
+                }
+            )
+        deltas: dict[str, list[dict[str, Any]]] = {}
+        for key in (
+            "characters",
+            "relationships",
+            "rosters",
+            "locations",
+            "inventory",
+            "counters",
+        ):
+            items = raw_deltas.get(key) or []
+            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                return None
+            deltas[key] = [dict(item) for item in items]
+        return {
+            "text": prose,
+            "events": events,
+            "deltas": deltas,
+            "continuity_note": str(value.get("continuity_note") or ""),
+        }
+
+    if text.startswith(("{", "```")):
+        return None
+    try:
+        prose = validate_language_output(text, CHAPTER_CONTRACT, language=language)
+    except ModelOutputError:
+        return None
+    return {"text": prose}
 
 
 def _read_verified_response(store: ModelCallStore, receipt: dict[str, Any]) -> str:

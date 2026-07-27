@@ -173,6 +173,108 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertNotIn("stable_entity_id", json.dumps(delta_schema))
         self.assertTrue(any("does not actually change" in rule for rule in payload["delta_rules"]))
 
+    def test_scene_request_compacts_global_plan_but_keeps_current_scene_complete(self) -> None:
+        scenes = [
+            {
+                "index": index,
+                "type": "story_project_blueprint",
+                "goal": f"Scene {index} goal",
+                "required_beat_indexes": [index],
+                "required_beats": [f"Full required beat {index}"],
+                "planned_events": [
+                    {
+                        "event_id": f"event-{index}",
+                        "type": f"beat_{index}_completed",
+                        "subjects": [],
+                        "objects": [],
+                        "location": "",
+                        "status": "completed",
+                    }
+                ],
+                "required_event_ids": [f"event-{index}"],
+                "forbidden_event_ids": [
+                    f"event-{previous}"
+                    for previous in range(1, index)
+                ],
+            }
+            for index in range(1, 10)
+        ]
+
+        payload = json.loads(
+            pipeline_module._scene_request_payload(
+                input_pack="# Requirements\nPreserve the chapter arc.",
+                plan={"goal": "Nine-scene chapter", "scenes": scenes},
+                scene=scenes[7],
+                scene_required_beats=[],
+                blueprint=None,
+            )
+        )
+
+        self.assertEqual(9, len(payload["chapter_plan"]["scenes"]))
+        self.assertEqual([8], payload["chapter_plan"]["scenes"][7]["required_beat_indexes"])
+        self.assertEqual(["event-8"], payload["chapter_plan"]["scenes"][7]["required_event_ids"])
+        self.assertNotIn("planned_events", payload["chapter_plan"]["scenes"][7])
+        self.assertNotIn("required_beats", payload["chapter_plan"]["scenes"][7])
+        self.assertNotIn("forbidden_event_ids", payload["chapter_plan"]["scenes"][7])
+        self.assertEqual(scenes[7], payload["scene"])
+
+    def test_scene_request_compacts_below_safe_limit_not_just_hard_limit(self) -> None:
+        context = "# Requirements\n" + "\n\n".join(
+            f"Requirement {index}: preserve continuity."
+            for index in range(100)
+        )
+
+        class HeadroomBudget:
+            hard_input_limit = 32_000
+
+            def __init__(self) -> None:
+                self.measured_payloads: list[dict] = []
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+                self.measured_payloads.append(json.loads(text))
+                tokens = 31_989 if len(self.measured_payloads) == 1 else 28_027
+                return {
+                    "within_budget": True,
+                    "budgeted_input_tokens": tokens,
+                    "hard_input_limit": self.hard_input_limit,
+                }
+
+            def require_input(self, *_: object, **__: object) -> dict:
+                raise AssertionError("the second candidate should meet the safe input target")
+
+        budget = HeadroomBudget()
+        with patch.object(pipeline_module, "default_context_budget", return_value=budget):
+            payload = json.loads(
+                pipeline_module._scene_request_payload(
+                    input_pack=context,
+                    plan={
+                        "goal": "Keep nine scenes ordered.",
+                        "scenes": [{"index": index} for index in range(1, 10)],
+                    },
+                    scene={"index": 8},
+                    scene_required_beats=[],
+                    blueprint=None,
+                    previous_scene_tail="latest scene tail " * 50,
+                    prior_scene_summaries=[
+                        {
+                            "index": index,
+                            "goal": f"Scene {index}",
+                            "tail": "prior scene evidence " * 20,
+                            "event_ids": [f"event-{index}"],
+                        }
+                        for index in range(1, 8)
+                    ],
+                )
+            )
+
+        self.assertEqual(2, len(budget.measured_payloads))
+        self.assertEqual(500, len(payload["previous_scene_tail"]))
+        self.assertTrue(
+            all("goal" not in item for item in payload["prior_scene_summaries"])
+        )
+
     def test_scene_request_compacts_large_sections_and_drops_memory_index(self) -> None:
         context = "\n\n".join(
             [f"# Section {index}\nHEAD-{index}\n" + (str(index) * 5_000) + f"\nTAIL-{index}" for index in range(8)]

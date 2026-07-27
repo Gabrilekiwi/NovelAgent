@@ -12,7 +12,7 @@ from api.contracts import (
     validate_text_output,
 )
 from api.openai_client import chat_completion
-from core.context_budget import default_context_budget
+from core.context_budget import ContextBudgetError, default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
 from core.quality.final_artifact_integrity import (
     FinalArtifactIntegrityGate,
@@ -46,6 +46,7 @@ PIPELINE_STAGE_NAMES = (
     "commit",
 )
 _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS = 4_096
+_SCENE_INPUT_HEADROOM_TOKENS = 2_000
 _SCENE_CONTEXT_PAYLOAD_POLICIES = (
     {
         "previous_tail_chars": 600,
@@ -565,9 +566,10 @@ def _scene_request_payload(
     scene_state: dict[str, Any] | None = None,
 ) -> str:
     target_min_chars, target_max_chars = _scene_target_char_range(plan)
+    chapter_plan_context = _compact_chapter_plan_context(plan)
     context_query = json.dumps(
         {
-            "chapter_plan": plan,
+            "chapter_plan": chapter_plan_context,
             "scene": scene,
             "required_beats": scene_required_beats,
             "ending_pressure": (blueprint or {}).get("ending_pressure"),
@@ -576,7 +578,7 @@ def _scene_request_payload(
         sort_keys=True,
     )
     payload_body = {
-        "chapter_plan": plan,
+        "chapter_plan": chapter_plan_context,
         "scene": scene,
         "story_project_required_beats": scene_required_beats,
         "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
@@ -629,6 +631,7 @@ def _scene_request_payload(
         ),
     }
     budget = default_context_budget()
+    safe_input_limit = _scene_safe_input_limit(budget)
     protocol_texts = (_load_scene_prompt(),)
     compact_scene_context = _compact_scene_context(input_pack, query=context_query)
     payload = ""
@@ -652,10 +655,70 @@ def _scene_request_payload(
             indent=2,
         )
         report = budget.measure(payload, stage="scene", protocol_texts=protocol_texts)
-        if report["within_budget"]:
+        if report["within_budget"] and _scene_report_within_safe_limit(
+            report,
+            safe_input_limit=safe_input_limit,
+        ):
             return payload
-    budget.require_input(payload, stage="scene", protocol_texts=protocol_texts)
+    report = budget.require_input(payload, stage="scene", protocol_texts=protocol_texts)
+    if not _scene_report_within_safe_limit(
+        report,
+        safe_input_limit=safe_input_limit,
+    ):
+        raise ContextBudgetError(
+            "story_project_context_headroom_exceeded",
+            "scene input requires "
+            f"{report['budgeted_input_tokens']} tokens; safe target is "
+            f"{safe_input_limit}; hard limit is {report['hard_input_limit']}",
+        )
     return payload
+
+
+def _compact_chapter_plan_context(plan: dict[str, Any]) -> dict[str, Any]:
+    """Keep the chapter arc while avoiding per-scene duplication of full beat records."""
+
+    scenes: list[dict[str, Any]] = []
+    for raw in plan.get("scenes") or []:
+        if not isinstance(raw, dict):
+            continue
+        scene = {
+            key: raw.get(key)
+            for key in ("index", "type", "goal")
+            if raw.get(key) is not None
+        }
+        for key in ("required_beat_indexes", "required_event_ids"):
+            values = raw.get(key)
+            if isinstance(values, list):
+                scene[key] = list(values)
+        scenes.append(scene)
+    return {
+        "goal": str(plan.get("goal") or ""),
+        "scenes": scenes,
+    }
+
+
+def _scene_safe_input_limit(budget: Any) -> int | None:
+    hard_limit = getattr(budget, "hard_input_limit", None)
+    if isinstance(hard_limit, bool) or not isinstance(hard_limit, int) or hard_limit < 1:
+        return None
+    headroom = min(
+        _SCENE_INPUT_HEADROOM_TOKENS,
+        max(256, hard_limit // 16),
+    )
+    return max(1, hard_limit - headroom)
+
+
+def _scene_report_within_safe_limit(
+    report: dict[str, Any],
+    *,
+    safe_input_limit: int | None,
+) -> bool:
+    if safe_input_limit is None:
+        return True
+    tokens = report.get("budgeted_input_tokens")
+    if isinstance(tokens, bool) or not isinstance(tokens, int):
+        return True
+    return tokens <= safe_input_limit
 
 
 def _compact_prior_scene_summaries(

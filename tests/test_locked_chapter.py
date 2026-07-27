@@ -287,6 +287,85 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertEqual("already_recovered", third["status"])
         self.assertEqual(2, len(list((self.run_dir / "locked_chapter_resolutions").glob("*.json"))))
 
+    def test_terminal_local_failure_recovers_structured_scene_receipts(self) -> None:
+        execution_id = "execution_terminal_local_budget_failure"
+        scene_one = "陆沉贴着冷库墙壁前进，逐一确认队员的位置和撤离顺序。" * 12
+        scene_two = "备用灯忽明忽暗，众人沿着维护通道继续向安全门转移。" * 12
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        responses = [
+            json.dumps(
+                {
+                    "prose": scene_one,
+                    "events": [
+                        {
+                            "event_id": "chapter-001-scene-001-event-001",
+                            "type": "route_checked",
+                            "subjects": ["char_lu_chen"],
+                            "objects": [],
+                            "location": "cold-storage",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": "队伍抵达维护通道入口。",
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "prose": scene_two,
+                    "events": [
+                        {
+                            "event_id": "chapter-001-scene-002-event-001",
+                            "type": "transfer_continued",
+                            "subjects": ["char_lu_chen"],
+                            "objects": ["main_survivor_group"],
+                            "location": "maintenance-corridor",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": "队伍正在接近安全门。",
+                },
+                ensure_ascii=False,
+            ),
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+        )
+        self._write_failed_run(execution_id=execution_id, chapter="", scene_count=3)
+
+        result = self._recover()
+
+        self.assertEqual("resume_scenes", result["action"])
+        self.assertEqual(2, result["reusable_scene_count"])
+        self.assertEqual(3, result["next_scene_index"])
+        self.assertEqual([], _unresolved_provider_calls(self.run_dir))
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([scene_one, scene_two], [item["text"] for item in checkpoint["scenes"]])
+        self.assertEqual(
+            "chapter-001-scene-002-event-001",
+            checkpoint["scenes"][1]["events"][0]["event_id"],
+        )
+        self.assertEqual(empty_deltas, checkpoint["scenes"][1]["deltas"])
+        self.assertEqual(
+            "队伍正在接近安全门。",
+            checkpoint["scenes"][1]["continuity_note"],
+        )
+
     def test_no_trustworthy_output_resets_failed_chapter_history(self) -> None:
         execution_id = "execution_empty"
         self._write_execution(execution_id, successful=[], missing_stage="chapter_generation")
@@ -388,7 +467,7 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         execution_id: str,
         *,
         successful: list[str],
-        missing_stage: str,
+        missing_stage: str | None,
     ) -> None:
         store = ModelCallStore(self.run_dir / "executions" / execution_id / "model_calls")
         for index, text in enumerate(successful, start=1):
@@ -422,17 +501,18 @@ class LockedChapterRecoveryTest(unittest.TestCase):
                 received_at=created_at,
             )
 
-        missing_index = len(successful) + 1
-        store.create_intent(
-            call_id="call-missing",
-            attempt_id="attempt-missing",
-            provider="openai",
-            model="gpt-test",
-            stage=missing_stage,
-            budget_reservation={"reserved_input_tokens": 10, "reserved_output_tokens": 100},
-            request={"messages": [{"role": "user", "content": "missing"}]},
-            created_at=self.now + timedelta(seconds=missing_index),
-        )
+        if missing_stage is not None:
+            missing_index = len(successful) + 1
+            store.create_intent(
+                call_id="call-missing",
+                attempt_id="attempt-missing",
+                provider="openai",
+                model="gpt-test",
+                stage=missing_stage,
+                budget_reservation={"reserved_input_tokens": 10, "reserved_output_tokens": 100},
+                request={"messages": [{"role": "user", "content": "missing"}]},
+                created_at=self.now + timedelta(seconds=missing_index),
+            )
 
     def _write_failed_run(self, *, execution_id: str, chapter: str, scene_count: int) -> None:
         decision = {
