@@ -6,6 +6,7 @@ import unittest
 from core.scene_continuity import (
     SceneBoundaryValidationError,
     empty_scene_state,
+    require_scene_transition,
     validate_scene_transition,
 )
 import modules.chapter_generator.pipeline as pipeline_module
@@ -251,6 +252,68 @@ class SceneContinuityTests(unittest.TestCase):
         self.assertEqual("shelter", after["locations"]["hero"])
         self.assertEqual(1, after["inventories"]["hero:serum"])
         self.assertEqual(13, after["counters"]["survivors"])
+
+    def test_invalid_generic_delta_error_aggregates_codes_and_includes_evidence(self) -> None:
+        report, _after = validate_scene_transition(
+            scene_index=1,
+            state_before=empty_scene_state(),
+            events=[],
+            deltas={
+                **_empty_deltas(),
+                "characters": [
+                    {
+                        "stable_entity_id": "陆沉",
+                        "before": None,
+                        "after": {"status": "active"},
+                    },
+                    {
+                        "stable_entity_id": "苏晴",
+                        "before": None,
+                        "after": {"status": "active"},
+                    },
+                ],
+                "rosters": [
+                    {
+                        "stable_entity_id": "火种一号",
+                        "before": None,
+                        "after": {"total_count": 17},
+                    }
+                ],
+                "locations": [
+                    {
+                        "stable_entity_id": "陆沉",
+                        "before": "冷库",
+                        "after": "人防医院地下病区",
+                    }
+                ],
+                "inventory": [
+                    {
+                        "stable_entity_id": "R-17核心碎片",
+                        "before": None,
+                        "after": {"container": "铅板药械柜"},
+                    }
+                ],
+                "counters": [
+                    {
+                        "stable_entity_id": "陆沉_侵蚀值",
+                        "before": None,
+                        "after": "6/100",
+                    }
+                ],
+            },
+        )
+
+        with self.assertRaises(SceneBoundaryValidationError) as raised:
+            require_scene_transition(report)
+
+        message = str(raised.exception)
+        self.assertIn("invalid_character_delta x2", message)
+        self.assertIn("invalid_roster_delta", message)
+        self.assertIn("invalid_location_delta", message)
+        self.assertIn("invalid_inventories_delta", message)
+        self.assertIn("invalid_counters_delta", message)
+        self.assertIn("Character delta is incomplete", message)
+        self.assertIn('"stable_entity_id":"陆沉"', message)
 
 
 if __name__ == "__main__":

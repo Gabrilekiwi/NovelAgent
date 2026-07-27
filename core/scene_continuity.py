@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import copy
 import hashlib
 import json
@@ -13,8 +14,102 @@ _DELTA_KINDS = ("characters", "relationships", "rosters", "locations", "inventor
 class SceneBoundaryValidationError(ValueError):
     def __init__(self, report: dict[str, Any]) -> None:
         self.report = copy.deepcopy(report)
-        codes = ", ".join(str(item.get("code")) for item in report.get("findings") or [])
-        super().__init__(f"scene boundary validation failed: {codes or 'unknown'}")
+        findings = [item for item in report.get("findings") or [] if isinstance(item, dict)]
+        counts = Counter(str(item.get("code") or "unknown") for item in findings)
+        codes = ", ".join(
+            f"{code} x{count}" if count > 1 else code
+            for code, count in counts.items()
+        )
+        first = findings[0] if findings else {}
+        evidence = json.dumps(
+            first.get("evidence") or {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len(evidence) > 400:
+            evidence = evidence[:397] + "..."
+        detail = (
+            f"; first={first.get('code')}: {first.get('message')}; evidence={evidence}"
+            if first
+            else ""
+        )
+        super().__init__(
+            f"scene boundary validation failed: {codes or 'unknown'}{detail}"
+        )
+
+
+def scene_delta_response_schema() -> dict[str, list[dict[str, Any]]]:
+    """Return the exact prompt-facing delta shape consumed by this module."""
+
+    return {
+        "characters": [
+            {
+                "character_id": "stable character id",
+                "field": "one changed character state field",
+                "before": "exact current value or null when absent",
+                "after": "new value",
+                "reason": "why this scene changed the field",
+            }
+        ],
+        "relationships": [
+            {
+                "source_id": "stable source character id",
+                "target_id": "stable target character id",
+                "field": "one changed relationship field",
+                "before": "exact current value or null when absent",
+                "after": "new value",
+                "reason": "why this scene changed the relationship",
+            }
+        ],
+        "rosters": [
+            {
+                "roster_id": "stable roster id",
+                "operation": "join|leave|dead|missing|replace",
+                "member_ids": ["stable member id"],
+                "members": [
+                    {
+                        "member_id": "same stable member id",
+                        "character_id": None,
+                        "descriptor": "stable descriptor",
+                        "status": "active|left|dead|missing",
+                    }
+                ],
+                "delta": 1,
+                "declared_count": 1,
+                "reason_event_id": "source event id",
+            }
+        ],
+        "locations": [
+            {
+                "entity_id": "stable character or entity id",
+                "before": "exact current location or null when absent",
+                "after": "new location",
+                "reason": "how the location changed in this scene",
+            }
+        ],
+        "inventory": [
+            {
+                "owner_id": "stable owner id",
+                "item_id": "stable item id",
+                "before": 2,
+                "delta": -1,
+                "after": 1,
+                "reason": "why the quantity changed",
+                "source_event_id": "source event id",
+            }
+        ],
+        "counters": [
+            {
+                "counter_id": "stable counter id",
+                "before": 6,
+                "delta": 0,
+                "after": 6,
+                "reason": "why the counter changed",
+                "source_event_id": "source event id",
+            }
+        ],
+    }
 
 
 def empty_scene_state() -> dict[str, Any]:
@@ -517,6 +612,7 @@ __all__ = [
     "SceneBoundaryValidationError",
     "empty_scene_state",
     "require_scene_transition",
+    "scene_delta_response_schema",
     "scene_state_summary",
     "validate_scene_transition",
 ]

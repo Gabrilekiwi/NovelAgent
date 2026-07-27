@@ -157,6 +157,21 @@ class ChapterPipelineTest(unittest.TestCase):
 
         self.assertIn("1000-1500 Chinese characters", payload["instruction"])
         self.assertIn("Do not restart, duplicate, or retell", payload["instruction"])
+        delta_schema = payload["response_schema"]["deltas"]
+        self.assertEqual(
+            {"character_id", "field", "before", "after", "reason"},
+            set(delta_schema["characters"][0]),
+        )
+        self.assertEqual(
+            {"owner_id", "item_id", "before", "delta", "after", "reason", "source_event_id"},
+            set(delta_schema["inventory"][0]),
+        )
+        self.assertEqual(
+            {"counter_id", "before", "delta", "after", "reason", "source_event_id"},
+            set(delta_schema["counters"][0]),
+        )
+        self.assertNotIn("stable_entity_id", json.dumps(delta_schema))
+        self.assertTrue(any("does not actually change" in rule for rule in payload["delta_rules"]))
 
     def test_scene_request_compacts_large_sections_and_drops_memory_index(self) -> None:
         context = "\n\n".join(

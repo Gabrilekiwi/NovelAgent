@@ -21,6 +21,7 @@ from core.quality.final_artifact_integrity import (
 from core.scene_continuity import (
     empty_scene_state,
     require_scene_transition,
+    scene_delta_response_schema,
     scene_state_summary,
     validate_scene_transition,
 )
@@ -594,16 +595,24 @@ def _scene_request_payload(
                     "status": "completed|started|ongoing",
                 }
             ],
-            "deltas": {
-                "characters": [],
-                "relationships": [],
-                "rosters": [],
-                "locations": [],
-                "inventory": [],
-                "counters": [],
-            },
+            "deltas": scene_delta_response_schema(),
             "continuity_note": "string",
         },
+        "delta_rules": [
+            "Use an empty list for every state kind that does not actually change in this scene.",
+            "Do not encode confirmations, observations, scene presence, role descriptions, rules, thresholds, "
+            "or prose facts as deltas.",
+            "Use exactly the type-specific id fields shown in response_schema.deltas; never use "
+            "stable_entity_id as a generic substitute.",
+            "A genuinely new character uses separate character deltas for canonical_name and aliases. Never "
+            "put a nested character record in one after value or re-introduce a character already present in "
+            "the project context.",
+            "Every before value must exactly match current_scene_state. Inventory and counter before, delta, "
+            "and after values must be numbers with after equal to before plus delta.",
+            "The numeric values shown in response_schema are type examples, not values to copy.",
+            "For roster join or replace, member_ids and members must describe the same stable member ids. "
+            "Do not invent missing roster members just to satisfy a declared count.",
+        ],
         "instruction": (
             "Return JSON only and exactly one object matching response_schema. "
             "prose must draft only this scene as continuous prose with no heading. "
@@ -614,10 +623,9 @@ def _scene_request_payload(
             "bound as a hard limit and stop the scene before exceeding it. "
             "Every required_event_id must appear exactly once in events. Do not restart, duplicate, or retell "
             "a completed event; never use a forbidden_event_id or roll state back. "
-            "Deltas must declare stable entity ids, before, delta, after, and reason. New characters must "
-            "declare canonical_name and aliases; relationships must declare relationship_id and type; "
-            "roster changes must declare stable member_ids and member records "
-            "where applicable. Continue directly from previous_scene_tail and current_scene_state."
+            "Deltas must follow the exact type-specific fields and delta_rules in this request. Do not emit a "
+            "delta merely to restate an unchanged fact. Continue directly from previous_scene_tail and "
+            "current_scene_state."
         ),
     }
     budget = default_context_budget()
