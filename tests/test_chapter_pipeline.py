@@ -300,6 +300,49 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(64, len(manifest["source_sha256"]))
         self.assertTrue(manifest["selected_items"])
 
+    def test_scene_context_compacts_prompt_selection_audit_list(self) -> None:
+        selection = {
+            "schema_version": "1.0",
+            "policy": "prompt_scene_section_relevance_v1",
+            "source_sha256": "a" * 64,
+            "original_chars": 127_984,
+            "selected_items": [
+                {
+                    "id": f"section:{index}:long-audit-name",
+                    "name": f"Long Audit Section {index}",
+                    "sha256": f"{index:064x}",
+                    "original_chars": 10_000 + index,
+                }
+                for index in range(12)
+            ],
+            "omitted_count": 4,
+        }
+        context = (
+            "# Prompt Context Selection\n"
+            + json.dumps(selection, ensure_ascii=False, indent=2)
+            + "\n\n# Requirements\nPreserve every authoritative story fact."
+        )
+
+        compact = pipeline_module._compact_scene_context(context)
+
+        body = compact.split("# Prompt Context Selection\n", 1)[1].split(
+            "\n\n# Requirements\n",
+            1,
+        )[0]
+        retained = json.loads(body)
+        self.assertEqual(
+            {
+                "schema_version",
+                "policy",
+                "source_sha256",
+                "original_chars",
+                "omitted_count",
+            },
+            set(retained),
+        )
+        self.assertNotIn("selected_items", retained)
+        self.assertEqual("a" * 64, retained["source_sha256"])
+
     def test_scene_request_adaptively_compacts_accumulated_scene_evidence(self) -> None:
         context = "# Requirements\n\n" + "\n\n".join(
             f"Requirement {index}: " + ("bounded context " * 10)

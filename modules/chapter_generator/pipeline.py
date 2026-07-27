@@ -13,7 +13,7 @@ from api.contracts import (
 )
 from api.openai_client import chat_completion
 from core.context_budget import ContextBudgetError, default_context_budget
-from core.prompt_compiler import compile_prompt_contexts
+from core.prompt_compiler import PROMPT_CONTEXT_SELECTION_KEYS, compile_prompt_contexts
 from core.quality.final_artifact_integrity import (
     FinalArtifactIntegrityGate,
     build_integrity_stage_record,
@@ -308,10 +308,14 @@ def _request_chapter_plan_json_repair(
         },
         excluded_sections={"Memory Index", "Structured Context Manifest"},
         required_json_keys={
+            "Prompt Context Selection": PROMPT_CONTEXT_SELECTION_KEYS,
             "Story State": STORY_STATE_CONTEXT_KEYS,
             "StoryProject Chapter Blueprint": {"chapter_blueprint", "read_set_context_digest"},
         },
-        allowed_json_keys={"Story State": STORY_STATE_CONTEXT_KEYS},
+        allowed_json_keys={
+            "Prompt Context Selection": PROMPT_CONTEXT_SELECTION_KEYS,
+            "Story State": STORY_STATE_CONTEXT_KEYS,
+        },
         section_max_chars={
             "Story State": STORY_STATE_SECTION_MAX_CHARS,
             "StoryProject Chapter Blueprint": _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS,
@@ -783,10 +787,14 @@ def _compact_scene_context(
         },
         excluded_sections={"Memory Index", "Structured Context Manifest"},
         required_json_keys={
+            "Prompt Context Selection": PROMPT_CONTEXT_SELECTION_KEYS,
             "Story State": STORY_STATE_CONTEXT_KEYS,
             "StoryProject Chapter Blueprint": {"chapter_blueprint", "read_set_context_digest"},
         },
-        allowed_json_keys={"Story State": STORY_STATE_CONTEXT_KEYS},
+        allowed_json_keys={
+            "Prompt Context Selection": PROMPT_CONTEXT_SELECTION_KEYS,
+            "Story State": STORY_STATE_CONTEXT_KEYS,
+        },
         section_max_chars={
             "Story State": STORY_STATE_SECTION_MAX_CHARS,
             "StoryProject Chapter Blueprint": _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS,

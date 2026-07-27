@@ -17,6 +17,15 @@ from core.structured_context import (
 
 
 PROMPT_CONTEXT_SCHEMA_VERSION = "1.0"
+PROMPT_CONTEXT_SELECTION_KEYS = frozenset(
+    {
+        "schema_version",
+        "policy",
+        "source_sha256",
+        "original_chars",
+        "omitted_count",
+    }
+)
 MANDATORY_SECTIONS = frozenset(
     {
         "Project Profile",
@@ -284,6 +293,7 @@ def _compact_oversized_section(name: str, text: str, *, query: str = "") -> str:
 __all__ = [
     "CompiledPromptContext",
     "MANDATORY_SECTIONS",
+    "PROMPT_CONTEXT_SELECTION_KEYS",
     "PROMPT_CONTEXT_SCHEMA_VERSION",
     "PromptContextBundle",
     "compile_prompt_contexts",

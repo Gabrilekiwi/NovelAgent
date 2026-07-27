@@ -76,6 +76,40 @@ class SceneRepairTest(unittest.TestCase):
         )
         self.assertNotIn("cumulative audit text", compact)
 
+    def test_repair_context_compacts_prompt_selection_audit_list(self) -> None:
+        selection = {
+            "schema_version": "1.0",
+            "policy": "prompt_repair_section_relevance_v1",
+            "source_sha256": "b" * 64,
+            "original_chars": 120_000,
+            "selected_items": [
+                {
+                    "id": f"section:{index}:repair-audit",
+                    "name": f"Repair Audit Section {index}",
+                    "sha256": f"{index:064x}",
+                    "original_chars": 8_000 + index,
+                }
+                for index in range(30)
+            ],
+            "omitted_count": 7,
+        }
+        context = "# Prompt Context Selection\n" + json.dumps(
+            selection,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        compact = _compact_repair_context(context, max_section_chars=1_500)
+
+        body = compact.split("# Prompt Context Selection\n", 1)[1].split(
+            "\n\n# Structured Context Manifest\n",
+            1,
+        )[0]
+        retained = json.loads(body)
+        self.assertNotIn("selected_items", retained)
+        self.assertEqual("b" * 64, retained["source_sha256"])
+        self.assertEqual(7, retained["omitted_count"])
+
     def test_compact_repair_context_selects_complete_relevant_paragraphs(self) -> None:
         context = "\n\n".join(
             f"# Section {index}\nHEAD-{index}\n" + (str(index) * 200) + f"\nTAIL-{index}"
