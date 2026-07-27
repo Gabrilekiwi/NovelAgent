@@ -5,7 +5,12 @@ import re
 import warnings
 from typing import Any
 
-from api.contracts import CHAPTER_CONTRACT, validate_language_output, validate_text_output
+from api.contracts import (
+    CHAPTER_CONTRACT,
+    ModelOutputError,
+    validate_language_output,
+    validate_text_output,
+)
 from api.openai_client import chat_completion
 from core.context_budget import default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
@@ -28,7 +33,7 @@ from core.story_project.coverage import (
     build_blueprint_plan,
     validate_generation_blueprint_contract,
 )
-from modules.chapter_generator.generator import _DRY_RUN_CHAPTER, _load_prompt
+from modules.chapter_generator.generator import _DRY_RUN_CHAPTER, _load_scene_prompt
 
 
 PIPELINE_STAGE_NAMES = (
@@ -40,6 +45,32 @@ PIPELINE_STAGE_NAMES = (
     "commit",
 )
 _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS = 4_096
+_SCENE_CONTEXT_PAYLOAD_POLICIES = (
+    {
+        "previous_tail_chars": 600,
+        "summary_limit": 8,
+        "summary_tail_chars": 280,
+        "include_summary_goal": True,
+    },
+    {
+        "previous_tail_chars": 500,
+        "summary_limit": 8,
+        "summary_tail_chars": 200,
+        "include_summary_goal": False,
+    },
+    {
+        "previous_tail_chars": 400,
+        "summary_limit": 8,
+        "summary_tail_chars": 120,
+        "include_summary_goal": False,
+    },
+    {
+        "previous_tail_chars": 360,
+        "summary_limit": 6,
+        "summary_tail_chars": 120,
+        "include_summary_goal": False,
+    },
+)
 
 
 def run_chapter_pipeline(
@@ -416,7 +447,7 @@ def generate_scenes(
         else:
             payload = chat_completion(
                 [
-                    {"role": "system", "content": _load_prompt()},
+                    {"role": "system", "content": _load_scene_prompt()},
                     {
                         "role": "user",
                         "content": _scene_request_payload(
@@ -442,7 +473,16 @@ def generate_scenes(
             except ValueError:
                 if _looks_like_structured_response(payload):
                     raise
-                scene_result = _legacy_prose_scene_result(payload, scene=scene)
+                _, target_max_chars = _scene_target_char_range(plan)
+                scene_result = _legacy_prose_scene_result(
+                    payload,
+                    scene=scene,
+                    max_chars=(
+                        target_max_chars
+                        if str(language or "").strip().lower().startswith("zh")
+                        else None
+                    ),
+                )
         boundary, state_after = validate_scene_transition(
             scene_index=scene_index,
             state_before=state_before,
@@ -523,9 +563,7 @@ def _scene_request_payload(
     prior_scene_summaries: list[dict[str, Any]] | None = None,
     scene_state: dict[str, Any] | None = None,
 ) -> str:
-    scene_count = max(1, len([item for item in plan.get("scenes", []) if isinstance(item, dict)]))
-    target_min_chars = max(600, 3_000 // scene_count)
-    target_max_chars = max(target_min_chars, 4_500 // scene_count)
+    target_min_chars, target_max_chars = _scene_target_char_range(plan)
     context_query = json.dumps(
         {
             "chapter_plan": plan,
@@ -536,66 +574,116 @@ def _scene_request_payload(
         ensure_ascii=False,
         sort_keys=True,
     )
-    compact_scene_context = _compact_scene_context(input_pack, query=context_query)
-    payload = json.dumps(
-        {
-            "shared_context": compact_scene_context,
-            "chapter_plan": plan,
-            "scene": scene,
-            "story_project_required_beats": scene_required_beats,
-            "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
-            "previous_scene_tail": str(previous_scene_tail)[-600:],
-            "prior_scene_summaries": list(prior_scene_summaries or [])[-8:],
-            "current_scene_state": scene_state_summary(scene_state or empty_scene_state()),
-            "required_event_ids": list(scene.get("required_event_ids") or []),
-            "forbidden_event_ids": list(scene.get("forbidden_event_ids") or []),
-            "response_schema": {
-                "prose": "string",
-                "events": [
-                    {
-                        "event_id": "one required_event_id",
-                        "type": "string",
-                        "subjects": ["stable character ids"],
-                        "objects": ["stable entity ids"],
-                        "location": "stable location id",
-                        "status": "completed|started|ongoing",
-                    }
-                ],
-                "deltas": {
-                    "characters": [],
-                    "relationships": [],
-                    "rosters": [],
-                    "locations": [],
-                    "inventory": [],
-                    "counters": [],
-                },
-                "continuity_note": "string",
+    payload_body = {
+        "chapter_plan": plan,
+        "scene": scene,
+        "story_project_required_beats": scene_required_beats,
+        "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
+        "current_scene_state": scene_state_summary(scene_state or empty_scene_state()),
+        "required_event_ids": list(scene.get("required_event_ids") or []),
+        "forbidden_event_ids": list(scene.get("forbidden_event_ids") or []),
+        "response_schema": {
+            "prose": "string",
+            "events": [
+                {
+                    "event_id": "one required_event_id",
+                    "type": "string",
+                    "subjects": ["stable character ids"],
+                    "objects": ["stable entity ids"],
+                    "location": "stable location id",
+                    "status": "completed|started|ongoing",
+                }
+            ],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
             },
-            "instruction": (
-                "Return JSON only and exactly one object matching response_schema. "
-                "prose must draft only this scene as continuous prose with no heading. "
-                "If story_project_required_beats are provided, cover each listed beat in the prose and preserve "
-                "its essential factual phrases closely enough for deterministic coverage checks. "
-                f"Target {target_min_chars}-{target_max_chars} Chinese characters for this scene when the project "
-                "language is zh-CN, so the merged chapter remains 3000-4500 Chinese characters; treat the upper "
-                "bound as a hard limit and stop the scene before exceeding it. "
-                "Every required_event_id must appear exactly once in events. Do not restart, duplicate, or retell "
-                "a completed event; never use a forbidden_event_id or roll state back. "
-                "Deltas must declare stable entity ids, before, delta, after, and reason. New characters must "
-                "declare canonical_name and aliases; relationships must declare relationship_id and type; "
-                "roster changes must declare stable member_ids and member records "
-                "where applicable. Continue directly from previous_scene_tail and current_scene_state."
-            ),
+            "continuity_note": "string",
         },
-        ensure_ascii=False,
-        indent=2,
-    )
-    default_context_budget().require_input(
-        payload,
-        stage="scene",
-        protocol_texts=(_load_prompt(),),
-    )
+        "instruction": (
+            "Return JSON only and exactly one object matching response_schema. "
+            "prose must draft only this scene as continuous prose with no heading. "
+            "If story_project_required_beats are provided, cover each listed beat in the prose and preserve "
+            "its essential factual phrases closely enough for deterministic coverage checks. "
+            f"Target {target_min_chars}-{target_max_chars} Chinese characters for this scene when the project "
+            "language is zh-CN, so the merged chapter remains 3000-4500 Chinese characters; treat the upper "
+            "bound as a hard limit and stop the scene before exceeding it. "
+            "Every required_event_id must appear exactly once in events. Do not restart, duplicate, or retell "
+            "a completed event; never use a forbidden_event_id or roll state back. "
+            "Deltas must declare stable entity ids, before, delta, after, and reason. New characters must "
+            "declare canonical_name and aliases; relationships must declare relationship_id and type; "
+            "roster changes must declare stable member_ids and member records "
+            "where applicable. Continue directly from previous_scene_tail and current_scene_state."
+        ),
+    }
+    budget = default_context_budget()
+    protocol_texts = (_load_scene_prompt(),)
+    compact_scene_context = _compact_scene_context(input_pack, query=context_query)
+    payload = ""
+    for policy in _SCENE_CONTEXT_PAYLOAD_POLICIES:
+        compact_summaries = _compact_prior_scene_summaries(
+            prior_scene_summaries,
+            limit=int(policy["summary_limit"]),
+            tail_chars=int(policy["summary_tail_chars"]),
+            include_goal=bool(policy["include_summary_goal"]),
+        )
+        payload = json.dumps(
+            {
+                "shared_context": compact_scene_context,
+                **payload_body,
+                "previous_scene_tail": str(previous_scene_tail)[
+                    -int(policy["previous_tail_chars"]) :
+                ],
+                "prior_scene_summaries": compact_summaries,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        report = budget.measure(payload, stage="scene", protocol_texts=protocol_texts)
+        if report["within_budget"]:
+            return payload
+    budget.require_input(payload, stage="scene", protocol_texts=protocol_texts)
     return payload
+
+
+def _compact_prior_scene_summaries(
+    summaries: list[dict[str, Any]] | None,
+    *,
+    limit: int,
+    tail_chars: int,
+    include_goal: bool,
+) -> list[dict[str, Any]]:
+    """Bound accumulated scene evidence without discarding completed event ids."""
+
+    bounded_limit = max(0, limit)
+    if bounded_limit == 0:
+        return []
+    compacted: list[dict[str, Any]] = []
+    for raw in list(summaries or [])[-bounded_limit:]:
+        if not isinstance(raw, dict):
+            continue
+        item = {
+            "index": int(raw.get("index") or 0),
+            "tail": str(raw.get("tail") or "")[-max(0, tail_chars) :],
+            "event_ids": [str(value) for value in raw.get("event_ids") or [] if str(value)],
+        }
+        if include_goal:
+            item["goal"] = str(raw.get("goal") or "")
+        compacted.append(item)
+    return compacted
+
+
+def _scene_target_char_range(plan: dict[str, Any]) -> tuple[int, int]:
+    scene_count = max(
+        1,
+        len([item for item in plan.get("scenes", []) if isinstance(item, dict)]),
+    )
+    target_min_chars = max(600, 3_000 // scene_count)
+    return target_min_chars, max(target_min_chars, 4_500 // scene_count)
 
 
 def _compact_scene_context(
@@ -810,6 +898,7 @@ def _legacy_prose_scene_result(
     payload: str,
     *,
     scene: dict[str, Any],
+    max_chars: int | None = None,
 ) -> dict[str, Any]:
     """Compatibility bridge for pre-2.0.1 providers that still return prose.
 
@@ -818,8 +907,14 @@ def _legacy_prose_scene_result(
     from natural language.
     """
 
+    prose = validate_text_output(payload, CHAPTER_CONTRACT)
+    if max_chars is not None and len(prose) > max_chars:
+        raise ModelOutputError(
+            "legacy prose scene exceeds scene hard limit: "
+            f"{len(prose)} > {max_chars}; refusing a likely whole-chapter response"
+        )
     return {
-        "prose": validate_text_output(payload, CHAPTER_CONTRACT),
+        "prose": prose,
         "events": [
             _normalize_scene_event(item)
             for item in scene.get("planned_events") or []

@@ -8,6 +8,7 @@ from core.context_budget import default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
 
 _PROMPT_PATH = Path("prompts/chapter_prompt.md")
+_SCENE_PROMPT_PATH = Path("prompts/scene_prompt.md")
 _DRY_RUN_CHAPTER = (
     "Continue from shelter, the first alarm sounded just as the shelter lights dimmed. The protagonist stood before the sealed gate "
     "and saw that the route once marked safe had been cut off by a new infection zone. She had to choose "
@@ -21,6 +22,15 @@ def _load_prompt() -> str:
     return (
         "You are a professional long-form fiction chapter writer. Generate continuous prose that advances plot, "
         "preserves continuity, and creates meaningful conflict."
+    )
+
+
+def _load_scene_prompt() -> str:
+    if _SCENE_PROMPT_PATH.exists():
+        return _SCENE_PROMPT_PATH.read_text(encoding="utf-8")
+    return (
+        "You are NovelAgent's sequential scene writer. Return exactly one JSON object matching the requested "
+        "scene response schema. Draft only the assigned scene, never the whole chapter."
     )
 
 

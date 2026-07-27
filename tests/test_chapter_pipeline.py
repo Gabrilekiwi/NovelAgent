@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 from api.contracts import ModelOutputError
 from core.schema import validate_schema
@@ -181,6 +182,69 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(len(context), manifest["original_chars"])
         self.assertEqual(64, len(manifest["source_sha256"]))
         self.assertTrue(manifest["selected_items"])
+
+    def test_scene_request_adaptively_compacts_accumulated_scene_evidence(self) -> None:
+        context = "# Requirements\n\n" + "\n\n".join(
+            f"Requirement {index}: " + ("bounded context " * 10)
+            for index in range(40)
+        )
+
+        class AdaptiveBudget:
+            def __init__(self) -> None:
+                self.measured_payloads: list[dict] = []
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                self.assert_stage(stage)
+                self.measured_payloads.append(json.loads(text))
+                return {"within_budget": len(self.measured_payloads) >= 2}
+
+            def require_input(self, *_: object, **__: object) -> dict:
+                raise AssertionError("the second adaptive context candidate should fit")
+
+            @staticmethod
+            def assert_stage(stage: str) -> None:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+
+        budget = AdaptiveBudget()
+        with patch.object(pipeline_module, "default_context_budget", return_value=budget):
+            payload = json.loads(
+                pipeline_module._scene_request_payload(
+                    input_pack=context,
+                    plan={"scenes": [{"index": index} for index in range(1, 10)]},
+                    scene={"index": 9},
+                    scene_required_beats=[],
+                    blueprint=None,
+                    previous_scene_tail="latest scene tail " * 50,
+                    prior_scene_summaries=[
+                        {
+                            "index": index,
+                            "goal": "planned scene goal " * 10,
+                            "tail": "previous scene tail " * 20,
+                            "event_ids": [f"event-{index}"],
+                        }
+                        for index in range(1, 9)
+                    ],
+                )
+            )
+
+        self.assertEqual(2, len(budget.measured_payloads))
+        first, second = budget.measured_payloads
+        self.assertEqual(first["shared_context"], second["shared_context"])
+        self.assertLess(
+            len(json.dumps(second["prior_scene_summaries"])),
+            len(json.dumps(first["prior_scene_summaries"])),
+        )
+        self.assertLess(
+            len(second["previous_scene_tail"]),
+            len(first["previous_scene_tail"]),
+        )
+        self.assertTrue(all("goal" in item for item in first["prior_scene_summaries"]))
+        self.assertTrue(all("goal" not in item for item in second["prior_scene_summaries"]))
+        self.assertEqual(
+            [f"event-{index}" for index in range(1, 9)],
+            [item["event_ids"][0] for item in payload["prior_scene_summaries"]],
+        )
 
     def test_story_project_plan_does_not_call_model_planner(self) -> None:
         original_chat_completion = pipeline_module.chat_completion
@@ -387,6 +451,74 @@ class ChapterPipelineTest(unittest.TestCase):
                 )
         finally:
             pipeline_module.chat_completion = original_chat_completion
+
+    def test_scene_generation_uses_structured_scene_system_prompt(self) -> None:
+        captured_system_prompts: list[str] = []
+        original_chat_completion = pipeline_module.chat_completion
+
+        def structured_scene(messages, **kwargs):
+            captured_system_prompts.append(str(messages[0]["content"]))
+            request = json.loads(messages[-1]["content"])
+            return json.dumps(
+                {
+                    "prose": "陆沉沿着前一场留下的脚印继续推进。",
+                    "events": request["scene"].get("planned_events") or [],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        pipeline_module.chat_completion = structured_scene
+        try:
+            pipeline_module.generate_scenes(
+                "input pack",
+                {
+                    "goal": "continue",
+                    "scenes": [{"index": 1, "goal": "continue", "required_beats": ["bridge"]}],
+                },
+                dry_run=False,
+                language="zh-CN",
+            )
+        finally:
+            pipeline_module.chat_completion = original_chat_completion
+
+        self.assertEqual(1, len(captured_system_prompts))
+        self.assertIn("exactly one JSON object", captured_system_prompts[0])
+        self.assertIn("never the whole chapter", captured_system_prompts[0])
+        self.assertNotIn("Returns only chapter prose", captured_system_prompts[0])
+
+    def test_oversized_legacy_prose_scene_is_rejected_before_next_call(self) -> None:
+        calls = 0
+        original_chat_completion = pipeline_module.chat_completion
+
+        def oversized_plain_prose(messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            return "陆沉继续推进。" * 400
+
+        pipeline_module.chat_completion = oversized_plain_prose
+        try:
+            with self.assertRaisesRegex(
+                ModelOutputError,
+                "legacy prose scene exceeds scene hard limit",
+            ):
+                pipeline_module.generate_scenes(
+                    "input pack",
+                    pipeline_module.plan_scenes("input pack", chapter_index=1, dry_run=True),
+                    dry_run=False,
+                    language="zh-CN",
+                )
+        finally:
+            pipeline_module.chat_completion = original_chat_completion
+
+        self.assertEqual(1, calls)
 
 
 if __name__ == "__main__":

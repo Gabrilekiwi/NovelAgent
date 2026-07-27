@@ -33,6 +33,7 @@ PROMPT_ASSETS = (
     Path("prompts/director_prompt.md"),
     Path("prompts/polish_prompt.md"),
     Path("prompts/repair_prompt.md"),
+    Path("prompts/scene_prompt.md"),
     Path("prompts/snapshot_prompt.md"),
 )
 
@@ -135,6 +136,7 @@ V1_STRUCTURE_PATHS = (
     Path("prompts/director_prompt.md"),
     Path("prompts/snapshot_prompt.md"),
     Path("prompts/chapter_prompt.md"),
+    Path("prompts/scene_prompt.md"),
     Path("workflows/dynamic_flow.py"),
     Path("api/openai_client.py"),
     Path("api/claude_client.py"),
