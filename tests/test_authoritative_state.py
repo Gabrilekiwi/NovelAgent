@@ -12,7 +12,9 @@ from core.memory_v2 import (
 from core.engine.executor import _attach_authoritative_scene_delta
 from core.memory_v2.runtime import _chapter_operations
 from core.state.authoritative import (
+    adapt_scene_deltas_to_authoritative_delta,
     empty_authoritative_state,
+    seed_authoritative_state_from_snapshot,
     validate_authoritative_state_delta,
 )
 
@@ -66,6 +68,7 @@ class AuthoritativeStateTests(unittest.TestCase):
                         "members": [{"member_id": "member_001", "descriptor": "男孩"}],
                         "delta": 1,
                         "declared_count": 1,
+                        "reason_event_id": "chapter-0001-event-001",
                     }
                 ],
                 "numeric_changes": [
@@ -76,6 +79,7 @@ class AuthoritativeStateTests(unittest.TestCase):
                         "expected_value": 2,
                         "declared_value": 2,
                         "rule": "monotonic_non_decreasing",
+                        "source_event_id": "chapter-0001-event-001",
                     }
                 ],
                 "inventory_changes": [
@@ -85,6 +89,7 @@ class AuthoritativeStateTests(unittest.TestCase):
                         "previous_quantity": 0,
                         "delta": 1,
                         "declared_quantity": 1,
+                        "source_event_id": "chapter-0001-event-001",
                     }
                 ],
                 "location_changes": [
@@ -193,8 +198,19 @@ class AuthoritativeStateTests(unittest.TestCase):
                         "members": [],
                         "delta": -1,
                         "declared_count": 1,
+                        "reason_event_id": "member-002-left",
                     }
-                ]
+                ],
+                "events": [
+                    {
+                        "event_id": "member-002-left",
+                        "type": "member_left",
+                        "subjects": ["member_002"],
+                        "objects": ["main_group"],
+                        "location": "",
+                        "status": "completed",
+                    }
+                ],
             },
         )
 
@@ -337,10 +353,377 @@ class AuthoritativeStateTests(unittest.TestCase):
                         "delta": 2,
                         "expected_value": 8,
                         "declared_value": 9,
+                        "source_event_id": "erosion-change",
                     }
-                ]
+                ],
+                "events": [
+                    {
+                        "event_id": "erosion-change",
+                        "type": "ability_used",
+                        "subjects": ["char_protagonist"],
+                        "objects": ["erosion"],
+                        "location": "",
+                        "status": "completed",
+                    }
+                ],
             },
         )
 
         self.assertFalse(report["accepted"])
         self.assertEqual({"numeric_counter_mismatch"}, _codes(report))
+
+    def test_legacy_snapshot_seeds_character_location_and_erosion(self) -> None:
+        state = seed_authoritative_state_from_snapshot(
+            {
+                "characters": {
+                    "陆沉": {
+                        "role": "主角",
+                        "erosion": 0,
+                        "current_location": "冷库",
+                    }
+                },
+                "spatial_state": {"character_positions": {"陆沉": "冷库"}},
+            }
+        )
+
+        self.assertEqual("陆沉", state["characters"]["陆沉"]["canonical_name"])
+        self.assertEqual("冷库", state["locations"]["陆沉"]["location_id"])
+        self.assertEqual(
+            0,
+            state["numeric_counters"]["陆沉侵蚀值"]["current_value"],
+        )
+
+    def test_scene_field_deltas_adapt_to_full_authority_records(self) -> None:
+        delta = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 3,
+                    "events": [
+                        {
+                            "event_id": "chapter-0016-beat-003",
+                            "type": "identity_confirmed",
+                            "subjects": ["韩野"],
+                            "objects": [],
+                            "location": "消防站",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": {
+                        "characters": [
+                            {
+                                "character_id": "韩野",
+                                "field": "canonical_name",
+                                "before": None,
+                                "after": "韩野",
+                            },
+                            {
+                                "character_id": "韩野",
+                                "field": "role",
+                                "before": None,
+                                "after": "消防站负责人",
+                            },
+                        ],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                }
+            ],
+            base_state=empty_authoritative_state(),
+        )
+        report = validate_authoritative_state_delta(
+            base_state=empty_authoritative_state(),
+            state_delta=delta,
+            chapter_text="",
+        )
+
+        self.assertTrue(report["accepted"], report["findings"])
+        self.assertEqual(
+            "消防站负责人",
+            report["state_after"]["characters"]["韩野"]["role"],
+        )
+
+    def test_chapter_counter_declaration_must_match_seeded_state(self) -> None:
+        base = seed_authoritative_state_from_snapshot(
+            {"characters": {"陆沉": {"role": "主角", "erosion": 0}}}
+        )
+
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            state_delta={},
+            chapter_text="陆沉侵蚀值6/100。",
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn("numeric_counter_mismatch", _codes(report))
+
+    def test_chapter_counter_transition_may_name_before_and_after_values(self) -> None:
+        base = empty_authoritative_state()
+        base["numeric_counters"]["erosion"] = {
+            "counter_id": "erosion",
+            "current_value": 7,
+            "minimum": 0,
+            "maximum": 100,
+            "rule": "monotonic_non_decreasing",
+        }
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            state_delta={
+                "numeric_changes": [
+                    {
+                        "counter_id": "erosion",
+                        "previous_value": 7,
+                        "delta": 2,
+                        "expected_value": 9,
+                        "declared_value": 9,
+                        "source_event_id": "ability-used",
+                    }
+                ],
+                "events": [
+                    {
+                        "event_id": "ability-used",
+                        "type": "ability_used",
+                        "subjects": ["hero"],
+                        "objects": ["erosion"],
+                        "location": "gate",
+                        "status": "completed",
+                    }
+                ],
+            },
+            chapter_text="代价立刻显现，侵蚀值由7/100升至9/100。",
+        )
+
+        self.assertTrue(report["accepted"], report["findings"])
+
+    def test_existing_authority_alias_owns_seeded_legacy_counter(self) -> None:
+        authority = empty_authoritative_state()
+        authority["characters"]["char_lu"] = {
+            "character_id": "char_lu",
+            "canonical_name": "陆沉",
+            "aliases": ["队长"],
+        }
+        state = seed_authoritative_state_from_snapshot(
+            {
+                "authoritative_state": authority,
+                "characters": {"陆沉": {"erosion": 6}},
+            }
+        )
+
+        self.assertEqual(
+            "char_lu",
+            state["numeric_counters"]["陆沉侵蚀值"]["owner_id"],
+        )
+
+    def test_two_new_characters_cannot_claim_the_same_alias(self) -> None:
+        report = validate_authoritative_state_delta(
+            base_state=empty_authoritative_state(),
+            state_delta={
+                "character_changes": [
+                    {
+                        "character_id": "char-1",
+                        "canonical_name": "钱明",
+                        "aliases": ["王主管"],
+                    },
+                    {
+                        "character_id": "char-2",
+                        "canonical_name": "王主管",
+                        "aliases": [],
+                    },
+                ]
+            },
+            chapter_text="",
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn("character_identity_drift", _codes(report))
+
+    def test_relationship_update_uses_the_selected_record_with_multiple_relations(
+        self,
+    ) -> None:
+        base = empty_authoritative_state()
+        base["relationships"] = {
+            "rel-a": {
+                "relationship_id": "rel-a",
+                "source_character_id": "a",
+                "target_character_id": "b",
+                "type": "ally",
+                "status": "active",
+            },
+            "rel-unrelated": {
+                "relationship_id": "rel-unrelated",
+                "source_character_id": "x",
+                "target_character_id": "y",
+                "type": "rival",
+                "status": "active",
+            },
+        }
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            state_delta={
+                "relationship_changes": [
+                    {
+                        "relationship_id": "rel-a",
+                        "source_character_id": "a",
+                        "target_character_id": "b",
+                        "type": "ally",
+                        "field": "status",
+                        "before": "active",
+                        "after": "strained",
+                    }
+                ]
+            },
+            chapter_text="",
+        )
+
+        self.assertTrue(report["accepted"], report["findings"])
+        self.assertEqual(
+            "strained",
+            report["state_after"]["relationships"]["rel-a"]["status"],
+        )
+
+    def test_stateful_ledgers_require_declared_event_references(self) -> None:
+        changes = {
+            "roster_changes": [
+                {
+                    "roster_id": "main",
+                    "operation": "join",
+                    "member_ids": ["member-1"],
+                    "members": [{"member_id": "member-1"}],
+                    "delta": 1,
+                    "declared_count": 1,
+                }
+            ],
+            "numeric_changes": [
+                {
+                    "counter_id": "erosion",
+                    "previous_value": 0,
+                    "delta": 1,
+                    "expected_value": 1,
+                    "declared_value": 1,
+                }
+            ],
+            "inventory_changes": [
+                {
+                    "owner_id": "main",
+                    "item_id": "water",
+                    "previous_quantity": 1,
+                    "delta": -1,
+                    "declared_quantity": 0,
+                }
+            ],
+        }
+
+        for key, value in changes.items():
+            with self.subTest(ledger=key):
+                report = validate_authoritative_state_delta(
+                    base_state=empty_authoritative_state(),
+                    state_delta={key: value},
+                    chapter_text="",
+                )
+                self.assertFalse(report["accepted"])
+                self.assertIn("missing_authority_event_reference", _codes(report))
+
+    def test_relationship_field_delta_rejects_stale_before_state(self) -> None:
+        base = empty_authoritative_state()
+        base["relationships"]["fire->main"] = {
+            "relationship_id": "fire->main",
+            "source_character_id": "fire",
+            "target_character_id": "main",
+            "type": "cooperation",
+            "合作边界": "共享避险区但组织未合并",
+        }
+        delta = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 1,
+                    "events": [],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [
+                            {
+                                "source_id": "fire",
+                                "target_id": "main",
+                                "field": "合作边界",
+                                "before": None,
+                                "after": "双方合并",
+                            }
+                        ],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                }
+            ],
+            base_state=base,
+        )
+
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            state_delta=delta,
+            chapter_text="",
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn("relationship_state_rollback", _codes(report))
+
+    def test_five_six_and_twelve_person_roster_errors_are_blocked(self) -> None:
+        cases = (
+            (4, 1, 5),
+            (5, 1, 6),
+            (7, 5, 12),
+        )
+        for previous_count, joined_count, expected_count in cases:
+            with self.subTest(expected_count=expected_count):
+                base = empty_authoritative_state()
+                existing_members = [
+                    {"member_id": f"member-{index:02d}"}
+                    for index in range(1, previous_count + 1)
+                ]
+                base["roster"]["main"] = {
+                    "roster_id": "main",
+                    "members": existing_members,
+                    "declared_count": previous_count,
+                    "computed_count": previous_count,
+                }
+                joined_members = [
+                    {"member_id": f"member-{previous_count + index:02d}"}
+                    for index in range(1, joined_count + 1)
+                ]
+                event_id = f"join-to-{expected_count}"
+                report = validate_authoritative_state_delta(
+                    base_state=base,
+                    chapter_text="",
+                    state_delta={
+                        "roster_changes": [
+                            {
+                                "roster_id": "main",
+                                "operation": "join",
+                                "member_ids": [
+                                    item["member_id"] for item in joined_members
+                                ],
+                                "members": joined_members,
+                                "delta": joined_count,
+                                "declared_count": expected_count - 1,
+                                "reason_event_id": event_id,
+                            }
+                        ],
+                        "events": [
+                            {
+                                "event_id": event_id,
+                                "type": "survivors_joined",
+                                "subjects": [],
+                                "objects": [
+                                    item["member_id"] for item in joined_members
+                                ],
+                                "location": "shelter",
+                                "status": "completed",
+                            }
+                        ],
+                    },
+                )
+
+                self.assertFalse(report["accepted"])
+                self.assertIn("roster_count_mismatch", _codes(report))

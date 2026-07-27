@@ -397,23 +397,33 @@ def _load_scene_response(payload: str) -> dict[str, Any]:
     raw_events = value.get("events")
     if not isinstance(raw_events, list):
         raise ValueError("Scene response events must be an array")
+    if any(not isinstance(item, dict) for item in raw_events):
+        raise ValueError("Scene response events must contain objects only")
     raw_deltas = value.get("deltas")
     if not isinstance(raw_deltas, dict):
         raise ValueError("Scene response deltas must be an object")
+    delta_keys = (
+        "characters",
+        "relationships",
+        "rosters",
+        "locations",
+        "inventory",
+        "counters",
+    )
+    for key in delta_keys:
+        items = raw_deltas.get(key)
+        if not isinstance(items, list):
+            raise ValueError(f"Scene response deltas.{key} must be an array")
+        if any(not isinstance(item, dict) for item in items):
+            raise ValueError(
+                f"Scene response deltas.{key} must contain objects only"
+            )
     return {
         "prose": prose,
-        "events": [
-            _normalize_scene_event(item)
-            for item in raw_events
-            if isinstance(item, dict)
-        ],
+        "events": [_normalize_scene_event(item) for item in raw_events],
         "deltas": {
-            key: [
-                dict(item)
-                for item in raw_deltas.get(key) or []
-                if isinstance(item, dict)
-            ]
-            for key in ("characters", "relationships", "rosters", "locations", "inventory", "counters")
+            key: [dict(item) for item in raw_deltas[key]]
+            for key in delta_keys
         },
         "continuity_note": str(value.get("continuity_note") or ""),
     }
@@ -538,6 +548,16 @@ def generate_scenes(
             "events": scene_result["events"],
             "deltas": scene_result["deltas"],
             "continuity_note": str(scene_result.get("continuity_note") or ""),
+            **(
+                {"source_call_id": str(scene_result["source_call_id"])}
+                if scene_result.get("source_call_id")
+                else {}
+            ),
+            **(
+                {"source_attempt_id": str(scene_result["source_attempt_id"])}
+                if scene_result.get("source_attempt_id")
+                else {}
+            ),
             "scene_state_before": state_before,
             "scene_state_after": scene_state_summary(state_after),
             "boundary_validation": boundary,
@@ -600,21 +620,9 @@ def _request_scene_candidate(
         ],
         **call_kwargs,
     )
-    try:
-        return _load_scene_response(payload)
-    except ValueError:
-        if _looks_like_structured_response(payload):
-            raise
-        _, target_max_chars = _scene_target_char_range(plan)
-        return _legacy_prose_scene_result(
-            payload,
-            scene=scene,
-            max_chars=(
-                target_max_chars
-                if str(language or "").strip().lower().startswith("zh")
-                else None
-            ),
-        )
+    result = _load_scene_response(payload)
+    result["source_call_id"] = str(call_kwargs["call_id"])
+    return result
 
 
 def _scene_boundary_retry_feedback(
@@ -693,6 +701,12 @@ def _recovered_scene_prefix(
             raise ValueError("recovered scenes must form a contiguous prefix starting at scene 1")
         if position not in plan_indexes:
             raise ValueError("recovered scene count exceeds the current chapter plan")
+        if not _has_complete_structured_scene_payload(draft):
+            # Legacy prose remains immutable evidence, but it cannot be reused
+            # as an accepted Scene because it has no model-declared boundary
+            # facts. Regenerate this scene and the remaining suffix instead of
+            # synthesizing completed events from the plan.
+            break
         recovered[position] = {
             **dict(draft),
             "text": validate_text_output(draft.get("text"), CHAPTER_CONTRACT),
@@ -978,9 +992,18 @@ def _initial_scene_state(input_pack: str) -> dict[str, Any]:
             if not isinstance(record, dict):
                 continue
             normalized = str(event_id).strip()
-            if normalized and normalized not in state["completed_event_ids"]:
-                state["completed_event_ids"].append(normalized)
-            state["completed_events"].append(dict(record))
+            status = str(record.get("status") or "").strip().lower()
+            if status == "completed":
+                if normalized and normalized not in state["completed_event_ids"]:
+                    state["completed_event_ids"].append(normalized)
+                state["completed_events"].append(dict(record))
+            elif status in {"started", "ongoing"}:
+                state["open_actions"].append(dict(record))
+        state["open_action"] = (
+            str(state["open_actions"][0].get("event_id") or "")
+            if state["open_actions"]
+            else ""
+        )
     match = re.search(
         r"(?ms)^# Story State[ \t]*\r?\n(.*?)(?=^# |\Z)",
         str(input_pack or ""),
@@ -1001,6 +1024,12 @@ def _initial_scene_state(input_pack: str) -> dict[str, Any]:
     location = str(story_state.get("last_scene_location") or "").strip()
     characters = story_state.get("last_scene_characters")
     if location and isinstance(characters, list):
+        state["current_location"] = location
+        state["characters_present"] = [
+            str(character).strip()
+            for character in characters
+            if str(character).strip()
+        ]
         for character in characters:
             character_id = str(character).strip()
             if character_id:
@@ -1036,26 +1065,65 @@ def _recovered_scene_result(
     *,
     scene: dict[str, Any],
 ) -> dict[str, Any]:
+    if not _has_complete_structured_scene_payload(recovered):
+        raise ValueError("recovered scene lacks a complete structured boundary")
     raw_events = recovered.get("events")
-    events = (
-        [_normalize_scene_event(item) for item in raw_events if isinstance(item, dict)]
-        if isinstance(raw_events, list)
-        else [dict(item) for item in scene.get("planned_events") or [] if isinstance(item, dict)]
-    )
+    assert isinstance(raw_events, list)
+    events = [
+        _normalize_scene_event(item)
+        for item in raw_events
+    ]
     raw_deltas = recovered.get("deltas")
+    assert isinstance(raw_deltas, dict)
     return {
         "prose": validate_text_output(recovered.get("text"), CHAPTER_CONTRACT),
         "events": events,
-        "deltas": (
-            {
-                key: [dict(item) for item in raw_deltas.get(key) or [] if isinstance(item, dict)]
-                for key in ("characters", "relationships", "rosters", "locations", "inventory", "counters")
-            }
-            if isinstance(raw_deltas, dict)
-            else _empty_scene_deltas()
-        ),
+        "deltas": {
+            key: [
+                dict(item)
+                for item in raw_deltas[key]
+            ]
+            for key in (
+                "characters",
+                "relationships",
+                "rosters",
+                "locations",
+                "inventory",
+                "counters",
+            )
+        },
         "continuity_note": str(recovered.get("continuity_note") or "recovered scene"),
+        **(
+            {"source_attempt_id": str(recovered["source_attempt_id"])}
+            if recovered.get("source_attempt_id")
+            else {}
+        ),
     }
+
+
+def _has_complete_structured_scene_payload(value: dict[str, Any]) -> bool:
+    raw_events = value.get("events")
+    if not isinstance(raw_events, list) or any(
+        not isinstance(item, dict) for item in raw_events
+    ):
+        return False
+    raw_deltas = value.get("deltas")
+    if not isinstance(raw_deltas, dict):
+        return False
+    for key in (
+        "characters",
+        "relationships",
+        "rosters",
+        "locations",
+        "inventory",
+        "counters",
+    ):
+        items = raw_deltas.get(key)
+        if not isinstance(items, list) or any(
+            not isinstance(item, dict) for item in items
+        ):
+            return False
+    return True
 
 
 def _dry_run_scene_result(
@@ -1110,44 +1178,6 @@ def _dry_run_unique_requirement(value: str) -> str:
             if suffix:
                 return suffix
     return text
-
-
-def _looks_like_structured_response(payload: str) -> bool:
-    text = str(payload or "").lstrip()
-    return text.startswith("{") or text.startswith("```")
-
-
-def _legacy_prose_scene_result(
-    payload: str,
-    *,
-    scene: dict[str, Any],
-    max_chars: int | None = None,
-) -> dict[str, Any]:
-    """Compatibility bridge for pre-2.0.1 providers that still return prose.
-
-    The prose is still contract-validated, while events are taken only from
-    the already validated deterministic scene plan. No state delta is inferred
-    from natural language.
-    """
-
-    prose = validate_text_output(payload, CHAPTER_CONTRACT)
-    if max_chars is not None and len(prose) > max_chars:
-        raise ModelOutputError(
-            "legacy prose scene exceeds scene hard limit: "
-            f"{len(prose)} > {max_chars}; refusing a likely whole-chapter response"
-        )
-    return {
-        "prose": prose,
-        "events": [
-            _normalize_scene_event(item)
-            for item in scene.get("planned_events") or []
-            if isinstance(item, dict)
-        ],
-        "deltas": _empty_scene_deltas(),
-        "continuity_note": (
-            "legacy prose response; structured events synthesized from the validated scene plan"
-        ),
-    }
 
 
 def _empty_scene_deltas() -> dict[str, list[dict[str, Any]]]:

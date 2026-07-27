@@ -41,7 +41,8 @@
             "logic",
             "story_project",
             "llm",
-            "final_artifact_integrity"
+            "final_artifact_integrity",
+            "authoritative_state"
           ]
       }
     },

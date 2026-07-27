@@ -12,6 +12,42 @@ import modules.chapter_generator.pipeline as pipeline_module
 
 
 class ChapterPipelineTest(unittest.TestCase):
+    def test_initial_scene_state_restores_location_presence_and_open_action(
+        self,
+    ) -> None:
+        input_pack = (
+            "# Authoritative State\n"
+            + json.dumps(
+                {
+                    "events": {
+                        "door-opening": {
+                            "event_id": "door-opening",
+                            "type": "door_opening",
+                            "subjects": ["Mira"],
+                            "objects": ["blast-door"],
+                            "location": "control room",
+                            "status": "ongoing",
+                        }
+                    }
+                }
+            )
+            + "\n\n# Story State\n"
+            + json.dumps(
+                {
+                    "last_scene_location": "control room",
+                    "last_scene_characters": ["Mira"],
+                    "completed_event_ids": [],
+                }
+            )
+        )
+
+        state = pipeline_module._initial_scene_state(input_pack)
+
+        self.assertEqual("control room", state["current_location"])
+        self.assertEqual(["Mira"], state["characters_present"])
+        self.assertEqual("door-opening", state["open_action"])
+        self.assertEqual([], state["completed_event_ids"])
+
     def test_scene_context_keeps_only_bounded_story_state_semantics(self) -> None:
         story_state = {
             "last_chapter_ending": "The generator failed.",
@@ -426,7 +462,9 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual("The crew enters the sealed station.", plan["goal"])
         self.assertEqual([1], plan["scenes"][0]["required_beat_indexes"])
 
-    def test_recovered_scene_prefix_generates_only_missing_scenes(self) -> None:
+    def test_legacy_recovered_scene_prefix_is_regenerated_from_first_unstructured_scene(
+        self,
+    ) -> None:
         calls: list[str] = []
         recovered = [
             {"index": 1, "text": "The sealed door opened onto the abandoned station."},
@@ -437,19 +475,15 @@ class ChapterPipelineTest(unittest.TestCase):
         def completion(messages, **kwargs):
             calls.append(kwargs.get("stage"))
             request = json.loads(messages[-1]["content"])
+            planned_events = request["scene"]["planned_events"]
+            scene_index = request["scene"]["index"]
             return json.dumps(
                 {
-                    "prose": "Mara carried the serum as the countdown began.",
-                    "events": [
-                        {
-                            "event_id": request["required_event_ids"][0],
-                            "type": "required_beat_3_completed",
-                            "subjects": ["Mara"],
-                            "objects": ["serum"],
-                            "location": "station",
-                            "status": "completed",
-                        }
-                    ],
+                    "prose": (
+                        f"Scene {scene_index} advances the station mission "
+                        f"with unique marker {scene_index}."
+                    ),
+                    "events": planned_events,
                     "deltas": {
                         "characters": [],
                         "relationships": [],
@@ -458,7 +492,7 @@ class ChapterPipelineTest(unittest.TestCase):
                         "inventory": [],
                         "counters": [],
                     },
-                    "continuity_note": "Continues from the missing signal.",
+                    "continuity_note": f"Structured scene {scene_index}.",
                 }
             )
 
@@ -474,10 +508,45 @@ class ChapterPipelineTest(unittest.TestCase):
         finally:
             pipeline_module.chat_completion = original_chat_completion
 
-        self.assertEqual(["chapter_generation"], calls)
+        self.assertEqual(["chapter_generation"] * 3, calls)
         self.assertEqual(3, len(pipeline["scene_drafts"]))
-        self.assertEqual(recovered[0]["text"], pipeline["scene_drafts"][0]["text"])
-        self.assertIn("countdown began", pipeline["merged_chapter"])
+        self.assertNotEqual(recovered[0]["text"], pipeline["scene_drafts"][0]["text"])
+        self.assertTrue(
+            all(draft.get("source_call_id") for draft in pipeline["scene_drafts"])
+        )
+        self.assertIn("unique marker 3", pipeline["merged_chapter"])
+
+    def test_recovered_scene_prefix_stops_before_incomplete_delta_schema(self) -> None:
+        complete = {
+            "index": 1,
+            "text": "The first scene has a complete structured boundary.",
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+        }
+        incomplete = {
+            **complete,
+            "index": 2,
+            "text": "The second scene omits one required delta collection.",
+            "deltas": {
+                key: value
+                for key, value in complete["deltas"].items()
+                if key != "counters"
+            },
+        }
+
+        recovered = pipeline_module._recovered_scene_prefix(
+            [complete, incomplete],
+            {"scenes": [{"index": 1}, {"index": 2}]},
+        )
+
+        self.assertEqual([1], list(recovered))
 
     def test_story_project_generation_blocks_missing_ending_pressure(self) -> None:
         blueprint = self._blueprint()
@@ -637,7 +706,7 @@ class ChapterPipelineTest(unittest.TestCase):
 
         pipeline_module.chat_completion = structured_scene
         try:
-            pipeline_module.generate_scenes(
+            drafts = pipeline_module.generate_scenes(
                 "input pack",
                 {
                     "goal": "continue",
@@ -653,6 +722,10 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertIn("exactly one JSON object", captured_system_prompts[0])
         self.assertIn("never the whole chapter", captured_system_prompts[0])
         self.assertNotIn("Returns only chapter prose", captured_system_prompts[0])
+        self.assertEqual(
+            "openai-chapter_generation-scene-0001-primary",
+            drafts[0]["source_call_id"],
+        )
 
     def test_scene_boundary_relationship_rollback_regenerates_only_current_scene_once(
         self,
@@ -997,20 +1070,22 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(recovered[0]["text"], drafts[0]["text"])
         self.assertEqual("核心已经隔离", drafts[1]["deltas"]["relationships"][0]["after"])
 
-    def test_oversized_legacy_prose_scene_is_rejected_before_next_call(self) -> None:
+    def test_live_plain_prose_scene_is_rejected_instead_of_synthesizing_events(
+        self,
+    ) -> None:
         calls = 0
         original_chat_completion = pipeline_module.chat_completion
 
-        def oversized_plain_prose(messages, **kwargs):
+        def plain_prose(messages, **kwargs):
             nonlocal calls
             calls += 1
-            return "陆沉继续推进。" * 400
+            return "The hero waits outside and does not perform the rescue."
 
-        pipeline_module.chat_completion = oversized_plain_prose
+        pipeline_module.chat_completion = plain_prose
         try:
             with self.assertRaisesRegex(
-                ModelOutputError,
-                "legacy prose scene exceeds scene hard limit",
+                ValueError,
+                "structured JSON",
             ):
                 pipeline_module.generate_scenes(
                     "input pack",

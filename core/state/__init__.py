@@ -1,8 +1,11 @@
 from core.state.builder import build_snapshot_state, build_snapshot_state_with_audit
 from core.state.authoritative import (
     AuthoritativeStateError,
+    adapt_scene_deltas_to_authoritative_delta,
     empty_authoritative_state,
+    merge_authoritative_report_into_validation,
     require_authoritative_state_delta,
+    seed_authoritative_state_from_snapshot,
     validate_authoritative_state,
     validate_authoritative_state_delta,
 )
@@ -33,7 +36,9 @@ __all__ = [
     "build_snapshot_state",
     "build_snapshot_state_with_audit",
     "build_state_update_audit",
+    "adapt_scene_deltas_to_authoritative_delta",
     "empty_authoritative_state",
+    "merge_authoritative_report_into_validation",
     "load_memory_context",
     "load_notion_memory_context",
     "MemoryError",
@@ -45,6 +50,7 @@ __all__ = [
     "SnapshotError",
     "AuthoritativeStateError",
     "require_authoritative_state_delta",
+    "seed_authoritative_state_from_snapshot",
     "validate_authoritative_state",
     "validate_authoritative_state_delta",
     "validate_snapshot",

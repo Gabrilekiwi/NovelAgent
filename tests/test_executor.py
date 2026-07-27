@@ -833,6 +833,149 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(final_artifact["artifact_sha256"], writeback["final_artifact_sha256"])
         self.assertEqual(final_artifact["artifact_sha256"], writeback["writeback_artifact_sha256"])
 
+    def test_story_project_canonicalization_preserves_prior_polish_rejection(self) -> None:
+        tmp_path = self._case_dir("story_project_polish_append_rejected")
+        snapshot_path = tmp_path / "snapshot.json"
+        before_snapshot = self._write_snapshot(snapshot_path)
+        book = self._story_book(tmp_path)
+        outline = self._story_outline(book, 2, "Audit")
+        context = {
+            "story_project_root": str(book),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": {
+                "chapter_index": 2,
+                "outline_path": str(outline),
+                "title": "Audit",
+                "core_event": "danger forces a costly route choice",
+                "required_beats": [
+                    {"index": 1, "text": "danger forces the route choice"},
+                    {"index": 2, "text": "open conflict over the serum"},
+                ],
+                "ending_pressure": "the locked door starts a countdown",
+                "source_path": str(outline),
+                "missing_fields": [],
+            },
+            "source_paths": {"outline_path": str(outline)},
+            "source_resolution": {"entries": []},
+        }
+        source = (
+            "Danger forces the route choice and open conflict over the serum. "
+            "The locked door starts a countdown. "
+        ) * 3
+        appended = source + "\n\n" + (
+            "A rewritten version restates the costly choice and countdown. " * 4
+        )
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "reject_appended_revision",
+                "actions": ["generate_chapter", "polish", "validate"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 0,
+                "notes": [],
+            }
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            director=director,
+            generator=lambda _input_pack: source,
+            polisher=lambda _chapter: appended,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            story_project_context=context,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy="minimal",
+        ).run_once(persist=True)
+
+        codes = {
+            finding["code"]
+            for finding in result["run"]["chapter"]["final_artifact"]["findings"]
+        }
+        self.assertFalse(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertIn("polish_append_instead_of_replace", codes)
+        self.assertEqual(
+            "polish",
+            result["run"]["chapter"]["integrity_audit"]["earliest_blocking_stage"],
+        )
+        self.assertEqual(before_snapshot, snapshot_path.read_text(encoding="utf-8"))
+        self.assertFalse(canonical_prose_path(book, 2, "Audit").exists())
+        self.assertFalse(result["run"]["story_project"]["writeback"]["attempted"])
+
+    def test_authoritative_prose_rollback_blocks_commit_before_persistence(self) -> None:
+        tmp_path = self._case_dir("authority_rollback_rejected")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot = json.loads(self._write_snapshot(snapshot_path))
+        snapshot["characters"] = {"陆沉": {"role": "主角", "erosion": 7}}
+        before = json.dumps(snapshot, ensure_ascii=False, indent=2)
+        snapshot_path.write_text(before, encoding="utf-8")
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            generator=lambda _input_pack: (
+                "陆沉守住门口并核对状态，侵蚀没有净化事件。"
+                "记录却写成陆沉侵蚀值2/100。"
+            ),
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            quality_policy="minimal",
+        ).run_once(persist=True)
+
+        codes = {
+            code
+            for finding in result["quality_decision"]["findings"]
+            for code in finding["codes"]
+        }
+        self.assertFalse(result["accepted"])
+        self.assertFalse(result["committed"])
+        self.assertIn("numeric_counter_rollback", codes)
+        self.assertIn("authoritative_state", result["validation"]["executed_checks"])
+        self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))
+
+    def test_legacy_snapshot_persists_seeded_authoritative_state(self) -> None:
+        tmp_path = self._case_dir("authority_seed_persisted")
+        snapshot_path = tmp_path / "snapshot.json"
+        snapshot = json.loads(self._write_snapshot(snapshot_path))
+        snapshot["characters"] = {"陆沉": {"role": "主角", "erosion": 7}}
+        snapshot_path.write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            generator=lambda _input_pack: (
+                "陆沉守住门口，清点物资后确认陆沉侵蚀值7/100。"
+            ),
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            quality_policy="minimal",
+        ).run_once(persist=True)
+
+        self.assertTrue(result["committed"])
+        saved = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            7,
+            saved["authoritative_state"]["numeric_counters"]["陆沉侵蚀值"][
+                "current_value"
+            ],
+        )
+
     def test_story_project_snapshot_identity_mismatch_fails_before_provider(self) -> None:
         tmp_path = self._case_dir("story_project_identity_mismatch")
         snapshot_path = tmp_path / "snapshot.json"

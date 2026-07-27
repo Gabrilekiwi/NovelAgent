@@ -60,6 +60,9 @@
     "context_budget": {
       "type": "object"
     },
+    "authoritative_state_validation": {
+      "type": "object"
+    },
     "integrity": {
       "type": "object",
       "additionalProperties": true
@@ -212,6 +215,14 @@
           },
           "continuity_note": {
             "type": "string"
+          },
+          "source_call_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_attempt_id": {
+            "type": "string",
+            "minLength": 1
           },
           "scene_state_before": {
             "type": "object"

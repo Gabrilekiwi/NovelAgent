@@ -36,6 +36,7 @@ from core.quality.final_artifact_integrity import (
     FinalArtifactIntegrityConfig,
     FinalArtifactIntegrityGate,
     build_integrity_stage_record,
+    merge_integrity_reports_for_canonicalized_artifact,
     merge_integrity_reports_for_artifact,
     merge_integrity_report_into_validation,
 )
@@ -53,6 +54,12 @@ from core.review.index import build_review_index_entry, review_index_path, updat
 from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH, RuntimePaths
+from core.state.authoritative import (
+    adapt_scene_deltas_to_authoritative_delta,
+    merge_authoritative_report_into_validation,
+    seed_authoritative_state_from_snapshot,
+    validate_authoritative_state_delta,
+)
 from core.memory_v2 import (
     canonical_memory_to_snapshot,
     ensure_memory_v2_storage_layout,
@@ -785,8 +792,10 @@ class AgentExecutor:
                 base_quality_decision=quality_decision,
             )
         )
+        canonicalization_before: str | None = None
         if self.story_project_writeback.enabled:
             before_canonical = chapter
+            canonicalization_before = before_canonical
             chapter = _canonical_story_project_prose(chapter)
             if isinstance(chapter_pipeline, dict):
                 canonical_patch = build_repair_patch_from_texts(
@@ -822,6 +831,52 @@ class AgentExecutor:
             if isinstance(final_scene_drafts, list)
             else None
         )
+        if canonicalization_before is not None:
+            canonicalization_report = self.final_artifact_integrity_gate.evaluate(
+                artifact_text=chapter,
+                stage="writeback_canonicalization",
+                scene_events=final_scene_events,
+                scene_drafts=final_scene_drafts,
+                scene_spans=final_scene_spans,
+            )
+            canonicalization_pipeline_integrity = (
+                (chapter_pipeline.get("integrity") or {}).values()
+                if isinstance(chapter_pipeline, dict)
+                and isinstance(chapter_pipeline.get("integrity"), dict)
+                else ()
+            )
+            canonicalization_report = (
+                merge_integrity_reports_for_canonicalized_artifact(
+                    canonicalization_report,
+                    [
+                        *workflow_integrity_reports.values(),
+                        *canonicalization_pipeline_integrity,
+                    ],
+                    before_artifact_text=canonicalization_before,
+                    before_artifact_sha256=hashlib.sha256(
+                        canonicalization_before.encode("utf-8")
+                    ).hexdigest(),
+                    canonicalized_artifact_text=chapter,
+                )
+            )
+            workflow_integrity_reports["writeback_canonicalization"] = (
+                canonicalization_report
+            )
+            workflow_integrity_records.append(
+                build_integrity_stage_record(
+                    stage="writeback_canonicalization",
+                    input_text=canonicalization_before,
+                    output_text=chapter,
+                    report=canonicalization_report,
+                )
+            )
+            _append_pipeline_integrity(
+                chapter_pipeline,
+                stage="writeback_canonicalization",
+                input_text=canonicalization_before,
+                output_text=chapter,
+                report=canonicalization_report,
+            )
         final_artifact_report = self.final_artifact_integrity_gate.evaluate(
             artifact_text=chapter,
             stage="final_gate",
@@ -855,6 +910,24 @@ class AgentExecutor:
             report=final_artifact_report,
         )
         validation = merge_integrity_report_into_validation(validation, final_artifact_report)
+        authority_base = seed_authoritative_state_from_snapshot(snapshot)
+        authority_delta = adapt_scene_deltas_to_authoritative_delta(
+            final_scene_drafts or [],
+            base_state=authority_base,
+        )
+        authority_report = validate_authoritative_state_delta(
+            base_state=authority_base,
+            state_delta=authority_delta,
+            chapter_text=chapter,
+        )
+        if isinstance(chapter_pipeline, dict):
+            chapter_pipeline["authoritative_state_validation"] = copy.deepcopy(
+                authority_report
+            )
+        validation = merge_authoritative_report_into_validation(
+            validation,
+            authority_report,
+        )
         quality_decision = self.quality_coordinator.decide(
             policy=quality_policy,
             validation=validation,
@@ -874,6 +947,7 @@ class AgentExecutor:
                         self._analyze(chapter, validation, snapshot),
                         chapter_pipeline,
                         snapshot,
+                        authority_delta=authority_delta,
                     ),
                     "analysis_result.schema.json",
                 )
@@ -885,6 +959,10 @@ class AgentExecutor:
                 if accepted
                 else base_snapshot
             )
+            if accepted:
+                next_snapshot["authoritative_state"] = copy.deepcopy(
+                    authority_report["state_after"]
+                )
             memory_updates = (
                 build_memory_updates({"id": planned_run_id, "chapter_index": decision["chapter_index"]}, analysis)
                 if committed
@@ -4327,59 +4405,26 @@ def _attach_authoritative_scene_delta(
     analysis: dict[str, Any],
     chapter_pipeline: dict[str, Any] | None,
     snapshot: dict[str, Any] | None = None,
+    *,
+    authority_delta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result = dict(analysis)
-    if not isinstance(chapter_pipeline, dict):
-        return result
-    scenes = [
-        item
-        for item in chapter_pipeline.get("scene_drafts") or []
-        if isinstance(item, dict)
-    ]
-    if not scenes:
-        return result
-    authority_delta: dict[str, Any] = {
-        "source_tier": "chapter_event",
-        "baseline_state": (
-            dict(snapshot["authoritative_state"])
-            if isinstance(snapshot, dict)
-            and isinstance(snapshot.get("authoritative_state"), dict)
-            else {}
-        ),
-        "character_changes": [],
-        "relationship_changes": [],
-        "roster_changes": [],
-        "numeric_changes": [],
-        "inventory_changes": [],
-        "location_changes": [],
-        "events": [],
-    }
-    key_map = {
-        "characters": "character_changes",
-        "relationships": "relationship_changes",
-        "rosters": "roster_changes",
-        "counters": "numeric_changes",
-        "inventory": "inventory_changes",
-        "locations": "location_changes",
-    }
-    for scene in scenes:
-        scene_index = int(scene.get("index") or 0)
-        for event in scene.get("events") or []:
-            if isinstance(event, dict):
-                authority_delta["events"].append(
-                    {**dict(event), "scene_index": scene_index}
-                )
-        deltas = scene.get("deltas")
-        if not isinstance(deltas, dict):
-            continue
-        for source_key, target_key in key_map.items():
-            for item in deltas.get(source_key) or []:
-                if not isinstance(item, dict):
-                    continue
-                authority_delta[target_key].append(
-                    {**dict(item), "scene_index": scene_index}
-                )
-    result["authoritative_state_delta"] = authority_delta
+    if authority_delta is None:
+        if not isinstance(chapter_pipeline, dict):
+            return result
+        scenes = [
+            item
+            for item in chapter_pipeline.get("scene_drafts") or []
+            if isinstance(item, dict)
+        ]
+        if not scenes:
+            return result
+        baseline = seed_authoritative_state_from_snapshot(snapshot)
+        authority_delta = adapt_scene_deltas_to_authoritative_delta(
+            scenes,
+            base_state=baseline,
+        )
+    result["authoritative_state_delta"] = copy.deepcopy(authority_delta)
     return result
 
 

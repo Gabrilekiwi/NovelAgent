@@ -1800,6 +1800,35 @@
               "type": "integer",
               "minimum": 1
             },
+            "scene_sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "scene_index",
+                  "text_sha256"
+                ],
+                "properties": {
+                  "scene_index": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "text_sha256": {
+                    "type": "string",
+                    "minLength": 64
+                  },
+                  "source_call_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "source_attempt_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
             "plan_goal": {
               "type": "string"
             },
@@ -1901,6 +1930,9 @@
               }
             },
             "final_artifact": {
+              "type": "object"
+            },
+            "authoritative_state_validation": {
               "type": "object"
             },
             "stages": {

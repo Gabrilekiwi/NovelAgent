@@ -5,7 +5,12 @@ import unittest
 import uuid
 from pathlib import Path
 
-from core.engine.run_record import load_latest_run_summary
+from core.engine.run_record import (
+    _integrity_audit,
+    _merge_integrity_records,
+    load_latest_run_summary,
+)
+from core.memory_v2.canonical import canonical_json_hash
 
 
 class RunRecordTest(unittest.TestCase):
@@ -271,6 +276,127 @@ class RunRecordTest(unittest.TestCase):
         (run_dir / "chapter_1_invalid_plan.json").write_text(json.dumps({"run": run}), encoding="utf-8")
 
         self.assertIsNone(load_latest_run_summary(run_dir))
+
+    def test_integrity_records_merge_all_stages_in_timestamp_order(self) -> None:
+        def record(
+            stage: str,
+            timestamp: str,
+            output_sha256: str,
+            *,
+            attempt: int | None = None,
+            blocking_codes: tuple[str, ...] = (),
+        ) -> dict:
+            payload = {
+                "stage": stage,
+                "input_sha256": f"{stage}-input",
+                "output_sha256": output_sha256,
+                "accepted": not blocking_codes,
+                "timestamp": timestamp,
+                "integrity_findings": [
+                    {"code": code, "blocking": True}
+                    for code in blocking_codes
+                ],
+            }
+            if attempt is not None:
+                payload["attempt"] = attempt
+            return payload
+
+        merge = record(
+            "merge",
+            "2026-01-01T00:00:01+00:00",
+            "merge-output",
+            blocking_codes=("duplicate_scene_event",),
+        )
+        polish = record(
+            "polish",
+            "2026-01-01T00:00:02+00:00",
+            "polish-output",
+        )
+        repair_one = record(
+            "repair",
+            "2026-01-01T00:00:03+00:00",
+            "repair-one-output",
+            attempt=1,
+            blocking_codes=("repair_append_instead_of_replace",),
+        )
+        repair_two = record(
+            "repair",
+            "2026-01-01T00:00:04+00:00",
+            "repair-two-output",
+            attempt=2,
+        )
+        final_gate = record(
+            "final_gate",
+            "2026-01-01T00:00:05+00:00",
+            "final-output",
+        )
+        pipeline_records = [merge, polish, final_gate]
+        workflow_records = [
+            repair_two,
+            dict(reversed(list(polish.items()))),
+            repair_one,
+            dict(reversed(list(final_gate.items()))),
+        ]
+
+        merged = _merge_integrity_records(pipeline_records, workflow_records)
+        audit = _integrity_audit(
+            chapter="final chapter",
+            records=merged,
+            final_artifact=None,
+        )
+
+        self.assertEqual(
+            ["merge", "polish", "repair", "repair", "final_gate"],
+            [item["stage"] for item in merged],
+        )
+        self.assertEqual(
+            [1, 2],
+            [item["attempt"] for item in merged if item["stage"] == "repair"],
+        )
+        self.assertEqual(
+            ["repair-one-output", "repair-two-output"],
+            [
+                item["output_sha256"]
+                for item in merged
+                if item["stage"] == "repair"
+            ],
+        )
+        self.assertEqual(5, audit["record_count"])
+        self.assertEqual("merge", audit["earliest_blocking_stage"])
+        self.assertEqual(
+            ["duplicate_scene_event"],
+            audit["earliest_blocking_problem_codes"],
+        )
+        self.assertEqual(
+            [
+                "2026-01-01T00:00:01+00:00",
+                "2026-01-01T00:00:02+00:00",
+                "2026-01-01T00:00:03+00:00",
+                "2026-01-01T00:00:04+00:00",
+                "2026-01-01T00:00:05+00:00",
+            ],
+            [item["timestamp"] for item in audit["stage_hashes"]],
+        )
+        self.assertEqual(
+            [
+                ["duplicate_scene_event"],
+                [],
+                ["repair_append_instead_of_replace"],
+                [],
+                [],
+            ],
+            [item["blocking_problem_codes"] for item in audit["stage_hashes"]],
+        )
+        self.assertEqual(
+            [
+                canonical_json_hash(
+                    item,
+                    exclude_environment_fields=False,
+                )
+                for item in merged
+            ],
+            [item["record_sha256"] for item in audit["stage_hashes"]],
+        )
 
     def _complete_run(self, override: dict) -> dict:
         chapter_index = override.get("chapter_index", 1)

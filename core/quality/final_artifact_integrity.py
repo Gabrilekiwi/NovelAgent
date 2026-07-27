@@ -13,6 +13,7 @@ from core.schema import validate_schema
 
 FINAL_ARTIFACT_GATE_VERSION = "2.0.1"
 FINAL_ARTIFACT_SCHEMA_VERSION = "1.0"
+_SAFE_CANONICALIZATION_POLICY = "rstrip_terminal_whitespace_then_single_newline_v1"
 _BLOCKING = "blocking"
 _WARNING = "warning"
 _PARAGRAPH_SEPARATOR_RE = re.compile(r"\n[ \t]*\n+")
@@ -683,16 +684,107 @@ def merge_integrity_reports_for_artifact(
     report: dict[str, Any],
     prior_reports: Iterable[dict[str, Any]],
 ) -> dict[str, Any]:
+    return _merge_integrity_reports(
+        report,
+        prior_reports,
+        equivalent_before_sha256=None,
+        canonicalization_transition=None,
+    )
+
+
+def merge_integrity_reports_for_canonicalized_artifact(
+    report: dict[str, Any],
+    prior_reports: Iterable[dict[str, Any]],
+    *,
+    before_artifact_text: str,
+    before_artifact_sha256: str,
+    canonicalized_artifact_text: str,
+) -> dict[str, Any]:
+    """Merge reports across the one explicitly supported canonicalization.
+
+    The caller must bind the supplied pre-canonicalization bytes to their hash,
+    supply the post-canonicalization bytes, and provide a report bound to those
+    post-canonicalization bytes. Different-SHA findings are inherited only
+    after all three bindings and the canonicalization rule have been verified.
+    """
+
+    if not isinstance(before_artifact_text, str):
+        raise TypeError("before_artifact_text must be a string")
+    if not isinstance(canonicalized_artifact_text, str):
+        raise TypeError("canonicalized_artifact_text must be a string")
+
+    declared_before_sha256 = str(before_artifact_sha256)
+    actual_before_sha256 = _sha256_text(before_artifact_text)
+    if declared_before_sha256 != actual_before_sha256:
+        raise ValueError(
+            "before_artifact_sha256 does not match before_artifact_text"
+        )
+
+    expected_canonicalized_text = _canonicalize_artifact_text(before_artifact_text)
+    if canonicalized_artifact_text != expected_canonicalized_text:
+        raise ValueError(
+            "canonicalized_artifact_text is not the supported safe canonicalization "
+            "of before_artifact_text"
+        )
+
+    validated_report = validate_schema(
+        report,
+        "final_artifact_integrity.schema.json",
+    )
+    after_artifact_sha256 = _sha256_text(canonicalized_artifact_text)
+    if validated_report["artifact_sha256"] != after_artifact_sha256:
+        raise ValueError(
+            "report artifact_sha256 does not match canonicalized_artifact_text"
+        )
+    if (
+        validated_report["artifact_chars"] != len(canonicalized_artifact_text)
+        or validated_report["artifact_bytes"]
+        != len(canonicalized_artifact_text.encode("utf-8"))
+    ):
+        raise ValueError(
+            "report artifact size does not match canonicalized_artifact_text"
+        )
+
+    transition = {
+        "policy": _SAFE_CANONICALIZATION_POLICY,
+        "before_artifact_sha256": actual_before_sha256,
+        "after_artifact_sha256": after_artifact_sha256,
+    }
+    return _merge_integrity_reports(
+        validated_report,
+        prior_reports,
+        equivalent_before_sha256=actual_before_sha256,
+        canonicalization_transition=transition,
+    )
+
+
+def _merge_integrity_reports(
+    report: dict[str, Any],
+    prior_reports: Iterable[dict[str, Any]],
+    *,
+    equivalent_before_sha256: str | None,
+    canonicalization_transition: dict[str, str] | None,
+) -> dict[str, Any]:
     merged = dict(validate_schema(report, "final_artifact_integrity.schema.json"))
     findings = [dict(item) for item in merged["findings"]]
     matching_stages: list[str] = []
+    equivalent_stages: list[str] = []
+    equivalent_prior_hashes: list[str] = []
     for prior in prior_reports:
         if not isinstance(prior, dict):
             continue
         validated = validate_schema(prior, "final_artifact_integrity.schema.json")
-        if validated["artifact_sha256"] != merged["artifact_sha256"]:
+        prior_sha256 = str(validated["artifact_sha256"])
+        if prior_sha256 == merged["artifact_sha256"]:
+            matching_stages.append(str(validated["stage"]))
+        elif (
+            equivalent_before_sha256 is not None
+            and prior_sha256 == equivalent_before_sha256
+        ):
+            equivalent_stages.append(str(validated["stage"]))
+            equivalent_prior_hashes.append(prior_sha256)
+        else:
             continue
-        matching_stages.append(str(validated["stage"]))
         findings.extend(dict(item) for item in validated["findings"])
     findings = _deduplicate_findings(findings)
     metrics = dict(merged["metrics"])
@@ -703,6 +795,16 @@ def merge_integrity_reports_for_artifact(
             "matching_prior_stages": sorted(set(matching_stages)),
         }
     )
+    if canonicalization_transition is not None:
+        metrics.update(
+            {
+                "canonicalization_transition": dict(canonicalization_transition),
+                "equivalent_prior_stages": sorted(set(equivalent_stages)),
+                "equivalent_prior_artifact_sha256s": sorted(
+                    set(equivalent_prior_hashes)
+                ),
+            }
+        )
     merged["findings"] = findings
     merged["metrics"] = metrics
     merged["accepted"] = not any(item["blocking"] for item in findings)
@@ -984,12 +1086,17 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
+def _canonicalize_artifact_text(value: str) -> str:
+    return str(value).rstrip() + "\n"
+
+
 __all__ = [
     "FINAL_ARTIFACT_GATE_VERSION",
     "FinalArtifactIntegrityConfig",
     "FinalArtifactIntegrityError",
     "FinalArtifactIntegrityGate",
     "build_integrity_stage_record",
+    "merge_integrity_reports_for_canonicalized_artifact",
     "merge_integrity_reports_for_artifact",
     "merge_integrity_report_into_validation",
 ]

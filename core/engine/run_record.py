@@ -537,17 +537,21 @@ def _chapter_summary(
             final_artifact,
             "final_artifact_integrity.schema.json",
         )
-    records = (
-        [dict(item) for item in integrity_records if isinstance(item, dict)]
-        if isinstance(integrity_records, list)
-        else []
-    )
-    if not records and isinstance(chapter_pipeline, dict):
-        records = [
+    pipeline_records = (
+        [
             dict(item)
             for item in chapter_pipeline.get("integrity_records") or []
             if isinstance(item, dict)
         ]
+        if isinstance(chapter_pipeline, dict)
+        else []
+    )
+    workflow_records = (
+        [dict(item) for item in integrity_records if isinstance(item, dict)]
+        if isinstance(integrity_records, list)
+        else []
+    )
+    records = _merge_integrity_records(pipeline_records, workflow_records)
     if records:
         summary["integrity_records"] = records
         summary["integrity_audit"] = _integrity_audit(
@@ -558,6 +562,57 @@ def _chapter_summary(
     if chapter_pipeline is not None:
         summary["pipeline"] = _chapter_pipeline_summary(chapter_pipeline)
     return summary
+
+
+def _merge_integrity_records(
+    pipeline_records: list[dict[str, Any]] | None,
+    workflow_records: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    indexed_records: list[tuple[int, dict[str, Any]]] = []
+    seen_hashes: set[str] = set()
+    for source in (pipeline_records, workflow_records):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if not isinstance(item, dict):
+                continue
+            record = dict(item)
+            record_sha256 = _integrity_record_sha256(record)
+            if record_sha256 in seen_hashes:
+                continue
+            seen_hashes.add(record_sha256)
+            indexed_records.append((len(indexed_records), record))
+    indexed_records.sort(
+        key=lambda item: _integrity_record_sort_key(
+            record=item[1],
+            stable_index=item[0],
+        )
+    )
+    return [record for _, record in indexed_records]
+
+
+def _integrity_record_sort_key(
+    *,
+    record: dict[str, Any],
+    stable_index: int,
+) -> tuple[int, datetime, int]:
+    timestamp = record.get("timestamp")
+    if isinstance(timestamp, str) and timestamp.strip():
+        normalized = timestamp.strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return (0, parsed.astimezone(timezone.utc), stable_index)
+        except (OverflowError, ValueError):
+            pass
+    return (1, datetime.max.replace(tzinfo=timezone.utc), stable_index)
+
+
+def _integrity_record_sha256(record: dict[str, Any]) -> str:
+    return canonical_json_hash(record, exclude_environment_fields=False)
 
 
 def _integrity_audit(
@@ -604,6 +659,13 @@ def _integrity_audit(
                 "input_sha256": record.get("input_sha256"),
                 "output_sha256": record.get("output_sha256"),
                 "accepted": bool(record.get("accepted")),
+                "timestamp": record.get("timestamp"),
+                "blocking_problem_codes": [
+                    str(finding.get("code"))
+                    for finding in record.get("integrity_findings") or []
+                    if isinstance(finding, dict) and finding.get("blocking")
+                ],
+                "record_sha256": _integrity_record_sha256(record),
             }
             for record in records
         ],
@@ -618,6 +680,26 @@ def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any
     summary = {
         "chapter_index": pipeline.get("chapter_index"),
         "scene_count": len(pipeline.get("scene_drafts", [])),
+        "scene_sources": [
+            {
+                "scene_index": int(scene.get("index") or 0),
+                "text_sha256": hashlib.sha256(
+                    str(scene.get("text") or "").encode("utf-8")
+                ).hexdigest(),
+                **(
+                    {"source_call_id": str(scene["source_call_id"])}
+                    if scene.get("source_call_id")
+                    else {}
+                ),
+                **(
+                    {"source_attempt_id": str(scene["source_attempt_id"])}
+                    if scene.get("source_attempt_id")
+                    else {}
+                ),
+            }
+            for scene in pipeline.get("scene_drafts", [])
+            if isinstance(scene, dict)
+        ],
         "plan_goal": (pipeline.get("plan") or {}).get("goal"),
         "merged_chars": len(str(pipeline.get("merged_chapter") or "")),
         "scene_spans": pipeline.get("scene_spans", []),
@@ -637,6 +719,10 @@ def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any
         summary["chapter_blueprint"] = pipeline.get("chapter_blueprint")
     if pipeline.get("blueprint_coverage") is not None:
         summary["blueprint_coverage"] = pipeline.get("blueprint_coverage")
+    if pipeline.get("authoritative_state_validation") is not None:
+        summary["authoritative_state_validation"] = pipeline.get(
+            "authoritative_state_validation"
+        )
     return summary
 
 

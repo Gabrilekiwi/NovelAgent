@@ -8,6 +8,7 @@ from core.quality.final_artifact_integrity import (
     FinalArtifactIntegrityGate,
     build_integrity_stage_record,
     merge_integrity_report_into_validation,
+    merge_integrity_reports_for_canonicalized_artifact,
     merge_integrity_reports_for_artifact,
 )
 from core.quality_decision import build_quality_decision
@@ -177,6 +178,97 @@ class FinalArtifactIntegrityGateTests(unittest.TestCase):
 
         self.assertTrue(combined["accepted"])
         self.assertNotIn("polish_append_instead_of_replace", _codes(combined))
+
+    def test_safe_canonicalization_retains_blocking_prior_finding(self) -> None:
+        source = "The crew crossed the gate under pressure. " * 4
+        before = source + "\n\n" + (
+            "A rewritten version follows with different wording. " * 4
+        )
+        polish = self.gate.evaluate(
+            artifact_text=before,
+            source_text=source,
+            stage="polish",
+        )
+        canonicalized = before.rstrip() + "\n"
+        final = self.gate.evaluate(
+            artifact_text=canonicalized,
+            stage="final_gate",
+        )
+
+        combined = merge_integrity_reports_for_canonicalized_artifact(
+            final,
+            [polish],
+            before_artifact_text=before,
+            before_artifact_sha256=polish["artifact_sha256"],
+            canonicalized_artifact_text=canonicalized,
+        )
+
+        self.assertTrue(final["accepted"])
+        self.assertFalse(combined["accepted"])
+        self.assertIn("polish_append_instead_of_replace", _codes(combined))
+        self.assertEqual(
+            ["polish"],
+            combined["metrics"]["equivalent_prior_stages"],
+        )
+        self.assertEqual(
+            [polish["artifact_sha256"]],
+            combined["metrics"]["equivalent_prior_artifact_sha256s"],
+        )
+        self.assertEqual(
+            polish["artifact_sha256"],
+            combined["metrics"]["canonicalization_transition"][
+                "before_artifact_sha256"
+            ],
+        )
+        self.assertEqual(
+            final["artifact_sha256"],
+            combined["metrics"]["canonicalization_transition"][
+                "after_artifact_sha256"
+            ],
+        )
+
+    def test_different_sha_does_not_inherit_without_explicit_canonicalization(self) -> None:
+        source = "The crew crossed the gate under pressure. " * 4
+        before = source + "\n\n" + (
+            "A rewritten version follows with different wording. " * 4
+        )
+        polish = self.gate.evaluate(
+            artifact_text=before,
+            source_text=source,
+            stage="polish",
+        )
+        canonicalized = before.rstrip() + "\n"
+        final = self.gate.evaluate(
+            artifact_text=canonicalized,
+            stage="final_gate",
+        )
+
+        combined = merge_integrity_reports_for_artifact(final, [polish])
+
+        self.assertNotEqual(
+            polish["artifact_sha256"],
+            final["artifact_sha256"],
+        )
+        self.assertTrue(combined["accepted"])
+        self.assertNotIn("polish_append_instead_of_replace", _codes(combined))
+        self.assertNotIn("equivalent_prior_stages", combined["metrics"])
+
+    def test_canonicalization_merge_rejects_unproved_transition(self) -> None:
+        before = "Only one artifact version remains."
+        canonicalized = before + "\n"
+        final = self.gate.evaluate(
+            artifact_text=canonicalized,
+            stage="final_gate",
+        )
+
+        with self.assertRaisesRegex(ValueError, "before_artifact_sha256"):
+            merge_integrity_reports_for_canonicalized_artifact(
+                final,
+                [],
+                before_artifact_text=before,
+                before_artifact_sha256="0" * 64,
+                canonicalized_artifact_text=canonicalized,
+            )
 
     def test_validation_and_quality_decision_include_integrity_problem_code(self) -> None:
         snapshot = normalize_snapshot({"chapter_index": 1})

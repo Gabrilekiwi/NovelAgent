@@ -4,6 +4,7 @@ from collections import Counter
 import copy
 import hashlib
 import json
+import re
 from typing import Any, Iterable
 
 
@@ -123,6 +124,10 @@ def empty_scene_state() -> dict[str, Any]:
         "counters": {},
         "completed_event_ids": [],
         "completed_events": [],
+        "current_location": "",
+        "characters_present": [],
+        "open_action": "",
+        "open_actions": [],
     }
 
 
@@ -152,6 +157,9 @@ def validate_scene_transition(
     prior_events = [
         item for item in before["completed_events"] if isinstance(item, dict)
     ]
+    prior_open_actions = [
+        item for item in before["open_actions"] if isinstance(item, dict)
+    ]
     seen_event_ids: set[str] = set()
     seen_event_signatures: set[str] = set()
 
@@ -166,6 +174,14 @@ def validate_scene_transition(
     for event in normalized_events:
         event_id = str(event["event_id"])
         signature = _event_signature(event)
+        findings.extend(
+            _validate_event_location(
+                scene_index=scene_index,
+                state_before=before,
+                event=event,
+                location_deltas=normalized_deltas["locations"],
+            )
+        )
         if event_id in seen_event_ids:
             findings.append(
                 _finding(
@@ -237,7 +253,9 @@ def validate_scene_transition(
         if str(event.get("status") or "") == "completed":
             for prior in prior_events:
                 if (
-                    _event_has_identity_anchor(event)
+                    not _is_plan_bookkeeping_event(event)
+                    and not _is_plan_bookkeeping_event(prior)
+                    and _event_has_identity_anchor(event)
                     and _event_has_identity_anchor(prior)
                     and _event_signature(prior) == _event_signature(event)
                 ):
@@ -253,6 +271,27 @@ def validate_scene_transition(
                         )
                     )
                     break
+        if str(event.get("status") or "") in {"started", "ongoing"}:
+            action_signature = _event_action_signature(event)
+            for prior in prior_open_actions:
+                if (
+                    str(prior.get("event_id") or "") != event_id
+                    and _event_has_identity_anchor(event)
+                    and _event_has_identity_anchor(prior)
+                    and _event_action_signature(prior) == action_signature
+                ):
+                    findings.append(
+                        _finding(
+                            "open_action_restarted",
+                            f"Scene {scene_index} restarted an already open action under a new id.",
+                            {
+                                "event_id": event_id,
+                                "prior_event_id": prior.get("event_id"),
+                                "signature": signature,
+                            },
+                        )
+                    )
+                    break
 
     after = copy.deepcopy(before)
     findings.extend(_apply_character_deltas(after, normalized_deltas["characters"]))
@@ -263,13 +302,63 @@ def validate_scene_transition(
     findings.extend(_apply_numeric_deltas(after, normalized_deltas["counters"], inventory=False))
 
     for event in normalized_events:
-        if str(event.get("status") or "") != "completed":
-            continue
         event_id = str(event["event_id"])
-        if event_id not in after["completed_event_ids"]:
-            after["completed_event_ids"].append(event_id)
-        if not any(_event_signature(item) == _event_signature(event) for item in after["completed_events"]):
-            after["completed_events"].append(event)
+        status = str(event.get("status") or "")
+        signature = _event_signature(event)
+        if status in {"started", "ongoing"}:
+            after["open_actions"] = [
+                item
+                for item in after["open_actions"]
+                if str(item.get("event_id") or "") != event_id
+            ]
+            after["open_actions"].append(event)
+        elif status in {
+            "completed",
+            "resolved",
+            "interrupted",
+            "cancelled",
+            "canceled",
+            "failed",
+        }:
+            after["open_actions"] = [
+                item
+                for item in after["open_actions"]
+                if (
+                    str(item.get("event_id") or "") != event_id
+                    and _event_action_signature(item)
+                    != _event_action_signature(event)
+                )
+            ]
+        if status == "completed":
+            if event_id not in after["completed_event_ids"]:
+                after["completed_event_ids"].append(event_id)
+            if not any(
+                _event_signature(item) == signature
+                for item in after["completed_events"]
+            ):
+                after["completed_events"].append(event)
+
+    locations = [
+        str(event.get("location") or "").strip()
+        for event in normalized_events
+        if str(event.get("location") or "").strip()
+    ]
+    if locations:
+        after["current_location"] = locations[-1]
+        after["characters_present"] = sorted(
+            {
+                str(subject)
+                for event in normalized_events
+                if str(event.get("location") or "").strip() == locations[-1]
+                for subject in event.get("subjects") or []
+                if str(subject).strip()
+            }
+        )
+    after["open_action"] = (
+        str(after["open_actions"][0].get("event_id") or "")
+        if after["open_actions"]
+        else ""
+    )
 
     report = {
         "schema_version": SCENE_CONTINUITY_SCHEMA_VERSION,
@@ -304,6 +393,10 @@ def scene_state_summary(state: dict[str, Any]) -> dict[str, Any]:
         "counters": copy.deepcopy(normalized["counters"]),
         "completed_event_ids": list(normalized["completed_event_ids"]),
         "completed_events": copy.deepcopy(normalized["completed_events"][-24:]),
+        "current_location": normalized["current_location"],
+        "characters_present": list(normalized["characters_present"]),
+        "open_action": normalized["open_action"],
+        "open_actions": copy.deepcopy(normalized["open_actions"][-12:]),
     }
 
 
@@ -314,10 +407,62 @@ def _normalize_state(value: dict[str, Any] | None) -> dict[str, Any]:
     for key in ("characters", "relationships", "rosters", "locations", "inventories", "counters"):
         if isinstance(value.get(key), dict):
             base[key] = copy.deepcopy(value[key])
-    for key in ("completed_event_ids", "completed_events"):
+    for key in (
+        "completed_event_ids",
+        "completed_events",
+        "characters_present",
+        "open_actions",
+    ):
         if isinstance(value.get(key), list):
             base[key] = copy.deepcopy(value[key])
+    for key in ("current_location", "open_action"):
+        if isinstance(value.get(key), str):
+            base[key] = str(value[key])
     return base
+
+
+def _validate_event_location(
+    *,
+    scene_index: int,
+    state_before: dict[str, Any],
+    event: dict[str, Any],
+    location_deltas: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    event_location = str(event.get("location") or "").strip()
+    if not event_location:
+        return []
+    transitions = {
+        str(item.get("entity_id") or "").strip(): item
+        for item in location_deltas
+        if isinstance(item, dict) and str(item.get("entity_id") or "").strip()
+    }
+    findings: list[dict[str, Any]] = []
+    for entity_id in _unique_strings(
+        [*(event.get("subjects") or []), *(event.get("objects") or [])]
+    ):
+        current = state_before["locations"].get(entity_id)
+        if current in (None, "") or current == event_location:
+            continue
+        transition = transitions.get(entity_id)
+        if (
+            isinstance(transition, dict)
+            and transition.get("before") == current
+            and transition.get("after") == event_location
+        ):
+            continue
+        findings.append(
+            _finding(
+                "scene_boundary_state_mismatch",
+                f"Scene {scene_index} places {entity_id} at {event_location} without a matching location delta.",
+                {
+                    "event_id": event.get("event_id"),
+                    "entity_id": entity_id,
+                    "expected_location": current,
+                    "event_location": event_location,
+                },
+            )
+        )
+    return findings
 
 
 def _normalize_event(value: dict[str, Any]) -> dict[str, Any]:
@@ -565,6 +710,31 @@ def _event_signature(event: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _event_action_signature(event: dict[str, Any]) -> str:
+    payload = {
+        "type": str(event.get("type") or ""),
+        "subjects": sorted(_string_list(event.get("subjects"))),
+        "objects": sorted(_string_list(event.get("objects"))),
+        "location": str(event.get("location") or ""),
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _is_plan_bookkeeping_event(event: dict[str, Any]) -> bool:
+    return bool(
+        re.fullmatch(
+            r"required_beat_\d+_completed",
+            str(event.get("type") or ""),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _event_has_identity_anchor(event: dict[str, Any]) -> bool:
     return bool(
         _string_list(event.get("subjects"))
@@ -591,6 +761,10 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item)]
+
+
+def _unique_strings(value: Any) -> list[str]:
+    return list(dict.fromkeys(_string_list(value)))
 
 
 def _roster_members(value: Any) -> dict[str, dict[str, Any]]:

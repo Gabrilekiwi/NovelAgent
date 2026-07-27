@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 import unicodedata
 from typing import Any
+
+from core.schema import validate_schema
 
 
 AUTHORITATIVE_STATE_SCHEMA_VERSION = "1.0"
@@ -21,6 +24,46 @@ _STATE_COLLECTIONS = (
     "locations",
     "events",
 )
+_AUTHORITY_DELTA_COLLECTIONS = (
+    "character_changes",
+    "relationship_changes",
+    "roster_changes",
+    "numeric_changes",
+    "inventory_changes",
+    "location_changes",
+    "events",
+)
+_SCENE_DELTA_KEY_MAP = {
+    "characters": "character_changes",
+    "relationships": "relationship_changes",
+    "rosters": "roster_changes",
+    "counters": "numeric_changes",
+    "inventory": "inventory_changes",
+    "locations": "location_changes",
+}
+_KNOWN_COUNTER_SPECS: dict[str, dict[str, Any]] = {
+    "erosion": {
+        "field_names": ("erosion", "erosion_value", "侵蚀", "侵蚀值"),
+        "labels": ("侵蚀值", "侵蚀", "erosion"),
+        "minimum": 0,
+        "maximum": 100,
+        "rule": "monotonic_non_decreasing",
+    },
+    "corruption": {
+        "field_names": ("corruption", "corruption_value", "污染", "污染值", "腐化", "腐化值"),
+        "labels": ("污染值", "腐化值", "corruption"),
+        "minimum": 0,
+        "maximum": 100,
+        "rule": "monotonic_non_decreasing",
+    },
+    "infection": {
+        "field_names": ("infection", "infection_value", "感染", "感染值"),
+        "labels": ("感染值", "感染", "infection"),
+        "minimum": 0,
+        "maximum": 100,
+        "rule": "monotonic_non_decreasing",
+    },
+}
 
 
 class AuthoritativeStateError(ValueError):
@@ -62,7 +105,6 @@ def validate_authoritative_state_delta(
     state_delta: dict[str, Any],
     chapter_text: str,
 ) -> dict[str, Any]:
-    del chapter_text
     base = _normalize_state(base_state)
     delta = state_delta if isinstance(state_delta, dict) else {}
     after = copy.deepcopy(base)
@@ -83,7 +125,14 @@ def validate_authoritative_state_delta(
         )
     )
     findings.extend(_apply_relationship_changes(after, delta.get("relationship_changes"), source_tier=source_tier))
-    findings.extend(_apply_roster_changes(after, delta.get("roster_changes"), source_tier=source_tier))
+    findings.extend(
+        _apply_roster_changes(
+            after,
+            delta.get("roster_changes"),
+            source_tier=source_tier,
+            declared_events=declared_events,
+        )
+    )
     findings.extend(
         _apply_numeric_changes(
             after,
@@ -92,9 +141,23 @@ def validate_authoritative_state_delta(
             declared_events=declared_events,
         )
     )
-    findings.extend(_apply_inventory_changes(after, delta.get("inventory_changes"), source_tier=source_tier))
+    findings.extend(
+        _apply_inventory_changes(
+            after,
+            delta.get("inventory_changes"),
+            source_tier=source_tier,
+            declared_events=declared_events,
+        )
+    )
     findings.extend(_apply_location_changes(after, delta.get("location_changes"), source_tier=source_tier))
     findings.extend(_apply_events(after, delta.get("events"), source_tier=source_tier))
+    findings.extend(
+        _validate_chapter_counter_declarations(
+            chapter_text,
+            after,
+            numeric_changes=delta.get("numeric_changes"),
+        )
+    )
 
     return {
         "schema_version": AUTHORITATIVE_STATE_SCHEMA_VERSION,
@@ -113,9 +176,1014 @@ def require_authoritative_state_delta(report: dict[str, Any]) -> dict[str, Any]:
     return report
 
 
+def merge_authoritative_report_into_validation(
+    validation: dict[str, Any],
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose authority conflicts to the same QualityDecision input as validators."""
+
+    base = copy.deepcopy(validation)
+    authority_problems = [
+        _authority_problem(item)
+        for item in report.get("findings") or []
+        if isinstance(item, dict)
+    ]
+    checks = [
+        copy.deepcopy(item)
+        for item in base.get("checks") or []
+        if isinstance(item, dict)
+        and item.get("name") != "authoritative_state"
+    ]
+    if not checks:
+        legacy_problems = [
+            _normalize_validation_problem(item, validation_ok=bool(base.get("ok")))
+            for item in base.get("problems") or []
+            if isinstance(item, dict)
+        ]
+        checks.append(
+            {
+                "name": "custom_validator",
+                "ok": not any(item["blocking"] for item in legacy_problems),
+                "problems": legacy_problems,
+            }
+        )
+    checks.append(
+        {
+            "name": "authoritative_state",
+            "ok": not authority_problems,
+            "problems": authority_problems,
+            "schema_version": str(
+                report.get("schema_version") or AUTHORITATIVE_STATE_SCHEMA_VERSION
+            ),
+            "applied_source_tier": str(report.get("applied_source_tier") or ""),
+        }
+    )
+    all_problems = [
+        _normalize_validation_problem(
+            problem,
+            validation_ok=bool(check.get("ok")),
+        )
+        for check in checks
+        for problem in check.get("problems") or []
+        if isinstance(problem, dict)
+    ]
+    normalized_checks: list[dict[str, Any]] = []
+    cursor = 0
+    for check in checks:
+        count = len(
+            [item for item in check.get("problems") or [] if isinstance(item, dict)]
+        )
+        normalized_checks.append(
+            {
+                **copy.deepcopy(check),
+                "problems": all_problems[cursor : cursor + count],
+                "ok": not any(
+                    item["blocking"]
+                    for item in all_problems[cursor : cursor + count]
+                ),
+            }
+        )
+        cursor += count
+    executed = [str(item) for item in base.get("executed_checks") or []]
+    if "authoritative_state" not in executed:
+        executed.append("authoritative_state")
+    severity_order = ("critical", "high", "medium", "low")
+    action_order = (
+        "seed_conflict_scene",
+        "expand_scene",
+        "add_conflict_signal",
+        "remove_forbidden_term",
+        "add_required_term",
+        "anchor_known_location",
+        "insert_opening_bridge",
+        "rewrite_spatial_transition",
+        "anchor_last_scene_state",
+        "repair_character_position",
+        "add_transition_event",
+        "flag_unknown_location",
+        "add_character_location",
+        "rewrite_inactive_character_action",
+        "correct_chapter_index",
+        "manual_review",
+    )
+    base.update(
+        {
+            "ok": not any(item["blocking"] for item in all_problems),
+            "requested_focus": [
+                str(item) for item in base.get("requested_focus") or []
+            ],
+            "executed_checks": executed,
+            "skipped_checks": [
+                str(item) for item in base.get("skipped_checks") or []
+            ],
+            "checks": normalized_checks,
+            "problems": all_problems,
+            "blocking_problem_count": sum(
+                1 for item in all_problems if item["blocking"]
+            ),
+            "warning_count": sum(
+                1 for item in all_problems if not item["blocking"]
+            ),
+            "severity_counts": [
+                {
+                    "severity": severity,
+                    "count": sum(
+                        1
+                        for item in all_problems
+                        if item["severity"] == severity
+                    ),
+                }
+                for severity in severity_order
+            ],
+            "deterministic_repair_count": sum(
+                1
+                for item in all_problems
+                if item["repair_action"] != "manual_review"
+            ),
+            "manual_review_count": sum(
+                1
+                for item in all_problems
+                if item["repair_action"] == "manual_review"
+            ),
+            "repair_action_counts": [
+                {
+                    "action": action,
+                    "count": sum(
+                        1
+                        for item in all_problems
+                        if item["repair_action"] == action
+                    ),
+                }
+                for action in action_order
+            ],
+        }
+    )
+    return validate_schema(base, "validation_result.schema.json")
+
+
 def normalize_entity_alias(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
+
+
+def seed_authoritative_state_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    """Deterministically bootstrap authority ledgers from a legacy/runtime snapshot.
+
+    Existing authoritative records always win. Legacy character facts only fill
+    missing identity, alias, location, and known numeric-counter records.
+    """
+
+    source = snapshot if isinstance(snapshot, dict) else {}
+    state = _normalize_state(
+        source.get("authoritative_state")
+        if isinstance(source.get("authoritative_state"), dict)
+        else None
+    )
+    _seed_top_level_numeric_counters(state, source.get("numeric_counters"))
+
+    legacy_characters = source.get("characters")
+    raw_characters = legacy_characters if isinstance(legacy_characters, dict) else {}
+    for legacy_key in sorted(raw_characters, key=lambda item: str(item)):
+        raw = raw_characters[legacy_key]
+        if not isinstance(raw, dict):
+            continue
+        values = _legacy_character_values(raw)
+        canonical_name = str(
+            values.get("canonical_name")
+            or values.get("name")
+            or legacy_key
+        ).strip()
+        if not canonical_name:
+            continue
+        explicit_id = str(
+            values.get("character_id")
+            or values.get("stable_id")
+            or values.get("id")
+            or legacy_key
+        ).strip()
+        alias_owners = _character_alias_owners(state["characters"])
+        character_id = next(
+            (
+                alias_owners[normalized]
+                for candidate in (canonical_name, legacy_key)
+                if (normalized := normalize_entity_alias(str(candidate))) in alias_owners
+            ),
+            explicit_id,
+        )
+        if not character_id:
+            continue
+        existing = state["characters"].get(character_id)
+        record = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+        aliases = _unique_strings(
+            [
+                *(record.get("aliases") or []),
+                canonical_name,
+                str(legacy_key),
+                *_string_values(values.get("aliases")),
+                *_string_values(values.get("alias")),
+            ]
+        )
+        record.update(
+            {
+                "character_id": character_id,
+                "canonical_name": str(
+                    record.get("canonical_name")
+                    or record.get("name")
+                    or canonical_name
+                ),
+                "aliases": aliases,
+                "source_tier": str(
+                    record.get("source_tier")
+                    or values.get("source_tier")
+                    or "chapter_event"
+                ),
+            }
+        )
+        identity = (
+            record.get("identity")
+            or values.get("identity")
+            or values.get("role")
+        )
+        if identity not in (None, ""):
+            record["identity"] = copy.deepcopy(identity)
+        for field in (
+            "role",
+            "status",
+            "condition",
+            "current_goal",
+            "last_observation",
+            "last_seen_chapter",
+            "traits",
+        ):
+            if field not in record and values.get(field) not in (None, ""):
+                record[field] = copy.deepcopy(values[field])
+        state["characters"][character_id] = record
+
+    positions = _snapshot_character_positions(source)
+    alias_owners = _character_alias_owners(state["characters"])
+    for character_id, record in state["characters"].items():
+        if not isinstance(record, dict) or character_id in state["locations"]:
+            continue
+        legacy_key, legacy_record = _legacy_record_for_character(
+            raw_characters,
+            character_id,
+            record,
+        )
+        values = _legacy_character_values(legacy_record)
+        location = _position_for_character(
+            positions,
+            character_id=character_id,
+            canonical_name=str(record.get("canonical_name") or legacy_key or character_id),
+            aliases=record.get("aliases"),
+        )
+        if location in (None, ""):
+            location = values.get("current_location") or values.get("location")
+        if location not in (None, ""):
+            state["locations"][character_id] = {
+                "entity_id": character_id,
+                "location_id": copy.deepcopy(location),
+                "source_tier": str(record.get("source_tier") or "chapter_event"),
+            }
+
+    _seed_character_numeric_counters(
+        state,
+        raw_characters,
+        alias_owners=alias_owners,
+    )
+    return state
+
+
+def adapt_scene_deltas_to_authoritative_delta(
+    scene_drafts: Any,
+    *,
+    base_state: dict[str, Any] | None = None,
+    source_tier: str = "chapter_event",
+) -> dict[str, Any]:
+    """Adapt ordered Scene field deltas into authority-validator changes."""
+
+    payload, payload_source_tier, embedded_baseline = _collect_scene_authority_payload(scene_drafts)
+    baseline = _normalize_state(base_state if isinstance(base_state, dict) else embedded_baseline)
+    applied_source_tier = (
+        payload_source_tier
+        if payload_source_tier in SOURCE_PRECEDENCE
+        else source_tier if source_tier in SOURCE_PRECEDENCE else "chapter_event"
+    )
+    result: dict[str, Any] = {
+        "source_tier": applied_source_tier,
+        "baseline_state": copy.deepcopy(baseline),
+        **{key: [] for key in _AUTHORITY_DELTA_COLLECTIONS},
+    }
+    result["events"] = [copy.deepcopy(item) for item in payload["events"]]
+
+    staged_characters = copy.deepcopy(baseline["characters"])
+    canonical_hints = _character_canonical_hints(
+        payload["character_changes"],
+        staged_characters,
+    )
+    for raw in payload["character_changes"]:
+        adapted = _adapt_character_field_delta(raw, staged_characters, canonical_hints)
+        result["character_changes"].append(adapted)
+
+    staged_relationships = copy.deepcopy(baseline["relationships"])
+    relationship_hints = _relationship_hints(
+        payload["relationship_changes"],
+        staged_relationships,
+    )
+    for raw in payload["relationship_changes"]:
+        adapted = _adapt_relationship_field_delta(raw, staged_relationships, relationship_hints)
+        result["relationship_changes"].append(adapted)
+
+    result["roster_changes"] = [
+        _with_event_reference(item)
+        for item in payload["roster_changes"]
+    ]
+    result["numeric_changes"] = [
+        _adapt_numeric_field_delta(item)
+        for item in payload["numeric_changes"]
+    ]
+    result["inventory_changes"] = [
+        _adapt_inventory_field_delta(item)
+        for item in payload["inventory_changes"]
+    ]
+    result["location_changes"] = [
+        copy.deepcopy(item)
+        for item in payload["location_changes"]
+    ]
+    return result
+
+
+def _collect_scene_authority_payload(
+    value: Any,
+) -> tuple[dict[str, list[dict[str, Any]]], str, dict[str, Any] | None]:
+    payload = {key: [] for key in _AUTHORITY_DELTA_COLLECTIONS}
+    source_tier = ""
+    embedded_baseline: dict[str, Any] | None = None
+    scenes: Any = value
+    if isinstance(value, dict):
+        source_tier = str(value.get("source_tier") or "")
+        baseline = value.get("baseline_state")
+        embedded_baseline = baseline if isinstance(baseline, dict) else None
+        if any(key in value for key in _AUTHORITY_DELTA_COLLECTIONS):
+            for key in _AUTHORITY_DELTA_COLLECTIONS:
+                payload[key].extend(_objects(value.get(key)))
+            return payload, source_tier, embedded_baseline
+        scenes = value.get("scene_drafts")
+        if not isinstance(scenes, list):
+            scenes = value.get("scenes")
+    for scene in scenes if isinstance(scenes, list) else []:
+        if not isinstance(scene, dict):
+            continue
+        scene_index = int(scene.get("index") or 0)
+        for event in _objects(scene.get("events")):
+            payload["events"].append({**event, "scene_index": scene_index})
+        deltas = scene.get("deltas")
+        if not isinstance(deltas, dict):
+            deltas = scene.get("state_delta")
+        if not isinstance(deltas, dict):
+            continue
+        for scene_key, authority_key in _SCENE_DELTA_KEY_MAP.items():
+            for item in _objects(deltas.get(scene_key)):
+                payload[authority_key].append({**item, "scene_index": scene_index})
+    return payload, source_tier, embedded_baseline
+
+
+def _character_canonical_hints(
+    changes: list[dict[str, Any]],
+    characters: dict[str, Any],
+) -> dict[str, str]:
+    hints = {
+        str(character_id): str(
+            record.get("canonical_name")
+            or record.get("name")
+            or character_id
+        )
+        for character_id, record in characters.items()
+        if isinstance(record, dict)
+    }
+    for raw in changes:
+        character_id = str(raw.get("character_id") or raw.get("id") or "").strip()
+        if not character_id:
+            continue
+        field = str(raw.get("field") or "").strip()
+        candidate = (
+            raw.get("canonical_name")
+            or raw.get("name")
+            or (raw.get("after") if field in {"canonical_name", "name"} else None)
+        )
+        if candidate not in (None, ""):
+            hints[character_id] = str(candidate)
+    return hints
+
+
+def _adapt_character_field_delta(
+    raw: dict[str, Any],
+    staged: dict[str, Any],
+    hints: dict[str, str],
+) -> dict[str, Any]:
+    result = _with_event_reference(raw)
+    character_id = str(result.get("character_id") or result.get("id") or "").strip()
+    field = str(result.get("field") or "").strip()
+    existing = staged.get(character_id)
+    canonical_name = (
+        result.get("canonical_name")
+        or result.get("name")
+        or (result.get("after") if field in {"canonical_name", "name"} else None)
+        or (existing or {}).get("canonical_name")
+        or (existing or {}).get("name")
+        or hints.get(character_id)
+        or character_id
+    )
+    if canonical_name not in (None, ""):
+        result["canonical_name"] = str(canonical_name)
+    if character_id:
+        next_record = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+        next_record.update(
+            {
+                "character_id": character_id,
+                "canonical_name": str(canonical_name or character_id),
+            }
+        )
+        if field and "after" in result:
+            next_record[field] = copy.deepcopy(result["after"])
+        else:
+            next_record.update(copy.deepcopy(result))
+        staged[character_id] = next_record
+    return result
+
+
+def _relationship_hints(
+    changes: list[dict[str, Any]],
+    relationships: dict[str, Any],
+) -> dict[tuple[str, str], dict[str, str]]:
+    hints: dict[tuple[str, str], dict[str, str]] = {}
+    for relationship_id, record in relationships.items():
+        if not isinstance(record, dict):
+            continue
+        source_id = str(
+            record.get("source_character_id") or record.get("source_id") or ""
+        ).strip()
+        target_id = str(
+            record.get("target_character_id") or record.get("target_id") or ""
+        ).strip()
+        if source_id and target_id:
+            hints[(source_id, target_id)] = {
+                "relationship_id": str(
+                    record.get("relationship_id") or relationship_id
+                ),
+                "type": str(record.get("type") or record.get("kind") or "relationship"),
+            }
+    for raw in changes:
+        source_id = str(
+            raw.get("source_character_id") or raw.get("source_id") or ""
+        ).strip()
+        target_id = str(
+            raw.get("target_character_id") or raw.get("target_id") or ""
+        ).strip()
+        if not source_id or not target_id:
+            continue
+        field = str(raw.get("field") or "").strip()
+        current = hints.setdefault(
+            (source_id, target_id),
+            {
+                "relationship_id": str(
+                    raw.get("relationship_id") or f"{source_id}->{target_id}"
+                ),
+                "type": "relationship",
+            },
+        )
+        relation_type = (
+            raw.get("type")
+            or raw.get("kind")
+            or (raw.get("after") if field in {"type", "kind"} else None)
+        )
+        if relation_type not in (None, ""):
+            current["type"] = str(relation_type)
+    return hints
+
+
+def _adapt_relationship_field_delta(
+    raw: dict[str, Any],
+    staged: dict[str, Any],
+    hints: dict[tuple[str, str], dict[str, str]],
+) -> dict[str, Any]:
+    result = _with_event_reference(raw)
+    source_id = str(
+        result.get("source_character_id") or result.get("source_id") or ""
+    ).strip()
+    target_id = str(
+        result.get("target_character_id") or result.get("target_id") or ""
+    ).strip()
+    hint = hints.get((source_id, target_id), {})
+    relationship_id = str(
+        result.get("relationship_id")
+        or hint.get("relationship_id")
+        or f"{source_id}->{target_id}"
+    )
+    field = str(result.get("field") or "").strip()
+    relation_type = (
+        result.get("type")
+        or result.get("kind")
+        or (result.get("after") if field in {"type", "kind"} else None)
+        or hint.get("type")
+        or "relationship"
+    )
+    result.update(
+        {
+            "relationship_id": relationship_id,
+            "source_character_id": source_id,
+            "target_character_id": target_id,
+            "type": str(relation_type),
+        }
+    )
+    if relationship_id:
+        existing = staged.get(relationship_id)
+        next_record = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+        next_record.update(
+            {
+                "relationship_id": relationship_id,
+                "source_character_id": source_id,
+                "target_character_id": target_id,
+                "type": str(relation_type),
+            }
+        )
+        if field and "after" in result:
+            next_record[field] = copy.deepcopy(result["after"])
+        staged[relationship_id] = next_record
+    return result
+
+
+def _adapt_numeric_field_delta(raw: dict[str, Any]) -> dict[str, Any]:
+    result = _with_event_reference(raw)
+    if "previous_value" not in result and "before" in result:
+        result["previous_value"] = copy.deepcopy(result["before"])
+    if "expected_value" not in result and "after" in result:
+        result["expected_value"] = copy.deepcopy(result["after"])
+    if "declared_value" not in result:
+        result["declared_value"] = copy.deepcopy(
+            result.get("expected_value", result.get("after"))
+        )
+    spec = _counter_spec_for(str(result.get("counter_id") or ""))
+    if spec:
+        for key in ("minimum", "maximum", "rule"):
+            result.setdefault(key, copy.deepcopy(spec[key]))
+    return result
+
+
+def _adapt_inventory_field_delta(raw: dict[str, Any]) -> dict[str, Any]:
+    result = _with_event_reference(raw)
+    if "previous_quantity" not in result and "before" in result:
+        result["previous_quantity"] = copy.deepcopy(result["before"])
+    if "declared_quantity" not in result and "after" in result:
+        result["declared_quantity"] = copy.deepcopy(result["after"])
+    return result
+
+
+def _with_event_reference(raw: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(raw)
+    if not str(result.get("source_event_id") or "").strip():
+        reason_event_id = str(result.get("reason_event_id") or "").strip()
+        if reason_event_id:
+            result["source_event_id"] = reason_event_id
+    return result
+
+
+def _required_event_reference_finding(
+    raw: dict[str, Any],
+    *,
+    state: dict[str, Any],
+    declared_events: dict[str, dict[str, Any]],
+    source_tier: str,
+    ledger: str,
+    include_member_join_events: bool = False,
+) -> dict[str, Any] | None:
+    if source_tier == "story_project_standard":
+        return None
+    event_ids = [
+        str(raw.get("source_event_id") or raw.get("reason_event_id") or "").strip()
+    ]
+    if include_member_join_events:
+        event_ids.extend(
+            str(
+                item.get("source_event_id")
+                or item.get("reason_event_id")
+                or item.get("joined_event_id")
+                or ""
+            ).strip()
+            for item in raw.get("members") or []
+            if isinstance(item, dict)
+        )
+    event_ids = [item for item in event_ids if item]
+    if not event_ids:
+        return _finding(
+            "missing_authority_event_reference",
+            f"{ledger} change requires a source event reference.",
+            {"ledger": ledger, "change": raw},
+        )
+    known_events = {
+        *declared_events,
+        *(
+            str(event_id)
+            for event_id in (state.get("events") or {})
+        ),
+    }
+    missing = sorted({event_id for event_id in event_ids if event_id not in known_events})
+    if missing:
+        return _finding(
+            "invalid_authority_event_reference",
+            f"{ledger} change references an undeclared event.",
+            {"ledger": ledger, "event_ids": missing, "change": raw},
+        )
+    return None
+
+
+def _validate_chapter_counter_declarations(
+    chapter_text: str,
+    state: dict[str, Any],
+    *,
+    numeric_changes: Any,
+) -> list[dict[str, Any]]:
+    text = str(chapter_text or "")
+    if not text:
+        return []
+    findings: list[dict[str, Any]] = []
+    counters = [
+        record
+        for record in (state.get("numeric_counters") or {}).values()
+        if isinstance(record, dict)
+    ]
+    transition_values: dict[str, set[int | float]] = {}
+    for change in _objects(numeric_changes):
+        counter_id = str(change.get("counter_id") or change.get("id") or "").strip()
+        if not counter_id:
+            continue
+        values = {
+            value
+            for value in (
+                change.get("previous_value", change.get("before")),
+                change.get("expected_value", change.get("after")),
+                change.get(
+                    "declared_value",
+                    change.get("expected_value", change.get("after")),
+                ),
+            )
+            if _number(value)
+        }
+        transition_values.setdefault(counter_id, set()).update(values)
+    for record in counters:
+        counter_id = str(record.get("counter_id") or record.get("id") or "").strip()
+        current = record.get("current_value")
+        if not counter_id or not _number(current):
+            continue
+        labels = [counter_id]
+        explicit_label = str(record.get("label") or record.get("name") or "").strip()
+        if explicit_label:
+            labels.append(explicit_label)
+        spec = _counter_spec_for(counter_id)
+        if spec and len(counters) == 1:
+            labels.extend(str(item) for item in spec["labels"])
+        declared_values: list[dict[str, Any]] = []
+        for label in _unique_strings(labels):
+            pattern = re.compile(
+                rf"{re.escape(label)}\s*(?:为|是|=|：|:)?\s*"
+                r"(?:由|从)?\s*"
+                r"(-?\d+(?:\.\d+)?)\s*(?:/\s*(-?\d+(?:\.\d+)?))?",
+                flags=re.IGNORECASE,
+            )
+            for match in pattern.finditer(text):
+                declared_values.append(
+                    {
+                        "label": label,
+                        "value": _parse_number(match.group(1)),
+                        "maximum": _parse_number(match.group(2)),
+                        "span": [match.start(), match.end()],
+                        "text": match.group(0),
+                    }
+                )
+                transition = re.match(
+                    r"\s*(?:升至|增至|提高到|变为|变成|到|→|->)\s*"
+                    r"(-?\d+(?:\.\d+)?)\s*(?:/\s*(-?\d+(?:\.\d+)?))?",
+                    text[match.end() : match.end() + 48],
+                    flags=re.IGNORECASE,
+                )
+                if transition is not None:
+                    declared_values.append(
+                        {
+                            "label": label,
+                            "value": _parse_number(transition.group(1)),
+                            "maximum": _parse_number(transition.group(2)),
+                            "span": [
+                                match.end() + transition.start(),
+                                match.end() + transition.end(),
+                            ],
+                            "text": transition.group(0),
+                        }
+                    )
+        mentions_by_span: dict[tuple[int, int, int | float | None], dict[str, Any]] = {
+            (
+                int(item["span"][0]),
+                int(item["span"][1]),
+                item.get("value"),
+            ): item
+            for item in declared_values
+        }
+        declared_values = list(mentions_by_span.values())
+        unique_values = {
+            item["value"]
+            for item in declared_values
+            if _number(item.get("value"))
+        }
+        allowed_values: set[int | float] = {current}
+        allowed_values.update(transition_values.get(counter_id, set()))
+        unexpected_values = unique_values - allowed_values
+        if len(unique_values) > 1 and unexpected_values:
+            findings.append(
+                _finding(
+                    "numeric_counter_mismatch",
+                    f"Counter {counter_id} has contradictory values in chapter prose.",
+                    {
+                        "kind": "contradictory_prose_values",
+                        "counter_id": counter_id,
+                        "allowed_transition_values": sorted(allowed_values),
+                        "mentions": declared_values,
+                    },
+                )
+            )
+        if declared_values and current not in unique_values:
+            findings.append(
+                _finding(
+                    "numeric_counter_mismatch",
+                    f"Counter {counter_id} prose omits its final authoritative value.",
+                    {
+                        "kind": "missing_final_prose_value",
+                        "counter_id": counter_id,
+                        "authoritative_value": current,
+                        "mentions": declared_values,
+                    },
+                )
+            )
+        for mention in declared_values:
+            if mention.get("value") not in allowed_values:
+                code = (
+                    "numeric_counter_rollback"
+                    if _number(mention.get("value"))
+                    and mention["value"] < current
+                    and str(record.get("rule") or "") == "monotonic_non_decreasing"
+                    else "numeric_counter_mismatch"
+                )
+                findings.append(
+                    _finding(
+                        code,
+                        f"Counter {counter_id} prose value does not match authoritative state.",
+                        {
+                            "kind": "prose_state_mismatch",
+                            "counter_id": counter_id,
+                            "authoritative_value": current,
+                            "prose_mention": mention,
+                        },
+                    )
+                )
+    return findings
+
+
+def _seed_top_level_numeric_counters(
+    state: dict[str, Any],
+    value: Any,
+) -> None:
+    if not isinstance(value, dict):
+        return
+    for key in sorted(value, key=lambda item: str(item)):
+        raw = value[key]
+        record = copy.deepcopy(raw) if isinstance(raw, dict) else {}
+        current = (
+            record.get("current_value")
+            if isinstance(raw, dict)
+            else raw
+        )
+        current = _coerce_counter_value(current)
+        if not _number(current):
+            continue
+        counter_id = str(record.get("counter_id") or key)
+        existing = state["numeric_counters"].get(counter_id)
+        if isinstance(existing, dict):
+            continue
+        spec = _counter_spec_for(counter_id)
+        seeded = {
+            **record,
+            "counter_id": counter_id,
+            "current_value": current,
+            "source_tier": str(record.get("source_tier") or "chapter_event"),
+        }
+        if spec:
+            for field in ("minimum", "maximum", "rule"):
+                seeded.setdefault(field, copy.deepcopy(spec[field]))
+        state["numeric_counters"][counter_id] = seeded
+
+
+def _seed_character_numeric_counters(
+    state: dict[str, Any],
+    characters: dict[str, Any],
+    *,
+    alias_owners: dict[str, str],
+) -> None:
+    for legacy_key in sorted(characters, key=lambda item: str(item)):
+        raw = characters[legacy_key]
+        if not isinstance(raw, dict):
+            continue
+        values = _legacy_character_values(raw)
+        explicit_character_id = str(
+            values.get("character_id")
+            or values.get("stable_id")
+            or values.get("id")
+            or legacy_key
+        ).strip()
+        character_id = next(
+            (
+                alias_owners[normalized]
+                for candidate in (
+                    explicit_character_id,
+                    legacy_key,
+                    values.get("canonical_name"),
+                    values.get("name"),
+                )
+                if (
+                    normalized := normalize_entity_alias(str(candidate or ""))
+                )
+                in alias_owners
+            ),
+            explicit_character_id,
+        )
+        record = state["characters"].get(character_id)
+        if not isinstance(record, dict):
+            continue
+        canonical_name = str(
+            record.get("canonical_name") or legacy_key or character_id
+        ).strip()
+        for spec_id, spec in _KNOWN_COUNTER_SPECS.items():
+            raw_value = next(
+                (
+                    values[field]
+                    for field in spec["field_names"]
+                    if field in values and values[field] not in (None, "")
+                ),
+                None,
+            )
+            current = _coerce_counter_value(raw_value)
+            if not _number(current):
+                continue
+            counter_id = str(
+                values.get(f"{spec_id}_counter_id")
+                or (
+                    f"{canonical_name}侵蚀值"
+                    if spec_id == "erosion" and canonical_name
+                    else f"{character_id}:{spec_id}"
+                )
+            )
+            matching_existing = next(
+                (
+                    existing
+                    for existing_id, existing in state["numeric_counters"].items()
+                    if isinstance(existing, dict)
+                    and _counter_spec_for(str(existing_id)) is spec
+                    and (
+                        str(existing.get("owner_id") or "") in {"", character_id}
+                        or str(existing_id) == counter_id
+                    )
+                ),
+                None,
+            )
+            if counter_id in state["numeric_counters"] or matching_existing is not None:
+                continue
+            state["numeric_counters"][counter_id] = {
+                "counter_id": counter_id,
+                "owner_id": character_id,
+                "label": counter_id,
+                "current_value": current,
+                "minimum": spec["minimum"],
+                "maximum": spec["maximum"],
+                "rule": spec["rule"],
+                "source_tier": str(record.get("source_tier") or "chapter_event"),
+            }
+
+
+def _legacy_character_values(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key in ("data", "state", "facts", "value"):
+        nested = raw.get(key)
+        if isinstance(nested, dict):
+            result.update(copy.deepcopy(nested))
+    result.update(
+        {
+            key: copy.deepcopy(value)
+            for key, value in raw.items()
+            if key not in {"data", "state", "facts", "value"}
+        }
+    )
+    return result
+
+
+def _snapshot_character_positions(snapshot: dict[str, Any]) -> dict[str, Any]:
+    spatial = snapshot.get("spatial_state")
+    if not isinstance(spatial, dict):
+        return {}
+    positions = spatial.get("character_positions")
+    return copy.deepcopy(positions) if isinstance(positions, dict) else {}
+
+
+def _legacy_record_for_character(
+    characters: dict[str, Any],
+    character_id: str,
+    record: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    candidates = {
+        normalize_entity_alias(character_id),
+        normalize_entity_alias(str(record.get("canonical_name") or "")),
+        *(
+            normalize_entity_alias(str(alias))
+            for alias in record.get("aliases") or []
+        ),
+    }
+    for key, raw in characters.items():
+        if not isinstance(raw, dict):
+            continue
+        values = _legacy_character_values(raw)
+        names = {
+            normalize_entity_alias(str(key)),
+            normalize_entity_alias(str(values.get("character_id") or "")),
+            normalize_entity_alias(str(values.get("canonical_name") or "")),
+            normalize_entity_alias(str(values.get("name") or "")),
+        }
+        if (candidates & names) - {""}:
+            return str(key), raw
+    return "", {}
+
+
+def _position_for_character(
+    positions: dict[str, Any],
+    *,
+    character_id: str,
+    canonical_name: str,
+    aliases: Any,
+) -> Any:
+    wanted = {
+        normalize_entity_alias(character_id),
+        normalize_entity_alias(canonical_name),
+        *(
+            (
+                normalize_entity_alias(str(alias))
+                for alias in aliases
+                if str(alias)
+            )
+            if isinstance(aliases, list)
+            else ()
+        ),
+    }
+    for key, value in positions.items():
+        if normalize_entity_alias(str(key)) in wanted:
+            return copy.deepcopy(value)
+    return None
+
+
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item).strip()]
+    return []
+
+
+def _counter_spec_for(counter_id: str) -> dict[str, Any] | None:
+    normalized = normalize_entity_alias(counter_id)
+    for spec_id, spec in _KNOWN_COUNTER_SPECS.items():
+        candidates = [spec_id, *spec["field_names"], *spec["labels"]]
+        if any(
+            normalize_entity_alias(str(candidate)) in normalized
+            for candidate in candidates
+            if normalize_entity_alias(str(candidate))
+        ):
+            return spec
+    return None
+
+
+def _coerce_counter_value(value: Any) -> Any:
+    if _number(value):
+        return value
+    if isinstance(value, str):
+        match = re.search(r"-?\d+(?:\.\d+)?", value)
+        if match:
+            return _parse_number(match.group(0))
+    return value
+
+
+def _parse_number(value: Any) -> int | float | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number.is_integer() else number
 
 
 def _normalize_state(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -271,14 +1339,14 @@ def _apply_relationship_changes(
         if not relationship_id or not source_id or not target_id or not relation_type:
             findings.append(_finding("invalid_relationship_change", "Relationship change is incomplete.", raw))
             continue
-        for existing_id, existing in state["relationships"].items():
-            if not isinstance(existing, dict):
+        for existing_id, candidate in state["relationships"].items():
+            if not isinstance(candidate, dict):
                 continue
             pair_matches = {
-                str(existing.get("source_character_id") or existing.get("source_id") or ""),
-                str(existing.get("target_character_id") or existing.get("target_id") or ""),
+                str(candidate.get("source_character_id") or candidate.get("source_id") or ""),
+                str(candidate.get("target_character_id") or candidate.get("target_id") or ""),
             } == {source_id, target_id}
-            existing_type = str(existing.get("type") or existing.get("kind") or "")
+            existing_type = str(candidate.get("type") or candidate.get("kind") or "")
             if pair_matches and existing_type and existing_type != relation_type:
                 findings.append(
                     _finding(
@@ -348,6 +1416,7 @@ def _apply_roster_changes(
     value: Any,
     *,
     source_tier: str,
+    declared_events: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for raw in _objects(value):
@@ -356,10 +1425,45 @@ def _apply_roster_changes(
         if not roster_id:
             findings.append(_finding("invalid_roster_change", "Roster change requires roster_id.", raw))
             continue
+        if operation not in {"join", "leave", "dead", "missing", "replace"}:
+            findings.append(
+                _finding(
+                    "invalid_roster_change",
+                    f"Roster {roster_id} uses unsupported operation {operation!r}.",
+                    raw,
+                )
+            )
+            continue
+        event_finding = _required_event_reference_finding(
+            raw,
+            state=state,
+            declared_events=declared_events,
+            source_tier=source_tier,
+            ledger="roster",
+            include_member_join_events=True,
+        )
+        if event_finding is not None:
+            findings.append(event_finding)
         existing = state["roster"].get(roster_id)
         existing_members = _roster_members(existing)
         declared_member_ids = _unique_strings(raw.get("member_ids") or [])
-        members = [copy.deepcopy(item) for item in raw.get("members") or [] if isinstance(item, dict)]
+        raw_members = [
+            copy.deepcopy(item)
+            for item in raw.get("members") or []
+            if isinstance(item, dict)
+        ]
+        invalid_members = [
+            item for item in raw_members if not str(item.get("member_id") or "").strip()
+        ]
+        if invalid_members:
+            findings.append(
+                _finding(
+                    "invalid_roster_change",
+                    f"Roster {roster_id} member records require stable member_id values.",
+                    {"members": invalid_members},
+                )
+            )
+        members = [item for item in raw_members if str(item.get("member_id") or "").strip()]
         member_ids = _unique_strings(
             [str(item.get("member_id") or "") for item in members if str(item.get("member_id") or "")]
         )
@@ -401,6 +1505,14 @@ def _apply_roster_changes(
         declared_delta = raw.get("delta")
         declared_count = raw.get("declared_count")
         computed_count = len(next_members)
+        if not _number(declared_delta) or not _number(declared_count):
+            findings.append(
+                _finding(
+                    "invalid_roster_change",
+                    f"Roster {roster_id} requires numeric delta and declared_count.",
+                    raw,
+                )
+            )
         if declared_delta is not None and declared_delta != expected_delta:
             findings.append(
                 _finding(
@@ -441,12 +1553,30 @@ def _apply_numeric_changes(
         if not counter_id:
             findings.append(_finding("invalid_numeric_change", "Numeric change requires counter_id.", raw))
             continue
+        event_finding = _required_event_reference_finding(
+            raw,
+            state=state,
+            declared_events=declared_events,
+            source_tier=source_tier,
+            ledger="numeric_counters",
+        )
+        if event_finding is not None:
+            findings.append(event_finding)
         existing = state["numeric_counters"].get(counter_id)
         current = (existing or {}).get("current_value", raw.get("previous_value"))
         previous = raw.get("previous_value", raw.get("before"))
         delta = raw.get("delta")
         expected = raw.get("expected_value", raw.get("after"))
         declared = raw.get("declared_value", expected)
+        if not all(_number(item) for item in (previous, delta, expected, declared)):
+            findings.append(
+                _finding(
+                    "invalid_numeric_change",
+                    f"Counter {counter_id} requires numeric previous, delta, expected, and declared values.",
+                    raw,
+                )
+            )
+            continue
         if current is not None and previous != current:
             findings.append(
                 _finding(
@@ -521,15 +1651,43 @@ def _apply_inventory_changes(
     value: Any,
     *,
     source_tier: str,
+    declared_events: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for raw in _objects(value):
         owner_id = str(raw.get("owner_id") or "").strip()
         item_id = str(raw.get("item_id") or "").strip()
+        if not owner_id or not item_id:
+            findings.append(
+                _finding(
+                    "invalid_inventory_change",
+                    "Inventory change requires stable owner_id and item_id values.",
+                    raw,
+                )
+            )
+            continue
         key = str(raw.get("inventory_id") or f"{owner_id}:{item_id}").strip()
+        event_finding = _required_event_reference_finding(
+            raw,
+            state=state,
+            declared_events=declared_events,
+            source_tier=source_tier,
+            ledger="inventory",
+        )
+        if event_finding is not None:
+            findings.append(event_finding)
         previous = raw.get("previous_quantity", raw.get("before"))
         delta = raw.get("delta")
         declared = raw.get("declared_quantity", raw.get("after"))
+        if not all(_number(item) for item in (previous, delta, declared)):
+            findings.append(
+                _finding(
+                    "invalid_inventory_change",
+                    f"Inventory {key} requires numeric previous, delta, and declared quantities.",
+                    raw,
+                )
+            )
+            continue
         existing = state["inventory"].get(key)
         current = (existing or {}).get("quantity", previous)
         if current is not None and previous != current:
@@ -591,7 +1749,19 @@ def _apply_events(
             findings.append(_finding("invalid_authority_event", "Authority event requires event_id.", raw))
             continue
         existing = state["events"].get(event_id)
-        if existing is not None and existing != raw:
+        existing_payload = (
+            {
+                key: value
+                for key, value in existing.items()
+                if key != "source_tier"
+            }
+            if isinstance(existing, dict)
+            else existing
+        )
+        raw_payload = {
+            key: value for key, value in raw.items() if key != "source_tier"
+        }
+        if existing is not None and existing_payload != raw_payload:
             findings.append(
                 _finding(
                     "duplicate_scene_event",
@@ -608,10 +1778,15 @@ def _apply_events(
 
 def _full_state_delta(state: dict[str, Any]) -> dict[str, Any]:
     return {
+        "source_tier": "story_project_standard",
         "character_changes": list(state["characters"].values()),
         "relationship_changes": list(state["relationships"].values()),
         "roster_changes": [
-            {**copy.deepcopy(item), "operation": "replace"}
+            {
+                **copy.deepcopy(item),
+                "operation": "replace",
+                "delta": len(_roster_members(item)),
+            }
             for item in state["roster"].values()
         ],
         "numeric_changes": [
@@ -776,6 +1951,111 @@ def _stronger_source_tier(existing: Any, incoming: str) -> str:
     return min((existing_tier, incoming), key=SOURCE_PRECEDENCE.index)
 
 
+def _authority_problem(finding: dict[str, Any]) -> dict[str, Any]:
+    evidence = finding.get("evidence")
+    evidence_text = json.dumps(
+        evidence,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return {
+        "code": str(finding.get("code") or "authoritative_state_conflict"),
+        "message": str(
+            finding.get("message")
+            or "Authoritative state validation reported a conflict."
+        ),
+        "validator": "authoritative_state",
+        "severity": "critical",
+        "blocking": True,
+        "category": "blocking",
+        "repair_hint": (
+            "Regenerate the affected Scene with a delta whose before-state and "
+            "source event match the authoritative ledger."
+        ),
+        "repair_action": "manual_review",
+        "repair_parameters": {},
+        "evidence": [
+            {
+                "kind": "authoritative_state_finding",
+                "value": evidence_text or "{}",
+            }
+        ],
+    }
+
+
+def _normalize_validation_problem(
+    problem: dict[str, Any],
+    *,
+    validation_ok: bool,
+) -> dict[str, Any]:
+    normalized = copy.deepcopy(problem)
+    blocking = bool(normalized.get("blocking", not validation_ok))
+    severity = str(
+        normalized.get("severity") or ("critical" if blocking else "medium")
+    )
+    if severity not in {"critical", "high", "medium", "low"}:
+        severity = "critical" if blocking else "medium"
+    action = str(normalized.get("repair_action") or "manual_review")
+    allowed_actions = {
+        "seed_conflict_scene",
+        "expand_scene",
+        "add_conflict_signal",
+        "remove_forbidden_term",
+        "add_required_term",
+        "anchor_known_location",
+        "insert_opening_bridge",
+        "rewrite_spatial_transition",
+        "anchor_last_scene_state",
+        "repair_character_position",
+        "add_transition_event",
+        "flag_unknown_location",
+        "add_character_location",
+        "rewrite_inactive_character_action",
+        "correct_chapter_index",
+        "manual_review",
+    }
+    if action not in allowed_actions:
+        action = "manual_review"
+    raw_evidence = normalized.get("evidence")
+    evidence = [
+        {
+            "kind": str(item.get("kind") or "validation_evidence"),
+            "value": str(item.get("value") or item),
+        }
+        for item in raw_evidence or []
+        if isinstance(item, dict)
+    ]
+    normalized.update(
+        {
+            "code": str(
+                normalized.get("code") or "custom_validation_problem"
+            ),
+            "message": str(
+                normalized.get("message")
+                or "Custom validator reported a problem."
+            ),
+            "validator": str(normalized.get("validator") or "custom"),
+            "severity": severity,
+            "blocking": blocking,
+            "category": "blocking" if blocking else "warning",
+            "repair_hint": str(
+                normalized.get("repair_hint")
+                or "Inspect the validation evidence before commit."
+            ),
+            "repair_action": action,
+            "repair_parameters": (
+                copy.deepcopy(normalized.get("repair_parameters"))
+                if isinstance(normalized.get("repair_parameters"), dict)
+                else {}
+            ),
+            "evidence": evidence,
+        }
+    )
+    return normalized
+
+
 def _finding(code: str, message: str, evidence: Any) -> dict[str, Any]:
     return {
         "code": code,
@@ -789,9 +2069,12 @@ __all__ = [
     "AUTHORITATIVE_STATE_SCHEMA_VERSION",
     "AuthoritativeStateError",
     "SOURCE_PRECEDENCE",
+    "adapt_scene_deltas_to_authoritative_delta",
     "empty_authoritative_state",
+    "merge_authoritative_report_into_validation",
     "normalize_entity_alias",
     "require_authoritative_state_delta",
+    "seed_authoritative_state_from_snapshot",
     "validate_authoritative_state",
     "validate_authoritative_state_delta",
 ]
