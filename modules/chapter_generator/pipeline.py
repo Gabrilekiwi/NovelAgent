@@ -51,6 +51,12 @@ _SCENE_INPUT_HEADROOM_TOKENS = 2_000
 _SCENE_BOUNDARY_REGENERATION_LIMIT = 1
 _SCENE_BOUNDARY_FEEDBACK_FINDING_LIMIT = 4
 _SCENE_BOUNDARY_FEEDBACK_EVIDENCE_MAX_CHARS = 480
+_EVENT_LOCATION_CONTRACT = (
+    "Use one exact, non-compound location for each event.location. Every known entity "
+    "listed in event.subjects or event.objects is asserted to be physically present "
+    "there. Omit remote or differently located entities from that event, and make each "
+    "matching location delta.after exactly equal event.location."
+)
 _SCENE_CONTEXT_PAYLOAD_POLICIES = (
     {
         "previous_tail_chars": 600,
@@ -654,7 +660,8 @@ def _scene_boundary_retry_feedback(
         "instruction": (
             "Regenerate this same scene only. Treat current_scene_state as authoritative. "
             "Correct or remove every rejected delta; each before value must exactly equal "
-            "the current value. Do not repeat any earlier scene or event."
+            "the current value. Do not repeat any earlier scene or event. "
+            + _EVENT_LOCATION_CONTRACT
         ),
     }
 
@@ -787,6 +794,7 @@ def _scene_request_payload(
             "bound as a hard limit and stop the scene before exceeding it. "
             "Every required_event_id must appear exactly once in events. Do not restart, duplicate, or retell "
             "a completed event; never use a forbidden_event_id or roll state back. "
+            f"{_EVENT_LOCATION_CONTRACT} "
             "Deltas must follow the exact type-specific fields and delta_rules in this request. Do not emit a "
             "delta merely to restate an unchanged fact. Continue directly from previous_scene_tail and "
             "current_scene_state."

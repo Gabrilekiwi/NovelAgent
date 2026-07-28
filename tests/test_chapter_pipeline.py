@@ -859,6 +859,110 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         self.assertEqual(1, drafts[1]["boundary_validation"]["local_regeneration_attempts"])
 
+    def test_location_retry_contract_excludes_remote_participant_from_event_scope(
+        self,
+    ) -> None:
+        authority = {
+            "locations": {
+                "陆沉": {"entity_id": "陆沉", "location_id": "二层通信室"},
+                "韩野": {"entity_id": "韩野", "location_id": "二层通信室"},
+            }
+        }
+        input_pack = "# Authoritative State\n" + json.dumps(
+            authority,
+            ensure_ascii=False,
+        )
+        plan = {
+            "goal": "完成入站安排",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "陆沉下楼，韩野留守通信室",
+                    "required_beats": ["完成入站安排"],
+                    "required_beat_indexes": [1],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0017-beat-001",
+                            "type": "required_beat_1_completed",
+                            "subjects": [],
+                            "objects": [],
+                            "location": "",
+                            "status": "completed",
+                        }
+                    ],
+                }
+            ],
+        }
+        calls: list[tuple[dict, dict]] = []
+
+        def completion(messages, **kwargs):
+            request = json.loads(messages[-1]["content"])
+            calls.append((request, kwargs))
+            planned = request["scene"]["planned_events"][0]
+            if len(calls) == 1:
+                event = {
+                    **planned,
+                    "subjects": ["陆沉", "韩野"],
+                    "location": "一层车库区与二层通信室",
+                }
+            else:
+                self.assertIn(
+                    "one exact, non-compound location",
+                    request["boundary_retry"]["instruction"],
+                )
+                event = {
+                    **planned,
+                    "subjects": ["陆沉"],
+                    "location": "一层车库区",
+                }
+            return json.dumps(
+                {
+                    "prose": "陆沉下到一层车库区安排入站，韩野仍在二层通信室远程确认。",
+                    "events": [event],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [
+                            {
+                                "entity_id": "陆沉",
+                                "before": "二层通信室",
+                                "after": "一层车库区",
+                                "reason": "下楼安排入站",
+                            }
+                        ],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "韩野远程参与但没有离开通信室。",
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(pipeline_module, "chat_completion", side_effect=completion):
+            drafts = pipeline_module.generate_scenes(
+                input_pack,
+                plan,
+                dry_run=False,
+                language="zh-CN",
+            )
+
+        self.assertEqual(2, len(calls))
+        self.assertEqual(
+            "openai-chapter_generation-scene-0001-boundary-retry-01",
+            calls[1][1]["call_id"],
+        )
+        self.assertEqual(["陆沉"], drafts[0]["events"][0]["subjects"])
+        self.assertEqual(
+            "一层车库区",
+            drafts[0]["scene_state_after"]["locations"]["陆沉"],
+        )
+        self.assertEqual(
+            "二层通信室",
+            drafts[0]["scene_state_after"]["locations"]["韩野"],
+        )
+        self.assertTrue(drafts[0]["boundary_validation"]["accepted"])
+
     def test_scene_boundary_failure_raises_after_one_local_regeneration(self) -> None:
         calls = 0
         authority = {
