@@ -651,6 +651,77 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual("pass", result["run"]["review_pipeline"]["status"])
         self.assertTrue((tmp_path / "runs" / "review_repairs" / result["run"]["id"] / "repaired_chapter_final.md").exists())
 
+    def test_review_auto_repair_realigns_real_scene_pipeline_before_final_gate(self) -> None:
+        tmp_path = self._case_dir("review_repair_scene_evidence")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        reviews = [
+            {
+                "enabled": True,
+                "status": "blocked",
+                "decision": "blocked",
+                "quality_score": 40,
+                "rule_score": 20,
+                "repair_task_count": 1,
+                "blocking_task_count": 1,
+                "artifacts_dir": str(tmp_path / "reviews" / "original"),
+                "summary_path": None,
+            },
+            {
+                "enabled": True,
+                "status": "pass",
+                "decision": "accept",
+                "quality_score": 90,
+                "rule_score": 90,
+                "repair_task_count": 0,
+                "blocking_task_count": 0,
+                "artifacts_dir": str(tmp_path / "reviews" / "repair_attempt_01"),
+                "summary_path": None,
+            },
+        ]
+
+        with patch("core.engine.executor.run_runtime_review", side_effect=reviews):
+            result = AgentExecutor(
+                snapshot_path=snapshot_path,
+                memory_path=tmp_path / "missing_memory.json",
+                run_dir=tmp_path / "runs",
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                polisher=lambda chapter: chapter,
+                validator=self._ok_validation,
+                repairer=lambda chapter, _validation, _input_pack, _plan, _recovery: (
+                    chapter + " Fixed."
+                ),
+                analyzer=self._analysis,
+                review_config=RuntimeReviewConfig(
+                    enabled=True,
+                    output_dir=tmp_path / "reviews",
+                ),
+                review_repair_config=ReviewRepairConfig(enabled=True),
+            ).run_once(persist=False)
+
+        pipeline = result["run"]["chapter"]["pipeline"]
+        final_codes = {
+            finding["code"]
+            for finding in result["run"]["chapter"]["final_artifact"]["findings"]
+        }
+
+        self.assertTrue(result["accepted"])
+        self.assertGreater(pipeline["scene_count"], 0)
+        self.assertEqual(
+            len(result["chapter"]),
+            pipeline["scene_spans"][-1]["end_char"],
+        )
+        self.assertEqual(
+            "review_repair",
+            pipeline["scene_evidence_history"][-1]["stage"],
+        )
+        self.assertIn(
+            pipeline["scene_count"],
+            pipeline["scene_evidence_history"][-1]["modified_scene_indexes"],
+        )
+        self.assertNotIn("stale_scene_evidence", final_codes)
+
     def test_review_auto_repair_rejects_when_post_repair_review_still_blocked(self) -> None:
         tmp_path = self._case_dir("review_repair_reject")
         snapshot_path = tmp_path / "snapshot.json"

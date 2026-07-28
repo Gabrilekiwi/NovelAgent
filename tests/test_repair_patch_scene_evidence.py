@@ -144,3 +144,48 @@ class SceneEvidenceAlignmentTests(unittest.TestCase):
             "stale_scene_evidence",
             {item["code"] for item in report["findings"]},
         )
+
+    def test_scene_evidence_must_cover_the_complete_artifact(self) -> None:
+        pipeline = _pipeline()
+        changed = pipeline["merged_chapter"] + " Fixed."
+
+        report = FinalArtifactIntegrityGate().evaluate(
+            artifact_text=changed,
+            stage="final_gate",
+            scene_drafts=pipeline["scene_drafts"],
+            scene_spans=pipeline["scene_spans"],
+        )
+
+        self.assertFalse(report["accepted"])
+        finding = next(
+            item
+            for item in report["findings"]
+            if item["code"] == "stale_scene_evidence"
+        )
+        reasons = {
+            item["reason"]
+            for item in finding["evidence"]["problems"]
+        }
+        self.assertIn("scene_coverage_does_not_reach_artifact_end", reasons)
+        self.assertIn("scene_reconstruction_mismatch", reasons)
+
+    def test_scene_evidence_rejects_untracked_prefix_and_separator_gap(self) -> None:
+        pipeline = _pipeline()
+        changed = "Prefix.\n\n" + pipeline["merged_chapter"]
+        shifted = copy.deepcopy(pipeline["scene_spans"])
+        for span in shifted:
+            span["start_char"] += len("Prefix.\n\n")
+            span["end_char"] += len("Prefix.\n\n")
+
+        report = FinalArtifactIntegrityGate().evaluate(
+            artifact_text=changed,
+            stage="final_gate",
+            scene_drafts=pipeline["scene_drafts"],
+            scene_spans=shifted,
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn(
+            "stale_scene_evidence",
+            {item["code"] for item in report["findings"]},
+        )

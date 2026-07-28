@@ -458,12 +458,35 @@ class FinalArtifactIntegrityGate:
         scene_spans: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         problems: list[dict[str, Any]] = []
+        draft_sequence = [
+            item
+            for item in scene_drafts
+            if isinstance(item, dict)
+        ]
         drafts = {
             int(item.get("index") or 0): str(item.get("text") or "")
-            for item in scene_drafts
-            if isinstance(item, dict) and int(item.get("index") or 0) > 0
+            for item in draft_sequence
+            if int(item.get("index") or 0) > 0
         }
+        if not draft_sequence or not scene_spans:
+            problems.append(
+                {
+                    "reason": "scene_evidence_missing",
+                    "draft_count": len(scene_drafts),
+                    "span_count": len(scene_spans),
+                }
+            )
+        if len(drafts) != len(draft_sequence):
+            problems.append(
+                {
+                    "reason": "scene_draft_index_invalid_or_duplicate",
+                    "draft_count": len(draft_sequence),
+                    "unique_index_count": len(drafts),
+                }
+            )
+
         previous_end = 0
+        span_indexes: list[int] = []
         for position, span in enumerate(scene_spans):
             if not isinstance(span, dict):
                 problems.append({"position": position, "reason": "span_not_object"})
@@ -472,6 +495,32 @@ class FinalArtifactIntegrityGate:
             start = int(span.get("start_char") or 0)
             end = int(span.get("end_char") or 0)
             draft = drafts.get(index)
+            span_indexes.append(index)
+            if position == 0 and start != 0:
+                problems.append(
+                    {
+                        "position": position,
+                        "scene_index": index,
+                        "start_char": start,
+                        "reason": "scene_coverage_does_not_start_at_zero",
+                    }
+                )
+            elif position > 0 and (
+                start != previous_end + 2
+                or artifact_text[previous_end:start] != "\n\n"
+            ):
+                problems.append(
+                    {
+                        "position": position,
+                        "scene_index": index,
+                        "previous_end_char": previous_end,
+                        "start_char": start,
+                        "separator": artifact_text[
+                            max(0, previous_end):max(0, min(start, len(artifact_text)))
+                        ],
+                        "reason": "scene_separator_or_coverage_gap_mismatch",
+                    }
+                )
             if (
                 index < 1
                 or draft is None
@@ -493,12 +542,42 @@ class FinalArtifactIntegrityGate:
                     }
                 )
             previous_end = max(previous_end, end)
+        if scene_spans and previous_end != len(artifact_text):
+            problems.append(
+                {
+                    "reason": "scene_coverage_does_not_reach_artifact_end",
+                    "last_end_char": previous_end,
+                    "artifact_chars": len(artifact_text),
+                }
+            )
         if len(scene_spans) != len(scene_drafts):
             problems.append(
                 {
                     "reason": "scene_span_count_mismatch",
                     "draft_count": len(scene_drafts),
                     "span_count": len(scene_spans),
+                }
+            )
+        if len(set(span_indexes)) != len(span_indexes) or set(span_indexes) != set(drafts):
+            problems.append(
+                {
+                    "reason": "scene_span_index_set_mismatch",
+                    "draft_indexes": sorted(drafts),
+                    "span_indexes": span_indexes,
+                }
+            )
+        reconstructed = "\n\n".join(
+            str(item.get("text") or "")
+            for item in draft_sequence
+        )
+        if reconstructed != artifact_text:
+            problems.append(
+                {
+                    "reason": "scene_reconstruction_mismatch",
+                    "reconstructed_sha256": _sha256_text(reconstructed),
+                    "artifact_sha256": _sha256_text(artifact_text),
+                    "reconstructed_chars": len(reconstructed),
+                    "artifact_chars": len(artifact_text),
                 }
             )
         if not problems:

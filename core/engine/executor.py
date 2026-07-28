@@ -4709,8 +4709,6 @@ def _append_pipeline_integrity(
             report=report,
         )
     )
-    if stage in {"polish", "repair", "final_gate"}:
-        chapter_pipeline["merged_chapter"] = output_text
 
 
 def _finalize_chapter_pipeline(
