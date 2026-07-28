@@ -27,6 +27,22 @@ class ChapterPipelineTest(unittest.TestCase):
                             "objects": ["blast-door"],
                             "location": "control room",
                             "status": "ongoing",
+                        },
+                        "radio-scan": {
+                            "event_id": "radio-scan",
+                            "type": "signal_search",
+                            "subjects": ["Mira"],
+                            "objects": ["radio"],
+                            "location": "control room",
+                            "status": "active",
+                        },
+                        "aborted-scan": {
+                            "event_id": "aborted-scan",
+                            "type": "signal_search",
+                            "subjects": ["Mira"],
+                            "objects": ["radio"],
+                            "location": "control room",
+                            "status": "cancelled",
                         }
                     }
                 }
@@ -46,7 +62,57 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual("control room", state["current_location"])
         self.assertEqual(["Mira"], state["characters_present"])
         self.assertEqual("door-opening", state["open_action"])
-        self.assertEqual([], state["completed_event_ids"])
+        self.assertEqual(
+            {"door-opening", "radio-scan"},
+            {
+                event["event_id"]
+                for event in state["open_actions"]
+            },
+        )
+        self.assertEqual(["aborted-scan"], state["completed_event_ids"])
+
+    def test_authority_location_overrides_stale_story_bridge(self) -> None:
+        input_pack = (
+            "# Authoritative State\n"
+            + json.dumps(
+                {
+                    "characters": {
+                        "hero": {
+                            "character_id": "hero",
+                            "canonical_name": "Captain",
+                            "aliases": ["Captain"],
+                            "role": "protagonist",
+                        },
+                        "ally": {
+                            "character_id": "ally",
+                        },
+                    },
+                    "locations": {
+                        "hero": {
+                            "entity_id": "hero",
+                            "location_id": "garage",
+                        },
+                        "ally": {
+                            "entity_id": "ally",
+                            "location_id": "garage",
+                        },
+                    },
+                }
+            )
+            + "\n\n# Story State\n"
+            + json.dumps(
+                {
+                    "last_scene_location": "stale-cold-storage",
+                    "last_scene_characters": ["Captain"],
+                }
+            )
+        )
+
+        state = pipeline_module._initial_scene_state(input_pack)
+
+        self.assertEqual("garage", state["current_location"])
+        self.assertEqual(["ally", "hero"], state["characters_present"])
+        self.assertEqual("garage", state["locations"]["hero"])
 
     def test_scene_context_keeps_only_bounded_story_state_semantics(self) -> None:
         story_state = {
@@ -101,6 +167,276 @@ class ChapterPipelineTest(unittest.TestCase):
             set(retained_blueprint),
         )
         self.assertNotIn("tracking_excerpts", retained_blueprint)
+
+    def test_scene_context_selects_complete_authority_records(self) -> None:
+        events = {
+            f"chapter-0017-event-{index:03d}": {
+                "event_id": f"chapter-0017-event-{index:03d}",
+                "type": "checkpoint_completed",
+                "subjects": [f"character-{index % 3}"],
+                "objects": [f"object-{index}"],
+                "location": "fire-station",
+                "status": "completed",
+                "detail": f"complete event detail {index} " + ("evidence " * 12),
+            }
+            for index in range(40)
+        }
+        events["open-transmission"] = {
+            "event_id": "open-transmission",
+            "type": "transmission_started",
+            "subjects": ["Mira"],
+            "objects": ["radio"],
+            "location": "fire-station",
+            "status": "ongoing",
+            "detail": "The transmission remains open.",
+        }
+        authority = {
+            "schema_version": "1.0",
+            "source_precedence": ["chapter_event", "model_inference"],
+            "characters": {
+                "Mira": {
+                    "character_id": "Mira",
+                    "canonical_name": "Mira",
+                    "role": "leader",
+                }
+            },
+            "relationships": {},
+            "roster": {},
+            "numeric_counters": {
+                "erosion": {
+                    "counter_id": "erosion",
+                    "owner_id": "Mira",
+                    "current_value": 6,
+                }
+            },
+            "inventory": {},
+            "locations": {
+                "Mira": {
+                    "entity_id": "Mira",
+                    "location_id": "fire-station",
+                }
+            },
+            "events": events,
+        }
+        context = "# Authoritative State\n" + json.dumps(
+            authority,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        compact = pipeline_module._compact_scene_context(
+            context,
+            query="chapter-0017-event-039 radio transmission",
+        )
+
+        body = compact.split("# Authoritative State\n", 1)[1].split(
+            "\n\n# Structured Context Manifest\n",
+            1,
+        )[0]
+        projected = json.loads(body)
+        selection = projected["context_selection"]
+        self.assertLessEqual(len(compact), 1_500 * 7)
+        self.assertGreater(selection["omitted_count"], 0)
+        self.assertIn("events/open-transmission", selection["selected_items"])
+        self.assertEqual(
+            authority["events"]["open-transmission"],
+            projected["events"]["open-transmission"],
+        )
+        self.assertIn("chapter-0017-event-039", projected["events"])
+        for collection in (
+            "characters",
+            "relationships",
+            "roster",
+            "numeric_counters",
+            "inventory",
+            "locations",
+            "events",
+        ):
+            for record_id, record in projected[collection].items():
+                self.assertEqual(authority[collection][record_id], record)
+
+    def test_scene_request_uses_full_state_before_authority_prompt_projection(self) -> None:
+        authority = {
+            "schema_version": "1.0",
+            "characters": {
+                "Mira": {
+                    "character_id": "Mira",
+                    "canonical_name": "Mira",
+                    "role": "leader",
+                }
+            },
+            "relationships": {
+                "Mira->Ivo": {
+                    "relationship_id": "Mira->Ivo",
+                    "source_character_id": "Mira",
+                    "target_character_id": "Ivo",
+                    "type": "allies",
+                }
+            },
+            "roster": {},
+            "numeric_counters": {
+                "erosion": {
+                    "counter_id": "erosion",
+                    "current_value": 6,
+                }
+            },
+            "inventory": {},
+            "locations": {
+                f"entity-{index}": {
+                    "entity_id": f"entity-{index}",
+                    "location_id": "fire-station",
+                }
+                for index in range(12)
+            },
+            "events": {
+                f"chapter-0017-event-{index:03d}": {
+                    "event_id": f"chapter-0017-event-{index:03d}",
+                    "type": "checkpoint_completed",
+                    "subjects": ["Mira"],
+                    "objects": [f"object-{index}"],
+                    "location": "fire-station",
+                    "status": "completed",
+                    "detail": "bound event evidence " * 12,
+                }
+                for index in range(40)
+            },
+        }
+        raw_input = "# Authoritative State\n" + json.dumps(
+            authority,
+            ensure_ascii=False,
+            indent=2,
+        )
+        initial_state = pipeline_module._initial_scene_state(raw_input)
+        compiled = pipeline_module.compile_prompt_contexts(
+            raw_input,
+            budget=pipeline_module.default_context_budget(
+                enable_model_tokenizer=False,
+            ),
+        )
+        plan = {
+            "goal": "Continue the transmission.",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "Decode the signal.",
+                    "required_beat_indexes": [],
+                    "required_event_ids": ["chapter-0018-event-001"],
+                }
+            ],
+        }
+
+        payload = json.loads(
+            pipeline_module._scene_request_payload(
+                input_pack=compiled.scene.text,
+                plan=plan,
+                scene=plan["scenes"][0],
+                scene_required_beats=[],
+                blueprint=None,
+                scene_state=initial_state,
+                authoritative_state_source=authority,
+            )
+        )
+
+        current = payload["current_scene_state"]
+        self.assertEqual(12, len(current["locations"]))
+        self.assertEqual(40, len(current["completed_event_ids"]))
+        self.assertEqual(24, len(current["completed_events"]))
+        self.assertEqual(6, current["counters"]["erosion"])
+        self.assertIn("context_selection", payload["shared_context"])
+
+    def test_scene_payload_reprojects_from_raw_authority_not_compiled_subset(
+        self,
+    ) -> None:
+        target_event_id = "zz-target-beta"
+        events = {
+            f"event-{index:03d}": {
+                "event_id": f"event-{index:03d}",
+                "type": "checkpoint_completed",
+                "subjects": ["Mira"],
+                "objects": [f"object-{index}"],
+                "location": "fire-station",
+                "status": "completed",
+                "detail": "distractor history " * 24,
+            }
+            for index in range(50)
+        }
+        events[target_event_id] = {
+            "event_id": target_event_id,
+            "type": "signal_recovered",
+            "subjects": ["Mira"],
+            "objects": ["beta-key"],
+            "location": "fire-station",
+            "status": "completed",
+            "detail": "Only this record contains beta recovery evidence. " * 30,
+        }
+        authority = {
+            "schema_version": "1.0",
+            "characters": {
+                "Mira": {
+                    "character_id": "Mira",
+                    "canonical_name": "Mira",
+                }
+            },
+            "relationships": {},
+            "roster": {},
+            "numeric_counters": {},
+            "inventory": {},
+            "locations": {},
+            "events": events,
+        }
+        raw_input = "# Authoritative State\n" + json.dumps(
+            authority,
+            ensure_ascii=False,
+            indent=2,
+        )
+        compiled = pipeline_module.compile_prompt_contexts(
+            raw_input,
+            budget=pipeline_module.default_context_budget(
+                enable_model_tokenizer=False,
+            ),
+        )
+        compiled_authority = pipeline_module.authoritative_state_from_markdown(
+            compiled.scene.text
+        )
+        self.assertIsNotNone(compiled_authority)
+        self.assertNotIn(target_event_id, compiled_authority["events"])
+        plan = {
+            "goal": f"Recover {target_event_id} beta-key evidence.",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": f"Use {target_event_id} and beta-key.",
+                    "required_beat_indexes": [],
+                    "required_event_ids": ["chapter-0018-event-001"],
+                }
+            ],
+        }
+
+        payload = json.loads(
+            pipeline_module._scene_request_payload(
+                input_pack=compiled.scene.text,
+                plan=plan,
+                scene=plan["scenes"][0],
+                scene_required_beats=[],
+                blueprint=None,
+                scene_state=pipeline_module._initial_scene_state(raw_input),
+                authoritative_state_source=authority,
+            )
+        )
+        scene_authority = pipeline_module.authoritative_state_from_markdown(
+            payload["shared_context"]
+        )
+
+        self.assertIsNotNone(scene_authority)
+        self.assertIn(target_event_id, scene_authority["events"])
+        self.assertNotIn(
+            "parent_projection_sha256",
+            scene_authority["context_selection"],
+        )
+        self.assertNotIn(
+            "input_sha256",
+            scene_authority["context_selection"],
+        )
 
     def test_plan_chapter_is_compatibility_alias_for_plan_scenes(self) -> None:
         expected = pipeline_module.plan_scenes("input pack", chapter_index=7, dry_run=True)

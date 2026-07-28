@@ -27,6 +27,12 @@ from core.scene_continuity import (
     validate_scene_transition,
 )
 from core.schema import validate_schema
+from core.state.authoritative_context import (
+    AUTHORITATIVE_SCENE_SECTION_MAX_CHARS,
+    authoritative_event_is_open,
+    authoritative_state_from_markdown,
+    compact_authoritative_state_in_markdown,
+)
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_text_blocks
 from core.story_project.coverage import (
@@ -48,6 +54,16 @@ PIPELINE_STAGE_NAMES = (
 )
 _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS = 4_096
 _SCENE_INPUT_HEADROOM_TOKENS = 2_000
+_CHAPTER_PLAN_PROMPT = (
+    "Create a compact chapter plan as JSON only. "
+    "Schema: {\"goal\": string, \"scenes\": [{\"index\": int, \"type\": string, "
+    "\"goal\": string, \"required_beats\": [string], \"planned_events\": "
+    "[{\"event_id\": string, \"type\": string, \"subjects\": [string], "
+    "\"objects\": [string], \"location\": string, \"status\": \"completed\"}]}]}. "
+    "Give every beat a stable event_id scoped to exactly one scene. Keep it to "
+    "2-4 scenes. Scene 1 must be type opening_bridge and continue directly from "
+    "the last chapter ending."
+)
 _SCENE_BOUNDARY_REGENERATION_LIMIT = 1
 _SCENE_BOUNDARY_FEEDBACK_FINDING_LIMIT = 4
 _SCENE_BOUNDARY_FEEDBACK_EVIDENCE_MAX_CHARS = 480
@@ -96,9 +112,16 @@ def run_chapter_pipeline(
     recovered_scene_drafts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     blueprint = blueprint_to_dict(chapter_blueprint)
+    initial_scene_state = _initial_scene_state(input_pack)
+    authoritative_state_source = authoritative_state_from_markdown(input_pack)
     prompt_contexts = compile_prompt_contexts(
         input_pack,
         budget=default_context_budget(enable_model_tokenizer=not dry_run),
+        stage_protocol_texts=(
+            {"plan": (_CHAPTER_PLAN_PROMPT,)}
+            if blueprint is None
+            else None
+        ),
     )
     plan_input = prompt_contexts.plan.text
     scene_input = prompt_contexts.scene.text
@@ -121,6 +144,8 @@ def run_chapter_pipeline(
         language=language,
         chapter_blueprint=blueprint,
         recovered_scene_drafts=recovered_scene_drafts,
+        initial_scene_state=initial_scene_state,
+        authoritative_state_source=authoritative_state_source,
     )
     merged, scene_spans = _merge_scene_texts(scenes)
     merged = validate_language_output(merged, CHAPTER_CONTRACT, language=language)
@@ -234,15 +259,7 @@ def plan_scenes(
     if dry_run:
         return _validate_plan(_dry_run_plan(chapter_index), chapter_index=chapter_index)
 
-    prompt = (
-        "Create a compact chapter plan as JSON only. "
-        "Schema: {\"goal\": string, \"scenes\": [{\"index\": int, \"type\": string, \"goal\": string, "
-        "\"required_beats\": [string], \"planned_events\": [{\"event_id\": string, \"type\": string, "
-        "\"subjects\": [string], \"objects\": [string], \"location\": string, \"status\": \"completed\"}]}]}. "
-        "Give every beat a stable event_id scoped to exactly one scene. Keep it to 2-4 scenes. "
-        "Scene 1 must be type opening_bridge and continue directly from the last chapter ending."
-    )
-    payload = _request_chapter_plan(input_pack, prompt)
+    payload = _request_chapter_plan(input_pack, _CHAPTER_PLAN_PROMPT)
     try:
         plan = _load_plan_json(payload)
     except json.JSONDecodeError as first_exc:
@@ -443,12 +460,18 @@ def generate_scenes(
     language: str | None = None,
     chapter_blueprint: dict[str, Any] | None = None,
     recovered_scene_drafts: list[dict[str, Any]] | None = None,
+    initial_scene_state: dict[str, Any] | None = None,
+    authoritative_state_source: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     blueprint = blueprint_to_dict(chapter_blueprint)
     plan = _validate_plan(plan)
     recovered = _recovered_scene_prefix(recovered_scene_drafts, plan)
     scene_drafts: list[dict[str, Any]] = []
-    scene_state = _initial_scene_state(input_pack)
+    scene_state = (
+        scene_state_summary(initial_scene_state)
+        if initial_scene_state is not None
+        else _initial_scene_state(input_pack)
+    )
     prior_scene_summaries: list[dict[str, Any]] = []
     for scene in plan.get("scenes", []):
         required_beat_indexes = _scene_beat_indexes(scene)
@@ -486,6 +509,7 @@ def generate_scenes(
                 prior_scene_summaries=prior_scene_summaries,
                 state_before=state_before,
                 language=language,
+                authoritative_state_source=authoritative_state_source,
             )
         local_regeneration_attempts = 0
         rejected_boundaries: list[dict[str, Any]] = []
@@ -534,6 +558,7 @@ def generate_scenes(
                 language=language,
                 boundary_retry=feedback,
                 boundary_retry_attempt=local_regeneration_attempts,
+                authoritative_state_source=authoritative_state_source,
             )
         if local_regeneration_attempts:
             boundary = {
@@ -595,6 +620,7 @@ def _request_scene_candidate(
     language: str | None,
     boundary_retry: dict[str, Any] | None = None,
     boundary_retry_attempt: int = 0,
+    authoritative_state_source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scene_index = int(scene["index"])
     call_kwargs: dict[str, Any] = {
@@ -621,6 +647,7 @@ def _request_scene_candidate(
                     prior_scene_summaries=prior_scene_summaries,
                     scene_state=state_before,
                     boundary_retry=boundary_retry,
+                    authoritative_state_source=authoritative_state_source,
                 ),
             },
         ],
@@ -732,6 +759,7 @@ def _scene_request_payload(
     prior_scene_summaries: list[dict[str, Any]] | None = None,
     scene_state: dict[str, Any] | None = None,
     boundary_retry: dict[str, Any] | None = None,
+    authoritative_state_source: dict[str, Any] | None = None,
 ) -> str:
     target_min_chars, target_max_chars = _scene_target_char_range(plan)
     chapter_plan_context = _compact_chapter_plan_context(plan)
@@ -803,7 +831,11 @@ def _scene_request_payload(
     budget = default_context_budget()
     safe_input_limit = _scene_safe_input_limit(budget)
     protocol_texts = (_load_scene_prompt(),)
-    compact_scene_context = _compact_scene_context(input_pack, query=context_query)
+    compact_scene_context = _compact_scene_context(
+        input_pack,
+        query=context_query,
+        authoritative_state_source=authoritative_state_source,
+    )
     payload = ""
     for policy in _SCENE_CONTEXT_PAYLOAD_POLICIES:
         compact_summaries = _compact_prior_scene_summaries(
@@ -932,10 +964,23 @@ def _compact_scene_context(
     *,
     max_section_chars: int = 1_500,
     query: str = "",
+    authoritative_state_source: dict[str, Any] | None = None,
 ) -> str:
     """Retrieve complete sections/JSON items relevant to the current scene."""
-    selection = compact_markdown_context(
+    authority_section_limit = min(
+        AUTHORITATIVE_SCENE_SECTION_MAX_CHARS,
+        max(1, max_section_chars * 7),
+    )
+    projected_text = compact_authoritative_state_in_markdown(
         text,
+        max_section_chars=authority_section_limit,
+        query=query,
+        require_query_references=False,
+        require_open_events=False,
+        authoritative_state_source=authoritative_state_source,
+    )
+    selection = compact_markdown_context(
+        projected_text,
         max_chars=max_section_chars * 7,
         per_section_max_chars=max_section_chars,
         query=query,
@@ -963,6 +1008,7 @@ def _compact_scene_context(
         },
         section_max_chars={
             "Story State": STORY_STATE_SECTION_MAX_CHARS,
+            "Authoritative State": authority_section_limit,
             "StoryProject Chapter Blueprint": _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS,
         },
         prefer_recent=True,
@@ -973,7 +1019,7 @@ def _compact_scene_context(
 
 def _initial_scene_state(input_pack: str) -> dict[str, Any]:
     state = empty_scene_state()
-    authority = _input_pack_json_section(input_pack, "Authoritative State")
+    authority = authoritative_state_from_markdown(input_pack)
     if isinstance(authority, dict):
         for character_id, record in (authority.get("characters") or {}).items():
             if isinstance(record, dict):
@@ -1000,48 +1046,23 @@ def _initial_scene_state(input_pack: str) -> dict[str, Any]:
             if not isinstance(record, dict):
                 continue
             normalized = str(event_id).strip()
-            status = str(record.get("status") or "").strip().lower()
-            if status == "completed":
+            if not authoritative_event_is_open(record):
                 if normalized and normalized not in state["completed_event_ids"]:
                     state["completed_event_ids"].append(normalized)
                 state["completed_events"].append(dict(record))
-            elif status in {"started", "ongoing"}:
+            else:
                 state["open_actions"].append(dict(record))
         state["open_action"] = (
             str(state["open_actions"][0].get("event_id") or "")
             if state["open_actions"]
             else ""
         )
-    match = re.search(
-        r"(?ms)^# Story State[ \t]*\r?\n(.*?)(?=^# |\Z)",
-        str(input_pack or ""),
+    story_state = _input_pack_json_section(input_pack, "Story State") or {}
+    _apply_scene_bridge(
+        state,
+        authority=authority if isinstance(authority, dict) else {},
+        story_state=story_state,
     )
-    if not match:
-        return state
-    body = match.group(1).strip()
-    start = body.find("{")
-    end = body.rfind("}")
-    if start < 0 or end <= start:
-        return state
-    try:
-        story_state = json.loads(body[start : end + 1])
-    except json.JSONDecodeError:
-        return state
-    if not isinstance(story_state, dict):
-        return state
-    location = str(story_state.get("last_scene_location") or "").strip()
-    characters = story_state.get("last_scene_characters")
-    if location and isinstance(characters, list):
-        state["current_location"] = location
-        state["characters_present"] = [
-            str(character).strip()
-            for character in characters
-            if str(character).strip()
-        ]
-        for character in characters:
-            character_id = str(character).strip()
-            if character_id:
-                state["locations"][character_id] = location
     for event_id in story_state.get("completed_event_ids") or []:
         normalized = str(event_id).strip()
         if normalized and normalized not in state["completed_event_ids"]:
@@ -1066,6 +1087,210 @@ def _input_pack_json_section(input_pack: str, section: str) -> dict[str, Any] | 
     except json.JSONDecodeError:
         return None
     return value if isinstance(value, dict) else None
+
+
+def _apply_scene_bridge(
+    state: dict[str, Any],
+    *,
+    authority: dict[str, Any],
+    story_state: dict[str, Any],
+) -> None:
+    """Apply Story State only where the authoritative ledger has no answer."""
+
+    story_location = str(
+        story_state.get("last_scene_location") or ""
+    ).strip()
+    raw_story_characters = story_state.get("last_scene_characters")
+    story_characters = (
+        [
+            normalized
+            for character in raw_story_characters
+            if (normalized := str(character).strip())
+        ]
+        if isinstance(raw_story_characters, list)
+        else []
+    )
+    aliases = _authoritative_character_aliases(authority)
+    resolved_story_characters = [
+        aliases.get(character_id, character_id)
+        for character_id in story_characters
+    ]
+    known_characters = _authoritative_character_ids(authority)
+    locations = {
+        str(entity_id): str(location_id).strip()
+        for entity_id, location_id in (state.get("locations") or {}).items()
+        if str(entity_id).strip() and str(location_id).strip()
+    }
+    authoritative_location = _authoritative_bridge_location(
+        authority,
+        locations=locations,
+        known_characters=known_characters,
+        story_location=story_location,
+        story_characters=resolved_story_characters,
+    )
+    if authoritative_location:
+        state["current_location"] = authoritative_location
+        present = {
+            character_id
+            for character_id in known_characters
+            if locations.get(character_id) == authoritative_location
+        }
+        if story_location == authoritative_location:
+            present.update(
+                character_id
+                for character_id in resolved_story_characters
+                if not locations.get(character_id)
+                or locations.get(character_id) == authoritative_location
+            )
+        state["characters_present"] = sorted(present)
+        return
+    if not story_location:
+        return
+    state["current_location"] = story_location
+    state["characters_present"] = story_characters
+    for character_id in story_characters:
+        state["locations"].setdefault(character_id, story_location)
+
+
+def _authoritative_bridge_location(
+    authority: dict[str, Any],
+    *,
+    locations: dict[str, str],
+    known_characters: set[str],
+    story_location: str,
+    story_characters: list[str],
+) -> str:
+    if story_characters:
+        story_authority_locations = {
+            locations[character_id]
+            for character_id in story_characters
+            if locations.get(character_id)
+        }
+        if story_location in story_authority_locations:
+            return story_location
+        if len(story_authority_locations) == 1:
+            return next(iter(story_authority_locations))
+        protagonist_locations = _protagonist_locations(
+            authority,
+            locations=locations,
+            allowed_characters=set(story_characters),
+        )
+        return (
+            next(iter(protagonist_locations))
+            if len(protagonist_locations) == 1
+            else ""
+        )
+    protagonist_locations = _protagonist_locations(
+        authority,
+        locations=locations,
+        allowed_characters=known_characters,
+    )
+    if len(protagonist_locations) == 1:
+        return next(iter(protagonist_locations))
+    known_locations = {
+        locations[character_id]
+        for character_id in known_characters
+        if locations.get(character_id)
+    }
+    return next(iter(known_locations)) if len(known_locations) == 1 else ""
+
+
+def _protagonist_locations(
+    authority: dict[str, Any],
+    *,
+    locations: dict[str, str],
+    allowed_characters: set[str],
+) -> set[str]:
+    result: set[str] = set()
+    for record_id, record in (authority.get("characters") or {}).items():
+        if not isinstance(record, dict):
+            continue
+        character_id = str(record.get("character_id") or record_id).strip()
+        if character_id not in allowed_characters:
+            continue
+        role_values = {
+            str(record.get(field) or "").strip().lower()
+            for field in ("role", "identity")
+        }
+        if not any(
+            value == "protagonist"
+            or value == "lead"
+            or "主角" in value
+            for value in role_values
+        ):
+            continue
+        location = locations.get(character_id)
+        if location:
+            result.add(location)
+    return result
+
+
+def _authoritative_character_aliases(
+    authority: dict[str, Any],
+) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for record_id, record in (authority.get("characters") or {}).items():
+        if not isinstance(record, dict):
+            continue
+        stable_id = str(record.get("character_id") or record_id).strip()
+        if not stable_id:
+            continue
+        references = [
+            record_id,
+            record.get("character_id"),
+            record.get("canonical_name"),
+            *(record.get("aliases") or []),
+        ]
+        for reference in references:
+            normalized = str(reference or "").strip()
+            if normalized:
+                result.setdefault(normalized, stable_id)
+    return result
+
+
+def _authoritative_character_ids(authority: dict[str, Any]) -> set[str]:
+    result: set[str] = set()
+    for record_id, record in (authority.get("characters") or {}).items():
+        normalized_id = str(record_id).strip()
+        if normalized_id:
+            result.add(normalized_id)
+        if isinstance(record, dict):
+            character_id = str(record.get("character_id") or "").strip()
+            if character_id:
+                result.add(character_id)
+    for record in (authority.get("relationships") or {}).values():
+        if not isinstance(record, dict):
+            continue
+        for field in (
+            "source_character_id",
+            "target_character_id",
+            "source_id",
+            "target_id",
+        ):
+            character_id = str(record.get(field) or "").strip()
+            if character_id:
+                result.add(character_id)
+    for record in (authority.get("roster") or {}).values():
+        if not isinstance(record, dict):
+            continue
+        for character_id in record.get("character_ids") or []:
+            normalized = str(character_id).strip()
+            if normalized:
+                result.add(normalized)
+        for member in record.get("members") or []:
+            if isinstance(member, str):
+                normalized = member.strip()
+            elif isinstance(member, dict):
+                normalized = str(
+                    member.get("character_id")
+                    or member.get("member_id")
+                    or ""
+                ).strip()
+            else:
+                normalized = ""
+            if normalized:
+                result.add(normalized)
+    return result
 
 
 def _recovered_scene_result(

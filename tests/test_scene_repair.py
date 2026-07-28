@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import patch
 
 from core.context_budget import ContextBudgetError
+from core.prompt_compiler import compile_prompt_contexts
 from core.schema import validate_schema
+from core.state.authoritative_context import authoritative_state_from_markdown
 from modules.scene_repair import apply_repair_plan, build_repair_plan, repair_scene
 from modules.scene_repair.repairer import (
     _compact_repair_context,
@@ -109,6 +111,131 @@ class SceneRepairTest(unittest.TestCase):
         self.assertNotIn("selected_items", retained)
         self.assertEqual("b" * 64, retained["source_sha256"])
         self.assertEqual(7, retained["omitted_count"])
+
+    def test_repair_context_selects_relevant_authority_records_by_stable_id(self) -> None:
+        authority = {
+            "schema_version": "1.0",
+            "characters": {
+                f"character-{index}": {
+                    "character_id": f"character-{index}",
+                    "canonical_name": f"Character {index}",
+                    "condition": "stable",
+                    "audit": "history " * 20,
+                }
+                for index in range(30)
+            },
+            "relationships": {},
+            "roster": {},
+            "numeric_counters": {
+                "erosion": {
+                    "counter_id": "erosion",
+                    "owner_id": "character-29",
+                    "current_value": 6,
+                }
+            },
+            "inventory": {},
+            "locations": {},
+            "events": {},
+        }
+        context = "# Authoritative State\n" + json.dumps(
+            authority,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        compact = _compact_repair_context(
+            context,
+            query="character-29 erosion counter mismatch",
+        )
+
+        body = compact.split("# Authoritative State\n", 1)[1].split(
+            "\n\n# Structured Context Manifest\n",
+            1,
+        )[0]
+        projected = json.loads(body)
+        self.assertEqual(
+            authority["characters"]["character-29"],
+            projected["characters"]["character-29"],
+        )
+        self.assertEqual(
+            authority["numeric_counters"]["erosion"],
+            projected["numeric_counters"]["erosion"],
+        )
+        self.assertGreater(projected["context_selection"]["omitted_count"], 0)
+
+    def test_repair_context_reprojects_from_raw_authority(self) -> None:
+        target_event_id = "zz-repair-target"
+        events = {
+            f"event-{index:03d}": {
+                "event_id": f"event-{index:03d}",
+                "type": "checkpoint_completed",
+                "subjects": ["Mira"],
+                "objects": [f"object-{index}"],
+                "location": "station",
+                "status": "completed",
+                "detail": "distractor evidence " * 24,
+            }
+            for index in range(50)
+        }
+        events[target_event_id] = {
+            "event_id": target_event_id,
+            "type": "counter_evidence",
+            "subjects": ["Mira"],
+            "objects": ["erosion"],
+            "location": "station",
+            "status": "completed",
+            "detail": "The repair must recover this exact target evidence. " * 40,
+        }
+        authority = {
+            "schema_version": "1.0",
+            "characters": {
+                "Mira": {
+                    "character_id": "Mira",
+                    "canonical_name": "Mira",
+                }
+            },
+            "relationships": {},
+            "roster": {},
+            "numeric_counters": {
+                "erosion": {
+                    "counter_id": "erosion",
+                    "owner_id": "Mira",
+                    "current_value": 6,
+                    "source_event_id": target_event_id,
+                }
+            },
+            "inventory": {},
+            "locations": {},
+            "events": events,
+        }
+        raw_input = "# Authoritative State\n" + json.dumps(
+            authority,
+            ensure_ascii=False,
+            indent=2,
+        )
+        compiled = compile_prompt_contexts(raw_input)
+        compiled_authority = authoritative_state_from_markdown(
+            compiled.repair.text
+        )
+        self.assertIsNotNone(compiled_authority)
+        self.assertNotIn(target_event_id, compiled_authority["events"])
+
+        compact = _compact_repair_context(
+            compiled.repair.text,
+            query=json.dumps(
+                {"required_event_id": target_event_id},
+            ),
+            authoritative_state_source=authority,
+        )
+        repaired_authority = authoritative_state_from_markdown(compact)
+
+        self.assertIsNotNone(repaired_authority)
+        self.assertIn(target_event_id, repaired_authority["events"])
+        self.assertIn("erosion", repaired_authority["numeric_counters"])
+        self.assertNotIn(
+            "input_sha256",
+            repaired_authority["context_selection"],
+        )
 
     def test_compact_repair_context_selects_complete_relevant_paragraphs(self) -> None:
         context = "\n\n".join(

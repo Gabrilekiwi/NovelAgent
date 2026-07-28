@@ -19,6 +19,11 @@ from core.model_call_runtime import current_model_call_runtime
 from core.prompt_compiler import PROMPT_CONTEXT_SELECTION_KEYS, compile_prompt_contexts
 from core.quality.repair_patch import coerce_repair_patch
 from core.schema import validate_schema
+from core.state.authoritative_context import (
+    AUTHORITATIVE_REPAIR_SECTION_MAX_CHARS,
+    authoritative_state_from_markdown,
+    compact_authoritative_state_in_markdown,
+)
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_json_items, sha256_text
 from modules.scene_repair.plan import build_repair_plan
@@ -73,8 +78,9 @@ def _repair_with_model(
         sort_keys=True,
     )
     compact_context = _compact_repair_context(
-        compile_prompt_contexts(input_pack).repair.text,
+        compile_prompt_contexts(input_pack, query_hint=repair_query).repair.text,
         query=repair_query,
+        authoritative_state_source=authoritative_state_from_markdown(input_pack),
     )
     payload = json.dumps(
         {
@@ -255,10 +261,21 @@ def _compact_repair_context(
     *,
     max_section_chars: int = 4_000,
     query: str = "",
+    authoritative_state_source: dict[str, Any] | None = None,
 ) -> str:
     """Retrieve complete repair-relevant sections, paragraphs, and JSON items."""
-    selection = compact_markdown_context(
+    authority_section_limit = min(
+        AUTHORITATIVE_REPAIR_SECTION_MAX_CHARS,
+        max(1, max_section_chars * 5),
+    )
+    projected_text = compact_authoritative_state_in_markdown(
         text,
+        max_section_chars=authority_section_limit,
+        query=query,
+        authoritative_state_source=authoritative_state_source,
+    )
+    selection = compact_markdown_context(
+        projected_text,
         max_chars=max_section_chars * 5,
         per_section_max_chars=max_section_chars,
         query=query,
@@ -283,7 +300,10 @@ def _compact_repair_context(
             "Prompt Context Selection": PROMPT_CONTEXT_SELECTION_KEYS,
             "Story State": STORY_STATE_CONTEXT_KEYS,
         },
-        section_max_chars={"Story State": STORY_STATE_SECTION_MAX_CHARS},
+        section_max_chars={
+            "Story State": STORY_STATE_SECTION_MAX_CHARS,
+            "Authoritative State": authority_section_limit,
+        },
         prefer_recent=True,
         policy="repair_markdown_json_retrieval_v1",
     )
