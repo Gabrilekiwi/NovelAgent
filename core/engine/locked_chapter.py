@@ -107,7 +107,7 @@ def recover_locked_chapter(
             source_payload = source["payload"]
             complete_draft = None
         else:
-            terminal_source = _newer_recoverable_failed_run(
+            terminal_source = _newer_recoverable_terminal_run(
                 runs,
                 run_dir=runtime_root,
                 chapter_index=chapter_index,
@@ -120,8 +120,24 @@ def recover_locked_chapter(
             source_payload = source["payload"]
             complete_draft = source["complete_draft"]
 
+        source_run = source_payload["run"]
+        expected_scene_count = _expected_scene_count(source_run)
         execution_dir = _source_execution_dir(runtime_root, source)
-        if not force_reset:
+        recovered_scenes = [
+            dict(scene)
+            for scene in source.get("recovered_scenes", [])
+            if isinstance(scene, dict)
+        ]
+        if not recovered_scenes and not force_reset:
+            recovered_scenes = _recover_persisted_scene_sequence(
+                source_payload,
+                run_dir=runtime_root,
+                expected_scene_count=expected_scene_count,
+                language=language,
+            )
+        if recovered_scenes:
+            complete_draft = None
+        elif not force_reset:
             durable_transform = _latest_usable_complete_transform(
                 execution_dir,
                 language=language,
@@ -142,9 +158,8 @@ def recover_locked_chapter(
                 language=language,
             )
             complete_draft = manual_draft
+            recovered_scenes = []
 
-        source_run = source_payload["run"]
-        expected_scene_count = _expected_scene_count(source_run)
         if (
             not force_reset
             and active_checkpoint is not None
@@ -154,11 +169,6 @@ def recover_locked_chapter(
                 "the existing recovery checkpoint no longer matches the chapter outline; reset it before reusing output"
             )
 
-        recovered_scenes = [
-            dict(scene)
-            for scene in source.get("recovered_scenes", [])
-            if isinstance(scene, dict)
-        ]
         if force_reset:
             complete_draft = None
             recovered_scenes = []
@@ -321,7 +331,7 @@ def _load_runs(run_dir: Path, *, expected_book_id: str) -> list[dict[str, Any]]:
     return results
 
 
-def _newer_recoverable_failed_run(
+def _newer_recoverable_terminal_run(
     runs: list[dict[str, Any]],
     *,
     run_dir: Path,
@@ -342,7 +352,7 @@ def _newer_recoverable_failed_run(
             item
             for item in runs
             if item["payload"]["run"].get("committed") is not True
-            and item["payload"]["run"].get("status") == "failed"
+            and item["payload"]["run"].get("status") in {"failed", "rejected"}
             and int(item["payload"]["run"].get("chapter_index") or 0) == chapter_index
         ),
         key=lambda item: _run_sort_key(item["payload"], item["path"]),
@@ -359,6 +369,18 @@ def _newer_recoverable_failed_run(
             and run_finished_at <= checkpoint_created_at
         ):
             continue
+        recovered_scenes = _recover_persisted_scene_sequence(
+            item["payload"],
+            run_dir=run_dir,
+            expected_scene_count=_expected_scene_count(run),
+            language=language,
+        )
+        if recovered_scenes:
+            return {
+                **item,
+                "complete_draft": None,
+                "recovered_scenes": recovered_scenes,
+            }
         complete_draft = _usable_complete_draft(item["payload"], language=language)
         if complete_draft is not None:
             return {**item, "complete_draft": complete_draft}
@@ -443,6 +465,253 @@ def _usable_complete_draft(payload: dict[str, Any], *, language: str | None) -> 
         "problem_codes": [str(code) for code in problem_codes or [] if str(code).strip()],
         "source_stage": "chapter",
     }
+
+
+def _recover_persisted_scene_sequence(
+    payload: dict[str, Any],
+    *,
+    run_dir: Path,
+    expected_scene_count: int,
+    language: str | None,
+) -> list[dict[str, Any]]:
+    """Recover a hash-bound final Scene sequence without another model call."""
+
+    run = payload.get("run")
+    run_chapter = run.get("chapter") if isinstance(run, dict) else None
+    pipeline = (
+        run_chapter.get("pipeline")
+        if isinstance(run_chapter, dict)
+        else None
+    )
+    artifacts = pipeline.get("artifacts") if isinstance(pipeline, dict) else None
+    sources = pipeline.get("scene_sources") if isinstance(pipeline, dict) else None
+    spans = pipeline.get("scene_spans") if isinstance(pipeline, dict) else None
+    final_artifact = (
+        pipeline.get("final_artifact")
+        if isinstance(pipeline, dict)
+        else None
+    )
+    scene_artifacts = (
+        artifacts.get("scene_drafts")
+        if isinstance(artifacts, dict)
+        else None
+    )
+    continuity_artifact = (
+        artifacts.get("scene_continuity")
+        if isinstance(artifacts, dict)
+        else None
+    )
+    chapter = payload.get("chapter")
+    if (
+        not isinstance(chapter, str)
+        or not isinstance(scene_artifacts, list)
+        or not isinstance(sources, list)
+        or not isinstance(spans, list)
+        or not isinstance(continuity_artifact, dict)
+        or not isinstance(final_artifact, dict)
+        or len(scene_artifacts) != expected_scene_count
+        or len(sources) != expected_scene_count
+        or len(spans) != expected_scene_count
+        or final_artifact.get("accepted") is not True
+        or str(final_artifact.get("artifact_sha256") or "") != _content_sha256(chapter)
+    ):
+        return []
+    try:
+        validate_language_output(
+            chapter,
+            CHAPTER_CONTRACT,
+            language=language,
+        )
+    except ModelOutputError:
+        return []
+
+    continuity_path = _verified_run_artifact_path(
+        continuity_artifact,
+        run_dir=run_dir,
+    )
+    if continuity_path is None:
+        return []
+    try:
+        continuity = json.loads(continuity_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(continuity, dict):
+        return []
+    try:
+        continuity_scenes = {
+            int(scene.get("index") or 0): scene
+            for scene in continuity.get("scenes") or []
+            if isinstance(scene, dict) and int(scene.get("index") or 0) > 0
+        }
+        source_by_index = {
+            int(source.get("scene_index") or 0): source
+            for source in sources
+            if isinstance(source, dict)
+            and int(source.get("scene_index") or 0) > 0
+        }
+        span_by_index = {
+            int(span.get("index") or 0): span
+            for span in spans
+            if isinstance(span, dict) and int(span.get("index") or 0) > 0
+        }
+    except (TypeError, ValueError):
+        return []
+    if (
+        set(continuity_scenes) != set(range(1, expected_scene_count + 1))
+        or set(source_by_index) != set(range(1, expected_scene_count + 1))
+        or set(span_by_index) != set(range(1, expected_scene_count + 1))
+    ):
+        return []
+
+    recovered: list[dict[str, Any]] = []
+    for index, metadata in enumerate(scene_artifacts, start=1):
+        if not isinstance(metadata, dict):
+            return []
+        artifact_path = _verified_run_artifact_path(metadata, run_dir=run_dir)
+        if artifact_path is None:
+            return []
+        try:
+            artifact_text = artifact_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            return []
+        _header, separator, body = artifact_text.partition("\n---\n\n")
+        if not separator:
+            return []
+        source = source_by_index[index]
+        expected_text_sha256 = str(source.get("text_sha256") or "")
+        candidates = [body]
+        if body.endswith("\n"):
+            candidates.append(body[:-1])
+        scene_text = next(
+            (
+                candidate
+                for candidate in candidates
+                if _content_sha256(candidate) == expected_text_sha256
+            ),
+            None,
+        )
+        if scene_text is None:
+            return []
+        span = span_by_index[index]
+        try:
+            span_chars = int(span.get("chars") or 0)
+            span_length = int(span.get("end_char") or 0) - int(
+                span.get("start_char") or 0
+            )
+        except (TypeError, ValueError):
+            return []
+        if span_chars != len(scene_text) or span_length != len(scene_text):
+            return []
+        source_attempt_id = str(source.get("source_attempt_id") or "").strip()
+        if not source_attempt_id:
+            source_call_id = str(source.get("source_call_id") or "").strip()
+            source_attempt_id = _succeeded_attempt_id_for_call(
+                run_dir,
+                run,
+                source_call_id,
+            )
+        if not source_attempt_id:
+            return []
+        continuity_scene = continuity_scenes[index]
+        raw_deltas = continuity_scene.get("deltas")
+        if not isinstance(raw_deltas, dict):
+            return []
+        recovered.append(
+            {
+                "index": index,
+                "text": scene_text,
+                "sha256": expected_text_sha256,
+                "source_attempt_id": source_attempt_id,
+                "events": [
+                    dict(event)
+                    for event in continuity_scene.get("events") or []
+                    if isinstance(event, dict)
+                ],
+                "deltas": {
+                    key: [
+                        dict(item)
+                        for item in raw_deltas.get(key) or []
+                        if isinstance(item, dict)
+                    ]
+                    for key in (
+                        "characters",
+                        "relationships",
+                        "rosters",
+                        "locations",
+                        "inventory",
+                        "counters",
+                    )
+                },
+                "continuity_note": str(
+                    continuity_scene.get("continuity_note") or ""
+                ),
+            }
+        )
+    merged = "\n\n".join(scene["text"] for scene in recovered)
+    if merged != chapter:
+        return []
+    return recovered
+
+
+def _verified_run_artifact_path(
+    metadata: dict[str, Any],
+    *,
+    run_dir: Path,
+) -> Path | None:
+    expected_sha256 = str(metadata.get("sha256") or "")
+    raw_path = metadata.get("path")
+    if len(expected_sha256) != 64 or not isinstance(raw_path, str):
+        return None
+    try:
+        root = run_dir.resolve(strict=True)
+        path = Path(raw_path).resolve(strict=True)
+        path.relative_to(root)
+        raw = path.read_bytes()
+    except (OSError, ValueError):
+        return None
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        return None
+    return path
+
+
+def _succeeded_attempt_id_for_call(
+    run_dir: Path,
+    run: Any,
+    call_id: str,
+) -> str:
+    if not call_id or not isinstance(run, dict):
+        return ""
+    evidence = run.get("execution_evidence")
+    execution_id = (
+        str(evidence.get("execution_id") or "")
+        if isinstance(evidence, dict)
+        else ""
+    )
+    if not execution_id.startswith("execution_"):
+        return ""
+    store = ModelCallStore(run_dir / "executions" / execution_id / "model_calls")
+    if not store.intents_dir.is_dir():
+        return ""
+    candidates: list[tuple[str, str]] = []
+    for path in sorted(store.intents_dir.glob("*.json")):
+        try:
+            intent = store.load_intent(path.stem)
+        except (OSError, ValueError):
+            continue
+        if str(intent.get("call_id") or "") != call_id:
+            continue
+        attempt_id = str(intent.get("attempt_id") or "")
+        if not attempt_id or not store.has_receipt(attempt_id):
+            continue
+        try:
+            receipt = store.load_receipt(attempt_id)
+        except (OSError, ValueError):
+            continue
+        if receipt.get("status") == "succeeded":
+            candidates.append(
+                (str(intent.get("created_at") or ""), attempt_id)
+            )
+    return max(candidates, default=("", ""))[1]
 
 
 def _source_execution_dir(run_dir: Path, source: dict[str, Any]) -> Path | None:

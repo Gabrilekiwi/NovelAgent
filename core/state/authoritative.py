@@ -330,7 +330,10 @@ def seed_authoritative_state_from_snapshot(snapshot: dict[str, Any] | None) -> d
     """Deterministically bootstrap authority ledgers from a legacy/runtime snapshot.
 
     Existing authoritative records always win. Legacy character facts only fill
-    missing identity, alias, location, and known numeric-counter records.
+    missing identity, alias, location, and known numeric-counter records. Mutable
+    legacy facts default to model-inference precedence so a structured chapter
+    event can establish a newer auditable baseline without weakening persisted
+    authoritative records.
     """
 
     source = snapshot if isinstance(snapshot, dict) else {}
@@ -395,7 +398,7 @@ def seed_authoritative_state_from_snapshot(snapshot: dict[str, Any] | None) -> d
                 "source_tier": str(
                     record.get("source_tier")
                     or values.get("source_tier")
-                    or "chapter_event"
+                    or "model_inference"
                 ),
             }
         )
@@ -442,7 +445,7 @@ def seed_authoritative_state_from_snapshot(snapshot: dict[str, Any] | None) -> d
             state["locations"][character_id] = {
                 "entity_id": character_id,
                 "location_id": copy.deepcopy(location),
-                "source_tier": str(record.get("source_tier") or "chapter_event"),
+                "source_tier": str(record.get("source_tier") or "model_inference"),
             }
 
     _seed_character_numeric_counters(
@@ -971,7 +974,7 @@ def _seed_top_level_numeric_counters(
             **record,
             "counter_id": counter_id,
             "current_value": current,
-            "source_tier": str(record.get("source_tier") or "chapter_event"),
+            "source_tier": str(record.get("source_tier") or "model_inference"),
         }
         if spec:
             for field in ("minimum", "maximum", "rule"):
@@ -1061,7 +1064,7 @@ def _seed_character_numeric_counters(
                 "minimum": spec["minimum"],
                 "maximum": spec["maximum"],
                 "rule": spec["rule"],
-                "source_tier": str(record.get("source_tier") or "chapter_event"),
+                "source_tier": str(record.get("source_tier") or "model_inference"),
             }
 
 
@@ -1322,11 +1325,11 @@ def _apply_relationship_changes(
             for existing_id, candidate in state["relationships"].items():
                 if not isinstance(candidate, dict):
                     continue
-                candidate_pair = {
+                candidate_pair = (
                     str(candidate.get("source_character_id") or candidate.get("source_id") or ""),
                     str(candidate.get("target_character_id") or candidate.get("target_id") or ""),
-                }
-                if candidate_pair == {source_id, target_id}:
+                )
+                if candidate_pair == (source_id, target_id):
                     relationship_id = str(existing_id)
                     existing = candidate
                     break
@@ -1342,10 +1345,10 @@ def _apply_relationship_changes(
         for existing_id, candidate in state["relationships"].items():
             if not isinstance(candidate, dict):
                 continue
-            pair_matches = {
+            pair_matches = (
                 str(candidate.get("source_character_id") or candidate.get("source_id") or ""),
                 str(candidate.get("target_character_id") or candidate.get("target_id") or ""),
-            } == {source_id, target_id}
+            ) == (source_id, target_id)
             existing_type = str(candidate.get("type") or candidate.get("kind") or "")
             if pair_matches and existing_type and existing_type != relation_type:
                 findings.append(
@@ -1577,7 +1580,11 @@ def _apply_numeric_changes(
                 )
             )
             continue
-        if current is not None and previous != current:
+        if (
+            current is not None
+            and previous != current
+            and not _incoming_source_supersedes(existing, source_tier)
+        ):
             findings.append(
                 _finding(
                     "numeric_counter_mismatch",
@@ -1724,7 +1731,11 @@ def _apply_location_changes(
         if not entity_id or after in (None, ""):
             findings.append(_finding("invalid_location_change", "Location change is incomplete.", raw))
             continue
-        if current is not None and before != current:
+        if (
+            current is not None
+            and before != current
+            and not _incoming_source_supersedes(existing, source_tier)
+        ):
             findings.append(_finding("location_state_rollback", f"Location {entity_id} starts stale.", raw))
         state["locations"][entity_id] = {
             **copy.deepcopy(existing or {}),
@@ -1949,6 +1960,22 @@ def _stronger_source_tier(existing: Any, incoming: str) -> str:
     if existing_tier not in SOURCE_PRECEDENCE:
         return incoming
     return min((existing_tier, incoming), key=SOURCE_PRECEDENCE.index)
+
+
+def _incoming_source_supersedes(existing: Any, incoming: str) -> bool:
+    existing_tier = (
+        str(existing.get("source_tier") or "")
+        if isinstance(existing, dict)
+        else ""
+    )
+    if (
+        existing_tier not in SOURCE_PRECEDENCE
+        or incoming not in SOURCE_PRECEDENCE
+    ):
+        return False
+    return SOURCE_PRECEDENCE.index(incoming) < SOURCE_PRECEDENCE.index(
+        existing_tier
+    )
 
 
 def _authority_problem(finding: dict[str, Any]) -> dict[str, Any]:

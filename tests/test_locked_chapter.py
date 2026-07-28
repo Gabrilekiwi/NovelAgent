@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from api.contracts import ModelResponse
+from core.engine.artifacts import save_chapter_pipeline_artifacts
 from core.engine.executor import AgentExecutor, _unresolved_provider_calls
 from core.engine.locked_chapter import LockedChapterRecoveryError, recover_locked_chapter
 from core.engine.locked_chapter_state import active_locked_chapter_checkpoint
-from core.engine.run_record import build_failed_run_record, load_latest_run_summary, validate_run_result
+from core.engine.run_record import (
+    build_failed_run_record,
+    build_run_id,
+    load_latest_run_summary,
+    validate_run_result,
+)
 from core.model_calls import ModelCallStore, build_scene_generation_call_id
 from core.state.snapshot import save_snapshot
 
@@ -418,6 +425,123 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertIsNone(checkpoint["complete_draft"])
         self.assertEqual(3, len(checkpoint["scenes"]))
 
+    def test_rejected_run_recovers_hash_bound_final_scene_artifacts(self) -> None:
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            "陆沉核对侵蚀值仍为六，并确认所有人都留在消防站器材口外。" * 18,
+            "韩野完成内侧复核后放行，双方仍保持各自独立的组织边界。" * 18,
+        ]
+        scenes = [
+            {
+                "index": index,
+                "goal": f"scene {index}",
+                "text": text,
+                "source_attempt_id": f"attempt-final-{index}",
+                "events": [
+                    {
+                        "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                        "type": "scene_completed",
+                        "subjects": ["陆沉"],
+                        "objects": [],
+                        "location": "消防站",
+                        "status": "completed",
+                    }
+                ],
+                "deltas": empty_deltas,
+                "continuity_note": f"scene {index} complete",
+            }
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        merged = "\n\n".join(scene_texts)
+        first_end = len(scene_texts[0])
+        pipeline = {
+            "chapter_index": 1,
+            "plan": {
+                "goal": "recover rejected final scenes",
+                "scenes": [
+                    {
+                        "index": index,
+                        "type": "scene",
+                        "goal": f"scene {index}",
+                        "required_beats": [f"beat {index}"],
+                    }
+                    for index in range(1, 3)
+                ],
+            },
+            "scene_drafts": scenes,
+            "merged_chapter": merged,
+            "scene_spans": [
+                {
+                    "index": 1,
+                    "start_char": 0,
+                    "end_char": first_end,
+                    "chars": first_end,
+                },
+                {
+                    "index": 2,
+                    "start_char": first_end + 2,
+                    "end_char": len(merged),
+                    "chars": len(scene_texts[1]),
+                },
+            ],
+            "stages": [
+                {"name": "plan_chapter", "status": "completed"},
+                {"name": "generate_scenes", "status": "completed"},
+                {"name": "merge_scenes", "status": "completed"},
+                {"name": "validate", "status": "completed"},
+                {"name": "repair", "status": "skipped"},
+                {"name": "commit", "status": "pending"},
+            ],
+            "integrity": {
+                "final_gate": {
+                    "accepted": True,
+                    "artifact_sha256": hashlib.sha256(
+                        merged.encode("utf-8")
+                    ).hexdigest(),
+                }
+            },
+        }
+        run_id = build_run_id(1, self.now)
+        pipeline["artifacts"] = save_chapter_pipeline_artifacts(
+            pipeline=pipeline,
+            validation=None,
+            repair_deltas=[],
+            run={"id": run_id, "chapter_index": 1},
+            output_dir=self.run_dir / "chapter_pipeline",
+        )
+        self._write_failed_run(
+            execution_id="execution_rejected_final_scenes",
+            chapter=merged,
+            scene_count=2,
+            chapter_pipeline=pipeline,
+            status="rejected",
+        )
+
+        result = self._recover()
+
+        self.assertEqual("resume_scenes", result["action"])
+        self.assertEqual("complete_scene_sequence_requires_revalidation", result["reason"])
+        self.assertEqual(2, result["reusable_scene_count"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual(scene_texts, [scene["text"] for scene in checkpoint["scenes"]])
+        self.assertEqual(
+            "chapter-001-scene-002-event-001",
+            checkpoint["scenes"][1]["events"][0]["event_id"],
+        )
+        self.assertEqual(empty_deltas, checkpoint["scenes"][1]["deltas"])
+        self.assertIsNone(checkpoint["complete_draft"])
+
     def test_scene_boundary_retry_receipt_replaces_primary_candidate(self) -> None:
         execution_id = "execution_scene_boundary_retry"
         empty_deltas = {
@@ -628,7 +752,15 @@ class LockedChapterRecoveryTest(unittest.TestCase):
                 created_at=self.now + timedelta(seconds=missing_index),
             )
 
-    def _write_failed_run(self, *, execution_id: str, chapter: str, scene_count: int) -> None:
+    def _write_failed_run(
+        self,
+        *,
+        execution_id: str,
+        chapter: str,
+        scene_count: int,
+        chapter_pipeline: dict | None = None,
+        status: str = "failed",
+    ) -> None:
         decision = {
             "chapter_index": 1,
             "goal": "continue_existing_arc",
@@ -696,7 +828,16 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             repair_attempts=0,
             workflow_trace=[],
             error=RuntimeError("provider call uncertain"),
+            chapter_pipeline=chapter_pipeline,
         )
+        record["status"] = status
+        if isinstance(chapter_pipeline, dict) and isinstance(
+            chapter_pipeline.get("artifacts"),
+            dict,
+        ):
+            record["chapter"]["pipeline"]["artifacts"] = chapter_pipeline[
+                "artifacts"
+            ]
         record["execution_evidence"] = {
             "execution_id": execution_id,
             "provenance_hash": "a" * 64,

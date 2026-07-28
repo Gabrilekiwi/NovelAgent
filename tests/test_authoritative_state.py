@@ -392,6 +392,93 @@ class AuthoritativeStateTests(unittest.TestCase):
             0,
             state["numeric_counters"]["陆沉侵蚀值"]["current_value"],
         )
+        self.assertEqual(
+            "model_inference",
+            state["locations"]["陆沉"]["source_tier"],
+        )
+        self.assertEqual(
+            "model_inference",
+            state["numeric_counters"]["陆沉侵蚀值"]["source_tier"],
+        )
+
+    def test_chapter_events_supersede_legacy_inferred_mutable_state(self) -> None:
+        base = seed_authoritative_state_from_snapshot(
+            {
+                "characters": {
+                    "陆沉": {
+                        "role": "主角",
+                        "erosion": 0,
+                        "current_location": "冷库",
+                    }
+                },
+                "spatial_state": {"character_positions": {"陆沉": "冷库"}},
+            }
+        )
+        delta = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 4,
+                    "events": [
+                        {
+                            "event_id": "chapter-0017-beat-004",
+                            "type": "alarm_disabled",
+                            "subjects": ["陆沉"],
+                            "objects": ["fire_alarm"],
+                            "location": "消防站器材口检修夹层",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [
+                            {
+                                "entity_id": "陆沉",
+                                "before": None,
+                                "after": "消防站器材口检修夹层",
+                                "reason": "legacy location is stale",
+                            }
+                        ],
+                        "inventory": [],
+                        "counters": [
+                            {
+                                "counter_id": "陆沉侵蚀值",
+                                "before": 6,
+                                "delta": 0,
+                                "after": 6,
+                                "source_event_id": "chapter-0017-beat-004",
+                            }
+                        ],
+                    },
+                }
+            ],
+            base_state=base,
+        )
+
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            state_delta=delta,
+            chapter_text="陆沉确认侵蚀值仍是6/100。",
+        )
+
+        self.assertTrue(report["accepted"], report["findings"])
+        self.assertEqual(
+            "消防站器材口检修夹层",
+            report["state_after"]["locations"]["陆沉"]["location_id"],
+        )
+        self.assertEqual(
+            6,
+            report["state_after"]["numeric_counters"]["陆沉侵蚀值"]["current_value"],
+        )
+        self.assertEqual(
+            "chapter_event",
+            report["state_after"]["locations"]["陆沉"]["source_tier"],
+        )
+        self.assertEqual(
+            "chapter_event",
+            report["state_after"]["numeric_counters"]["陆沉侵蚀值"]["source_tier"],
+        )
 
     def test_scene_field_deltas_adapt_to_full_authority_records(self) -> None:
         delta = adapt_scene_deltas_to_authoritative_delta(
@@ -581,6 +668,79 @@ class AuthoritativeStateTests(unittest.TestCase):
         self.assertEqual(
             "strained",
             report["state_after"]["relationships"]["rel-a"]["status"],
+        )
+
+    def test_bidirectional_relationship_field_deltas_remain_independent(
+        self,
+    ) -> None:
+        delta = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 6,
+                    "events": [],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [
+                            {
+                                "source_id": "陆沉",
+                                "target_id": "韩野",
+                                "field": "combat_coordination",
+                                "before": None,
+                                "after": "首次完成并肩作战配合",
+                            }
+                        ],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                },
+                {
+                    "index": 7,
+                    "events": [],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [
+                            {
+                                "source_id": "韩野",
+                                "target_id": "陆沉",
+                                "field": "threat_assessment",
+                                "before": None,
+                                "after": "警惕未消但认可其自我限制",
+                            }
+                        ],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                },
+            ],
+            base_state=empty_authoritative_state(),
+        )
+
+        report = validate_authoritative_state_delta(
+            base_state=empty_authoritative_state(),
+            state_delta=delta,
+            chapter_text="",
+        )
+
+        self.assertTrue(report["accepted"], report["findings"])
+        self.assertEqual(
+            {"陆沉->韩野", "韩野->陆沉"},
+            set(report["state_after"]["relationships"]),
+        )
+        self.assertEqual(
+            "首次完成并肩作战配合",
+            report["state_after"]["relationships"]["陆沉->韩野"][
+                "combat_coordination"
+            ],
+        )
+        self.assertEqual(
+            "警惕未消但认可其自我限制",
+            report["state_after"]["relationships"]["韩野->陆沉"][
+                "threat_assessment"
+            ],
         )
 
     def test_stateful_ledgers_require_declared_event_references(self) -> None:
