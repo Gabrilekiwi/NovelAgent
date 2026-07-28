@@ -844,6 +844,9 @@ def _scene_request_payload(
             tail_chars=int(policy["summary_tail_chars"]),
             include_goal=bool(policy["include_summary_goal"]),
         )
+        # This payload is machine-readable transport JSON. Compact only its
+        # formatting so admission headroom is not consumed by indentation;
+        # every authoritative fact and continuity field remains unchanged.
         payload = json.dumps(
             {
                 "shared_context": compact_scene_context,
@@ -854,7 +857,7 @@ def _scene_request_payload(
                 "prior_scene_summaries": compact_summaries,
             },
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),
         )
         report = budget.measure(payload, stage="scene", protocol_texts=protocol_texts)
         if report["within_budget"] and _scene_report_within_safe_limit(

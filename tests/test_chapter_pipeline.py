@@ -647,6 +647,158 @@ class ChapterPipelineTest(unittest.TestCase):
             all("goal" not in item for item in payload["prior_scene_summaries"])
         )
 
+    def test_second_scene_uses_lossless_transport_after_state_advances(
+        self,
+    ) -> None:
+        class TwoSceneBudget:
+            hard_input_limit = 10_100
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+                tokens = len(text)
+                return {
+                    "within_budget": tokens <= self.hard_input_limit,
+                    "budgeted_input_tokens": tokens,
+                    "hard_input_limit": self.hard_input_limit,
+                }
+
+            def require_input(self, text: str, *, stage: str, **_: object) -> dict:
+                return self.measure(text, stage=stage)
+
+        plan = {
+            "goal": "Complete the two-stage transmission.",
+            "scenes": [],
+        }
+        for index, (event_type, event_object) in enumerate(
+            [
+                ("signal_alignment_completed", "relay"),
+                ("transmission_completed", "receiver"),
+            ],
+            start=1,
+        ):
+            event = {
+                "event_id": f"chapter-0018-event-{index:03d}",
+                "type": event_type,
+                "subjects": ["hero"],
+                "objects": [event_object],
+                "location": "station",
+                "status": "completed",
+            }
+            plan["scenes"].append(
+                {
+                    "index": index,
+                    "type": "story_project_blueprint",
+                    "goal": f"Scene {index} " + ("preserve ordered continuity " * 2),
+                    "required_beat_indexes": [],
+                    "required_event_ids": [event["event_id"]],
+                    "forbidden_event_ids": [
+                        f"chapter-0018-event-{prior:03d}"
+                        for prior in range(1, index)
+                    ],
+                    "planned_events": [event],
+                }
+            )
+        initial_state = pipeline_module.empty_scene_state()
+        initial_state["characters"] = {
+            "hero": {
+                "character_id": "hero",
+                "canonical_name": "Mira",
+                "role": "leader",
+                "identity": "station commander",
+                "notes": "stable authority " * 2,
+            }
+        }
+        initial_state["locations"] = {"hero": "station"}
+        initial_state["counters"] = {"erosion": 6}
+        initial_state["current_location"] = "station"
+        initial_state["characters_present"] = ["hero"]
+        historical_event = {
+            "event_id": "chapter-0017-event-001",
+            "type": "checkpoint_completed",
+            "subjects": ["hero"],
+            "objects": ["north gate"],
+            "location": "station",
+            "status": "completed",
+            "detail": "historical audit evidence " * 5,
+        }
+        initial_state["completed_event_ids"] = [historical_event["event_id"]]
+        initial_state["completed_events"] = [historical_event]
+        requests: list[str] = []
+
+        def completion(messages, **_kwargs):
+            raw_request = messages[-1]["content"]
+            requests.append(raw_request)
+            request = json.loads(raw_request)
+            scene_index = request["scene"]["index"]
+            return json.dumps(
+                {
+                    "prose": (
+                        f"Scene {scene_index} unique marker. "
+                        + ("continuous scene prose " * 30)
+                    ),
+                    "events": request["scene"]["planned_events"],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": f"Scene {scene_index} continues.",
+                }
+            )
+
+        budget = TwoSceneBudget()
+        with (
+            patch.object(pipeline_module, "default_context_budget", return_value=budget),
+            patch.object(pipeline_module, "chat_completion", side_effect=completion),
+        ):
+            drafts = pipeline_module.generate_scenes(
+                "# Requirements\nPreserve authority and continuity.",
+                plan,
+                dry_run=False,
+                initial_scene_state=initial_state,
+            )
+
+        self.assertEqual(2, len(requests))
+        self.assertEqual(2, len(drafts))
+        scene_two_payload = json.loads(requests[1])
+        self.assertEqual(
+            drafts[0]["scene_state_after"],
+            scene_two_payload["current_scene_state"],
+        )
+        self.assertEqual(
+            6,
+            scene_two_payload["current_scene_state"]["counters"]["erosion"],
+        )
+        self.assertEqual(
+            "station",
+            scene_two_payload["current_scene_state"]["locations"]["hero"],
+        )
+        self.assertIn(
+            plan["scenes"][0]["required_event_ids"][0],
+            scene_two_payload["current_scene_state"]["completed_event_ids"],
+        )
+        pretty_payload = json.dumps(
+            scene_two_payload,
+            ensure_ascii=False,
+            indent=2,
+        )
+        safe_input_limit = pipeline_module._scene_safe_input_limit(budget)
+        self.assertGreater(len(pretty_payload), safe_input_limit)
+        self.assertLessEqual(len(pretty_payload), budget.hard_input_limit)
+        self.assertLessEqual(len(requests[1]), safe_input_limit)
+        self.assertEqual(
+            requests[1],
+            json.dumps(
+                scene_two_payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+
     def test_scene_request_compacts_large_sections_and_drops_memory_index(self) -> None:
         context = "\n\n".join(
             [f"# Section {index}\nHEAD-{index}\n" + (str(index) * 5_000) + f"\nTAIL-{index}" for index in range(8)]
