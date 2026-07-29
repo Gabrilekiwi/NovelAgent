@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from api.contracts import ModelOutputError
+from core.scene_continuity import scene_state_hash
 from core.schema import validate_schema
 from core.story_project.coverage import validate_blueprint_coverage
 from modules.chapter_generator import run_chapter_pipeline
@@ -13,6 +14,131 @@ import modules.chapter_generator.pipeline as pipeline_module
 
 
 class ChapterPipelineTest(unittest.TestCase):
+    def test_scene_prompt_uses_roster_generation_view_without_losing_local_audit(
+        self,
+    ) -> None:
+        audit_marker = "AUDIT-EVIDENCE-THAT-MUST-STAY-LOCAL"
+        authority = {
+            "schema_version": "1.0",
+            "source_precedence": [
+                "story_project_standard",
+                "chapter_event",
+                "model_inference",
+            ],
+            "characters": {},
+            "relationships": {},
+            "roster": {
+                "roster_fireseed_one": {
+                    "roster_id": "roster_fireseed_one",
+                    "name": "Fireseed One",
+                    "aliases": ["Fireseed"],
+                    "baseline_evidence": {
+                        "source_kind": "committed_chapter_prose",
+                        "source_path": "chapters/17.md",
+                        "sha256": "a" * 64,
+                        "exact_evidence": [{"line_number": 5, "text": audit_marker}],
+                    },
+                    "introduced_chapter": 17,
+                    "introduced_event_id": "chapter-0017-beat-001",
+                    "baseline_source": "runs/chapter-17.json",
+                    "migration_id": "chapter17-roster-baseline-v1",
+                    "members": [],
+                    "unresolved_count": 17,
+                    "declared_count": 17,
+                    "computed_count": 17,
+                    "source_tier": "story_project_standard",
+                }
+            },
+            "numeric_counters": {},
+            "inventory": {},
+            "locations": {},
+            "events": {},
+        }
+        raw_input = "# Authoritative State\n" + json.dumps(
+            authority,
+            ensure_ascii=False,
+        )
+        initial_state = pipeline_module._initial_scene_state(raw_input)
+        full_local_summary = pipeline_module.scene_state_summary(initial_state)
+        plan = {
+            "goal": "roster_fireseed_one",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "roster_fireseed_one",
+                    "required_event_ids": [],
+                }
+            ],
+        }
+
+        payload = json.loads(
+            pipeline_module._scene_request_payload(
+                input_pack=raw_input,
+                plan=plan,
+                scene=plan["scenes"][0],
+                scene_required_beats=[],
+                blueprint=None,
+                scene_state=initial_state,
+                authoritative_state_source=authority,
+            )
+        )
+
+        current_roster = payload["current_scene_state"]["rosters"][
+            "roster_fireseed_one"
+        ]
+        state_projection = payload["current_scene_state"][
+            "context_projection"
+        ]
+        shared_authority = pipeline_module.authoritative_state_from_markdown(
+            payload["shared_context"]
+        )
+        for field in (
+            "baseline_evidence",
+            "introduced_chapter",
+            "introduced_event_id",
+            "baseline_source",
+            "migration_id",
+        ):
+            self.assertNotIn(field, current_roster)
+        self.assertEqual(17, current_roster["computed_count"])
+        self.assertEqual(
+            scene_state_hash(initial_state),
+            state_projection["source_sha256"],
+        )
+        projection_payload = dict(payload["current_scene_state"])
+        projection_payload.pop("context_projection")
+        self.assertEqual(
+            hashlib.sha256(
+                json.dumps(
+                    projection_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            state_projection["projection_sha256"],
+        )
+        self.assertEqual({}, shared_authority["roster"])
+        self.assertEqual(
+            {"roster": "current_scene_state.rosters"},
+            shared_authority["context_selection"][
+                "externalized_collections"
+            ],
+        )
+        self.assertNotIn(audit_marker, json.dumps(payload, ensure_ascii=False))
+        self.assertEqual(
+            audit_marker,
+            full_local_summary["rosters"]["roster_fireseed_one"][
+                "baseline_evidence"
+            ]["exact_evidence"][0]["text"],
+        )
+        self.assertEqual(
+            audit_marker,
+            initial_state["rosters"]["roster_fireseed_one"][
+                "baseline_evidence"
+            ]["exact_evidence"][0]["text"],
+        )
+
     def test_initial_scene_state_restores_location_presence_and_open_action(
         self,
     ) -> None:
@@ -548,6 +674,14 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         self.assertNotIn("stable_entity_id", json.dumps(delta_schema))
         self.assertTrue(any("does not actually change" in rule for rule in payload["delta_rules"]))
+        self.assertIn("resolve", delta_schema["rosters"][0]["operation"])
+        self.assertTrue(
+            any(
+                "total delta must be 0" in rule
+                and "declared_count must stay unchanged" in rule
+                for rule in payload["delta_rules"]
+            )
+        )
 
     def test_scene_request_compacts_global_plan_but_keeps_current_scene_complete(self) -> None:
         scenes = [
@@ -655,7 +789,7 @@ class ChapterPipelineTest(unittest.TestCase):
         self,
     ) -> None:
         class TwoSceneBudget:
-            hard_input_limit = 10_500
+            hard_input_limit = 11_000
 
             def measure(self, text: str, *, stage: str, **_: object) -> dict:
                 if stage != "scene":
@@ -771,7 +905,13 @@ class ChapterPipelineTest(unittest.TestCase):
         scene_two_payload = json.loads(requests[1])
         self.assertEqual(
             drafts[0]["scene_state_after"],
-            scene_two_payload["current_scene_state"],
+            {
+                key: value
+                for key, value in scene_two_payload[
+                    "current_scene_state"
+                ].items()
+                if key != "context_projection"
+            },
         )
         self.assertEqual(
             6,
@@ -792,7 +932,7 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         safe_input_limit = pipeline_module._scene_safe_input_limit(budget)
         self.assertGreater(len(pretty_payload), safe_input_limit)
-        self.assertLessEqual(len(pretty_payload), budget.hard_input_limit)
+        self.assertGreater(len(pretty_payload), len(requests[1]))
         self.assertLessEqual(len(requests[1]), safe_input_limit)
         self.assertEqual(
             requests[1],
@@ -1156,6 +1296,93 @@ class ChapterPipelineTest(unittest.TestCase):
         )
 
         self.assertEqual([1], list(recovered))
+
+    def test_recovered_scene_prefix_stops_when_beat_grouping_changed(self) -> None:
+        recovered = [
+            {
+                "index": 1,
+                "text": "The legacy first Scene covered only the first required beat.",
+                "events": [
+                    {
+                        "event_id": "chapter-0017-beat-001",
+                        "type": "required_beat_1_completed",
+                        "subjects": [],
+                        "objects": [],
+                        "location": "",
+                        "status": "completed",
+                    }
+                ],
+                "deltas": {
+                    "characters": [],
+                    "relationships": [],
+                    "rosters": [],
+                    "locations": [],
+                    "inventory": [],
+                    "counters": [],
+                },
+            }
+        ]
+        current_plan = {
+            "scenes": [
+                {
+                    "index": 1,
+                    "required_event_ids": [
+                        "chapter-0017-beat-001",
+                        "chapter-0017-beat-002",
+                        "chapter-0017-beat-003",
+                    ],
+                }
+            ]
+        }
+
+        accepted = pipeline_module._recovered_scene_prefix(
+            recovered,
+            current_plan,
+        )
+
+        self.assertEqual({}, accepted)
+
+    def test_recovered_scene_prefix_ignores_suffix_beyond_current_plan(self) -> None:
+        def recovered_scene(index: int, event_id: str) -> dict[str, Any]:
+            return {
+                "index": index,
+                "text": f"Recovered Scene {index}.",
+                "events": [
+                    {
+                        "event_id": event_id,
+                        "type": f"required_beat_{index}_completed",
+                        "subjects": [],
+                        "objects": [],
+                        "location": "",
+                        "status": "completed",
+                    }
+                ],
+                "deltas": {
+                    "characters": [],
+                    "relationships": [],
+                    "rosters": [],
+                    "locations": [],
+                    "inventory": [],
+                    "counters": [],
+                },
+            }
+
+        accepted = pipeline_module._recovered_scene_prefix(
+            [
+                recovered_scene(1, "chapter-0017-beat-001"),
+                recovered_scene(2, "chapter-0017-beat-002"),
+            ],
+            {
+                "scenes": [
+                    {
+                        "index": 1,
+                        "required_event_ids": ["chapter-0017-beat-001"],
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual([1], list(accepted))
 
     def test_story_project_generation_blocks_missing_ending_pressure(self) -> None:
         blueprint = self._blueprint()

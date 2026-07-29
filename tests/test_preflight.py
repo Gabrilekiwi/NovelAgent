@@ -620,7 +620,14 @@ class PreflightTest(unittest.TestCase):
             encoding="utf-8",
         )
         schema_path.write_text(
-            json.dumps({"type": "object", "properties": {"name": {"type": "string", "pattern": "^[A-Z]"}}}),
+            json.dumps(
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "format": "uuid"}
+                    },
+                }
+            ),
             encoding="utf-8",
         )
         original_assets = preflight_module.SCHEMA_ASSETS
@@ -634,7 +641,7 @@ class PreflightTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         failed = [check for check in result["checks"] if check["name"] == "schema_assets"][0]
         self.assertFalse(failed["ok"])
-        self.assertIn("unsupported.schema.json.properties.name.pattern is unsupported", failed["error"])
+        self.assertIn("unsupported.schema.json.properties.name.format is unsupported", failed["error"])
 
     def test_preflight_rejects_missing_v1_structure_path(self) -> None:
         tmp_path = self._case_dir("missing_v1_structure")

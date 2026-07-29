@@ -696,6 +696,11 @@ def _chapter_pipeline_summary(chapter_pipeline: dict[str, Any]) -> dict[str, Any
                     if scene.get("source_attempt_id")
                     else {}
                 ),
+                **(
+                    {"source_provenance": dict(scene["source_provenance"])}
+                    if isinstance(scene.get("source_provenance"), dict)
+                    else {}
+                ),
             }
             for scene in pipeline.get("scene_drafts", [])
             if isinstance(scene, dict)

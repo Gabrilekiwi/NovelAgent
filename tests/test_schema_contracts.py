@@ -15,7 +15,13 @@ from core.engine.run_record import (
     validate_run_result,
 )
 from core.memory_v2.canonical import canonical_json_hash
-from core.schema import SchemaValidationError, validate_schema, validate_schema_consistency, validate_schema_keywords
+from core.schema import (
+    SchemaValidationError,
+    _validate,
+    validate_schema,
+    validate_schema_consistency,
+    validate_schema_keywords,
+)
 from core.state.snapshot import SnapshotError, validate_snapshot
 from core.validator import validate_chapter
 
@@ -98,19 +104,99 @@ class SchemaContractTest(unittest.TestCase):
             validate_decision(decision)
 
     def test_schema_validator_rejects_unsupported_schema_keyword(self) -> None:
-        with self.assertRaisesRegex(SchemaValidationError, "pattern is unsupported"):
+        with self.assertRaisesRegex(SchemaValidationError, "format is unsupported"):
             validate_schema_keywords(
                 {
                     "type": "object",
                     "properties": {
                         "name": {
                             "type": "string",
-                            "pattern": "^[A-Z]",
+                            "format": "uuid",
                         }
                     },
                 },
                 "test.schema.json",
             )
+
+    def test_schema_validator_enforces_pattern_and_max_length(self) -> None:
+        schema = {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 4,
+            "pattern": "^[a-z]+$",
+        }
+        self.assertEqual([], _validate("abcd", schema, "$"))
+        self.assertTrue(_validate("abcde", schema, "$"))
+        self.assertTrue(_validate("AB", schema, "$"))
+
+    def test_scene_source_provenance_schemas_require_exact_hashes_and_safe_ids(
+        self,
+    ) -> None:
+        locations = (
+            (
+                "chapter_pipeline.schema.json",
+                (
+                    "properties",
+                    "scene_drafts",
+                    "items",
+                    "properties",
+                    "source_provenance",
+                ),
+            ),
+            (
+                "locked_chapter_resolution.schema.json",
+                (
+                    "properties",
+                    "scenes",
+                    "items",
+                    "properties",
+                    "source_provenance",
+                ),
+            ),
+            (
+                "run_record.schema.json",
+                (
+                    "properties",
+                    "chapter",
+                    "properties",
+                    "pipeline",
+                    "properties",
+                    "scene_sources",
+                    "items",
+                    "properties",
+                    "source_provenance",
+                ),
+            ),
+        )
+        for schema_name, path in locations:
+            with self.subTest(schema=schema_name):
+                current = json.loads(
+                    (Path("schemas") / schema_name).read_text(encoding="utf-8")
+                )
+                for part in path:
+                    current = current[part]
+                properties = current["properties"]
+                for field in (
+                    "source_run_sha256",
+                    "receipt_hash",
+                    "response_artifact_hash",
+                ):
+                    self.assertEqual(64, properties[field]["minLength"])
+                    self.assertEqual(64, properties[field]["maxLength"])
+                    self.assertEqual(
+                        "^[0-9a-f]{64}$",
+                        properties[field]["pattern"],
+                    )
+                if schema_name != "locked_chapter_resolution.schema.json":
+                    self.assertIn("source_run_sha256", current["required"])
+                for field in (
+                    "source_run_id",
+                    "execution_id",
+                    "call_id",
+                    "attempt_id",
+                ):
+                    self.assertEqual(192, properties[field]["maxLength"])
+                    self.assertIn("pattern", properties[field])
 
     def test_schema_validator_rejects_unsupported_schema_shapes(self) -> None:
         with self.assertRaisesRegex(SchemaValidationError, "additionalProperties must be a boolean"):

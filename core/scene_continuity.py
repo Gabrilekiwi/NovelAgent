@@ -8,9 +8,15 @@ import re
 from typing import Any, Iterable
 
 from core.state.prose_state_alignment import validate_roster_count_claims
+from core.state.roster import (
+    ROSTER_INVALID_MUTATION,
+    project_roster_for_generation,
+    reduce_roster_mutation,
+)
 
 
 SCENE_CONTINUITY_SCHEMA_VERSION = "1.0"
+SCENE_STATE_GENERATION_PROJECTION_POLICY = "scene_state_generation_v1"
 _DELTA_KINDS = ("characters", "relationships", "rosters", "locations", "inventory", "counters")
 _COMPLETED_EVENT_SUMMARY_LIMIT = 24
 _OPEN_ACTION_SUMMARY_LIMIT = 12
@@ -71,7 +77,9 @@ def scene_delta_response_schema() -> dict[str, list[dict[str, Any]]]:
         "rosters": [
             {
                 "roster_id": "stable roster id",
-                "operation": "join|leave|dead|missing|replace",
+                "name": "canonical name",
+                "aliases": ["exact alias"],
+                "operation": "join|leave|dead|missing|resolve|replace",
                 "member_ids": ["stable member id"],
                 "members": [
                     {
@@ -83,7 +91,10 @@ def scene_delta_response_schema() -> dict[str, list[dict[str, Any]]]:
                 ],
                 "delta": 1,
                 "declared_count": 1,
-                "reason_event_id": "source event id",
+                "unresolved_before": None,
+                "unresolved_delta": None,
+                "unresolved_count": None,
+                "reason_event_id": "event id declared by this Scene",
             }
         ],
         "locations": [
@@ -314,7 +325,16 @@ def validate_scene_transition(
             scene_index=scene_index,
         )
     )
-    findings.extend(_apply_roster_deltas(after, normalized_deltas["rosters"]))
+    findings.extend(
+        _apply_roster_deltas(
+            after,
+            normalized_deltas["rosters"],
+            current_events={
+                str(event["event_id"]): event
+                for event in normalized_events
+            },
+        )
+    )
     findings.extend(_apply_location_deltas(after, normalized_deltas["locations"]))
     findings.extend(_apply_numeric_deltas(after, normalized_deltas["inventory"], inventory=True))
     findings.extend(_apply_numeric_deltas(after, normalized_deltas["counters"], inventory=False))
@@ -395,8 +415,8 @@ def validate_scene_transition(
         "forbidden_event_ids": sorted(forbidden),
         "declared_event_ids": declared_ids,
         "planned_event_ids": sorted(planned_by_id),
-        "state_before_sha256": _state_hash(before),
-        "state_after_sha256": _state_hash(after),
+        "state_before_sha256": scene_state_hash(before),
+        "state_after_sha256": scene_state_hash(after),
     }
     return report, after
 
@@ -434,6 +454,31 @@ def scene_state_summary(state: dict[str, Any]) -> dict[str, Any]:
             normalized["open_actions"][-_OPEN_ACTION_SUMMARY_LIMIT:]
         ),
     }
+
+
+def scene_state_generation_projection(state: dict[str, Any]) -> dict[str, Any]:
+    """Return a prompt-only Scene state while retaining full local audit state."""
+
+    normalized = _normalize_state(state)
+    projected = scene_state_summary(normalized)
+    projected["rosters"] = {
+        roster_id: project_roster_for_generation(record)
+        for roster_id, record in projected["rosters"].items()
+        if isinstance(record, dict)
+    }
+    projected["context_projection"] = {
+        "policy": SCENE_STATE_GENERATION_PROJECTION_POLICY,
+        "source_kind": "normalized_scene_state",
+        "source_sha256": scene_state_hash(normalized),
+        "projection_sha256": _state_hash(projected),
+    }
+    return projected
+
+
+def scene_state_hash(state: dict[str, Any] | None) -> str:
+    """Hash the complete normalized Scene state used by boundary validation."""
+
+    return _state_hash(_normalize_state(state))
 
 
 def normalize_scene_state(state: dict[str, Any] | None) -> dict[str, Any]:
@@ -609,81 +654,34 @@ def _apply_relationship_deltas(
 def _apply_roster_deltas(
     state: dict[str, Any],
     deltas: list[dict[str, Any]],
+    *,
+    current_events: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for delta in deltas:
-        roster_id = str(delta.get("roster_id") or "").strip()
-        operation = str(delta.get("operation") or "replace").strip()
-        if not roster_id:
-            findings.append(_finding("invalid_roster_delta", "Roster delta is incomplete.", delta))
-            continue
-        existing = state["rosters"].get(roster_id)
-        existing_members = _roster_members(existing)
-        declared_ids = _string_list(delta.get("member_ids"))
-        members = [
-            copy.deepcopy(item)
-            for item in delta.get("members") or []
-            if isinstance(item, dict) and str(item.get("member_id") or "")
-        ]
-        member_ids = [str(item["member_id"]) for item in members]
-        if operation in {"join", "replace"} and declared_ids and set(declared_ids) != set(member_ids):
+        transition = reduce_roster_mutation(
+            state["rosters"],
+            delta,
+            current_events=current_events,
+            require_current_event=True,
+        )
+        for issue in transition["issues"]:
+            code = str(issue.get("code") or ROSTER_INVALID_MUTATION)
             findings.append(
                 _finding(
-                    "roster_count_mismatch",
-                    f"Roster {roster_id} member ids do not match its member records.",
-                    {"member_ids": declared_ids, "record_member_ids": member_ids},
+                    (
+                        "invalid_roster_delta"
+                        if code == ROSTER_INVALID_MUTATION
+                        else code
+                    ),
+                    str(issue.get("message") or "Invalid roster mutation."),
+                    issue.get("evidence") or {},
                 )
             )
-        change_ids = set(declared_ids or member_ids)
-        if operation == "join":
-            for member in members:
-                member_id = str(member["member_id"])
-                prior = existing_members.get(member_id)
-                if isinstance(prior, dict) and any(
-                    prior.get(field) not in (None, "")
-                    and member.get(field) not in (None, "")
-                    and prior.get(field) != member.get(field)
-                    for field in ("character_id", "descriptor")
-                ):
-                    findings.append(
-                        _finding(
-                            "roster_member_identity_drift",
-                            f"Roster member {member_id} changed identity fields.",
-                            {"before": prior, "after": member},
-                        )
-                    )
-            next_members = {**existing_members, **{str(item["member_id"]): item for item in members}}
-            expected_delta = len(change_ids - set(existing_members))
-        elif operation in {"leave", "dead", "missing"}:
-            next_members = {key: item for key, item in existing_members.items() if key not in change_ids}
-            expected_delta = -len(change_ids & set(existing_members))
-        else:
-            next_members = {str(item["member_id"]): item for item in members}
-            expected_delta = len(next_members) - len(existing_members)
-        declared_delta = delta.get("delta")
-        declared_count = delta.get("declared_count")
-        if declared_delta is not None and declared_delta != expected_delta:
-            findings.append(
-                _finding(
-                    "roster_count_mismatch",
-                    f"Roster {roster_id} declared delta is inconsistent.",
-                    {"declared_delta": declared_delta, "computed_delta": expected_delta},
-                )
-            )
-        if declared_count is not None and declared_count != len(next_members):
-            findings.append(
-                _finding(
-                    "roster_count_mismatch",
-                    f"Roster {roster_id} declared count is inconsistent.",
-                    {"declared_count": declared_count, "computed_count": len(next_members)},
-                )
-            )
-        state["rosters"][roster_id] = {
-            "roster_id": roster_id,
-            "members": list(next_members.values()),
-            "declared_count": len(next_members),
-            "computed_count": len(next_members),
-        }
+        record = transition.get("record")
+        roster_id = str(transition.get("roster_id") or "")
+        if roster_id and isinstance(record, dict):
+            state["rosters"][roster_id] = copy.deepcopy(record)
     return findings
 
 
@@ -858,27 +856,20 @@ def _unique_strings(value: Any) -> list[str]:
     return list(dict.fromkeys(_string_list(value)))
 
 
-def _roster_members(value: Any) -> dict[str, dict[str, Any]]:
-    if not isinstance(value, dict):
-        return {}
-    return {
-        str(item["member_id"]): copy.deepcopy(item)
-        for item in value.get("members") or []
-        if isinstance(item, dict) and str(item.get("member_id") or "")
-    }
-
-
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 __all__ = [
     "SCENE_CONTINUITY_SCHEMA_VERSION",
+    "SCENE_STATE_GENERATION_PROJECTION_POLICY",
     "SceneBoundaryValidationError",
     "empty_scene_state",
     "normalize_scene_state",
     "require_scene_transition",
     "scene_delta_response_schema",
+    "scene_state_generation_projection",
+    "scene_state_hash",
     "scene_state_summary",
     "validate_scene_transition",
 ]

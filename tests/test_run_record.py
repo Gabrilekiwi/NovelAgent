@@ -6,14 +6,43 @@ import uuid
 from pathlib import Path
 
 from core.engine.run_record import (
+    _chapter_pipeline_summary,
     _integrity_audit,
     _merge_integrity_records,
     load_latest_run_summary,
 )
 from core.memory_v2.canonical import canonical_json_hash
+from modules.chapter_generator.pipeline import run_chapter_pipeline
 
 
 class RunRecordTest(unittest.TestCase):
+    def test_chapter_pipeline_summary_preserves_recovered_scene_provenance(
+        self,
+    ) -> None:
+        pipeline = run_chapter_pipeline(
+            "deterministic input",
+            chapter_index=1,
+            dry_run=True,
+        )
+        provenance = {
+            "source_run_id": "chapter_1_source",
+            "source_run_sha256": "c" * 64,
+            "execution_id": "execution_source",
+            "call_id": "call-source",
+            "attempt_id": "attempt-source",
+            "receipt_hash": "a" * 64,
+            "response_artifact_hash": "b" * 64,
+        }
+        pipeline["scene_drafts"][0]["source_attempt_id"] = provenance["attempt_id"]
+        pipeline["scene_drafts"][0]["source_provenance"] = provenance
+
+        summary = _chapter_pipeline_summary(pipeline)
+
+        self.assertEqual(
+            provenance,
+            summary["scene_sources"][0]["source_provenance"],
+        )
+
     def test_load_latest_run_summary_accepts_utf8_bom(self) -> None:
         run_dir = Path.cwd() / ".tmp" / "test_run_record" / uuid.uuid4().hex
         run_dir.mkdir(parents=True)

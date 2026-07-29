@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from core.memory_v2.canonical import canonical_json_hash
 from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
 from core.state.story_state_context import project_story_state_for_model
+from core.story_project.coverage import build_blueprint_plan
 from core.structured_context import select_text_blocks
 
 
@@ -317,12 +319,42 @@ def build_input_pack_metadata(
     }
     if isinstance(story_project_context, dict):
         blueprint = story_project_context.get("chapter_blueprint") or {}
-        metadata["story_project"] = {
+        story_project_metadata = {
             "enabled": True,
             "chapter_index": story_project_context.get("chapter_index"),
             "required_beat_count": len(blueprint.get("required_beats") or []),
             "ending_pressure_present": bool(blueprint.get("ending_pressure")),
         }
+        try:
+            planned = build_blueprint_plan(blueprint)
+        except (TypeError, ValueError):
+            planned = None
+        if isinstance(planned, dict):
+            planned_scenes = [
+                scene
+                for scene in planned.get("scenes") or []
+                if isinstance(scene, dict)
+            ]
+            story_project_metadata.update(
+                {
+                    "planned_scene_count": len(planned_scenes),
+                    "scene_plan_hash": canonical_json_hash(
+                        planned,
+                        exclude_environment_fields=False,
+                    ),
+                    "planned_scene_scopes": [
+                        {
+                            "index": int(scene.get("index") or position),
+                            "required_beat_indexes": [
+                                int(index)
+                                for index in scene.get("required_beat_indexes") or []
+                            ],
+                        }
+                        for position, scene in enumerate(planned_scenes, start=1)
+                    ],
+                }
+            )
+        metadata["story_project"] = story_project_metadata
     return validate_schema(metadata, "input_pack_metadata.schema.json")
 
 

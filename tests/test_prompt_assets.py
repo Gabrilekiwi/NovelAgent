@@ -246,6 +246,37 @@ class PromptAssetTest(unittest.TestCase):
         self.assertNotIn('"membership"', input_pack)
         self.assertNotIn("tracking/secret.md", input_pack)
 
+    def test_story_project_metadata_persists_four_scene_plan_for_nine_beats(
+        self,
+    ) -> None:
+        metadata = build_input_pack_metadata(
+            "input",
+            {"chapter_index": 18},
+            story_project_context={
+                "chapter_index": 18,
+                "chapter_blueprint": {
+                    "core_event": "Hold the fire station.",
+                    "ending_pressure": "The outer gate starts to fail.",
+                    "required_beats": [
+                        {"index": index, "text": f"required beat {index}"}
+                        for index in range(1, 10)
+                    ],
+                },
+            },
+        )
+
+        story = metadata["story_project"]
+        self.assertEqual(9, story["required_beat_count"])
+        self.assertEqual(4, story["planned_scene_count"])
+        self.assertEqual(64, len(story["scene_plan_hash"]))
+        self.assertEqual(
+            [[1, 2, 3], [4, 5], [6, 7], [8, 9]],
+            [
+                scope["required_beat_indexes"]
+                for scope in story["planned_scene_scopes"]
+            ],
+        )
+
     def test_story_project_input_pack_compacts_semantic_provenance(self) -> None:
         input_pack = build_input_pack(
             {

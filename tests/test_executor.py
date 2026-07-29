@@ -129,21 +129,23 @@ class AgentExecutorTest(unittest.TestCase):
             context["revalidation"]["prior_problems"],
         )
 
-    def test_complete_recovered_scene_sequence_is_allowed_for_boundary_replay(self) -> None:
+    def test_recovered_checkpoint_count_mismatch_is_allowed_for_scope_replay(self) -> None:
         executor = AgentExecutor(
             story_project_context={
                 "chapter_blueprint": {
                     "required_beats": [
                         {"index": 1, "text": "第一拍"},
                         {"index": 2, "text": "第二拍"},
+                        {"index": 3, "text": "第三拍"},
+                        {"index": 4, "text": "第四拍"},
                     ]
                 }
             }
         )
 
-        executor._validate_recovered_scene_plan(
+        executor._validate_recovered_checkpoint_structure(
             [{"index": 1}, {"index": 2}],
-            expected_scene_count=2,
+            expected_scene_count=9,
         )
 
     def _ok_validation(self, snapshot: dict, chapter: str, decision: dict) -> dict:
@@ -839,7 +841,7 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertIn("story_project", saved_run["run"]["validation"]["executed_checks"])
         self.assertFalse((tmp_path / "runs" / "story_project_writebacks").exists())
 
-    def test_story_project_writeback_rebuilds_blueprint_coverage_without_chapter_pipeline(self) -> None:
+    def test_story_project_writeback_blocks_missing_scene_evidence_without_pipeline(self) -> None:
         tmp_path = self._case_dir("story_project_writeback_without_pipeline")
         snapshot_path = tmp_path / "snapshot.json"
         self._write_snapshot(snapshot_path)
@@ -889,20 +891,163 @@ class AgentExecutorTest(unittest.TestCase):
             quality_policy="minimal",
         ).run_once(persist=True)
 
-        self.assertTrue(result["committed"])
+        self.assertFalse(result["accepted"])
+        self.assertFalse(result["committed"])
         self.assertNotIn("pipeline", result["run"]["chapter"])
         coverage = result["run"]["story_project"]["blueprint_coverage"]
         self.assertEqual([], coverage["missing_beat_indexes"])
         self.assertTrue(coverage["ending_pressure_covered"])
         prose = canonical_prose_path(book, 2, "Audit")
-        expected_bytes = (chapter + "\n").encode("utf-8")
-        self.assertEqual(expected_bytes, prose.read_bytes())
+        self.assertFalse(prose.exists())
         final_artifact = result["run"]["chapter"]["final_artifact"]
-        self.assertTrue(final_artifact["accepted"])
-        self.assertEqual(hashlib.sha256(expected_bytes).hexdigest(), final_artifact["artifact_sha256"])
+        self.assertFalse(final_artifact["accepted"])
+        self.assertIn(
+            "stale_scene_evidence",
+            {finding["code"] for finding in final_artifact["findings"]},
+        )
         writeback = result["run"]["story_project"]["writeback"]
-        self.assertEqual(final_artifact["artifact_sha256"], writeback["final_artifact_sha256"])
-        self.assertEqual(final_artifact["artifact_sha256"], writeback["writeback_artifact_sha256"])
+        self.assertFalse(writeback["attempted"])
+        self.assertFalse(writeback["applied"])
+        self.assertEqual(
+            ["quality_gate_rejected_before_writeback"],
+            writeback["blocked_reasons"],
+        )
+
+    def test_failed_story_project_run_audit_does_not_claim_writeback_disabled(
+        self,
+    ) -> None:
+        executor = AgentExecutor(
+            story_project_context={
+                "story_project_root": "book",
+                "chapter_index": 18,
+            },
+            story_project_writeback=StoryProjectWritebackConfig(
+                mode="apply",
+                overwrite=True,
+            ),
+        )
+        result = {
+            "run": {
+                "status": "failed",
+                "chapter": {},
+            },
+            "chapter": "",
+        }
+
+        executor._attach_story_project_audit(result)
+
+        writeback = result["run"]["story_project"]["writeback"]
+        self.assertFalse(writeback["attempted"])
+        self.assertFalse(writeback["applied"])
+        self.assertTrue(writeback["overwrite"])
+        self.assertEqual(
+            ["run_failed_before_writeback"],
+            writeback["blocked_reasons"],
+        )
+
+    def test_recovered_repair_draft_without_scene_evidence_never_writes_back(
+        self,
+    ) -> None:
+        tmp_path = self._case_dir("recovered_draft_missing_scene_evidence")
+        snapshot_path = tmp_path / "snapshot.json"
+        before_snapshot = self._write_snapshot(snapshot_path)
+        book = tmp_path / "book"
+        for directory in CORE_DIRECTORY_NAMES:
+            (book / directory).mkdir(parents=True)
+        outline = book / "大纲" / "细纲_第002章.md"
+        outline.write_text("# Audit", encoding="utf-8")
+        story_project_context = {
+            "story_project_root": str(book),
+            "chapter_index": 2,
+            "snapshot_overlay": {"chapter_index": 2},
+            "memory_context_overlay": {"items": [], "source_mappings": []},
+            "chapter_blueprint": {
+                "chapter_index": 2,
+                "outline_path": str(outline),
+                "title": "Audit",
+                "core_event": "danger forces the route choice",
+                "required_beats": [
+                    {"index": 1, "text": "danger forces the route choice"},
+                    {"index": 2, "text": "open conflict over the serum"},
+                ],
+                "ending_pressure": "the locked door starts a countdown",
+                "source_path": str(outline),
+                "missing_fields": [],
+            },
+            "source_paths": {"outline_path": str(outline)},
+            "source_resolution": {"entries": []},
+        }
+        chapter = (
+            "The sudden danger forces the route choice while the team enters "
+            "open conflict over the serum. They hold their ground and count "
+            "the remaining supplies. At the end, the locked door starts a "
+            "countdown."
+        )
+        generator_calls: list[str] = []
+
+        def generator(input_pack: str) -> str:
+            generator_calls.append(input_pack)
+            return self.fail("a recovered complete draft must not regenerate")
+
+        executor = AgentExecutor(
+            snapshot_path=snapshot_path,
+            memory_path=tmp_path / "missing_memory.json",
+            run_dir=tmp_path / "runs",
+            chapter_dir=tmp_path / "chapters",
+            dry_run=True,
+            generator=generator,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            story_project_context=story_project_context,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            quality_policy="minimal",
+        )
+        checkpoint = {
+            "action": "repair_draft",
+            "expected_scene_count": 2,
+            "complete_draft": {
+                "text": chapter,
+                "sha256": hashlib.sha256(chapter.encode("utf-8")).hexdigest(),
+                "problem_codes": [],
+                "source_stage": "scene_repair",
+            },
+            "scenes": [],
+        }
+
+        with patch.object(
+            executor,
+            "_locked_chapter_checkpoint",
+            return_value=checkpoint,
+        ):
+            result = executor.run_once(persist=True)
+
+        self.assertEqual([], generator_calls)
+        self.assertFalse(result["accepted"])
+        self.assertFalse(result["committed"])
+        coverage = result["run"]["story_project"]["blueprint_coverage"]
+        self.assertEqual([], coverage["missing_beat_indexes"])
+        self.assertTrue(coverage["ending_pressure_covered"])
+        final_artifact = result["run"]["chapter"]["final_artifact"]
+        self.assertFalse(final_artifact["accepted"])
+        stale_findings = [
+            finding
+            for finding in final_artifact["findings"]
+            if finding["code"] == "stale_scene_evidence"
+        ]
+        self.assertTrue(stale_findings)
+        self.assertIn(
+            "scene_evidence_missing",
+            {
+                problem["reason"]
+                for finding in stale_findings
+                for problem in finding["evidence"]["problems"]
+            },
+        )
+        writeback = result["run"]["story_project"]["writeback"]
+        self.assertFalse(writeback["attempted"])
+        self.assertFalse(writeback["applied"])
+        self.assertFalse(canonical_prose_path(book, 2, "Audit").exists())
+        self.assertEqual(before_snapshot, snapshot_path.read_text(encoding="utf-8"))
 
     def test_story_project_canonicalization_preserves_prior_polish_rejection(self) -> None:
         tmp_path = self._case_dir("story_project_polish_append_rejected")

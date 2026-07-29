@@ -3,12 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from core.structured_context import (
     StructuredContextError,
     rank_texts,
     sha256_text,
+)
+from core.state.roster import (
+    ROSTER_GENERATION_PROJECTION_POLICY,
+    project_roster_for_generation,
 )
 
 
@@ -77,6 +81,7 @@ def compact_authoritative_state_section(
     query: str = "",
     require_query_references: bool = True,
     require_open_events: bool = True,
+    externalized_collections: Mapping[str, str] | None = None,
 ) -> str:
     """Project raw Authoritative State at complete stable-record boundaries."""
 
@@ -116,6 +121,7 @@ def compact_authoritative_state_section(
         query=query,
         require_query_references=require_query_references,
         require_open_events=require_open_events,
+        externalized_collections=externalized_collections,
     )
     rendered = _json_text(projected, sort_keys=True)
     if len(rendered) > body_limit:
@@ -156,6 +162,7 @@ def compact_authoritative_state_in_markdown(
     require_query_references: bool = True,
     require_open_events: bool = True,
     authoritative_state_source: dict[str, Any] | None = None,
+    externalized_collections: Mapping[str, str] | None = None,
 ) -> str:
     """Replace one Authoritative State section with one raw-source projection."""
 
@@ -192,6 +199,7 @@ def compact_authoritative_state_in_markdown(
         query=query,
         require_query_references=require_query_references,
         require_open_events=require_open_events,
+        externalized_collections=externalized_collections,
     )
     suffix = source[match.end() :]
     separator = "\n\n" if suffix else ""
@@ -206,6 +214,7 @@ def project_authoritative_state(
     required_item_ids: Iterable[str] = (),
     require_query_references: bool = True,
     require_open_events: bool = True,
+    externalized_collections: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return one bounded projection built directly from raw authority.
 
@@ -233,6 +242,9 @@ def project_authoritative_state(
         )
 
     source = dict(value)
+    externalized = _normalize_externalized_collections(
+        externalized_collections
+    )
     unknown_keys = set(source) - set(AUTHORITATIVE_RECORD_COLLECTIONS) - set(
         AUTHORITATIVE_METADATA_KEYS
     )
@@ -251,19 +263,30 @@ def project_authoritative_state(
     records_by_item_id = {record.item_id: record for record in records}
     records_by_record_id = _records_by_record_id(records)
     records_by_reference = _records_by_reference(records)
-    normalized_source = _projected_payload(
+    normalized_source = _raw_payload(
         metadata,
         records=records,
-        selected_ordinals={record.ordinal for record in records},
     )
     canonical_source = _json_text(normalized_source, sort_keys=True)
     source_sha256 = sha256_text(canonical_source)
 
-    required_ordinals = _resolve_required_item_ids(
+    explicit_required_ordinals = _resolve_required_item_ids(
         required_item_ids,
         records_by_item_id=records_by_item_id,
         records_by_record_id=records_by_record_id,
     )
+    externalized_explicit_items = [
+        records[ordinal].item_id
+        for ordinal in sorted(explicit_required_ordinals)
+        if records[ordinal].collection in externalized
+    ]
+    if externalized_explicit_items:
+        raise StructuredContextError(
+            "required_authoritative_record_externalized",
+            "explicitly required records cannot be externalized: "
+            + ", ".join(externalized_explicit_items),
+        )
+    required_ordinals = set(explicit_required_ordinals)
     if require_query_references:
         required_ordinals.update(
             _resolve_query_references(
@@ -289,6 +312,11 @@ def project_authoritative_state(
             records_by_reference=records_by_reference,
         )
     )
+    required_ordinals = {
+        ordinal
+        for ordinal in required_ordinals
+        if records[ordinal].collection not in externalized
+    }
     required_items = [
         record.item_id
         for record in records
@@ -338,6 +366,16 @@ def project_authoritative_state(
             "omitted_counts_by_collection": sparse_omitted_counts,
             "query_sha256": sha256_text(str(query or "")),
         }
+        if any(
+            record.collection == "roster"
+            and record.ordinal in selected_ordinals
+            for record in records
+        ):
+            manifest["record_projection_policies"] = {
+                "roster": ROSTER_GENERATION_PROJECTION_POLICY,
+            }
+        if externalized:
+            manifest["externalized_collections"] = dict(externalized)
         projected[AUTHORITATIVE_CONTEXT_SELECTION_KEY] = manifest
         manifest["projection_sha256"] = sha256_text(
             _json_text(projected, sort_keys=True)
@@ -376,12 +414,20 @@ def project_authoritative_state(
             f"authoritative metadata exceeds {max_chars} characters",
         )
 
-    all_ordinals = {record.ordinal for record in records}
+    all_ordinals = {
+        record.ordinal
+        for record in records
+        if record.collection not in externalized
+    }
     if rendered_chars(all_ordinals) <= max_chars:
         return render(all_ordinals)
 
     chosen = set(required_ordinals)
-    ranking_records = _records_for_ranking(records)
+    ranking_records = [
+        record
+        for record in _records_for_ranking(records)
+        if record.collection not in externalized
+    ]
     ranked = rank_texts(
         [record.search_text for record in ranking_records],
         query=str(query or ""),
@@ -395,6 +441,30 @@ def project_authoritative_state(
         if rendered_chars(candidate) <= max_chars:
             chosen = candidate
     return render(chosen)
+
+
+def _normalize_externalized_collections(
+    value: Mapping[str, str] | None,
+) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise StructuredContextError(
+            "authoritative_context_externalization_invalid",
+            "externalized_collections must map collection names to prompt fields",
+        )
+    normalized: dict[str, str] = {}
+    for raw_collection, raw_target in value.items():
+        collection = str(raw_collection).strip()
+        target = str(raw_target).strip()
+        if collection not in AUTHORITATIVE_RECORD_COLLECTIONS or not target:
+            raise StructuredContextError(
+                "authoritative_context_externalization_invalid",
+                "externalized collections require supported collection names "
+                "and non-empty prompt-field targets",
+            )
+        normalized[collection] = target
+    return dict(sorted(normalized.items()))
 
 
 def _authority_records(value: dict[str, Any]) -> list[_AuthorityRecord]:
@@ -454,9 +524,30 @@ def _projected_payload(
     }
     for record in records:
         if record.ordinal in selected_ordinals:
-            collections[record.collection][record.record_id] = record.value
+            collections[record.collection][record.record_id] = (
+                project_roster_for_generation(record.value)
+                if record.collection == "roster"
+                else record.value
+            )
     projected.update(collections)
     return projected
+
+
+def _raw_payload(
+    metadata: dict[str, Any],
+    *,
+    records: list[_AuthorityRecord],
+) -> dict[str, Any]:
+    """Normalize the complete raw source used by the audit source hash."""
+
+    payload = dict(metadata)
+    collections: dict[str, dict[str, Any]] = {
+        collection: {} for collection in AUTHORITATIVE_RECORD_COLLECTIONS
+    }
+    for record in records:
+        collections[record.collection][record.record_id] = record.value
+    payload.update(collections)
+    return payload
 
 
 def _records_by_record_id(
@@ -616,7 +707,10 @@ def _stable_record_references(record: _AuthorityRecord) -> set[str]:
         "events": ("event_id",),
     }
     if record.collection == "roster":
-        return _strings_from_fields(record.value, ("roster_id",)) | (
+        return _strings_from_fields(
+            record.value,
+            ("roster_id", "name", "roster_name", "aliases"),
+        ) | (
             _roster_member_references(record.value)
         )
     return _strings_from_fields(

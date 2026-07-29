@@ -14,9 +14,17 @@ from core.engine.locked_chapter_state import (
     discarded_run_ids,
     resolved_execution_ids,
     validate_locked_chapter_resolution,
+    verify_locked_chapter_scene_sources,
 )
 from core.engine.persistence import atomic_create_json, persistence_run_lock
 from core.engine.run_record import validate_run_result
+from core.engine.scene_source_provenance import (
+    SceneSourceProvenanceError,
+    normalize_scene_response,
+    verified_scene_source_provenance,
+    verified_scene_source_response,
+    verify_scene_source_provenance,
+)
 from core.memory_v2.canonical import canonical_json_hash
 from core.model_calls import (
     ModelCallStore,
@@ -79,6 +87,7 @@ def recover_locked_chapter(
             runtime_root,
             chapter_index=chapter_index,
             expected_book_id=expected_book_id,
+            language=language,
         )
         if unresolved:
             owners = _bind_unresolved_to_runs(
@@ -194,6 +203,9 @@ def recover_locked_chapter(
                     active_checkpoint=active_checkpoint,
                     expected_scene_count=expected_scene_count,
                     language=language,
+                    source_run_id=str(source_run["id"]),
+                    expected_chapter_index=chapter_index,
+                    expected_book_id=expected_book_id,
                 )
             if recovered_scenes:
                 action = "resume_scenes"
@@ -238,6 +250,11 @@ def recover_locked_chapter(
             exclude_environment_fields=False,
         )
         marker = validate_locked_chapter_resolution(marker)
+        verify_locked_chapter_scene_sources(
+            runtime_root,
+            marker,
+            language=language,
+        )
         marker_path = runtime_root / "locked_chapter_resolutions" / f"{marker_id}.json"
         atomic_create_json(marker_path, marker)
         return _public_result(marker, marker_path)
@@ -392,6 +409,9 @@ def _newer_recoverable_terminal_run(
             active_checkpoint=active_checkpoint,
             expected_scene_count=_expected_scene_count(run),
             language=language,
+            source_run_id=str(run["id"]),
+            expected_chapter_index=int(run.get("chapter_index") or 0),
+            expected_book_id=_run_book_id(run),
         )
         if recovered_scenes:
             return {
@@ -602,26 +622,38 @@ def _recover_persisted_scene_sequence(
             return []
         if span_chars != len(scene_text) or span_length != len(scene_text):
             return []
-        source_attempt_id = str(source.get("source_attempt_id") or "").strip()
-        if not source_attempt_id:
-            source_call_id = str(source.get("source_call_id") or "").strip()
-            source_attempt_id = _succeeded_attempt_id_for_call(
-                run_dir,
-                run,
-                source_call_id,
-            )
-        if not source_attempt_id:
+        source_provenance = _verified_scene_source_from_run(
+            run_dir,
+            run,
+            source,
+        )
+        if source_provenance is None:
             return []
         continuity_scene = continuity_scenes[index]
         raw_deltas = continuity_scene.get("deltas")
         if not isinstance(raw_deltas, dict):
+            return []
+        source_response = _verified_persisted_scene_response(
+            run_dir,
+            source_provenance,
+            language=language,
+        )
+        if (
+            source_response is None
+            or source_response.get("text") != scene_text
+            or source_response.get("events") != continuity_scene.get("events")
+            or source_response.get("deltas") != raw_deltas
+            or source_response.get("continuity_note")
+            != continuity_scene.get("continuity_note")
+        ):
             return []
         recovered.append(
             {
                 "index": index,
                 "text": scene_text,
                 "sha256": expected_text_sha256,
-                "source_attempt_id": source_attempt_id,
+                "source_attempt_id": source_provenance["attempt_id"],
+                "source_provenance": source_provenance,
                 "events": [
                     dict(event)
                     for event in continuity_scene.get("events") or []
@@ -674,44 +706,86 @@ def _verified_run_artifact_path(
     return path
 
 
-def _succeeded_attempt_id_for_call(
+def _verified_scene_source_from_run(
     run_dir: Path,
     run: Any,
-    call_id: str,
-) -> str:
-    if not call_id or not isinstance(run, dict):
-        return ""
+    source: dict[str, Any],
+) -> dict[str, str] | None:
+    declared = source.get("source_provenance")
+    if declared is not None:
+        source_chapter_index = (
+            int(run.get("chapter_index") or 0)
+            if isinstance(run, dict)
+            else None
+        )
+        source_book_id = _run_book_id(run) if isinstance(run, dict) else None
+        try:
+            verified = verify_scene_source_provenance(
+                run_dir,
+                declared,
+                expected_chapter_index=source_chapter_index,
+                expected_book_id=source_book_id,
+            )
+        except SceneSourceProvenanceError:
+            return None
+        source_attempt_id = str(source.get("source_attempt_id") or "").strip()
+        source_call_id = str(source.get("source_call_id") or "").strip()
+        if (
+            source_attempt_id
+            and source_attempt_id != verified["attempt_id"]
+        ) or (
+            source_call_id
+            and source_call_id != verified["call_id"]
+        ):
+            return None
+        return verified
+    if not isinstance(run, dict):
+        return None
     evidence = run.get("execution_evidence")
     execution_id = (
         str(evidence.get("execution_id") or "")
         if isinstance(evidence, dict)
         else ""
     )
-    if not execution_id.startswith("execution_"):
-        return ""
-    store = ModelCallStore(run_dir / "executions" / execution_id / "model_calls")
-    if not store.intents_dir.is_dir():
-        return ""
-    candidates: list[tuple[str, str]] = []
-    for path in sorted(store.intents_dir.glob("*.json")):
-        try:
-            intent = store.load_intent(path.stem)
-        except (OSError, ValueError):
-            continue
-        if str(intent.get("call_id") or "") != call_id:
-            continue
-        attempt_id = str(intent.get("attempt_id") or "")
-        if not attempt_id or not store.has_receipt(attempt_id):
-            continue
-        try:
-            receipt = store.load_receipt(attempt_id)
-        except (OSError, ValueError):
-            continue
-        if receipt.get("status") == "succeeded":
-            candidates.append(
-                (str(intent.get("created_at") or ""), attempt_id)
-            )
-    return max(candidates, default=("", ""))[1]
+    source_run_id = str(run.get("id") or "")
+    attempt_id = str(source.get("source_attempt_id") or "").strip() or None
+    call_id = str(source.get("source_call_id") or "").strip() or None
+    try:
+        return verified_scene_source_provenance(
+            run_dir,
+            source_run_id=source_run_id,
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            call_id=call_id,
+        )
+    except SceneSourceProvenanceError:
+        return None
+
+
+def _verified_persisted_scene_response(
+    run_dir: Path,
+    source_provenance: dict[str, str],
+    *,
+    language: str | None,
+) -> dict[str, Any] | None:
+    try:
+        response = verified_scene_source_response(
+            run_dir,
+            source_provenance,
+            language=language,
+        )
+    except SceneSourceProvenanceError:
+        return None
+    if (
+        not isinstance(response, dict)
+        or not isinstance(response.get("events"), list)
+        or not isinstance(response.get("deltas"), dict)
+        or "continuity_note" not in response
+    ):
+        # Legacy plain-prose responses may prove their own text, but they cannot
+        # authorize structured events or state deltas added later.
+        return None
+    return response
 
 
 def _source_execution_dir(run_dir: Path, source: dict[str, Any]) -> Path | None:
@@ -797,6 +871,9 @@ def _recover_scene_prefix(
     active_checkpoint: dict[str, Any] | None,
     expected_scene_count: int,
     language: str | None,
+    source_run_id: str,
+    expected_chapter_index: int,
+    expected_book_id: str | None,
 ) -> list[dict[str, Any]]:
     scenes = [dict(scene) for scene in (active_checkpoint or {}).get("scenes", [])]
     seen_attempts = {str(scene["source_attempt_id"]) for scene in scenes}
@@ -845,11 +922,24 @@ def _recover_scene_prefix(
         )
         if scene_index > expected_scene_count:
             break
+        try:
+            source_provenance = verified_scene_source_provenance(
+                execution_dir.parent.parent,
+                source_run_id=source_run_id,
+                execution_id=execution_dir.name,
+                attempt_id=attempt_id,
+                call_id=str(intent["call_id"]),
+                expected_chapter_index=expected_chapter_index,
+                expected_book_id=expected_book_id,
+            )
+        except SceneSourceProvenanceError:
+            break
         candidate = {
             "index": scene_index,
             **response,
             "sha256": _content_sha256(text),
             "source_attempt_id": attempt_id,
+            "source_provenance": source_provenance,
         }
         if identity is None:
             scenes.append(candidate)
@@ -874,97 +964,7 @@ def _recover_scene_response(
     *,
     language: str | None,
 ) -> dict[str, Any] | None:
-    """Recover either the current structured scene contract or legacy prose."""
-
-    text = str(raw or "").strip()
-    fenced = None
-    if text.startswith("```"):
-        closing = text.rfind("```")
-        if closing > 3:
-            opening_end = text.find("\n")
-            if 0 <= opening_end < closing:
-                fenced = text[opening_end + 1 : closing].strip()
-    candidate = fenced if fenced is not None else text
-    value: Any = None
-    try:
-        value = json.loads(candidate)
-    except json.JSONDecodeError:
-        start = candidate.find("{")
-        end = candidate.rfind("}")
-        if 0 <= start < end:
-            try:
-                value = json.loads(candidate[start : end + 1])
-            except json.JSONDecodeError:
-                value = None
-
-    if isinstance(value, dict):
-        if "prose" not in value:
-            return None
-        try:
-            prose = validate_language_output(
-                value.get("prose"),
-                CHAPTER_CONTRACT,
-                language=language,
-            )
-        except ModelOutputError:
-            return None
-        raw_events = value.get("events")
-        raw_deltas = value.get("deltas")
-        if not isinstance(raw_events, list) or not isinstance(raw_deltas, dict):
-            return None
-        events: list[dict[str, Any]] = []
-        for item in raw_events:
-            if not isinstance(item, dict):
-                return None
-            event_id = str(item.get("event_id") or "").strip()
-            event_type = str(item.get("type") or "").strip()
-            if not event_id or not event_type:
-                return None
-            events.append(
-                {
-                    "event_id": event_id,
-                    "type": event_type,
-                    "subjects": [
-                        str(subject)
-                        for subject in item.get("subjects") or []
-                        if str(subject).strip()
-                    ],
-                    "objects": [
-                        str(obj)
-                        for obj in item.get("objects") or []
-                        if str(obj).strip()
-                    ],
-                    "location": str(item.get("location") or ""),
-                    "status": str(item.get("status") or "completed"),
-                }
-            )
-        deltas: dict[str, list[dict[str, Any]]] = {}
-        for key in (
-            "characters",
-            "relationships",
-            "rosters",
-            "locations",
-            "inventory",
-            "counters",
-        ):
-            items = raw_deltas.get(key) or []
-            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
-                return None
-            deltas[key] = [dict(item) for item in items]
-        return {
-            "text": prose,
-            "events": events,
-            "deltas": deltas,
-            "continuity_note": str(value.get("continuity_note") or ""),
-        }
-
-    if text.startswith(("{", "```")):
-        return None
-    try:
-        prose = validate_language_output(text, CHAPTER_CONTRACT, language=language)
-    except ModelOutputError:
-        return None
-    return {"text": prose}
+    return normalize_scene_response(raw, language=language)
 
 
 def _read_verified_response(store: ModelCallStore, receipt: dict[str, Any]) -> str:
@@ -984,8 +984,34 @@ def _read_verified_response(store: ModelCallStore, receipt: dict[str, Any]) -> s
 
 
 def _expected_scene_count(run: dict[str, Any]) -> int:
+    run_chapter = run.get("chapter")
+    pipeline_candidates = [
+        run_chapter.get("pipeline") if isinstance(run_chapter, dict) else None,
+        run.get("chapter_pipeline"),
+    ]
+    for pipeline in pipeline_candidates:
+        if not isinstance(pipeline, dict):
+            continue
+        plan = pipeline.get("plan")
+        planned_scenes = plan.get("scenes") if isinstance(plan, dict) else None
+        if isinstance(planned_scenes, list) and planned_scenes:
+            return len(planned_scenes)
+        count = pipeline.get("scene_count")
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+            return count
     story_metadata = ((run.get("input_pack") or {}).get("metadata") or {}).get("story_project")
-    count = story_metadata.get("required_beat_count") if isinstance(story_metadata, dict) else None
+    count = (
+        story_metadata.get("planned_scene_count")
+        if isinstance(story_metadata, dict)
+        else None
+    )
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        return count
+    count = (
+        story_metadata.get("required_beat_count")
+        if isinstance(story_metadata, dict)
+        else None
+    )
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise LockedChapterRecoveryError("locked run does not record a valid StoryProject scene count")
     return count

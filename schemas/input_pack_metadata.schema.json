@@ -323,6 +323,35 @@
           "type": "integer",
           "minimum": 0
         },
+        "planned_scene_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "scene_plan_hash": {
+          "type": "string",
+          "minLength": 64
+        },
+        "planned_scene_scopes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "required_beat_indexes"],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "required_beat_indexes": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
         "ending_pressure_present": {
           "type": "boolean"
         }

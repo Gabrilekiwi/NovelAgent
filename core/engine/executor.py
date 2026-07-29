@@ -820,6 +820,15 @@ class AgentExecutor:
             if isinstance(chapter_pipeline, dict)
             else None
         )
+        if self.story_project_writeback.enabled:
+            # Formal StoryProject delivery must be reconstructable from current
+            # Scene evidence. Passing explicit empty evidence makes a recovered
+            # complete draft fail closed instead of bypassing the gate through
+            # the optional ``None`` compatibility path.
+            if not isinstance(final_scene_drafts, list):
+                final_scene_drafts = []
+            if not isinstance(final_scene_spans, list):
+                final_scene_spans = []
         final_scene_events = (
             [
                 event
@@ -1645,7 +1654,7 @@ class AgentExecutor:
             return
         recovered_scene_drafts = state.get("recovered_scene_drafts") or []
         if recovered_scene_drafts:
-            self._validate_recovered_scene_plan(
+            self._validate_recovered_checkpoint_structure(
                 recovered_scene_drafts,
                 expected_scene_count=state.get("recovered_expected_scene_count"),
             )
@@ -2086,7 +2095,7 @@ class AgentExecutor:
             expected_book_id=expected_book_id,
         )
 
-    def _validate_recovered_scene_plan(
+    def _validate_recovered_checkpoint_structure(
         self,
         scenes: list[dict[str, Any]],
         *,
@@ -2095,18 +2104,22 @@ class AgentExecutor:
         blueprint = self._story_project_chapter_blueprint()
         if not isinstance(blueprint, dict):
             raise ValueError("locked chapter scene recovery requires a StoryProject chapter blueprint")
-        expected = len(blueprint.get("required_beats") or [])
-        if self.scene_limit is not None:
-            expected = min(expected, max(1, int(self.scene_limit)))
+        required_beats = blueprint.get("required_beats")
+        scene_indexes = [
+            int(scene.get("index") or 0)
+            for scene in scenes
+            if isinstance(scene, dict)
+        ]
         if (
-            expected < 1
+            not isinstance(required_beats, list)
+            or not required_beats
+            or scene_indexes != list(range(1, len(scenes) + 1))
             or isinstance(expected_scene_count, bool)
             or not isinstance(expected_scene_count, int)
-            or expected_scene_count != expected
-            or len(scenes) > expected
+            or expected_scene_count < 1
         ):
             raise ValueError(
-                "locked chapter scene checkpoint does not match the current chapter plan"
+                "locked chapter scene checkpoint structure is invalid"
             )
 
     def _require_strict_story_project_writeback(self, *, persist: bool) -> None:
@@ -2724,7 +2737,11 @@ class AgentExecutor:
                 chapter_text,
             )
         existing = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
-        writeback = existing.get("writeback") if isinstance(existing.get("writeback"), dict) else default_story_project_writeback()
+        writeback = (
+            existing.get("writeback")
+            if isinstance(existing.get("writeback"), dict)
+            else self._story_project_writeback_not_reached(run)
+        )
         run["story_project"] = {
             "enabled": True,
             "mode": context.get("story_state_mode") or "compatible",
@@ -2746,6 +2763,26 @@ class AgentExecutor:
         }
         if isinstance(self.story_project_oh_story_report, dict):
             run["story_project"]["oh_story"] = self.story_project_oh_story_report
+
+    def _story_project_writeback_not_reached(
+        self,
+        run: dict[str, Any],
+    ) -> dict[str, Any]:
+        writeback = default_story_project_writeback()
+        writeback["dry_run"] = bool(self.story_project_writeback.dry_run)
+        writeback["overwrite"] = bool(self.story_project_writeback.overwrite)
+        if not self.story_project_writeback.enabled:
+            return writeback
+
+        status = str(run.get("status") or "")
+        if status == "failed":
+            reason = "run_failed_before_writeback"
+        elif status == "rejected":
+            reason = "quality_gate_rejected_before_writeback"
+        else:
+            reason = "story_project_writeback_not_reached"
+        writeback["blocked_reasons"] = [reason]
+        return writeback
 
     def _persist_accepted_result(
         self,

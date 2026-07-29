@@ -8,6 +8,7 @@ from typing import Any
 
 from core.schema import validate_schema
 from core.state.prose_state_alignment import validate_roster_count_claims
+from core.state.roster import ROSTER_INVALID_MUTATION, reduce_roster_mutation
 
 
 AUTHORITATIVE_STATE_SCHEMA_VERSION = "1.0"
@@ -773,7 +774,6 @@ def _required_event_reference_finding(
     declared_events: dict[str, dict[str, Any]],
     source_tier: str,
     ledger: str,
-    include_member_join_events: bool = False,
     current_delta_only: bool = False,
 ) -> dict[str, Any] | None:
     if source_tier == "story_project_standard":
@@ -781,17 +781,6 @@ def _required_event_reference_finding(
     event_ids = [
         str(raw.get("source_event_id") or raw.get("reason_event_id") or "").strip()
     ]
-    if include_member_join_events:
-        event_ids.extend(
-            str(
-                item.get("source_event_id")
-                or item.get("reason_event_id")
-                or item.get("joined_event_id")
-                or ""
-            ).strip()
-            for item in raw.get("members") or []
-            if isinstance(item, dict)
-        )
     event_ids = [item for item in event_ids if item]
     if not event_ids:
         return _finding(
@@ -1488,124 +1477,43 @@ def _apply_roster_changes(
     declared_events: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
+    current_events = {
+        event_id: event
+        for event_id, event in declared_events.items()
+        if event_id not in (state.get("events") or {})
+    }
     for raw in _objects(value):
         roster_id = str(raw.get("roster_id") or raw.get("id") or "").strip()
-        operation = str(raw.get("operation") or "replace").strip()
-        if not roster_id:
-            findings.append(_finding("invalid_roster_change", "Roster change requires roster_id.", raw))
-            continue
-        if operation not in {"join", "leave", "dead", "missing", "replace"}:
-            findings.append(
-                _finding(
-                    "invalid_roster_change",
-                    f"Roster {roster_id} uses unsupported operation {operation!r}.",
-                    raw,
-                )
-            )
-            continue
-        event_finding = _required_event_reference_finding(
-            raw,
-            state=state,
-            declared_events=declared_events,
-            source_tier=source_tier,
-            ledger="roster",
-            include_member_join_events=True,
-        )
-        if event_finding is not None:
-            findings.append(event_finding)
         existing = state["roster"].get(roster_id)
-        existing_members = _roster_members(existing)
-        declared_member_ids = _unique_strings(raw.get("member_ids") or [])
-        raw_members = [
-            copy.deepcopy(item)
-            for item in raw.get("members") or []
-            if isinstance(item, dict)
-        ]
-        invalid_members = [
-            item for item in raw_members if not str(item.get("member_id") or "").strip()
-        ]
-        if invalid_members:
-            findings.append(
-                _finding(
-                    "invalid_roster_change",
-                    f"Roster {roster_id} member records require stable member_id values.",
-                    {"members": invalid_members},
-                )
-            )
-        members = [item for item in raw_members if str(item.get("member_id") or "").strip()]
-        member_ids = _unique_strings(
-            [str(item.get("member_id") or "") for item in members if str(item.get("member_id") or "")]
+        transition = reduce_roster_mutation(
+            state["roster"],
+            raw,
+            current_events=current_events,
+            require_current_event=not (
+                source_tier == "story_project_standard"
+                and str(raw.get("operation") or "replace").strip() == "replace"
+            ),
         )
-        if operation in {"join", "replace"} and declared_member_ids and set(declared_member_ids) != set(member_ids):
+        for issue in transition["issues"]:
+            code = str(issue.get("code") or ROSTER_INVALID_MUTATION)
             findings.append(
                 _finding(
-                    "roster_count_mismatch",
-                    f"Roster {roster_id} member_ids do not match member records.",
-                    {"member_ids": declared_member_ids, "record_member_ids": member_ids},
+                    (
+                        "invalid_roster_change"
+                        if code == ROSTER_INVALID_MUTATION
+                        else code
+                    ),
+                    str(issue.get("message") or "Invalid roster mutation."),
+                    issue.get("evidence") or {},
                 )
             )
-        change_ids = declared_member_ids or member_ids
-        if operation in {"join", "replace"}:
-            for member in members:
-                member_id = str(member["member_id"])
-                prior = existing_members.get(member_id)
-                if isinstance(prior, dict) and any(
-                    prior.get(field) not in (None, "")
-                    and member.get(field) not in (None, "")
-                    and prior.get(field) != member.get(field)
-                    for field in ("character_id", "descriptor")
-                ):
-                    findings.append(
-                        _finding(
-                            "roster_member_identity_drift",
-                            f"Roster member {member_id} changed identity fields.",
-                            {"before": prior, "after": member},
-                        )
-                    )
-        if operation == "join":
-            next_members = {**existing_members, **{str(item["member_id"]): item for item in members}}
-            expected_delta = len(set(change_ids) - set(existing_members))
-        elif operation in {"leave", "dead", "missing"}:
-            next_members = {key: item for key, item in existing_members.items() if key not in set(change_ids)}
-            expected_delta = -len(set(change_ids) & set(existing_members))
-        else:
-            next_members = {str(item["member_id"]): item for item in members}
-            expected_delta = len(next_members) - len(existing_members)
-        declared_delta = raw.get("delta")
-        declared_count = raw.get("declared_count")
-        computed_count = len(next_members)
-        if not _number(declared_delta) or not _number(declared_count):
-            findings.append(
-                _finding(
-                    "invalid_roster_change",
-                    f"Roster {roster_id} requires numeric delta and declared_count.",
-                    raw,
-                )
-            )
-        if declared_delta is not None and declared_delta != expected_delta:
-            findings.append(
-                _finding(
-                    "roster_count_mismatch",
-                    f"Roster {roster_id} declared delta does not match member records.",
-                    {"declared_delta": declared_delta, "computed_delta": expected_delta},
-                )
-            )
-        if declared_count is not None and declared_count != computed_count:
-            findings.append(
-                _finding(
-                    "roster_count_mismatch",
-                    f"Roster {roster_id} declared count does not match computed members.",
-                    {"declared_count": declared_count, "computed_count": computed_count},
-                )
-            )
-        state["roster"][roster_id] = {
-            **copy.deepcopy(existing or {}),
-            "roster_id": roster_id,
-            "members": list(next_members.values()),
-            "declared_count": computed_count,
-            "computed_count": computed_count,
-            "source_tier": _stronger_source_tier(existing, source_tier),
-        }
+        record = transition.get("record")
+        roster_id = str(transition.get("roster_id") or "")
+        if roster_id and isinstance(record, dict):
+            state["roster"][roster_id] = {
+                **copy.deepcopy(record),
+                "source_tier": _stronger_source_tier(existing, source_tier),
+            }
     return findings
 
 
@@ -1862,7 +1770,20 @@ def _full_state_delta(state: dict[str, Any]) -> dict[str, Any]:
             {
                 **copy.deepcopy(item),
                 "operation": "replace",
-                "delta": len(_roster_members(item)),
+                "unresolved_before": 0,
+                "unresolved_count": (
+                    item.get("unresolved_count")
+                    if _nonnegative_int(item.get("unresolved_count"))
+                    else 0
+                ),
+                "delta": (
+                    len(_roster_members(item))
+                    + (
+                        int(item.get("unresolved_count"))
+                        if _nonnegative_int(item.get("unresolved_count"))
+                        else 0
+                    )
+                ),
             }
             for item in state["roster"].values()
         ],
@@ -1940,6 +1861,14 @@ def _unique_strings(value: Any) -> list[str]:
 
 def _number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _nonnegative_int(value: Any) -> bool:
+    return _integer(value) and value >= 0
 
 
 def _source_tier(delta: dict[str, Any]) -> str:

@@ -1746,6 +1746,35 @@
                   "type": "integer",
                   "minimum": 0
                 },
+                "planned_scene_count": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "scene_plan_hash": {
+                  "type": "string",
+                  "minLength": 64
+                },
+                "planned_scene_scopes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["index", "required_beat_indexes"],
+                    "properties": {
+                      "index": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "required_beat_indexes": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
                 "ending_pressure_present": {
                   "type": "boolean"
                 }
@@ -1824,6 +1853,28 @@
                   "source_attempt_id": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "source_provenance": {
+                    "type": "object",
+                    "required": [
+                      "source_run_id",
+                      "source_run_sha256",
+                      "execution_id",
+                      "call_id",
+                      "attempt_id",
+                      "receipt_hash",
+                      "response_artifact_hash"
+                    ],
+                    "properties": {
+                      "source_run_id": {"type": "string", "minLength": 1, "maxLength": 192, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
+                      "source_run_sha256": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
+                      "execution_id": {"type": "string", "minLength": 10, "maxLength": 192, "pattern": "^execution_[A-Za-z0-9._-]{0,182}$"},
+                      "call_id": {"type": "string", "minLength": 1, "maxLength": 192, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
+                      "attempt_id": {"type": "string", "minLength": 1, "maxLength": 192, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
+                      "receipt_hash": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
+                      "response_artifact_hash": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"}
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false

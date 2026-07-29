@@ -19,6 +19,7 @@ from core.state.authoritative_context import (
     compact_authoritative_state_in_markdown,
     project_authoritative_state,
 )
+from core.state.roster import ROSTER_GENERATION_PROJECTION_POLICY
 from core.structured_context import StructuredContextError, sha256_text
 
 
@@ -289,6 +290,117 @@ class AuthoritativeContextTests(unittest.TestCase):
             ),
             projection_sha256,
         )
+
+    def test_roster_generation_projection_omits_provenance_but_binds_raw_source(
+        self,
+    ) -> None:
+        state = _authoritative_state()
+        state["roster"] = {
+            "roster_fireseed_one": {
+                "roster_id": "roster_fireseed_one",
+                "name": "Fireseed One",
+                "aliases": ["Fireseed"],
+                "baseline_evidence": {
+                    "source_kind": "committed_chapter_prose",
+                    "source_path": "chapters/17.md",
+                    "sha256": "a" * 64,
+                    "exact_evidence": [
+                        {
+                            "line_number": 5,
+                            "text": "AUDIT-EVIDENCE-THAT-MUST-NOT-ENTER-THE-MODEL",
+                        }
+                    ],
+                },
+                "introduced_chapter": 17,
+                "introduced_event_id": "chapter-0017-beat-001",
+                "baseline_source": "runs/chapter-17.json",
+                "migration_id": "chapter17-roster-baseline-v1",
+                "members": [],
+                "unresolved_count": 17,
+                "declared_count": 17,
+                "computed_count": 17,
+                "source_tier": "story_project_standard",
+            }
+        }
+        original = copy.deepcopy(state)
+
+        first = project_authoritative_state(
+            state,
+            max_chars=10_000,
+            required_item_ids={"roster/roster_fireseed_one"},
+        )
+        changed = copy.deepcopy(state)
+        changed["roster"]["roster_fireseed_one"]["baseline_evidence"][
+            "exact_evidence"
+        ][0]["text"] = "DIFFERENT-IMMUTABLE-AUDIT-EVIDENCE"
+        second = project_authoritative_state(
+            changed,
+            max_chars=10_000,
+            required_item_ids={"roster/roster_fireseed_one"},
+        )
+
+        projected_record = first["roster"]["roster_fireseed_one"]
+        self.assertEqual(
+            {
+                "roster_id": "roster_fireseed_one",
+                "name": "Fireseed One",
+                "aliases": ["Fireseed"],
+                "members": [],
+                "unresolved_count": 17,
+                "declared_count": 17,
+                "computed_count": 17,
+                "source_tier": "story_project_standard",
+            },
+            projected_record,
+        )
+        self.assertNotIn(
+            "AUDIT-EVIDENCE-THAT-MUST-NOT-ENTER-THE-MODEL",
+            json.dumps(first, ensure_ascii=False),
+        )
+        manifest = first[AUTHORITATIVE_CONTEXT_SELECTION_KEY]
+        self.assertEqual(
+            {"roster": ROSTER_GENERATION_PROJECTION_POLICY},
+            manifest["record_projection_policies"],
+        )
+        self.assertNotEqual(
+            manifest["source_sha256"],
+            second[AUTHORITATIVE_CONTEXT_SELECTION_KEY]["source_sha256"],
+        )
+        externalized = project_authoritative_state(
+            state,
+            max_chars=10_000,
+            query=json.dumps({"roster_id": "roster_fireseed_one"}),
+            externalized_collections={
+                "roster": "current_scene_state.rosters",
+            },
+        )
+        externalized_manifest = externalized[
+            AUTHORITATIVE_CONTEXT_SELECTION_KEY
+        ]
+        self.assertEqual({}, externalized["roster"])
+        self.assertEqual(
+            manifest["source_sha256"],
+            externalized_manifest["source_sha256"],
+        )
+        self.assertEqual(
+            {"roster": "current_scene_state.rosters"},
+            externalized_manifest["externalized_collections"],
+        )
+        self.assertEqual(1, externalized_manifest["omitted_count"])
+        with self.assertRaises(StructuredContextError) as raised:
+            project_authoritative_state(
+                state,
+                max_chars=10_000,
+                required_item_ids={"roster/roster_fireseed_one"},
+                externalized_collections={
+                    "roster": "current_scene_state.rosters",
+                },
+            )
+        self.assertEqual(
+            "required_authoritative_record_externalized",
+            raised.exception.code,
+        )
+        self.assertEqual(original, state)
 
     def test_reprojection_is_rejected_to_prevent_compounded_record_loss(
         self,

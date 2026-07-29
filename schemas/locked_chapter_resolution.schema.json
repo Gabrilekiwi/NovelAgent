@@ -20,7 +20,7 @@
     "resolution_hash"
   ],
   "properties": {
-    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "schema_version": {"type": "string", "enum": ["1.0", "1.1", "1.2"]},
     "id": {"type": "string", "minLength": 1},
     "created_at": {"type": "string", "minLength": 1},
     "book_id": {"type": "string", "minLength": 1},
@@ -70,6 +70,27 @@
           "text": {"type": "string", "minLength": 1},
           "sha256": {"type": "string", "minLength": 64},
           "source_attempt_id": {"type": "string", "minLength": 1},
+          "source_provenance": {
+            "type": "object",
+            "required": [
+              "source_run_id",
+              "execution_id",
+              "call_id",
+              "attempt_id",
+              "receipt_hash",
+              "response_artifact_hash"
+            ],
+            "properties": {
+              "source_run_id": {"type": "string", "minLength": 1, "maxLength": 192, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
+              "source_run_sha256": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
+              "execution_id": {"type": "string", "minLength": 10, "maxLength": 192, "pattern": "^execution_[A-Za-z0-9._-]{0,182}$"},
+              "call_id": {"type": "string", "minLength": 1, "maxLength": 192, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
+              "attempt_id": {"type": "string", "minLength": 1, "maxLength": 192, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
+              "receipt_hash": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
+              "response_artifact_hash": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"}
+            },
+            "additionalProperties": false
+          },
           "events": {
             "type": "array",
             "items": {

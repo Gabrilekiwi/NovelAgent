@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -76,9 +77,11 @@ SUPPORTED_SCHEMA_KEYWORDS = frozenset(
         "enum",
         "items",
         "maximum",
+        "maxLength",
         "minimum",
         "minItems",
         "minLength",
+        "pattern",
         "properties",
         "required",
         "title",
@@ -206,6 +209,18 @@ def _schema_keyword_errors(schema: dict[str, Any], path: str) -> list[str]:
 
         if key == "additionalProperties" and not isinstance(value, bool):
             errors.append(f"{path}.additionalProperties must be a boolean")
+        if key in {"minLength", "maxLength"} and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+        ):
+            errors.append(f"{path}.{key} must be a non-negative integer")
+        if key == "pattern":
+            if not isinstance(value, str):
+                errors.append(f"{path}.pattern must be a string")
+            else:
+                try:
+                    re.compile(value)
+                except re.error as exc:
+                    errors.append(f"{path}.pattern is invalid: {exc}")
 
     return errors
 
@@ -232,8 +247,14 @@ def _validate(data: Any, schema: dict[str, Any], path: str) -> list[str]:
 
     if primary_type == "string":
         min_length = schema.get("minLength")
+        max_length = schema.get("maxLength")
         if min_length is not None and len(data) < min_length:
             errors.append(f"{path} length must be >= {min_length}")
+        if max_length is not None and len(data) > max_length:
+            errors.append(f"{path} length must be <= {max_length}")
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, data) is None:
+            errors.append(f"{path} must match pattern {pattern!r}")
 
     if primary_type == "object":
         required = schema.get("required", [])

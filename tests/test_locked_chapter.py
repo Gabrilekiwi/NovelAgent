@@ -10,14 +10,23 @@ from pathlib import Path
 from api.contracts import ModelResponse
 from core.engine.artifacts import save_chapter_pipeline_artifacts
 from core.engine.executor import AgentExecutor, _unresolved_provider_calls
-from core.engine.locked_chapter import LockedChapterRecoveryError, recover_locked_chapter
-from core.engine.locked_chapter_state import active_locked_chapter_checkpoint
+from core.engine.locked_chapter import (
+    LockedChapterRecoveryError,
+    _expected_scene_count,
+    recover_locked_chapter,
+)
+from core.engine.locked_chapter_state import (
+    LockedChapterStateError,
+    active_locked_chapter_checkpoint,
+    load_locked_chapter_resolutions,
+)
 from core.engine.run_record import (
     build_failed_run_record,
     build_run_id,
     load_latest_run_summary,
     validate_run_result,
 )
+from core.memory_v2.canonical import canonical_json_hash
 from core.model_calls import ModelCallStore, build_scene_generation_call_id
 from core.state.snapshot import save_snapshot
 
@@ -62,6 +71,211 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         second = self._recover()
         self.assertEqual("already_recovered", second["status"])
         self.assertEqual(1, len(list((self.run_dir / "locked_chapter_resolutions").glob("*.json"))))
+
+    def test_cross_run_recovery_preserves_verified_scene_prefix(self) -> None:
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+
+        def response(scene_index: int) -> str:
+            return json.dumps(
+                {
+                    "prose": (
+                        f"陆沉继续处理第{scene_index}场的连续行动，并保留可核验的来源证据。"
+                        * 24
+                    ),
+                    "events": [
+                        {
+                            "event_id": (
+                                f"chapter-001-scene-{scene_index:03d}-event-001"
+                            ),
+                            "type": f"scene_{scene_index}_completed",
+                            "subjects": ["陆沉"],
+                            "objects": [],
+                            "location": "消防站",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"第{scene_index}场结束状态。",
+                },
+                ensure_ascii=False,
+            )
+
+        first_execution = "execution_cross_run_scene_1"
+        self._write_execution(
+            first_execution,
+            successful=[response(1)],
+            missing_stage="chapter_generation",
+            call_ids=[build_scene_generation_call_id(1)],
+            attempt_ids=["attempt-run-one-scene-one"],
+        )
+        self._write_failed_run(
+            execution_id=first_execution,
+            chapter="",
+            scene_count=3,
+        )
+        first = self._recover()
+        self.assertEqual("resume_scenes", first["action"])
+        self.assertEqual(1, first["reusable_scene_count"])
+
+        self.now += timedelta(minutes=5)
+        second_execution = "execution_cross_run_scene_2"
+        self._write_execution(
+            second_execution,
+            successful=[response(2)],
+            missing_stage="chapter_generation",
+            call_ids=[build_scene_generation_call_id(2)],
+            attempt_ids=["attempt-run-two-scene-two"],
+        )
+        self._write_failed_run(
+            execution_id=second_execution,
+            chapter="",
+            scene_count=3,
+        )
+
+        second = self._recover()
+
+        self.assertEqual("resume_scenes", second["action"])
+        self.assertEqual(2, second["reusable_scene_count"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+            language="zh-CN",
+        )
+        source_run_ids = [
+            scene["source_provenance"]["source_run_id"]
+            for scene in checkpoint["scenes"]
+        ]
+        self.assertEqual(2, len(set(source_run_ids)))
+        self.assertEqual(checkpoint["source_run_id"], source_run_ids[1])
+        self.assertNotEqual(checkpoint["source_run_id"], source_run_ids[0])
+
+    def test_persisted_pipeline_accepts_scene_provenance_from_prior_same_chapter_run(
+        self,
+    ) -> None:
+        scene_text = (
+            "陆沉完成对消防站外围的终检，并逐项记录本场景的可核验证据。"
+            * 40
+        )
+        event = {
+            "event_id": "chapter-001-scene-001-event-001",
+            "type": "scene_completed",
+            "subjects": ["陆沉"],
+            "objects": [],
+            "location": "fire-station",
+            "status": "completed",
+        }
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        source_execution = "execution_prior_scene_source"
+        source_call = build_scene_generation_call_id(1)
+        self._write_execution(
+            source_execution,
+            successful=[
+                json.dumps(
+                    {
+                        "prose": scene_text,
+                        "events": [event],
+                        "deltas": empty_deltas,
+                        "continuity_note": "single Scene complete",
+                    },
+                    ensure_ascii=False,
+                )
+            ],
+            missing_stage=None,
+            call_ids=[source_call],
+        )
+        self._write_failed_run(
+            execution_id=source_execution,
+            chapter="",
+            scene_count=1,
+        )
+        first = self._recover()
+        self.assertEqual("resume_scenes", first["action"])
+        first_checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        prior_scene = first_checkpoint["scenes"][0]
+        prior_source_run_id = prior_scene["source_provenance"]["source_run_id"]
+
+        self.now += timedelta(minutes=5)
+        persisting_execution = "execution_persisting_prior_scene"
+        self._write_execution(
+            persisting_execution,
+            successful=[],
+            missing_stage=None,
+        )
+        self._write_rejected_single_scene_artifact_run(
+            execution_id=persisting_execution,
+            source_attempt_id=prior_scene["source_attempt_id"],
+            source_call_id=source_call,
+            source_provenance=prior_scene["source_provenance"],
+            scene_text=scene_text,
+        )
+
+        second = self._recover()
+
+        self.assertEqual("resume_scenes", second["action"])
+        self.assertEqual(1, second["reusable_scene_count"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertNotEqual(prior_source_run_id, checkpoint["source_run_id"])
+        self.assertEqual(
+            prior_source_run_id,
+            checkpoint["scenes"][0]["source_provenance"]["source_run_id"],
+        )
+
+    def test_expected_scene_count_prefers_pipeline_scene_count_over_beat_count(
+        self,
+    ) -> None:
+        self.assertEqual(
+            4,
+            _expected_scene_count(
+                {
+                    "chapter": {"pipeline": {"scene_count": 4}},
+                    "input_pack": {
+                        "metadata": {
+                            "story_project": {
+                                "required_beat_count": 9,
+                            }
+                        }
+                    },
+                }
+            ),
+        )
+        self.assertEqual(
+            4,
+            _expected_scene_count(
+                {
+                    "input_pack": {
+                        "metadata": {
+                            "story_project": {
+                                "planned_scene_count": 4,
+                                "required_beat_count": 9,
+                            }
+                        }
+                    }
+                }
+            ),
+        )
 
     def test_complete_draft_is_staged_for_validation_and_repair(self) -> None:
         execution_id = "execution_complete"
@@ -426,6 +640,7 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertEqual(3, len(checkpoint["scenes"]))
 
     def test_rejected_run_recovers_hash_bound_final_scene_artifacts(self) -> None:
+        execution_id = "execution_rejected_final_scenes"
         empty_deltas = {
             "characters": [],
             "relationships": [],
@@ -438,22 +653,46 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             "陆沉核对侵蚀值仍为六，并确认所有人都留在消防站器材口外。" * 18,
             "韩野完成内侧复核后放行，双方仍保持各自独立的组织边界。" * 18,
         ]
+        call_ids = [
+            build_scene_generation_call_id(index)
+            for index in range(1, len(scene_texts) + 1)
+        ]
+        events = [
+            {
+                "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                "type": "scene_completed",
+                "subjects": ["陆沉"],
+                "objects": [],
+                "location": "消防站",
+                "status": "completed",
+            }
+            for index in range(1, len(scene_texts) + 1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=[
+                json.dumps(
+                    {
+                        "prose": text,
+                        "events": [events[index - 1]],
+                        "deltas": empty_deltas,
+                        "continuity_note": f"scene {index} complete",
+                    },
+                    ensure_ascii=False,
+                )
+                for index, text in enumerate(scene_texts, start=1)
+            ],
+            missing_stage=None,
+            call_ids=call_ids,
+        )
         scenes = [
             {
                 "index": index,
                 "goal": f"scene {index}",
                 "text": text,
-                "source_attempt_id": f"attempt-final-{index}",
-                "events": [
-                    {
-                        "event_id": f"chapter-001-scene-{index:03d}-event-001",
-                        "type": "scene_completed",
-                        "subjects": ["陆沉"],
-                        "objects": [],
-                        "location": "消防站",
-                        "status": "completed",
-                    }
-                ],
+                "source_call_id": call_ids[index - 1],
+                "source_attempt_id": f"attempt-{index}",
+                "events": [events[index - 1]],
                 "deltas": empty_deltas,
                 "continuity_note": f"scene {index} complete",
             }
@@ -517,7 +756,7 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             output_dir=self.run_dir / "chapter_pipeline",
         )
         self._write_failed_run(
-            execution_id="execution_rejected_final_scenes",
+            execution_id=execution_id,
             chapter=merged,
             scene_count=2,
             chapter_pipeline=pipeline,
@@ -540,7 +779,450 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             checkpoint["scenes"][1]["events"][0]["event_id"],
         )
         self.assertEqual(empty_deltas, checkpoint["scenes"][1]["deltas"])
+        provenance = checkpoint["scenes"][1]["source_provenance"]
+        self.assertEqual(build_run_id(1, self.now), provenance["source_run_id"])
+        self.assertEqual(execution_id, provenance["execution_id"])
+        self.assertEqual(call_ids[1], provenance["call_id"])
+        self.assertEqual("attempt-2", provenance["attempt_id"])
+        store = ModelCallStore(
+            self.run_dir / "executions" / execution_id / "model_calls"
+        )
+        receipt = store.load_receipt("attempt-2")
+        self.assertEqual(receipt["receipt_hash"], provenance["receipt_hash"])
+        self.assertEqual(
+            receipt["response_artifact_hash"],
+            provenance["response_artifact_hash"],
+        )
+        source_run_path = self.run_dir / f"{provenance['source_run_id']}.json"
+        self.assertEqual(
+            hashlib.sha256(source_run_path.read_bytes()).hexdigest(),
+            provenance["source_run_sha256"],
+        )
         self.assertIsNone(checkpoint["complete_draft"])
+
+    def test_persisted_scene_artifact_rejects_nonexistent_attempt(self) -> None:
+        self._write_rejected_single_scene_artifact_run(
+            execution_id="execution_fake_persisted_scene",
+            source_attempt_id="attempt-does-not-exist",
+        )
+
+        result = self._recover()
+
+        self.assertNotEqual("resume_scenes", result["action"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertTrue(checkpoint is None or checkpoint["scenes"] == [])
+
+    def test_persisted_scene_artifact_rejects_wrong_receipt_hash(self) -> None:
+        execution_id = "execution_wrong_persisted_receipt"
+        call_id = build_scene_generation_call_id(1)
+        self._write_execution(
+            execution_id,
+            successful=["x"],
+            missing_stage=None,
+            call_ids=[call_id],
+        )
+        receipt = ModelCallStore(
+            self.run_dir / "executions" / execution_id / "model_calls"
+        ).load_receipt("attempt-1")
+        self._write_rejected_single_scene_artifact_run(
+            execution_id=execution_id,
+            source_attempt_id="attempt-1",
+            source_call_id=call_id,
+            source_provenance={
+                "source_run_id": build_run_id(1, self.now),
+                "source_run_sha256": "c" * 64,
+                "execution_id": execution_id,
+                "call_id": call_id,
+                "attempt_id": "attempt-1",
+                "receipt_hash": "0" * 64,
+                "response_artifact_hash": receipt["response_artifact_hash"],
+            },
+        )
+
+        result = self._recover()
+
+        self.assertNotEqual("resume_scenes", result["action"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertTrue(checkpoint is None or checkpoint["scenes"] == [])
+
+    def test_valid_receipt_does_not_authorize_replaced_persisted_scene_text(
+        self,
+    ) -> None:
+        execution_id = "execution_replaced_persisted_text"
+        call_id = build_scene_generation_call_id(1)
+        source_text = "陆沉逐项核对原始响应中的场景事实，确认记录没有被替换。" * 24
+        persisted_text = "这是一段被替换的持久化场景正文，不能借用无关的有效收据。" * 24
+        event = {
+            "event_id": "chapter-001-scene-001-event-001",
+            "type": "scene_completed",
+            "subjects": ["陆沉"],
+            "objects": [],
+            "location": "fire-station",
+            "status": "completed",
+        }
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        self._write_execution(
+            execution_id,
+            successful=[
+                json.dumps(
+                    {
+                        "prose": source_text,
+                        "events": [event],
+                        "deltas": empty_deltas,
+                        "continuity_note": "single Scene complete",
+                    },
+                    ensure_ascii=False,
+                )
+            ],
+            missing_stage=None,
+            call_ids=[call_id],
+        )
+        self._write_rejected_single_scene_artifact_run(
+            execution_id=execution_id,
+            source_attempt_id="attempt-1",
+            source_call_id=call_id,
+            scene_text=persisted_text,
+        )
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(persisted_text, checkpoint["complete_draft"]["text"])
+
+    def test_valid_receipt_does_not_authorize_replaced_continuity_note(
+        self,
+    ) -> None:
+        execution_id = "execution_replaced_persisted_continuity"
+        call_id = build_scene_generation_call_id(1)
+        scene_text = "陆沉保留原始场景正文，并核对响应声明的连续性说明。" * 24
+        source_note = "source continuity note"
+        tampered_note = "tampered continuity note"
+        event = {
+            "event_id": "chapter-001-scene-001-event-001",
+            "type": "scene_completed",
+            "subjects": ["陆沉"],
+            "objects": [],
+            "location": "fire-station",
+            "status": "completed",
+        }
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        self._write_execution(
+            execution_id,
+            successful=[
+                json.dumps(
+                    {
+                        "prose": scene_text,
+                        "events": [event],
+                        "deltas": empty_deltas,
+                        "continuity_note": source_note,
+                    },
+                    ensure_ascii=False,
+                )
+            ],
+            missing_stage=None,
+            call_ids=[call_id],
+        )
+        self._write_rejected_single_scene_artifact_run(
+            execution_id=execution_id,
+            source_attempt_id="attempt-1",
+            source_call_id=call_id,
+            scene_text=scene_text,
+            continuity_note=tampered_note,
+        )
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(scene_text, checkpoint["complete_draft"]["text"])
+
+    def test_active_checkpoint_rejects_rehashed_scene_content_substitution(
+        self,
+    ) -> None:
+        marker_path, _source_run_path = self._write_structured_scene_checkpoint(
+            execution_id="execution_rehashed_marker_content",
+        )
+        original = json.loads(marker_path.read_text(encoding="utf-8"))
+
+        for field in ("text", "events", "deltas", "continuity_note"):
+            with self.subTest(field=field):
+                tampered = json.loads(json.dumps(original, ensure_ascii=False))
+                scene = tampered["scenes"][0]
+                if field == "text":
+                    scene["text"] = "替换后的正文仍然拥有合法 marker 哈希，但不属于原始响应。" * 24
+                    scene["sha256"] = hashlib.sha256(
+                        scene["text"].encode("utf-8")
+                    ).hexdigest()
+                elif field == "events":
+                    scene["events"][0]["type"] = "tampered_event"
+                elif field == "deltas":
+                    scene["deltas"]["characters"].append(
+                        {
+                            "entity_id": "陆沉",
+                            "before": None,
+                            "after": "invented",
+                        }
+                    )
+                else:
+                    scene["continuity_note"] = "tampered continuity note"
+                tampered["resolution_hash"] = canonical_json_hash(
+                    tampered,
+                    exclude_fields=("resolution_hash",),
+                    exclude_environment_fields=False,
+                )
+                marker_path.write_text(
+                    json.dumps(tampered, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+                with self.assertRaisesRegex(
+                    LockedChapterStateError,
+                    rf"content does not match.*{field}",
+                ):
+                    active_locked_chapter_checkpoint(
+                        self.run_dir,
+                        chapter_index=1,
+                        expected_book_id=self.book_id,
+                    )
+
+    def test_legacy_marker_without_scene_provenance_is_readable_but_not_reusable(
+        self,
+    ) -> None:
+        marker_path, _source_run_path = self._write_structured_scene_checkpoint(
+            execution_id="execution_legacy_marker_without_provenance",
+        )
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["schema_version"] = "1.0"
+        for scene in marker["scenes"]:
+            scene.pop("source_provenance", None)
+        marker["resolution_hash"] = canonical_json_hash(
+            marker,
+            exclude_fields=("resolution_hash",),
+            exclude_environment_fields=False,
+        )
+        marker_path.write_text(
+            json.dumps(marker, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        loaded = load_locked_chapter_resolutions(self.run_dir)
+
+        self.assertEqual(1, len(loaded))
+        self.assertEqual("1.0", loaded[0]["schema_version"])
+        self.assertIsNone(
+            active_locked_chapter_checkpoint(
+                self.run_dir,
+                chapter_index=1,
+                expected_book_id=self.book_id,
+            )
+        )
+
+    def test_version_1_1_marker_is_readable_but_not_reusable(
+        self,
+    ) -> None:
+        marker_path, _source_run_path = self._write_structured_scene_checkpoint(
+            execution_id="execution_legacy_v11_source_provenance",
+        )
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["schema_version"] = "1.1"
+        for scene in marker["scenes"]:
+            scene["source_provenance"].pop("source_run_sha256")
+        marker["resolution_hash"] = canonical_json_hash(
+            marker,
+            exclude_fields=("resolution_hash",),
+            exclude_environment_fields=False,
+        )
+        marker_path.write_text(
+            json.dumps(marker, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        loaded = load_locked_chapter_resolutions(self.run_dir)
+
+        self.assertEqual(1, len(loaded))
+        self.assertEqual("1.1", loaded[0]["schema_version"])
+        self.assertIsNone(
+            active_locked_chapter_checkpoint(
+                self.run_dir,
+                chapter_index=1,
+                expected_book_id=self.book_id,
+            )
+        )
+
+    def test_version_1_2_marker_requires_source_run_hash(self) -> None:
+        marker_path, _source_run_path = self._write_structured_scene_checkpoint(
+            execution_id="execution_v12_missing_source_run_hash",
+        )
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["scenes"][0]["source_provenance"].pop("source_run_sha256")
+        marker["resolution_hash"] = canonical_json_hash(
+            marker,
+            exclude_fields=("resolution_hash",),
+            exclude_environment_fields=False,
+        )
+        marker_path.write_text(
+            json.dumps(marker, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            LockedChapterStateError,
+            "exactly the required evidence fields",
+        ):
+            load_locked_chapter_resolutions(self.run_dir)
+
+    def test_active_checkpoint_hashes_source_run_before_scope_parsing(
+        self,
+    ) -> None:
+        marker_path, source_run_path = self._write_structured_scene_checkpoint(
+            execution_id="execution_wrong_scene_scope",
+        )
+        original_marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        original_source_run = json.loads(
+            source_run_path.read_text(encoding="utf-8")
+        )
+
+        for scope in ("chapter_index", "book_id"):
+            with self.subTest(scope=scope):
+                marker_path.write_text(
+                    json.dumps(original_marker, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                altered_source = json.loads(
+                    json.dumps(original_source_run, ensure_ascii=False)
+                )
+                if scope == "chapter_index":
+                    altered_source["run"]["chapter_index"] = 2
+                else:
+                    altered_source["run"]["story_project"]["book_id"] = (
+                        "book-other"
+                    )
+                source_run_path.write_text(
+                    json.dumps(altered_source, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+                with self.assertRaisesRegex(
+                    LockedChapterStateError,
+                    "source run raw bytes do not match source_run_sha256",
+                ):
+                    active_locked_chapter_checkpoint(
+                        self.run_dir,
+                        chapter_index=1,
+                        expected_book_id=self.book_id,
+                    )
+
+    def test_active_checkpoint_rejects_cross_bound_source_run_hash(
+        self,
+    ) -> None:
+        marker_path, _source_run_path = self._write_structured_scene_checkpoint(
+            execution_id="execution_cross_binding_original",
+        )
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+
+        self.now += timedelta(minutes=5)
+        other_execution = "execution_cross_binding_other"
+        self._write_execution(
+            other_execution,
+            successful=[],
+            missing_stage=None,
+        )
+        self._write_failed_run(
+            execution_id=other_execution,
+            chapter="",
+            scene_count=1,
+        )
+        other_run_id = build_run_id(1, self.now)
+        other_run_path = self.run_dir / f"{other_run_id}.json"
+        self.assertTrue(other_run_path.is_file())
+
+        marker["scenes"][0]["source_provenance"]["source_run_id"] = other_run_id
+        marker["resolution_hash"] = canonical_json_hash(
+            marker,
+            exclude_fields=("resolution_hash",),
+            exclude_environment_fields=False,
+        )
+        marker_path.write_text(
+            json.dumps(marker, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            LockedChapterStateError,
+            "source run raw bytes do not match source_run_sha256",
+        ):
+            active_locked_chapter_checkpoint(
+                self.run_dir,
+                chapter_index=1,
+                expected_book_id=self.book_id,
+            )
+
+    def test_active_scene_checkpoint_reverifies_response_artifact_hash(self) -> None:
+        execution_id = "execution_tampered_scene_response"
+        self._write_execution(
+            execution_id,
+            successful=["可验证的场景响应证据。" * 20],
+            missing_stage=None,
+            call_ids=[build_scene_generation_call_id(1)],
+        )
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter="",
+            scene_count=1,
+        )
+        self._recover()
+        response_path = (
+            self.run_dir
+            / "executions"
+            / execution_id
+            / "model_calls"
+            / "responses"
+            / "attempt-1.txt"
+        )
+        response_path.write_text("tampered", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            LockedChapterStateError,
+            "source provenance is not verifiable",
+        ):
+            active_locked_chapter_checkpoint(
+                self.run_dir,
+                chapter_index=1,
+                expected_book_id=self.book_id,
+            )
 
     def test_scene_boundary_retry_receipt_replaces_primary_candidate(self) -> None:
         execution_id = "execution_scene_boundary_retry"
@@ -686,6 +1368,74 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertFalse((self.run_dir / "locked_chapter_resolutions").exists())
         self.assertEqual(1, len(_unresolved_provider_calls(self.run_dir)))
 
+    def _write_structured_scene_checkpoint(
+        self,
+        *,
+        execution_id: str,
+    ) -> tuple[Path, Path]:
+        scene_text = (
+            "陆沉逐项核对场景响应、状态变化和连续性说明，确认四类证据来自同一次调用。"
+            * 24
+        )
+        event = {
+            "event_id": "chapter-001-scene-001-event-001",
+            "type": "scene_completed",
+            "subjects": ["陆沉"],
+            "objects": [],
+            "location": "消防站",
+            "status": "completed",
+        }
+        deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        self._write_execution(
+            execution_id,
+            successful=[
+                json.dumps(
+                    {
+                        "prose": scene_text,
+                        "events": [event],
+                        "deltas": deltas,
+                        "continuity_note": "陆沉仍在消防站核验证据。",
+                    },
+                    ensure_ascii=False,
+                )
+            ],
+            missing_stage=None,
+            call_ids=[build_scene_generation_call_id(1)],
+        )
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter="",
+            scene_count=1,
+        )
+        result = self._recover()
+        self.assertEqual("resume_scenes", result["action"])
+        # Explicit zh-CN and the deterministic language-neutral read path must
+        # both resolve the same normalized provider response.
+        for language in (None, "zh-CN"):
+            checkpoint = active_locked_chapter_checkpoint(
+                self.run_dir,
+                chapter_index=1,
+                expected_book_id=self.book_id,
+                language=language,
+            )
+            self.assertEqual(scene_text, checkpoint["scenes"][0]["text"])
+
+        marker_path = next(
+            (self.run_dir / "locked_chapter_resolutions").glob(
+                "resolution_*.json"
+            )
+        )
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        source_run_path = self.run_dir / f"{marker['source_run_id']}.json"
+        return marker_path, source_run_path
+
     def _recover(self) -> dict:
         return recover_locked_chapter(
             story_project_root=self.story_root,
@@ -704,12 +1454,19 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         successful: list[str],
         missing_stage: str | None,
         call_ids: list[str] | None = None,
+        attempt_ids: list[str] | None = None,
     ) -> None:
         if call_ids is not None and len(call_ids) != len(successful):
             raise ValueError("call_ids must match successful responses")
+        if attempt_ids is not None and len(attempt_ids) != len(successful):
+            raise ValueError("attempt_ids must match successful responses")
         store = ModelCallStore(self.run_dir / "executions" / execution_id / "model_calls")
         for index, text in enumerate(successful, start=1):
-            attempt_id = f"attempt-{index}"
+            attempt_id = (
+                attempt_ids[index - 1]
+                if attempt_ids is not None
+                else f"attempt-{index}"
+            )
             created_at = self.now + timedelta(seconds=index)
             store.create_intent(
                 call_id=(call_ids[index - 1] if call_ids is not None else f"call-{index}"),
@@ -830,6 +1587,29 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             error=RuntimeError("provider call uncertain"),
             chapter_pipeline=chapter_pipeline,
         )
+        record["story_project"] = {
+            "enabled": True,
+            "mode": "apply",
+            "root": str(self.story_root),
+            "book_id": self.book_id,
+            "chapter_index": 1,
+            "chapter_blueprint": None,
+            "source_paths": None,
+            "source_resolution": None,
+            "writeback": {
+                "attempted": False,
+                "applied": False,
+                "partial": False,
+                "dry_run": False,
+                "overwrite": False,
+                "targets": [],
+                "blocked_reasons": [],
+                "errors": [],
+                "failed_targets": [],
+                "diff_summary": {},
+                "artifacts": {},
+            },
+        }
         record["status"] = status
         if isinstance(chapter_pipeline, dict) and isinstance(
             chapter_pipeline.get("artifacts"),
@@ -849,6 +1629,107 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         (self.run_dir / f"{record['id']}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
+        )
+
+    def _write_rejected_single_scene_artifact_run(
+        self,
+        *,
+        execution_id: str,
+        source_attempt_id: str,
+        source_call_id: str | None = None,
+        source_provenance: dict | None = None,
+        scene_text: str | None = None,
+        continuity_note: str = "single Scene complete",
+    ) -> None:
+        if scene_text is None:
+            scene_text = (
+                "陆沉完成对消防站外围的终检，并逐项记录本场景的可核验证据。"
+                * 40
+            )
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene = {
+            "index": 1,
+            "goal": "verify persisted Scene provenance",
+            "text": scene_text,
+            "source_attempt_id": source_attempt_id,
+            "events": [
+                {
+                    "event_id": "chapter-001-scene-001-event-001",
+                    "type": "scene_completed",
+                    "subjects": ["陆沉"],
+                    "objects": [],
+                    "location": "fire-station",
+                    "status": "completed",
+                }
+            ],
+            "deltas": empty_deltas,
+            "continuity_note": continuity_note,
+        }
+        if source_call_id is not None:
+            scene["source_call_id"] = source_call_id
+        if source_provenance is not None:
+            scene["source_provenance"] = source_provenance
+        pipeline = {
+            "chapter_index": 1,
+            "plan": {
+                "goal": "verify persisted Scene provenance",
+                "scenes": [
+                    {
+                        "index": 1,
+                        "type": "scene",
+                        "goal": "verify persisted Scene provenance",
+                        "required_beats": ["verify source"],
+                    }
+                ],
+            },
+            "scene_drafts": [scene],
+            "merged_chapter": scene_text,
+            "scene_spans": [
+                {
+                    "index": 1,
+                    "start_char": 0,
+                    "end_char": len(scene_text),
+                    "chars": len(scene_text),
+                }
+            ],
+            "stages": [
+                {"name": "plan_chapter", "status": "completed"},
+                {"name": "generate_scenes", "status": "completed"},
+                {"name": "merge_scenes", "status": "completed"},
+                {"name": "validate", "status": "completed"},
+                {"name": "repair", "status": "skipped"},
+                {"name": "commit", "status": "pending"},
+            ],
+            "integrity": {
+                "final_gate": {
+                    "accepted": True,
+                    "artifact_sha256": hashlib.sha256(
+                        scene_text.encode("utf-8")
+                    ).hexdigest(),
+                }
+            },
+        }
+        run_id = build_run_id(1, self.now)
+        pipeline["artifacts"] = save_chapter_pipeline_artifacts(
+            pipeline=pipeline,
+            validation=None,
+            repair_deltas=[],
+            run={"id": run_id, "chapter_index": 1},
+            output_dir=self.run_dir / "chapter_pipeline",
+        )
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=scene_text,
+            scene_count=1,
+            chapter_pipeline=pipeline,
+            status="rejected",
         )
 
 

@@ -7,11 +7,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.engine.scene_source_provenance import (
+    SceneSourceProvenanceError,
+    validate_legacy_scene_source_provenance,
+    validate_scene_source_provenance,
+    verified_scene_source_response,
+)
 from core.memory_v2.canonical import canonical_json_hash
 from core.schema import SchemaValidationError, validate_schema
 
 
-LOCKED_CHAPTER_RESOLUTION_VERSION = "1.0"
+LOCKED_CHAPTER_RESOLUTION_VERSION = "1.2"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -66,6 +72,29 @@ def validate_locked_chapter_resolution(value: dict[str, Any]) -> dict[str, Any]:
             raise LockedChapterStateError("scene indexes must be unique")
         indexes.append(index)
         _require_safe_text("scenes.source_attempt_id", scene["source_attempt_id"])
+        source_provenance = scene.get("source_provenance")
+        marker_version = str(payload["schema_version"])
+        if marker_version in {"1.1", LOCKED_CHAPTER_RESOLUTION_VERSION}:
+            if source_provenance is None:
+                raise LockedChapterStateError(
+                    f"version {marker_version} recovered scenes require "
+                    "source_provenance"
+                )
+        if source_provenance is not None:
+            try:
+                source_provenance = (
+                    validate_scene_source_provenance(source_provenance)
+                    if marker_version == LOCKED_CHAPTER_RESOLUTION_VERSION
+                    else validate_legacy_scene_source_provenance(
+                        source_provenance
+                    )
+                )
+            except SceneSourceProvenanceError as exc:
+                raise LockedChapterStateError(str(exc)) from exc
+            if source_provenance["attempt_id"] != scene["source_attempt_id"]:
+                raise LockedChapterStateError(
+                    "scene source_attempt_id does not match source_provenance.attempt_id"
+                )
         _require_sha256("scenes.sha256", scene["sha256"])
         if _content_sha256(scene["text"]) != scene["sha256"]:
             raise LockedChapterStateError(f"scene {index} hash mismatch")
@@ -132,6 +161,7 @@ def active_locked_chapter_checkpoint(
     *,
     chapter_index: int,
     expected_book_id: str | None = None,
+    language: str | None = None,
 ) -> dict[str, Any] | None:
     matching = [
         resolution
@@ -142,7 +172,55 @@ def active_locked_chapter_checkpoint(
     if not matching:
         return None
     latest = matching[-1]
-    return None if latest["action"] == "reset" else latest
+    if latest["action"] == "reset":
+        return None
+    if latest["schema_version"] != LOCKED_CHAPTER_RESOLUTION_VERSION:
+        # Historical markers remain readable append-only evidence, but only
+        # version 1.2 binds each Scene to the raw bytes of its source run.
+        return None
+    if any(scene.get("source_provenance") is None for scene in latest["scenes"]):
+        # Defensive fail-closed guard for malformed current-version history.
+        return None
+    verify_locked_chapter_scene_sources(
+        run_dir,
+        latest,
+        language=language,
+    )
+    return latest
+
+
+def verify_locked_chapter_scene_sources(
+    run_dir: str | Path,
+    resolution: dict[str, Any],
+    *,
+    language: str | None = None,
+) -> None:
+    """Re-bind every marker Scene to its exact normalized provider response."""
+
+    for scene in resolution["scenes"]:
+        try:
+            response = verified_scene_source_response(
+                run_dir,
+                scene["source_provenance"],
+                language=language,
+                expected_chapter_index=int(resolution["chapter_index"]),
+                expected_book_id=str(resolution["book_id"]),
+            )
+        except SceneSourceProvenanceError as exc:
+            raise LockedChapterStateError(
+                f"scene {scene['index']} source provenance is not verifiable: {exc}"
+            ) from exc
+        mismatched_fields = [
+            field
+            for field in ("text", "events", "deltas", "continuity_note")
+            if (field in scene) != (field in response)
+            or scene.get(field) != response.get(field)
+        ]
+        if mismatched_fields:
+            raise LockedChapterStateError(
+                f"scene {scene['index']} content does not match its verified "
+                f"model response: {', '.join(mismatched_fields)}"
+            )
 
 
 def _require_unique_safe_ids(field: str, values: list[Any]) -> None:
@@ -180,4 +258,5 @@ __all__ = [
     "load_locked_chapter_resolutions",
     "resolved_execution_ids",
     "validate_locked_chapter_resolution",
+    "verify_locked_chapter_scene_sources",
 ]

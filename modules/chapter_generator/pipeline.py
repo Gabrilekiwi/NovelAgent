@@ -24,6 +24,7 @@ from core.scene_continuity import (
     normalize_scene_state,
     require_scene_transition,
     scene_delta_response_schema,
+    scene_state_generation_projection,
     scene_state_summary,
     validate_scene_transition,
 )
@@ -591,6 +592,11 @@ def generate_scenes(
                 if scene_result.get("source_attempt_id")
                 else {}
             ),
+            **(
+                {"source_provenance": dict(scene_result["source_provenance"])}
+                if isinstance(scene_result.get("source_provenance"), dict)
+                else {}
+            ),
             "scene_state_before": scene_state_summary(state_before),
             "scene_state_after": scene_state_summary(state_after),
             "boundary_validation": boundary,
@@ -732,16 +738,39 @@ def _recovered_scene_prefix(
         if isinstance(scene, dict) and isinstance(scene.get("index"), int)
     ]
     recovered: dict[int, dict[str, Any]] = {}
+    plan_by_index = {
+        int(scene.get("index") or 0): scene
+        for scene in plan.get("scenes", [])
+        if isinstance(scene, dict) and int(scene.get("index") or 0) > 0
+    }
     for position, draft in enumerate(scene_drafts, start=1):
         if not isinstance(draft, dict) or int(draft.get("index") or 0) != position:
             raise ValueError("recovered scenes must form a contiguous prefix starting at scene 1")
         if position not in plan_indexes:
-            raise ValueError("recovered scene count exceeds the current chapter plan")
+            # A newer plan may contain fewer Scenes than the persisted run.
+            # Recovery is only a reusable prefix of the current plan; old
+            # suffix Scenes are evidence, not a reason to fail generation.
+            break
         if not _has_complete_structured_scene_payload(draft):
             # Legacy prose remains immutable evidence, but it cannot be reused
             # as an accepted Scene because it has no model-declared boundary
             # facts. Regenerate this scene and the remaining suffix instead of
             # synthesizing completed events from the plan.
+            break
+        planned_scene = plan_by_index.get(position) or {}
+        required_event_ids = [
+            str(event_id)
+            for event_id in planned_scene.get("required_event_ids") or []
+        ]
+        recovered_event_ids = [
+            str(event.get("event_id") or "")
+            for event in draft.get("events") or []
+            if isinstance(event, dict)
+        ]
+        if recovered_event_ids != required_event_ids:
+            # Scene indexes alone are not a stable identity when StoryProject
+            # beats are regrouped. Drop this Scene and the remaining prefix so
+            # generation restarts at the first changed event scope.
             break
         recovered[position] = {
             **dict(draft),
@@ -780,7 +809,9 @@ def _scene_request_payload(
         "scene": scene,
         "story_project_required_beats": scene_required_beats,
         "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
-        "current_scene_state": scene_state_summary(scene_state or empty_scene_state()),
+        "current_scene_state": scene_state_generation_projection(
+            scene_state or empty_scene_state()
+        ),
         "required_event_ids": list(scene.get("required_event_ids") or []),
         "forbidden_event_ids": list(scene.get("forbidden_event_ids") or []),
         "response_schema": {
@@ -810,8 +841,14 @@ def _scene_request_payload(
             "Every before value must exactly match current_scene_state. Inventory and counter before, delta, "
             "and after values must be numbers with after equal to before plus delta.",
             "The numeric values shown in response_schema are type examples, not values to copy.",
-            "For roster join or replace, member_ids and members must describe the same stable member ids. "
-            "Do not invent missing roster members just to satisfy a declared count.",
+            "Roster count equals stable members plus unresolved_count; never invent member_ids. Join uses "
+            "non-negative unresolved_delta; leave, dead, or missing use non-positive values. Resolve identifies "
+            "new stable members already included in unresolved_count: unresolved_delta must equal minus the "
+            "number of new members, total delta must be 0, and declared_count must stay unchanged. Replace uses "
+            "unresolved_count; aggregate changes require exact unresolved_before. Every roster mutation needs "
+            "this Scene's reason_event_id. Existing-roster identity and audit metadata may only be omitted or "
+            "echoed exactly. Existing-roster replace must be an exact echo; use another operation for changes. "
+            "Never emit migration audit metadata.",
             "Every relationship delta must include source_event_id and it must reference an event declared "
             "by this Scene; never reuse an earlier Scene event to justify a new relationship state.",
         ],
@@ -985,6 +1022,7 @@ def _compact_scene_context(
         require_query_references=False,
         require_open_events=False,
         authoritative_state_source=authoritative_state_source,
+        externalized_collections={"roster": "current_scene_state.rosters"},
     )
     selection = compact_markdown_context(
         projected_text,
@@ -1336,6 +1374,11 @@ def _recovered_scene_result(
         **(
             {"source_attempt_id": str(recovered["source_attempt_id"])}
             if recovered.get("source_attempt_id")
+            else {}
+        ),
+        **(
+            {"source_provenance": dict(recovered["source_provenance"])}
+            if isinstance(recovered.get("source_provenance"), dict)
             else {}
         ),
     }

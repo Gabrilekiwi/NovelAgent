@@ -354,6 +354,7 @@ class V201MultiChapterRegressionTests(unittest.TestCase):
                         ],
                         "delta": 1,
                         "declared_count": chapter_index,
+                        "reason_event_id": event_id,
                     }
                 ],
                 "numeric_changes": [
