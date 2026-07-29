@@ -328,6 +328,7 @@ class V201MultiChapterRegressionTests(unittest.TestCase):
                         "type": "spouse",
                         "status": "active",
                         "introduced_chapter": 1,
+                        "source_event_id": event_id,
                     }
                 ]
                 if chapter_index == 1

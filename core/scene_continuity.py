@@ -7,9 +7,13 @@ import json
 import re
 from typing import Any, Iterable
 
+from core.state.prose_state_alignment import validate_roster_count_claims
+
 
 SCENE_CONTINUITY_SCHEMA_VERSION = "1.0"
 _DELTA_KINDS = ("characters", "relationships", "rosters", "locations", "inventory", "counters")
+_COMPLETED_EVENT_SUMMARY_LIMIT = 24
+_OPEN_ACTION_SUMMARY_LIMIT = 12
 
 
 class SceneBoundaryValidationError(ValueError):
@@ -61,6 +65,7 @@ def scene_delta_response_schema() -> dict[str, list[dict[str, Any]]]:
                 "before": "exact current value or null when absent",
                 "after": "new value",
                 "reason": "why this scene changed the relationship",
+                "source_event_id": "event id declared by this scene",
             }
         ],
         "rosters": [
@@ -137,6 +142,7 @@ def validate_scene_transition(
     state_before: dict[str, Any],
     events: Iterable[dict[str, Any]],
     deltas: dict[str, Any] | None,
+    prose: str = "",
     required_event_ids: Iterable[str] = (),
     forbidden_event_ids: Iterable[str] = (),
     planned_events: Iterable[dict[str, Any]] = (),
@@ -154,8 +160,13 @@ def validate_scene_transition(
     }
     declared_ids = [str(item["event_id"]) for item in normalized_events]
     completed_ids = {str(item) for item in before["completed_event_ids"]}
+    # Exact event ids remain authoritative for the complete local history.
+    # Semantic signatures are only a recent-window heuristic: recurring real
+    # actions may legitimately share actors, objects, type, and location.
     prior_events = [
-        item for item in before["completed_events"] if isinstance(item, dict)
+        item
+        for item in before["completed_events"][-_COMPLETED_EVENT_SUMMARY_LIMIT:]
+        if isinstance(item, dict)
     ]
     prior_open_actions = [
         item for item in before["open_actions"] if isinstance(item, dict)
@@ -295,11 +306,26 @@ def validate_scene_transition(
 
     after = copy.deepcopy(before)
     findings.extend(_apply_character_deltas(after, normalized_deltas["characters"]))
-    findings.extend(_apply_relationship_deltas(after, normalized_deltas["relationships"]))
+    findings.extend(
+        _apply_relationship_deltas(
+            after,
+            normalized_deltas["relationships"],
+            current_event_ids=set(declared_ids),
+            scene_index=scene_index,
+        )
+    )
     findings.extend(_apply_roster_deltas(after, normalized_deltas["rosters"]))
     findings.extend(_apply_location_deltas(after, normalized_deltas["locations"]))
     findings.extend(_apply_numeric_deltas(after, normalized_deltas["inventory"], inventory=True))
     findings.extend(_apply_numeric_deltas(after, normalized_deltas["counters"], inventory=False))
+    findings.extend(
+        validate_roster_count_claims(
+            chapter_text=prose,
+            state_before=before,
+            state_after=after,
+            roster_changes=normalized_deltas["rosters"],
+        )
+    )
 
     for event in normalized_events:
         event_id = str(event["event_id"])
@@ -383,6 +409,7 @@ def require_scene_transition(report: dict[str, Any]) -> dict[str, Any]:
 
 def scene_state_summary(state: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_state(state)
+    completed_event_ids = list(normalized["completed_event_ids"])
     return {
         "schema_version": normalized["schema_version"],
         "characters": copy.deepcopy(normalized["characters"]),
@@ -391,13 +418,28 @@ def scene_state_summary(state: dict[str, Any]) -> dict[str, Any]:
         "locations": copy.deepcopy(normalized["locations"]),
         "inventories": copy.deepcopy(normalized["inventories"]),
         "counters": copy.deepcopy(normalized["counters"]),
-        "completed_event_ids": list(normalized["completed_event_ids"]),
-        "completed_events": copy.deepcopy(normalized["completed_events"][-24:]),
+        "completed_event_ids": completed_event_ids[-_COMPLETED_EVENT_SUMMARY_LIMIT:],
+        "completed_event_ids_count": len(completed_event_ids),
+        "completed_event_ids_sha256": _history_hash(completed_event_ids),
+        "completed_event_ids_truncated": (
+            len(completed_event_ids) > _COMPLETED_EVENT_SUMMARY_LIMIT
+        ),
+        "completed_events": copy.deepcopy(
+            normalized["completed_events"][-_COMPLETED_EVENT_SUMMARY_LIMIT:]
+        ),
         "current_location": normalized["current_location"],
         "characters_present": list(normalized["characters_present"]),
         "open_action": normalized["open_action"],
-        "open_actions": copy.deepcopy(normalized["open_actions"][-12:]),
+        "open_actions": copy.deepcopy(
+            normalized["open_actions"][-_OPEN_ACTION_SUMMARY_LIMIT:]
+        ),
     }
+
+
+def normalize_scene_state(state: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the complete internal Scene state without prompt-size truncation."""
+
+    return _normalize_state(state)
 
 
 def _normalize_state(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -509,15 +551,54 @@ def _apply_character_deltas(
 def _apply_relationship_deltas(
     state: dict[str, Any],
     deltas: list[dict[str, Any]],
+    *,
+    current_event_ids: set[str],
+    scene_index: int,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for delta in deltas:
         source_id = str(delta.get("source_id") or "").strip()
         target_id = str(delta.get("target_id") or "").strip()
         field = str(delta.get("field") or "status").strip()
+        source_event_id = str(
+            delta.get("source_event_id")
+            or delta.get("reason_event_id")
+            or ""
+        ).strip()
         if not source_id or not target_id or "after" not in delta:
             findings.append(_finding("invalid_relationship_delta", "Relationship delta is incomplete.", delta))
             continue
+        if not source_event_id:
+            findings.append(
+                _finding(
+                    "missing_authority_event_reference",
+                    "Relationship delta requires a source event declared by the same Scene.",
+                    {
+                        "ledger": "relationships",
+                        "scene_index": int(scene_index),
+                        "source_id": source_id,
+                        "target_id": target_id,
+                        "field": field,
+                        "source_event_id": "",
+                    },
+                )
+            )
+        elif source_event_id not in current_event_ids:
+            findings.append(
+                _finding(
+                    "invalid_authority_event_reference",
+                    "Relationship delta references an event outside the current Scene.",
+                    {
+                        "ledger": "relationships",
+                        "scene_index": int(scene_index),
+                        "source_id": source_id,
+                        "target_id": target_id,
+                        "field": field,
+                        "source_event_id": source_event_id,
+                        "current_event_ids": sorted(current_event_ids),
+                    },
+                )
+            )
         relation_key = f"{source_id}->{target_id}"
         fields = state["relationships"].setdefault(relation_key, {})
         findings.extend(_check_before_value("relationship_state_rollback", fields, field, delta))
@@ -748,6 +829,16 @@ def _state_hash(state: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _history_hash(value: list[Any]) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _finding(code: str, message: str, evidence: dict[str, Any]) -> dict[str, Any]:
     return {
         "code": code,
@@ -785,6 +876,7 @@ __all__ = [
     "SCENE_CONTINUITY_SCHEMA_VERSION",
     "SceneBoundaryValidationError",
     "empty_scene_state",
+    "normalize_scene_state",
     "require_scene_transition",
     "scene_delta_response_schema",
     "scene_state_summary",

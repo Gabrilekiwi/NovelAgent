@@ -310,6 +310,63 @@ class SceneContinuityTests(unittest.TestCase):
         self.assertEqual("shelter", after["current_location"])
         self.assertEqual(["hero"], after["characters_present"])
 
+    def test_old_semantic_signature_may_recur_but_old_event_id_may_not(self) -> None:
+        state = empty_scene_state()
+        oldest = {
+            "event_id": "chapter-0001-patrol",
+            "type": "patrol_completed",
+            "subjects": ["hero"],
+            "objects": ["north-gate"],
+            "location": "station",
+            "status": "completed",
+        }
+        state["completed_events"] = [
+            oldest,
+            *[
+                {
+                    "event_id": f"chapter-0002-checkpoint-{index:02d}",
+                    "type": "checkpoint_completed",
+                    "subjects": ["hero"],
+                    "objects": [f"checkpoint-{index:02d}"],
+                    "location": "station",
+                    "status": "completed",
+                }
+                for index in range(24)
+            ],
+        ]
+        state["completed_event_ids"] = [
+            event["event_id"]
+            for event in state["completed_events"]
+        ]
+        new_instance = {
+            **oldest,
+            "event_id": "chapter-0018-patrol",
+        }
+
+        accepted, _ = validate_scene_transition(
+            scene_index=1,
+            state_before=state,
+            events=[new_instance],
+            deltas=_empty_deltas(),
+            required_event_ids=[new_instance["event_id"]],
+            planned_events=[new_instance],
+        )
+        rejected, _ = validate_scene_transition(
+            scene_index=1,
+            state_before=state,
+            events=[oldest],
+            deltas=_empty_deltas(),
+            required_event_ids=[oldest["event_id"]],
+            planned_events=[oldest],
+        )
+
+        self.assertTrue(accepted["accepted"], accepted["findings"])
+        self.assertFalse(rejected["accepted"])
+        self.assertIn(
+            "repeated_completed_event_id",
+            {item["code"] for item in rejected["findings"]},
+        )
+
     def test_open_action_cannot_restart_under_a_new_event_id(self) -> None:
         state = empty_scene_state()
         first = {
@@ -347,6 +404,175 @@ class SceneContinuityTests(unittest.TestCase):
             "open_action_restarted",
             {item["code"] for item in repeated_report["findings"]},
         )
+
+    def test_relationship_delta_requires_current_scene_event_reference(self) -> None:
+        event = {
+            "event_id": "scene-1-alliance",
+            "type": "alliance_updated",
+            "subjects": ["hero", "ally"],
+            "objects": [],
+            "location": "gate",
+            "status": "completed",
+        }
+        missing, _ = validate_scene_transition(
+            scene_index=1,
+            state_before=empty_scene_state(),
+            events=[event],
+            deltas={
+                **_empty_deltas(),
+                "relationships": [
+                    {
+                        "source_id": "hero",
+                        "target_id": "ally",
+                        "field": "status",
+                        "before": None,
+                        "after": "active",
+                    }
+                ],
+            },
+            required_event_ids=[event["event_id"]],
+        )
+        valid, after = validate_scene_transition(
+            scene_index=1,
+            state_before=empty_scene_state(),
+            events=[event],
+            deltas={
+                **_empty_deltas(),
+                "relationships": [
+                    {
+                        "source_id": "hero",
+                        "target_id": "ally",
+                        "field": "status",
+                        "before": None,
+                        "after": "active",
+                        "source_event_id": event["event_id"],
+                    }
+                ],
+            },
+            required_event_ids=[event["event_id"]],
+        )
+
+        self.assertFalse(missing["accepted"])
+        self.assertIn(
+            "missing_authority_event_reference",
+            {item["code"] for item in missing["findings"]},
+        )
+        self.assertTrue(valid["accepted"], valid["findings"])
+        self.assertEqual(
+            "active",
+            after["relationships"]["hero->ally"]["status"],
+        )
+
+    def test_relationship_delta_cannot_reuse_prior_scene_event(self) -> None:
+        state = empty_scene_state()
+        state["completed_event_ids"] = ["scene-1-alliance"]
+        state["completed_events"] = [
+            {
+                "event_id": "scene-1-alliance",
+                "type": "alliance_updated",
+                "subjects": ["hero", "ally"],
+                "objects": [],
+                "location": "gate",
+                "status": "completed",
+            }
+        ]
+        current = {
+            "event_id": "scene-2-move",
+            "type": "movement_completed",
+            "subjects": ["hero", "ally"],
+            "objects": [],
+            "location": "shelter",
+            "status": "completed",
+        }
+
+        report, _ = validate_scene_transition(
+            scene_index=2,
+            state_before=state,
+            events=[current],
+            deltas={
+                **_empty_deltas(),
+                "relationships": [
+                    {
+                        "source_id": "hero",
+                        "target_id": "ally",
+                        "field": "status",
+                        "before": None,
+                        "after": "strained",
+                        "source_event_id": "scene-1-alliance",
+                    }
+                ],
+            },
+            required_event_ids=[current["event_id"]],
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn(
+            "invalid_authority_event_reference",
+            {item["code"] for item in report["findings"]},
+        )
+
+    def test_explicit_roster_prose_count_must_match_scene_ledger(self) -> None:
+        state = empty_scene_state()
+        state["rosters"]["main"] = {
+            "roster_id": "main",
+            "members": [
+                {"member_id": f"member-{index:02d}"}
+                for index in range(1, 8)
+            ],
+            "computed_count": 7,
+            "declared_count": 7,
+        }
+        joined = [
+            {"member_id": f"member-{index:02d}"}
+            for index in range(8, 13)
+        ]
+        event = {
+            "event_id": "scene-2-join",
+            "type": "survivors_joined",
+            "subjects": ["hero"],
+            "objects": [member["member_id"] for member in joined],
+            "location": "shelter",
+            "status": "completed",
+        }
+        deltas = {
+            **_empty_deltas(),
+            "rosters": [
+                {
+                    "roster_id": "main",
+                    "operation": "join",
+                    "member_ids": [member["member_id"] for member in joined],
+                    "members": joined,
+                    "delta": 5,
+                    "declared_count": 12,
+                    "reason_event_id": event["event_id"],
+                }
+            ],
+        }
+
+        rejected, _ = validate_scene_transition(
+            scene_index=2,
+            state_before=state,
+            events=[event],
+            deltas=deltas,
+            prose="五名幸存者加入后，队伍现在共有十一人。",
+            required_event_ids=[event["event_id"]],
+        )
+        accepted, after = validate_scene_transition(
+            scene_index=2,
+            state_before=state,
+            events=[event],
+            deltas=deltas,
+            prose="原先队伍共有七人，五名幸存者加入后，队伍现在共有十二人。",
+            required_event_ids=[event["event_id"]],
+        )
+
+        self.assertFalse(rejected["accepted"])
+        self.assertIn(
+            "roster_count_mismatch",
+            {item["code"] for item in rejected["findings"]},
+        )
+        self.assertTrue(accepted["accepted"], accepted["findings"])
+        self.assertEqual(12, after["rosters"]["main"]["computed_count"])
 
     def test_cross_chapter_required_beat_bookkeeping_is_not_a_duplicate_event(
         self,

@@ -21,6 +21,7 @@ from core.quality.final_artifact_integrity import (
 )
 from core.scene_continuity import (
     empty_scene_state,
+    normalize_scene_state,
     require_scene_transition,
     scene_delta_response_schema,
     scene_state_summary,
@@ -468,7 +469,7 @@ def generate_scenes(
     recovered = _recovered_scene_prefix(recovered_scene_drafts, plan)
     scene_drafts: list[dict[str, Any]] = []
     scene_state = (
-        scene_state_summary(initial_scene_state)
+        normalize_scene_state(initial_scene_state)
         if initial_scene_state is not None
         else _initial_scene_state(input_pack)
     )
@@ -481,7 +482,7 @@ def generate_scenes(
             if isinstance(beat, dict) and int(beat.get("index") or 0) in required_beat_indexes
         ]
         scene_index = int(scene["index"])
-        state_before = scene_state_summary(scene_state)
+        state_before = normalize_scene_state(scene_state)
         previous_scene_tail = (
             str(scene_drafts[-1]["text"])[-600:]
             if scene_drafts
@@ -524,6 +525,7 @@ def generate_scenes(
                 state_before=state_before,
                 events=scene_result["events"],
                 deltas=scene_result["deltas"],
+                prose=scene_text,
                 required_event_ids=scene.get("required_event_ids") or [],
                 forbidden_event_ids=scene.get("forbidden_event_ids") or [],
                 planned_events=scene.get("planned_events") or [],
@@ -589,7 +591,7 @@ def generate_scenes(
                 if scene_result.get("source_attempt_id")
                 else {}
             ),
-            "scene_state_before": state_before,
+            "scene_state_before": scene_state_summary(state_before),
             "scene_state_after": scene_state_summary(state_after),
             "boundary_validation": boundary,
         }
@@ -810,6 +812,8 @@ def _scene_request_payload(
             "The numeric values shown in response_schema are type examples, not values to copy.",
             "For roster join or replace, member_ids and members must describe the same stable member ids. "
             "Do not invent missing roster members just to satisfy a declared count.",
+            "Every relationship delta must include source_event_id and it must reference an event declared "
+            "by this Scene; never reuse an earlier Scene event to justify a new relationship state.",
         ],
         **({"boundary_retry": boundary_retry} if boundary_retry is not None else {}),
         "instruction": (

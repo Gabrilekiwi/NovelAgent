@@ -58,6 +58,7 @@ class AuthoritativeStateTests(unittest.TestCase):
                         "target_character_id": "char_spouse",
                         "type": "spouse",
                         "status": "active",
+                        "source_event_id": "chapter-0001-event-001",
                     }
                 ],
                 "roster_changes": [
@@ -658,8 +659,19 @@ class AuthoritativeStateTests(unittest.TestCase):
                         "field": "status",
                         "before": "active",
                         "after": "strained",
+                        "source_event_id": "alliance-strained",
                     }
-                ]
+                ],
+                "events": [
+                    {
+                        "event_id": "alliance-strained",
+                        "type": "alliance_strained",
+                        "subjects": ["a", "b"],
+                        "objects": [],
+                        "location": "",
+                        "status": "completed",
+                    }
+                ],
             },
             chapter_text="",
         )
@@ -677,7 +689,16 @@ class AuthoritativeStateTests(unittest.TestCase):
             [
                 {
                     "index": 6,
-                    "events": [],
+                    "events": [
+                        {
+                            "event_id": "coordination-established",
+                            "type": "coordination_established",
+                            "subjects": ["陆沉", "韩野"],
+                            "objects": [],
+                            "location": "",
+                            "status": "completed",
+                        }
+                    ],
                     "deltas": {
                         "characters": [],
                         "relationships": [
@@ -687,6 +708,7 @@ class AuthoritativeStateTests(unittest.TestCase):
                                 "field": "combat_coordination",
                                 "before": None,
                                 "after": "首次完成并肩作战配合",
+                                "source_event_id": "coordination-established",
                             }
                         ],
                         "rosters": [],
@@ -697,7 +719,16 @@ class AuthoritativeStateTests(unittest.TestCase):
                 },
                 {
                     "index": 7,
-                    "events": [],
+                    "events": [
+                        {
+                            "event_id": "threat-assessment-updated",
+                            "type": "threat_assessment_updated",
+                            "subjects": ["韩野", "陆沉"],
+                            "objects": [],
+                            "location": "",
+                            "status": "completed",
+                        }
+                    ],
                     "deltas": {
                         "characters": [],
                         "relationships": [
@@ -707,6 +738,7 @@ class AuthoritativeStateTests(unittest.TestCase):
                                 "field": "threat_assessment",
                                 "before": None,
                                 "after": "警惕未消但认可其自我限制",
+                                "source_event_id": "threat-assessment-updated",
                             }
                         ],
                         "rosters": [],
@@ -745,6 +777,17 @@ class AuthoritativeStateTests(unittest.TestCase):
 
     def test_stateful_ledgers_require_declared_event_references(self) -> None:
         changes = {
+            "relationship_changes": [
+                {
+                    "relationship_id": "a->b",
+                    "source_character_id": "a",
+                    "target_character_id": "b",
+                    "type": "ally",
+                    "field": "status",
+                    "before": "active",
+                    "after": "strained",
+                }
+            ],
             "roster_changes": [
                 {
                     "roster_id": "main",
@@ -785,6 +828,83 @@ class AuthoritativeStateTests(unittest.TestCase):
                 self.assertFalse(report["accepted"])
                 self.assertIn("missing_authority_event_reference", _codes(report))
 
+    def test_relationship_change_must_reference_event_from_the_same_scene(self) -> None:
+        delta = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 1,
+                    "events": [
+                        {
+                            "event_id": "scene-1-event",
+                            "type": "alliance_started",
+                            "subjects": ["a", "b"],
+                            "objects": [],
+                            "location": "",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                },
+                {
+                    "index": 2,
+                    "events": [
+                        {
+                            "event_id": "scene-2-event",
+                            "type": "movement_completed",
+                            "subjects": ["a", "b"],
+                            "objects": [],
+                            "location": "",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [
+                            {
+                                "source_id": "a",
+                                "target_id": "b",
+                                "field": "status",
+                                "before": None,
+                                "after": "strained",
+                                "source_event_id": "scene-1-event",
+                            }
+                        ],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                },
+            ],
+            base_state=empty_authoritative_state(),
+        )
+
+        report = validate_authoritative_state_delta(
+            base_state=empty_authoritative_state(),
+            state_delta=delta,
+            chapter_text="",
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn("invalid_authority_event_reference", _codes(report))
+        finding = next(
+            item
+            for item in report["findings"]
+            if item["code"] == "invalid_authority_event_reference"
+        )
+        self.assertEqual(2, finding["evidence"]["change_scene_index"])
+        self.assertEqual(
+            {"scene-1-event": 1},
+            finding["evidence"]["event_scene_indexes"],
+        )
+
     def test_relationship_field_delta_rejects_stale_before_state(self) -> None:
         base = empty_authoritative_state()
         base["relationships"]["fire->main"] = {
@@ -798,7 +918,16 @@ class AuthoritativeStateTests(unittest.TestCase):
             [
                 {
                     "index": 1,
-                    "events": [],
+                    "events": [
+                        {
+                            "event_id": "cooperation-redefined",
+                            "type": "cooperation_redefined",
+                            "subjects": ["fire", "main"],
+                            "objects": [],
+                            "location": "",
+                            "status": "completed",
+                        }
+                    ],
                     "deltas": {
                         "characters": [],
                         "relationships": [
@@ -808,6 +937,7 @@ class AuthoritativeStateTests(unittest.TestCase):
                                 "field": "合作边界",
                                 "before": None,
                                 "after": "双方合并",
+                                "source_event_id": "cooperation-redefined",
                             }
                         ],
                         "rosters": [],
@@ -887,3 +1017,57 @@ class AuthoritativeStateTests(unittest.TestCase):
 
                 self.assertFalse(report["accepted"])
                 self.assertIn("roster_count_mismatch", _codes(report))
+
+    def test_chapter_roster_prose_count_must_match_authoritative_state(self) -> None:
+        base = empty_authoritative_state()
+        base["roster"]["main"] = {
+            "roster_id": "main",
+            "members": [
+                {"member_id": f"member-{index:02d}"}
+                for index in range(1, 8)
+            ],
+            "computed_count": 7,
+            "declared_count": 7,
+        }
+        joined = [
+            {"member_id": f"member-{index:02d}"}
+            for index in range(8, 13)
+        ]
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            state_delta={
+                "roster_changes": [
+                    {
+                        "roster_id": "main",
+                        "operation": "join",
+                        "member_ids": [member["member_id"] for member in joined],
+                        "members": joined,
+                        "delta": 5,
+                        "declared_count": 12,
+                        "reason_event_id": "five-joined",
+                    }
+                ],
+                "events": [
+                    {
+                        "event_id": "five-joined",
+                        "type": "survivors_joined",
+                        "subjects": [],
+                        "objects": [member["member_id"] for member in joined],
+                        "location": "shelter",
+                        "status": "completed",
+                    }
+                ],
+            },
+            chapter_text="五人加入后，队伍现在共有十一人。",
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn("roster_count_mismatch", _codes(report))
+        finding = next(
+            item
+            for item in report["findings"]
+            if item["code"] == "roster_count_mismatch"
+            and item["evidence"].get("kind") == "prose_state_mismatch"
+        )
+        self.assertEqual(11, finding["evidence"]["declared_count"])
+        self.assertEqual(12, finding["evidence"]["authoritative_count"])

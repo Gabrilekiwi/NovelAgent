@@ -7,6 +7,7 @@ import unicodedata
 from typing import Any
 
 from core.schema import validate_schema
+from core.state.prose_state_alignment import validate_roster_count_claims
 
 
 AUTHORITATIVE_STATE_SCHEMA_VERSION = "1.0"
@@ -124,7 +125,14 @@ def validate_authoritative_state_delta(
             declared_events=declared_events,
         )
     )
-    findings.extend(_apply_relationship_changes(after, delta.get("relationship_changes"), source_tier=source_tier))
+    findings.extend(
+        _apply_relationship_changes(
+            after,
+            delta.get("relationship_changes"),
+            source_tier=source_tier,
+            declared_events=declared_events,
+        )
+    )
     findings.extend(
         _apply_roster_changes(
             after,
@@ -156,6 +164,14 @@ def validate_authoritative_state_delta(
             chapter_text,
             after,
             numeric_changes=delta.get("numeric_changes"),
+        )
+    )
+    findings.extend(
+        validate_roster_count_claims(
+            chapter_text=chapter_text,
+            state_before=base,
+            state_after=after,
+            roster_changes=delta.get("roster_changes"),
         )
     )
 
@@ -758,6 +774,7 @@ def _required_event_reference_finding(
     source_tier: str,
     ledger: str,
     include_member_join_events: bool = False,
+    current_delta_only: bool = False,
 ) -> dict[str, Any] | None:
     if source_tier == "story_project_standard":
         return None
@@ -782,6 +799,44 @@ def _required_event_reference_finding(
             f"{ledger} change requires a source event reference.",
             {"ledger": ledger, "change": raw},
         )
+    if current_delta_only:
+        missing = sorted(
+            {
+                event_id
+                for event_id in event_ids
+                if event_id not in declared_events
+            }
+        )
+        if missing:
+            return _finding(
+                "invalid_authority_event_reference",
+                f"{ledger} change must reference an event declared in the current delta.",
+                {"ledger": ledger, "event_ids": missing, "change": raw},
+            )
+        change_scene_index = raw.get("scene_index")
+        mismatched = sorted(
+            event_id
+            for event_id in event_ids
+            if change_scene_index is not None
+            and declared_events[event_id].get("scene_index") is not None
+            and declared_events[event_id].get("scene_index") != change_scene_index
+        )
+        if mismatched:
+            return _finding(
+                "invalid_authority_event_reference",
+                f"{ledger} change references an event from another Scene.",
+                {
+                    "ledger": ledger,
+                    "event_ids": mismatched,
+                    "change_scene_index": change_scene_index,
+                    "event_scene_indexes": {
+                        event_id: declared_events[event_id].get("scene_index")
+                        for event_id in mismatched
+                    },
+                    "change": raw,
+                },
+            )
+        return None
     known_events = {
         *declared_events,
         *(
@@ -1313,6 +1368,7 @@ def _apply_relationship_changes(
     value: Any,
     *,
     source_tier: str,
+    declared_events: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for raw in _objects(value):
@@ -1342,6 +1398,16 @@ def _apply_relationship_changes(
         if not relationship_id or not source_id or not target_id or not relation_type:
             findings.append(_finding("invalid_relationship_change", "Relationship change is incomplete.", raw))
             continue
+        event_finding = _required_event_reference_finding(
+            raw,
+            state=state,
+            declared_events=declared_events,
+            source_tier=source_tier,
+            ledger="relationships",
+            current_delta_only=True,
+        )
+        if event_finding is not None:
+            findings.append(event_finding)
         for existing_id, candidate in state["relationships"].items():
             if not isinstance(candidate, dict):
                 continue

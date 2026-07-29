@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 from unittest.mock import patch
@@ -339,7 +340,10 @@ class ChapterPipelineTest(unittest.TestCase):
 
         current = payload["current_scene_state"]
         self.assertEqual(12, len(current["locations"]))
-        self.assertEqual(40, len(current["completed_event_ids"]))
+        self.assertEqual(24, len(current["completed_event_ids"]))
+        self.assertEqual(40, current["completed_event_ids_count"])
+        self.assertTrue(current["completed_event_ids_truncated"])
+        self.assertEqual(64, len(current["completed_event_ids_sha256"]))
         self.assertEqual(24, len(current["completed_events"]))
         self.assertEqual(6, current["counters"]["erosion"])
         self.assertIn("context_selection", payload["shared_context"])
@@ -651,7 +655,7 @@ class ChapterPipelineTest(unittest.TestCase):
         self,
     ) -> None:
         class TwoSceneBudget:
-            hard_input_limit = 10_100
+            hard_input_limit = 10_500
 
             def measure(self, text: str, *, stage: str, **_: object) -> dict:
                 if stage != "scene":
@@ -797,6 +801,123 @@ class ChapterPipelineTest(unittest.TestCase):
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
+        )
+
+    def test_full_local_event_ids_are_validated_with_bounded_prompt_summary(self) -> None:
+        oldest = {
+            "event_id": "historical-event-000",
+            "type": "rescue_completed",
+            "subjects": ["hero"],
+            "objects": ["survivor-group"],
+            "location": "service-tunnel",
+            "status": "completed",
+        }
+        historical_events = [
+            oldest,
+            *[
+                {
+                    "event_id": f"historical-event-{index:03d}",
+                    "type": f"checkpoint_{index}_completed",
+                    "subjects": ["hero"],
+                    "objects": [f"checkpoint-{index}"],
+                    "location": "service-tunnel",
+                    "status": "completed",
+                }
+                for index in range(1, 25)
+            ],
+        ]
+        initial_state = pipeline_module.empty_scene_state()
+        initial_state["completed_event_ids"] = [
+            event["event_id"]
+            for event in historical_events
+        ]
+        initial_state["completed_events"] = historical_events
+        repeated = dict(oldest)
+        plan = {
+            "goal": "Do not repeat a historical rescue.",
+            "scenes": [
+                {
+                    "index": 1,
+                    "type": "story_project_blueprint",
+                    "goal": "Advance without replaying the rescue.",
+                    "required_beats": ["advance"],
+                    "required_event_ids": [repeated["event_id"]],
+                    "forbidden_event_ids": [],
+                    "planned_events": [repeated],
+                }
+            ],
+        }
+        requests: list[dict] = []
+
+        def repeated_completion(messages, **_kwargs):
+            request = json.loads(messages[-1]["content"])
+            requests.append(request)
+            return json.dumps(
+                {
+                    "prose": "The same completed rescue reuses its old event id.",
+                    "events": [repeated],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "invalid historical replay",
+                }
+            )
+
+        with patch.object(
+            pipeline_module,
+            "chat_completion",
+            side_effect=repeated_completion,
+        ):
+            with self.assertRaisesRegex(ValueError, "repeated_completed_event_id"):
+                pipeline_module.generate_scenes(
+                    "input pack",
+                    plan,
+                    dry_run=False,
+                    initial_scene_state=initial_state,
+                )
+
+        self.assertEqual(2, len(requests))
+        self.assertEqual(
+            24,
+            len(requests[0]["current_scene_state"]["completed_events"]),
+        )
+        self.assertEqual(
+            24,
+            len(requests[0]["current_scene_state"]["completed_event_ids"]),
+        )
+        self.assertNotIn(
+            oldest["event_id"],
+            {
+                event["event_id"]
+                for event in requests[0]["current_scene_state"]["completed_events"]
+            },
+        )
+        self.assertNotIn(
+            oldest["event_id"],
+            requests[0]["current_scene_state"]["completed_event_ids"],
+        )
+        self.assertEqual(
+            len(historical_events),
+            requests[0]["current_scene_state"]["completed_event_ids_count"],
+        )
+        self.assertTrue(
+            requests[0]["current_scene_state"]["completed_event_ids_truncated"],
+        )
+        self.assertEqual(
+            hashlib.sha256(
+                json.dumps(
+                    initial_state["completed_event_ids"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            requests[0]["current_scene_state"]["completed_event_ids_sha256"],
         )
 
     def test_scene_request_compacts_large_sections_and_drops_memory_index(self) -> None:
@@ -1274,6 +1395,7 @@ class ChapterPipelineTest(unittest.TestCase):
                         "before": None,
                         "after": established_boundary,
                         "reason": "完成双向验伤",
+                        "source_event_id": event["event_id"],
                     }
                 ]
                 prose = "陆沉与韩野完成双向验伤，划定临时避险区的合作边界。"
@@ -1286,6 +1408,7 @@ class ChapterPipelineTest(unittest.TestCase):
                         "before": None,
                         "after": "危险核心进入独立隔离柜",
                         "reason": "隔离危险核心",
+                        "source_event_id": event["event_id"],
                     }
                 ]
                 prose = "双方把危险核心送进隔离柜，却错误声明此前没有合作边界。"
@@ -1298,6 +1421,7 @@ class ChapterPipelineTest(unittest.TestCase):
                         "before": established_boundary,
                         "after": "危险核心进入独立隔离柜，双方仍不合并组织",
                         "reason": "隔离危险核心",
+                        "source_event_id": event["event_id"],
                     }
                 ]
                 prose = "双方按既有合作边界把危险核心转入隔离柜，组织仍不合并。"
@@ -1346,6 +1470,111 @@ class ChapterPipelineTest(unittest.TestCase):
             drafts[1]["deltas"]["relationships"][0]["after"],
         )
         self.assertEqual(1, drafts[1]["boundary_validation"]["local_regeneration_attempts"])
+
+    def test_roster_prose_mismatch_regenerates_only_current_scene_once(self) -> None:
+        plan = {
+            "goal": "接纳五名幸存者并完成账本对账",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "接纳五名幸存者",
+                    "required_beats": ["五名幸存者加入主队"],
+                    "required_beat_indexes": [1],
+                    "required_event_ids": ["chapter-0018-join-001"],
+                    "forbidden_event_ids": [],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0018-join-001",
+                            "type": "survivors_joined",
+                            "subjects": ["hero"],
+                            "objects": ["incoming-group"],
+                            "location": "shelter",
+                            "status": "completed",
+                        }
+                    ],
+                }
+            ],
+        }
+        initial_state = pipeline_module.empty_scene_state()
+        initial_state["rosters"]["main"] = {
+            "roster_id": "main",
+            "members": [
+                {"member_id": f"member-{index:02d}"}
+                for index in range(1, 8)
+            ],
+            "computed_count": 7,
+            "declared_count": 7,
+        }
+        joined = [
+            {"member_id": f"member-{index:02d}"}
+            for index in range(8, 13)
+        ]
+        calls: list[dict] = []
+
+        def completion(messages, **_kwargs):
+            request = json.loads(messages[-1]["content"])
+            calls.append(request)
+            event = request["scene"]["planned_events"][0]
+            declared_in_prose = 11 if len(calls) == 1 else 12
+            return json.dumps(
+                {
+                    "prose": (
+                        "五名幸存者完成登记后加入主队，"
+                        f"队伍现在共有{declared_in_prose}人。"
+                    ),
+                    "events": [event],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [
+                            {
+                                "roster_id": "main",
+                                "operation": "join",
+                                "member_ids": [
+                                    member["member_id"]
+                                    for member in joined
+                                ],
+                                "members": joined,
+                                "delta": 5,
+                                "declared_count": 12,
+                                "reason_event_id": event["event_id"],
+                            }
+                        ],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "账本与正文人数必须一致。",
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(
+            pipeline_module,
+            "chat_completion",
+            side_effect=completion,
+        ):
+            drafts = pipeline_module.generate_scenes(
+                "input pack",
+                plan,
+                dry_run=False,
+                language="zh-CN",
+                initial_scene_state=initial_state,
+            )
+
+        self.assertEqual(2, len(calls))
+        self.assertIn(
+            "roster_count_mismatch",
+            {
+                finding["code"]
+                for finding in calls[1]["boundary_retry"]["findings"]
+            },
+        )
+        self.assertEqual(
+            1,
+            drafts[0]["boundary_validation"]["local_regeneration_attempts"],
+        )
+        self.assertIn("12人", drafts[0]["text"])
 
     def test_location_retry_contract_excludes_remote_participant_from_event_scope(
         self,
@@ -1503,6 +1732,9 @@ class ChapterPipelineTest(unittest.TestCase):
                                 "before": None,
                                 "after": "新的合作边界",
                                 "reason": "继续合作",
+                                "source_event_id": request["scene"]["planned_events"][0][
+                                    "event_id"
+                                ],
                             }
                         ],
                         "rosters": [],
@@ -1592,6 +1824,9 @@ class ChapterPipelineTest(unittest.TestCase):
                             "before": None,
                             "after": established_boundary,
                             "reason": "完成验伤",
+                            "source_event_id": plan["scenes"][0]["planned_events"][0][
+                                "event_id"
+                            ],
                         }
                     ],
                 },
@@ -1610,6 +1845,9 @@ class ChapterPipelineTest(unittest.TestCase):
                             "before": None,
                             "after": "核心已经隔离",
                             "reason": "隔离危险核心",
+                            "source_event_id": plan["scenes"][1]["planned_events"][0][
+                                "event_id"
+                            ],
                         }
                     ],
                 },
@@ -1634,6 +1872,9 @@ class ChapterPipelineTest(unittest.TestCase):
                                 "before": established_boundary,
                                 "after": "核心已经隔离",
                                 "reason": "隔离危险核心",
+                                "source_event_id": request["scene"]["planned_events"][0][
+                                    "event_id"
+                                ],
                             }
                         ],
                     },
