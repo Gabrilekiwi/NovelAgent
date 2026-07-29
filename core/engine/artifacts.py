@@ -98,7 +98,7 @@ def prepare_input_pack_artifact(
         content,
         "markdown",
         metadata_chars=len(input_pack),
-        include_sha256=False,
+        include_sha256=True,
         native_newlines=True,
     )
     return {"metadata": metadata, "targets": [target]}

@@ -158,6 +158,12 @@ class PreparedArtifactsTest(unittest.TestCase):
             "输入包\n第二行\n"
         )
         self.assertEqual(input_logical.replace("\n", os.linesep), input_pack["targets"][0]["content"])
+        self.assertEqual(
+            hashlib.sha256(
+                input_pack["targets"][0]["content"].encode("utf-8")
+            ).hexdigest(),
+            input_pack["metadata"]["sha256"],
+        )
         saved_input = save_input_pack_artifact(
             input_pack="输入包\n第二行",
             run=run,
