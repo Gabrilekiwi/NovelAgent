@@ -13,6 +13,14 @@ _CHINESE_UNITS = "十百千万亿"
 _NUMBER_TOKEN = rf"[{_ARABIC_DIGITS},，]+|[{_CHINESE_DIGITS}{_CHINESE_UNITS}]+"
 _ROSTER_SUFFIX = r"(?:\s*(?:幸存者)?(?:队伍|小队|团队|队))?"
 _CLAUSE_END = r"(?=\s*(?:$|[。！？，；、,.!?;】\]]))"
+_COUNT_FIRST_CLAUSE_START = (
+    r"(?:^|(?<=[。！？!?；;\n，,：:“‘（(【\[]))\s*"
+)
+_COUNT_FIRST_SUBJECT_FOLLOW = (
+    r"(?=\s*(?:$|[。！？，；、,.!?;：:】\]]|"
+    r"目前|当前|现在|如今|仍|还|都|全部|全都|已|已经|"
+    r"正在|正|被|未|没有|将|留|待|位于|处于|集中|单独|一起))"
+)
 
 _CURRENT_MARKERS = ("目前", "当前", "现在", "如今", "现今", "眼下", "此刻")
 _HISTORY_MARKERS = (
@@ -128,8 +136,17 @@ def extract_roster_count_claims(
     anchored_alias = (
         rf"(?<![0-9A-Za-z_\u3400-\u9fff])(?P<alias>{alias_pattern})"
     )
+    count_first_alias = rf"(?P<alias>{alias_pattern})"
     number = rf"(?P<number>{_NUMBER_TOKEN})"
     patterns = (
+        (
+            "count_first_subject",
+            re.compile(
+                rf"{_COUNT_FIRST_CLAUSE_START}{number}\s*名\s*"
+                rf"{count_first_alias}{_COUNT_FIRST_SUBJECT_FOLLOW}",
+                re.IGNORECASE,
+            ),
+        ),
         (
             "status_bracket",
             re.compile(
@@ -170,7 +187,17 @@ def extract_roster_count_claims(
         (
             "status_colon",
             re.compile(
-                rf"{anchored_alias}{_ROSTER_SUFFIX}\s*[:：=]\s*{number}\s*人",
+                rf"{anchored_alias}{_ROSTER_SUFFIX}\s*[:：=]\s*{number}\s*人"
+                rf"{_CLAUSE_END}",
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "paused_status",
+            re.compile(
+                rf"{anchored_alias}{_ROSTER_SUFFIX}\s*"
+                rf"(?:[,，、;；]|[-—–]{{1,2}})\s*{number}\s*人"
+                rf"{_CLAUSE_END}",
                 re.IGNORECASE,
             ),
         ),
