@@ -7,6 +7,9 @@ from typing import Any
 from core.schema import validate_schema
 
 
+_MAX_BLUEPRINT_SCENES = 4
+
+
 def blueprint_to_dict(chapter_blueprint: Any) -> dict[str, Any] | None:
     if chapter_blueprint is None:
         return None
@@ -37,7 +40,7 @@ def build_blueprint_plan(
 ) -> dict[str, Any]:
     validate_generation_blueprint_contract(chapter_blueprint)
     beats = _normalized_beats(chapter_blueprint)
-    scene_count = len(beats)
+    scene_count = min(len(beats), _MAX_BLUEPRINT_SCENES)
     if scene_limit is not None:
         scene_count = min(scene_count, max(1, int(scene_limit)))
     groups = _group_beats(beats, scene_count)
@@ -139,10 +142,17 @@ def _normalized_beats(chapter_blueprint: dict[str, Any]) -> list[dict[str, Any]]
 
 
 def _group_beats(beats: list[dict[str, Any]], scene_count: int) -> list[list[dict[str, Any]]]:
-    groups: list[list[dict[str, Any]]] = [[] for _ in range(max(1, scene_count))]
-    for offset, beat in enumerate(beats):
-        groups[offset % len(groups)].append(beat)
-    return [group for group in groups if group]
+    if not beats:
+        return []
+    bounded_count = min(len(beats), max(1, int(scene_count)))
+    base_size, larger_group_count = divmod(len(beats), bounded_count)
+    groups: list[list[dict[str, Any]]] = []
+    cursor = 0
+    for index in range(bounded_count):
+        group_size = base_size + (1 if index < larger_group_count else 0)
+        groups.append(beats[cursor : cursor + group_size])
+        cursor += group_size
+    return groups
 
 
 def _scene_goal(chapter_blueprint: dict[str, Any], index: int, beat_texts: list[str]) -> str:
