@@ -61,6 +61,7 @@ def build_input_pack(
     *,
     narrative_rules: str | None = None,
     story_project_context: dict[str, Any] | None = None,
+    generation_state_view: dict[str, Any] | None = None,
 ) -> str:
     return f"""You are NovelAgent's chapter generation module. Generate the next chapter from the runtime Snapshot and Director decision.
 
@@ -81,6 +82,7 @@ def build_input_pack(
 
 # Spatial State
 {_dump(snapshot.get("spatial_state", {}))}
+{_generation_state_view_section(generation_state_view)}
 
 # Authoritative State
 {_dump(snapshot.get("authoritative_state", {}))}
@@ -124,12 +126,33 @@ def _narrative_rules_section(narrative_rules: str | None) -> str:
     return "\n\n# 小说生成规则契约\n" + narrative_rules.strip()
 
 
+def _generation_state_view_section(
+    generation_state_view: dict[str, Any] | None,
+) -> str:
+    if not isinstance(generation_state_view, dict):
+        return ""
+    return "\n# Generation State View\n" + _dump(generation_state_view)
+
+
 def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
     if not isinstance(story_project_context, dict):
         return ""
     event_authority = _uses_event_authority(story_project_context)
+    blueprint = story_project_context.get("chapter_blueprint")
+    chapter_context_read_set = (
+        blueprint.get("chapter_context_read_set")
+        if isinstance(blueprint, dict)
+        else None
+    )
+    explicit_chapter_context = (
+        isinstance(chapter_context_read_set, dict)
+        and chapter_context_read_set.get("mode") == "explicit"
+    )
     payload = {
-        "chapter_blueprint": story_project_context.get("chapter_blueprint"),
+        "chapter_blueprint": _prompt_chapter_blueprint(
+            blueprint,
+            explicit_chapter_context=explicit_chapter_context,
+        ),
         "read_set_context_digest": (
             story_project_context.get("read_set") or {}
         ).get("context_digest"),
@@ -142,12 +165,30 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
             for key in ("status", "revision", "projection_hash")
         },
         "tracking_excerpts": _compact_story_sources(
-            {} if event_authority else story_project_context.get("tracking_files"),
+            (
+                {}
+                if event_authority or explicit_chapter_context
+                else story_project_context.get("tracking_files")
+            ),
             excerpt_chars=2000,
         ),
         "setting_excerpts": _compact_story_sources(
-            {} if event_authority else story_project_context.get("setting_files"),
+            (
+                {}
+                if event_authority or explicit_chapter_context
+                else story_project_context.get("setting_files")
+            ),
             excerpt_chars=1200,
+        ),
+        "tracking_sources": (
+            _story_source_metadata(story_project_context.get("tracking_files"))
+            if explicit_chapter_context
+            else {}
+        ),
+        "setting_sources": (
+            _story_source_metadata(story_project_context.get("setting_files"))
+            if explicit_chapter_context
+            else {}
         ),
         "source_paths": _prompt_source_paths(story_project_context, event_authority),
         "source_resolution": _prompt_source_resolution(
@@ -155,6 +196,65 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         ),
     }
     return "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+
+
+def _prompt_chapter_blueprint(
+    value: Any,
+    *,
+    explicit_chapter_context: bool,
+) -> Any:
+    if not isinstance(value, dict) or not explicit_chapter_context:
+        return value
+    projected = dict(value)
+    read_set = projected.get("chapter_context_read_set")
+    if not isinstance(read_set, dict):
+        return projected
+    # The complete, hash-bound contract already lives in Generation State
+    # View. Repeating it inside the blueprint makes a single required JSON item
+    # exceed the structured-context cap and gives the model two copies of the
+    # same constraints. Keep only an auditable binding summary here.
+    projected["chapter_context_read_set"] = {
+        key: read_set.get(key)
+        for key in (
+            "schema_version",
+            "mode",
+            "chapter_index",
+            "contract_sha256",
+            "source_outline_sha256",
+        )
+        if read_set.get(key) is not None
+    }
+    projected["chapter_context_read_set"].update(
+        {
+            "required_state_item_count": len(
+                read_set.get("required_state_item_ids") or []
+            ),
+            "required_event_item_count": len(
+                read_set.get("required_event_item_ids") or []
+            ),
+            "narrative_constraint_count": len(
+                read_set.get("narrative_constraints") or []
+            ),
+            "expected_new_entity_count": len(
+                read_set.get("expected_new_entities") or []
+            ),
+        }
+    )
+    return projected
+
+
+def _story_source_metadata(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(name): {
+            "relative_path": source.get("relative_path"),
+            "sha256": source.get("sha256"),
+            "original_chars": source.get("chars"),
+        }
+        for name, source in sorted(value.items())
+        if isinstance(source, dict)
+    }
 
 
 def _uses_event_authority(context: dict[str, Any]) -> bool:
@@ -275,11 +375,14 @@ def build_input_pack_metadata(
     decision: dict[str, Any] | None = None,
     memory_context: dict[str, Any] | None = None,
     story_project_context: dict[str, Any] | None = None,
+    generation_state_view: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     memory_index = _memory_index(memory_context)
     sections = list(INPUT_PACK_SECTIONS)
     if isinstance(story_project_context, dict):
         sections.append("story_project_chapter_blueprint")
+    if isinstance(generation_state_view, dict):
+        sections.append("generation_state_view")
     metadata = {
         "kind": "chapter_input_pack",
         "chapter_index": int(snapshot.get("chapter_index") or 1),
@@ -355,6 +458,36 @@ def build_input_pack_metadata(
                 }
             )
         metadata["story_project"] = story_project_metadata
+    if isinstance(generation_state_view, dict):
+        audit = generation_state_view.get("audit")
+        metadata["generation_state_view"] = {
+            "schema_version": generation_state_view.get("schema_version"),
+            "chapter_index": generation_state_view.get("chapter_index"),
+            "read_set_digest": (
+                generation_state_view.get("read_set_digest")
+                or (
+                    audit.get("chapter_context_read_set_sha256")
+                    if isinstance(audit, dict)
+                    else None
+                )
+            ),
+            "source_authority_sha256": (
+                generation_state_view.get("source_authority_sha256")
+                or (
+                    audit.get("source_authority_sha256")
+                    if isinstance(audit, dict)
+                    else None
+                )
+            ),
+            "projection_sha256": (
+                generation_state_view.get("projection_sha256")
+                or (
+                    audit.get("projection_sha256")
+                    if isinstance(audit, dict)
+                    else None
+                )
+            ),
+        }
     return validate_schema(metadata, "input_pack_metadata.schema.json")
 
 

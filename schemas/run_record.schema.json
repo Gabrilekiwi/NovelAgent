@@ -1458,9 +1458,10 @@
                   "project_profile",
                   "director_decision",
                   "world_state",
-                  "story_state",
-                  "spatial_state",
-                  "authoritative_state",
+                   "story_state",
+                   "spatial_state",
+                   "generation_state_view",
+                   "authoritative_state",
                   "characters",
                   "timeline",
                   "constraints",
@@ -1664,7 +1665,7 @@
               },
               "additionalProperties": false
             },
-            "recovery_context": {
+             "recovery_context": {
               "type": "object",
               "required": [
                 "available",
@@ -1724,9 +1725,53 @@
                   "minimum": 0
                 }
               },
-              "additionalProperties": false
-            },
-            "story_project": {
+               "additionalProperties": false
+             },
+             "generation_state_view": {
+               "type": "object",
+               "required": [
+                 "schema_version",
+                 "chapter_index",
+                 "read_set_digest",
+                 "source_authority_sha256",
+                 "projection_sha256"
+               ],
+               "properties": {
+                 "schema_version": {
+                   "type": [
+                     "string",
+                     "null"
+                   ]
+                 },
+                 "chapter_index": {
+                   "type": [
+                     "integer",
+                     "null"
+                   ],
+                   "minimum": 1
+                 },
+                 "read_set_digest": {
+                   "type": [
+                     "string",
+                     "null"
+                   ]
+                 },
+                 "source_authority_sha256": {
+                   "type": [
+                     "string",
+                     "null"
+                   ]
+                 },
+                 "projection_sha256": {
+                   "type": [
+                     "string",
+                     "null"
+                   ]
+                 }
+               },
+               "additionalProperties": false
+             },
+             "story_project": {
               "type": "object",
               "required": [
                 "enabled",

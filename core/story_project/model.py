@@ -127,6 +127,7 @@ class ChapterBlueprint:
     core_event: str | None = None
     required_beats: tuple[dict[str, Any], ...] = ()
     ending_pressure: str | None = None
+    chapter_context_read_set: dict[str, Any] | None = None
     source_path: Path | None = None
     missing_fields: tuple[str, ...] = ()
 
@@ -138,6 +139,11 @@ class ChapterBlueprint:
             "core_event": self.core_event,
             "required_beats": [dict(beat) for beat in self.required_beats],
             "ending_pressure": self.ending_pressure,
+            "chapter_context_read_set": (
+                copy.deepcopy(self.chapter_context_read_set)
+                if self.chapter_context_read_set is not None
+                else None
+            ),
             "source_path": str(self.source_path or self.outline_path),
             "missing_fields": list(self.missing_fields),
         }

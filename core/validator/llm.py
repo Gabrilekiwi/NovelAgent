@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -305,6 +306,8 @@ def _validation_max_tokens(*, revalidation: bool) -> int:
 
 
 def _project_snapshot_for_llm(snapshot: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(snapshot.get("generation_state_view"), dict):
+        return _project_explicit_generation_snapshot(snapshot)
     story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
     world_state = snapshot.get("world_state") if isinstance(snapshot.get("world_state"), dict) else {}
     timeline = snapshot.get("timeline") if isinstance(snapshot.get("timeline"), list) else []
@@ -324,6 +327,333 @@ def _project_snapshot_for_llm(snapshot: dict[str, Any]) -> dict[str, Any]:
             else None,
         },
     }
+
+
+def _project_explicit_generation_snapshot(
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve one shared working-set snapshot without reopening raw state."""
+
+    allowed_top_level = (
+        "book_id",
+        "chapter_index",
+        "project_profile",
+        "world_state",
+        "story_state",
+        "spatial_state",
+        "characters",
+        "relationships",
+        "roster",
+        "numeric_counters",
+        "inventory",
+        "locations",
+        "required_events",
+        "constraints",
+        "expected_new_entities",
+        "authority_summary",
+        "timeline_summary",
+        "generation_state_view",
+        "story_project",
+    )
+    projected = {
+        key: copy.deepcopy(snapshot[key])
+        for key in allowed_top_level
+        if key in snapshot
+    }
+    authority_summary = (
+        projected.get("authority_summary")
+        if isinstance(projected.get("authority_summary"), dict)
+        else {}
+    )
+    authority_summary = {
+        key: copy.deepcopy(authority_summary.get(key))
+        for key in (
+            "source_authority_sha256",
+            "selected_state_item_ids",
+            "selected_event_item_ids",
+        )
+        if key in authority_summary
+    }
+    projected["authority_summary"] = authority_summary
+    timeline_summary = (
+        projected.get("timeline_summary")
+        if isinstance(projected.get("timeline_summary"), dict)
+        else {}
+    )
+    projected["timeline_summary"] = {
+        key: copy.deepcopy(timeline_summary.get(key))
+        for key in ("entry_count", "source_sha256")
+        if key in timeline_summary
+    }
+    view_summary = (
+        projected.get("generation_state_view")
+        if isinstance(projected.get("generation_state_view"), dict)
+        else {}
+    )
+    projected["generation_state_view"] = {
+        key: copy.deepcopy(view_summary.get(key))
+        for key in (
+            "schema_version",
+            "chapter_index",
+            "read_set_digest",
+            "source_authority_sha256",
+            "projection_sha256",
+        )
+        if key in view_summary
+    }
+    if isinstance(projected.get("story_project"), dict):
+        projected["story_project"] = {
+            "chapter_index": projected["story_project"].get("chapter_index")
+        }
+    selected = _selected_generation_ids(authority_summary)
+    for collection in (
+        "characters",
+        "relationships",
+        "roster",
+        "numeric_counters",
+        "inventory",
+        "locations",
+    ):
+        records = projected.get(collection)
+        projected[collection] = (
+            {
+                record_id: record
+                for record_id, record in records.items()
+                if str(record_id) in selected[collection]
+            }
+            if isinstance(records, dict)
+            else {}
+        )
+    events = projected.get("required_events")
+    projected["required_events"] = (
+        {
+            event_id: event
+            for event_id, event in events.items()
+            if str(event_id) in selected["events"]
+        }
+        if isinstance(events, dict)
+        else {}
+    )
+
+    story_state = (
+        projected.get("story_state")
+        if isinstance(projected.get("story_state"), dict)
+        else {}
+    )
+    projected["story_state"] = {
+        key: copy.deepcopy(story_state.get(key))
+        for key in (
+            "last_scene_location",
+            "last_scene_characters",
+            "required_opening_bridge",
+        )
+        if key in story_state
+    }
+    relevant_location_ids = {
+        str(record.get("location_id") or "").strip()
+        for record in projected["locations"].values()
+        if isinstance(record, dict)
+        and str(record.get("location_id") or "").strip()
+    }
+    story_location = str(
+        projected["story_state"].get("last_scene_location") or ""
+    ).strip()
+    if story_location:
+        relevant_location_ids.add(story_location)
+    projected["world_state"] = _project_explicit_world_state(
+        projected.get("world_state"),
+        relevant_location_ids=relevant_location_ids,
+    )
+    projected["spatial_state"] = _project_explicit_spatial_state(
+        projected.get("spatial_state"),
+        selected_character_ids=selected["characters"],
+        selected_locations=projected["locations"],
+        relevant_location_ids=relevant_location_ids,
+    )
+    projected["project_profile"] = _project_explicit_profile(
+        projected.get("project_profile"),
+        characters=projected["characters"],
+        story_state=projected["story_state"],
+        relevant_location_ids=relevant_location_ids,
+    )
+    return projected
+
+
+def _selected_generation_ids(
+    authority_summary: dict[str, Any],
+) -> dict[str, set[str]]:
+    selected = {
+        collection: set()
+        for collection in (
+            "characters",
+            "relationships",
+            "roster",
+            "numeric_counters",
+            "inventory",
+            "locations",
+            "events",
+        )
+    }
+    item_ids = [
+        *(authority_summary.get("selected_state_item_ids") or []),
+        *(authority_summary.get("selected_event_item_ids") or []),
+    ]
+    for raw in item_ids:
+        item_id = str(raw or "").strip()
+        collection, separator, record_id = item_id.partition("/")
+        if separator and collection in selected and record_id:
+            selected[collection].add(record_id)
+    return selected
+
+
+def _project_explicit_world_state(
+    value: Any,
+    *,
+    relevant_location_ids: set[str],
+) -> dict[str, Any]:
+    source = _without_source_document(value) if isinstance(value, dict) else {}
+    locations = source.get("locations")
+    return {
+        **{
+            key: copy.deepcopy(item)
+            for key, item in source.items()
+            if key != "locations"
+            and (
+                isinstance(item, (bool, int, float))
+                or item is None
+                or isinstance(item, str)
+            )
+        },
+        "locations": {
+            location_id: copy.deepcopy(locations[location_id])
+            for location_id in sorted(relevant_location_ids)
+            if isinstance(locations, dict) and location_id in locations
+        },
+    }
+
+
+def _project_explicit_spatial_state(
+    value: Any,
+    *,
+    selected_character_ids: set[str],
+    selected_locations: dict[str, Any],
+    relevant_location_ids: set[str],
+) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    spaces = source.get("spaces") if isinstance(source.get("spaces"), dict) else {}
+    positions = (
+        source.get("character_positions")
+        if isinstance(source.get("character_positions"), dict)
+        else {}
+    )
+    confirmed_location_entities = {
+        entity_id
+        for entity_id, record in selected_locations.items()
+        if isinstance(record, dict) and _generation_location_confirmed(record)
+    }
+    allowed_position_ids = selected_character_ids | confirmed_location_entities
+    return {
+        "spaces": {
+            location_id: copy.deepcopy(spaces[location_id])
+            for location_id in sorted(relevant_location_ids)
+            if location_id in spaces
+        },
+        "connections": [
+            copy.deepcopy(item)
+            for item in source.get("connections") or []
+            if _generation_connection_relevant(
+                item,
+                relevant_location_ids=relevant_location_ids,
+            )
+        ],
+        "character_positions": {
+            entity_id: copy.deepcopy(positions[entity_id])
+            for entity_id in sorted(allowed_position_ids)
+            if entity_id in positions
+        },
+        "blocked_paths": [
+            copy.deepcopy(item)
+            for item in source.get("blocked_paths") or []
+            if _generation_connection_relevant(
+                item,
+                relevant_location_ids=relevant_location_ids,
+            )
+        ],
+        "last_transition": (
+            copy.deepcopy(source.get("last_transition"))
+            if _generation_connection_relevant(
+                source.get("last_transition"),
+                relevant_location_ids=relevant_location_ids,
+            )
+            else {}
+        ),
+    }
+
+
+def _project_explicit_profile(
+    value: Any,
+    *,
+    characters: dict[str, Any],
+    story_state: dict[str, Any],
+    relevant_location_ids: set[str],
+) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    allowed_character_names = {
+        str(item).strip()
+        for item in story_state.get("last_scene_characters") or []
+        if str(item).strip()
+    }
+    for character_id, record in characters.items():
+        allowed_character_names.add(str(character_id))
+        if not isinstance(record, dict):
+            continue
+        values = [
+            record.get("canonical_name"),
+            record.get("name"),
+            *(record.get("aliases") or []),
+        ]
+        allowed_character_names.update(
+            str(item).strip() for item in values if str(item or "").strip()
+        )
+    declared_characters = source.get("known_characters")
+    declared_locations = source.get("known_locations")
+    return {
+        "language": str(
+            source.get("language") or source.get("language_code") or ""
+        ).strip(),
+        "known_characters": [
+            str(item)
+            for item in declared_characters or []
+            if str(item) in allowed_character_names
+        ],
+        "known_locations": [
+            str(item)
+            for item in declared_locations or []
+            if str(item) in relevant_location_ids
+        ],
+    }
+
+
+def _generation_location_confirmed(record: dict[str, Any]) -> bool:
+    certainty = record.get("certainty")
+    if certainty in (None, ""):
+        return True
+    return str(certainty).strip().casefold() in {"confirmed", "current"}
+
+
+def _generation_connection_relevant(
+    value: Any,
+    *,
+    relevant_location_ids: set[str],
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    endpoints = {
+        str(value.get(key) or "").strip()
+        for key in ("from", "to", "source", "target")
+        if str(value.get(key) or "").strip()
+    }
+    return bool(endpoints) and endpoints.issubset(relevant_location_ids)
 
 
 def _without_source_document(value: dict[str, Any]) -> dict[str, Any]:

@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RepairEnvelope",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "envelope_kind",
+    "chapter_index",
+    "chapter",
+    "base_chapter_sha256",
+    "chapter_contract",
+    "chapter_contract_sha256",
+    "validation_sha256",
+    "generation_state_view_sha256",
+    "generation_state_projection_sha256",
+    "source_generation_state_view_projection_sha256",
+    "generation_state_read_set_digest",
+    "source_authority_sha256",
+    "problem_set_sha256",
+    "repair_plan_sha256",
+    "recovery_context_sha256",
+    "problems",
+    "repair_plan",
+    "recovery_context",
+    "generation_state_projection",
+    "envelope_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "envelope_kind": {
+      "type": "string",
+      "enum": ["repair_envelope"]
+    },
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "chapter": {
+      "type": "string"
+    },
+    "base_chapter_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "chapter_contract": {
+      "type": "object",
+      "required": ["chapter_index"],
+      "properties": {
+        "chapter_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": ["string", "null"]
+        },
+        "chapter_goal": {
+          "type": ["string", "null"]
+        },
+        "core_event": {
+          "type": ["string", "null"]
+        },
+        "human_conflict": {
+          "type": ["string", "null"]
+        },
+        "required_beats": {
+          "type": "array",
+          "items": {
+            "type": ["string", "object"]
+          }
+        },
+        "ending_pressure": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "chapter_contract_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "validation_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "generation_state_view_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "generation_state_projection_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_generation_state_view_projection_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "generation_state_read_set_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_authority_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "problem_set_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "repair_plan_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "recovery_context_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "problem_id",
+          "code",
+          "message",
+          "validator",
+          "severity",
+          "blocking",
+          "category",
+          "repair_hint",
+          "evidence"
+        ],
+        "properties": {
+          "problem_id": {
+            "type": "string",
+            "pattern": "^p[0-9]{3,}$"
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string"
+          },
+          "validator": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "category": {
+            "enum": ["blocking", "warning"]
+          },
+          "repair_hint": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["kind", "value"],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "repair_plan": {
+      "type": "object",
+      "required": [
+        "risk_level",
+        "repair_budget",
+        "attempt",
+        "steps"
+      ],
+      "properties": {
+        "risk_level": {
+          "enum": ["critical", "high", "medium", "low", "none"]
+        },
+        "repair_budget": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 5
+        },
+        "attempt": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "problem_id",
+              "action",
+              "priority",
+              "strategy",
+              "parameters"
+            ],
+            "properties": {
+              "problem_id": {
+                "type": "string",
+                "pattern": "^p[0-9]{3,}$"
+              },
+              "action": {
+                "type": "string",
+                "minLength": 1
+              },
+              "priority": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "strategy": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "recovery_context": {
+      "type": "object"
+    },
+    "generation_state_projection": {
+      "type": "object"
+    },
+    "envelope_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

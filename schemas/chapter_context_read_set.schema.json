@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterContextReadSet",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "mode",
+    "chapter_index",
+    "required_state_item_ids",
+    "required_event_item_ids",
+    "continuity",
+    "narrative_constraints",
+    "expected_new_entities",
+    "source_outline_sha256",
+    "contract_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["explicit"]
+    },
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "required_state_item_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(characters|relationships|roster|numeric_counters|inventory|locations)/[^/\\s]+$"
+      }
+    },
+    "required_event_item_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^events/[^/\\s]+$"
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "required": [
+        "last_scene_location",
+        "last_scene_character_ids",
+        "required_opening_bridge"
+      ],
+      "properties": {
+        "last_scene_location": {
+          "type": "string"
+        },
+        "last_scene_character_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/\\s]+$"
+          }
+        },
+        "required_opening_bridge": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "narrative_constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "constraint_id",
+          "lifecycle_action",
+          "instruction"
+        ],
+        "properties": {
+          "constraint_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/\\s]+$"
+          },
+          "lifecycle_action": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/\\s]+$"
+          },
+          "instruction": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "expected_new_entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "entity_id",
+          "display_name"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/\\s]+$"
+          },
+          "entity_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/\\s]+$"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "source_outline_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "contract_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

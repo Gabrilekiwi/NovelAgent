@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from core.model_call_runtime import current_model_call_runtime
 from core.prompt_compiler import PROMPT_CONTEXT_SELECTION_KEYS, compile_prompt_contexts
 from core.quality.repair_patch import coerce_repair_patch
 from core.schema import validate_schema
+from core.state.generation_state_view import generation_state_view_from_markdown
 from core.state.authoritative_context import (
     AUTHORITATIVE_REPAIR_SECTION_MAX_CHARS,
     authoritative_state_from_markdown,
@@ -26,10 +28,30 @@ from core.state.authoritative_context import (
 )
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_json_items, sha256_text
+from modules.scene_repair.envelope import (
+    build_repair_envelope,
+    generation_state_view_sha256,
+    repair_validation_sha256,
+)
 from modules.scene_repair.plan import build_repair_plan
 
 
 _PROMPT_PATH = Path("prompts/repair_prompt.md")
+_EXPLICIT_REPAIR_PROMPT_SUFFIX = """
+
+## Explicit RepairEnvelope V1
+
+The user message is one verified `repair_envelope`. Treat its
+`generation_state_projection` as the only model-facing state projection and
+its `chapter_contract` as the narrative intent that the repair must preserve.
+The complete authoritative ledger remains local to the runtime and is
+intentionally absent.
+
+Each item in `repair_plan.steps` references exactly one canonical item in
+`problems` by `problem_id`. Read the problem message, repair hint, and evidence
+from that canonical problem; do not expect them to be duplicated in the step.
+Use the single top-level `recovery_context` for prior-attempt evidence.
+""".rstrip()
 RepairStrategy = Callable[[str, dict[str, Any], list[dict[str, Any]]], str]
 
 
@@ -69,6 +91,125 @@ def _repair_with_model(
     recovery_context: dict[str, Any] | None,
     repair_context: RepairContext,
 ) -> str | dict[str, Any]:
+    messages = build_repair_messages(
+        chapter_text,
+        validation,
+        input_pack,
+        repair_plan,
+        recovery_context,
+        repair_context,
+    )
+    payload = messages[-1]["content"]
+    protocol = messages[0]["content"]
+    default_context_budget().require_input(
+        payload,
+        stage="repair",
+        protocol_texts=(protocol,),
+    )
+    max_output_tokens = _repair_max_output_tokens(
+        chapter_text,
+        language=repair_context.language,
+    )
+    output = chat_completion(
+        messages,
+        temperature=0.2,
+        stage="scene_repair",
+        max_tokens=max_output_tokens,
+    )
+    stripped = str(output).strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            return coerce_repair_patch(
+                chapter_text,
+                stripped,
+                problem_codes=[
+                    str(item.get("code") or "")
+                    for item in validation.get("problems") or []
+                    if isinstance(item, dict)
+                ],
+            )
+        except ValueError:
+            pass
+    return validate_text_output(output, REPAIR_CONTRACT)
+
+
+def build_repair_messages(
+    chapter_text: str,
+    validation: dict[str, Any],
+    input_pack: str,
+    repair_plan: dict[str, Any],
+    recovery_context: dict[str, Any] | None,
+    repair_context: RepairContext,
+    *,
+    expected_validation_sha256: str | None = None,
+    expected_generation_state_view_sha256: str | None = None,
+) -> list[dict[str, str]]:
+    """Build the exact final repair messages without calling a provider."""
+
+    generation_state_view = generation_state_view_from_markdown(input_pack)
+    if generation_state_view is None:
+        return _build_legacy_repair_messages(
+            chapter_text,
+            validation,
+            input_pack,
+            repair_plan,
+            recovery_context,
+            repair_context,
+        )
+
+    read_set = generation_state_view.get("chapter_context_read_set")
+    chapter_index = (
+        read_set.get("chapter_index")
+        if isinstance(read_set, dict)
+        else None
+    )
+    bound_validation_sha256 = (
+        expected_validation_sha256
+        if expected_validation_sha256 is not None
+        else repair_validation_sha256(validation)
+    )
+    bound_view_sha256 = (
+        expected_generation_state_view_sha256
+        if expected_generation_state_view_sha256 is not None
+        else generation_state_view_sha256(generation_state_view)
+    )
+    envelope = build_repair_envelope(
+        chapter_text,
+        validation,
+        repair_plan,
+        chapter_index=chapter_index,
+        recovery_context=_explicit_recovery_context(recovery_context),
+        generation_state_view=generation_state_view,
+        chapter_contract=_repair_chapter_contract(
+            input_pack,
+            chapter_index=chapter_index,
+        ),
+        expected_validation_sha256=bound_validation_sha256,
+        expected_generation_state_view_sha256=bound_view_sha256,
+    )
+    prompt = _explicit_repair_prompt(repair_context)
+    return [
+        {"role": "system", "content": prompt},
+        {
+            "role": "user",
+            "content": json.dumps(
+                envelope,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        },
+    ]
+
+
+def _build_legacy_repair_messages(
+    chapter_text: str,
+    validation: dict[str, Any],
+    input_pack: str,
+    repair_plan: dict[str, Any],
+    recovery_context: dict[str, Any] | None,
+    repair_context: RepairContext,
+) -> list[dict[str, str]]:
     repair_query = json.dumps(
         {
             "problem_codes": [str(item.get("code") or "") for item in validation.get("problems") or [] if isinstance(item, dict)],
@@ -113,42 +254,87 @@ def _repair_with_model(
         ensure_ascii=False,
         indent=2,
     )
-    default_context_budget().require_input(
-        payload,
-        stage="repair",
-        protocol_texts=(_load_prompt(),),
+    return [
+        {"role": "system", "content": _load_prompt()},
+        {
+            "role": "user",
+            "content": payload,
+        },
+    ]
+
+
+def _explicit_recovery_context(
+    recovery_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(recovery_context, dict):
+        return {"available": False}
+    compact = copy.deepcopy(recovery_context)
+    previous_plan = compact.pop("repair_plan", None)
+    if isinstance(previous_plan, dict):
+        compact["previous_repair_summary"] = previous_plan
+    return compact
+
+
+def _repair_chapter_contract(
+    input_pack: str,
+    *,
+    chapter_index: int,
+) -> dict[str, Any]:
+    contract: dict[str, Any] = {"chapter_index": int(chapter_index)}
+    match = re.search(
+        r"(?ms)^# StoryProject Chapter Blueprint[ \t]*\r?\n"
+        r"(.*?)(?=^# |\Z)",
+        str(input_pack or ""),
     )
-    max_output_tokens = _repair_max_output_tokens(
-        chapter_text,
-        language=repair_context.language,
+    if match is None:
+        return contract
+    try:
+        payload = json.loads(match.group(1).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "StoryProject Chapter Blueprint must contain one JSON object"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "StoryProject Chapter Blueprint must contain one JSON object"
+        )
+    blueprint = payload.get("chapter_blueprint")
+    if not isinstance(blueprint, dict):
+        return contract
+    for field in (
+        "title",
+        "chapter_goal",
+        "core_event",
+        "human_conflict",
+        "required_beats",
+        "ending_pressure",
+    ):
+        if field in blueprint:
+            contract[field] = copy.deepcopy(blueprint[field])
+    declared_chapter = blueprint.get("chapter_index")
+    if declared_chapter is not None:
+        contract["chapter_index"] = declared_chapter
+    return contract
+
+
+def _explicit_repair_prompt(repair_context: RepairContext) -> str:
+    directives = {
+        "language": _normalized_language(repair_context.language),
+        "allow_new_facts": bool(repair_context.allow_new_facts),
+        "known_conflict_hint": repair_context.known_conflict_hint,
+    }
+    return (
+        _load_prompt()
+        + "\n\n"
+        + _EXPLICIT_REPAIR_PROMPT_SUFFIX
+        + "\n\nRepair directives:\n"
+        + json.dumps(
+            directives,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     )
-    output = chat_completion(
-        [
-            {"role": "system", "content": _load_prompt()},
-            {
-                "role": "user",
-                "content": payload,
-            },
-        ],
-        temperature=0.2,
-        stage="scene_repair",
-        max_tokens=max_output_tokens,
-    )
-    stripped = str(output).strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        try:
-            return coerce_repair_patch(
-                chapter_text,
-                stripped,
-                problem_codes=[
-                    str(item.get("code") or "")
-                    for item in validation.get("problems") or []
-                    if isinstance(item, dict)
-                ],
-            )
-        except ValueError:
-            pass
-    return validate_text_output(output, REPAIR_CONTRACT)
 
 
 def _repair_max_output_tokens(

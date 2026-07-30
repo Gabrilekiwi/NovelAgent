@@ -35,6 +35,13 @@ from core.state.authoritative_context import (
     authoritative_state_from_markdown,
     compact_authoritative_state_in_markdown,
 )
+from core.state.generation_state_view import (
+    SCENE_GENERATION_STATE_REFERENCE_HEADING,
+    build_scene_generation_state_reference,
+    filter_scene_state_for_generation,
+    generation_state_view_from_markdown,
+    scene_generation_state_reference_from_markdown,
+)
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
 from core.structured_context import compact_markdown_context, select_text_blocks
 from core.story_project.coverage import (
@@ -116,6 +123,9 @@ def run_chapter_pipeline(
     blueprint = blueprint_to_dict(chapter_blueprint)
     initial_scene_state = _initial_scene_state(input_pack)
     authoritative_state_source = authoritative_state_from_markdown(input_pack)
+    generation_state_view_source = generation_state_view_from_markdown(
+        input_pack
+    )
     prompt_contexts = compile_prompt_contexts(
         input_pack,
         budget=default_context_budget(enable_model_tokenizer=not dry_run),
@@ -148,6 +158,7 @@ def run_chapter_pipeline(
         recovered_scene_drafts=recovered_scene_drafts,
         initial_scene_state=initial_scene_state,
         authoritative_state_source=authoritative_state_source,
+        generation_state_view_source=generation_state_view_source,
     )
     merged, scene_spans = _merge_scene_texts(scenes)
     merged = validate_language_output(merged, CHAPTER_CONTRACT, language=language)
@@ -464,6 +475,7 @@ def generate_scenes(
     recovered_scene_drafts: list[dict[str, Any]] | None = None,
     initial_scene_state: dict[str, Any] | None = None,
     authoritative_state_source: dict[str, Any] | None = None,
+    generation_state_view_source: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     blueprint = blueprint_to_dict(chapter_blueprint)
     plan = _validate_plan(plan)
@@ -512,6 +524,7 @@ def generate_scenes(
                 state_before=state_before,
                 language=language,
                 authoritative_state_source=authoritative_state_source,
+                generation_state_view_source=generation_state_view_source,
             )
         local_regeneration_attempts = 0
         rejected_boundaries: list[dict[str, Any]] = []
@@ -562,6 +575,7 @@ def generate_scenes(
                 boundary_retry=feedback,
                 boundary_retry_attempt=local_regeneration_attempts,
                 authoritative_state_source=authoritative_state_source,
+                generation_state_view_source=generation_state_view_source,
             )
         if local_regeneration_attempts:
             boundary = {
@@ -629,6 +643,7 @@ def _request_scene_candidate(
     boundary_retry: dict[str, Any] | None = None,
     boundary_retry_attempt: int = 0,
     authoritative_state_source: dict[str, Any] | None = None,
+    generation_state_view_source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scene_index = int(scene["index"])
     call_kwargs: dict[str, Any] = {
@@ -656,6 +671,9 @@ def _request_scene_candidate(
                     scene_state=state_before,
                     boundary_retry=boundary_retry,
                     authoritative_state_source=authoritative_state_source,
+                    generation_state_view_source=(
+                        generation_state_view_source
+                    ),
                 ),
             },
         ],
@@ -791,9 +809,22 @@ def _scene_request_payload(
     scene_state: dict[str, Any] | None = None,
     boundary_retry: dict[str, Any] | None = None,
     authoritative_state_source: dict[str, Any] | None = None,
+    generation_state_view_source: dict[str, Any] | None = None,
 ) -> str:
     target_min_chars, target_max_chars = _scene_target_char_range(plan)
     chapter_plan_context = _compact_chapter_plan_context(plan)
+    generation_state_view = (
+        generation_state_view_source
+        if generation_state_view_source is not None
+        else generation_state_view_from_markdown(input_pack)
+    )
+    prompt_scene_state = scene_state or empty_scene_state()
+    if generation_state_view is not None:
+        prompt_scene_state = filter_scene_state_for_generation(
+            prompt_scene_state,
+            generation_state_view,
+            active_event_ids=_active_plan_event_ids(plan),
+        )
     context_query = json.dumps(
         {
             "chapter_plan": chapter_plan_context,
@@ -809,8 +840,29 @@ def _scene_request_payload(
         "scene": scene,
         "story_project_required_beats": scene_required_beats,
         "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
+        "story_project_chapter_contract": _scene_blueprint_contract(
+            blueprint
+        ),
         "current_scene_state": scene_state_generation_projection(
-            scene_state or empty_scene_state()
+            prompt_scene_state,
+            include_completed_event_records=(
+                generation_state_view is None
+            ),
+        ),
+        **(
+            {
+                "expected_new_entities": list(
+                    generation_state_view["expected_new_entities"]
+                ),
+                "generation_state_projection_sha256": generation_state_view[
+                    "projection_sha256"
+                ],
+                "generation_state_read_set_digest": generation_state_view[
+                    "read_set_digest"
+                ],
+            }
+            if generation_state_view is not None
+            else {}
         ),
         "required_event_ids": list(scene.get("required_event_ids") or []),
         "forbidden_event_ids": list(scene.get("forbidden_event_ids") or []),
@@ -876,6 +928,7 @@ def _scene_request_payload(
         input_pack,
         query=context_query,
         authoritative_state_source=authoritative_state_source,
+        generation_state_view_source=generation_state_view,
     )
     payload = ""
     for policy in _SCENE_CONTEXT_PAYLOAD_POLICIES:
@@ -941,6 +994,50 @@ def _compact_chapter_plan_context(plan: dict[str, Any]) -> dict[str, Any]:
         "goal": str(plan.get("goal") or ""),
         "scenes": scenes,
     }
+
+
+def _scene_blueprint_contract(
+    blueprint: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Project non-duplicated narrative fields for a single Scene request."""
+
+    if not isinstance(blueprint, dict):
+        return {}
+    duplicated_or_local_only = {
+        "chapter_context_read_set",
+        "ending_pressure",
+        "missing_fields",
+        "outline_path",
+        "required_beats",
+        "source_path",
+    }
+    return {
+        str(key): value
+        for key, value in sorted(blueprint.items())
+        if str(key) not in duplicated_or_local_only
+    }
+
+
+def _active_plan_event_ids(plan: dict[str, Any]) -> list[str]:
+    event_ids: list[str] = []
+    seen: set[str] = set()
+    for scene in plan.get("scenes") or []:
+        if not isinstance(scene, dict):
+            continue
+        candidates = [
+            *list(scene.get("required_event_ids") or []),
+            *[
+                event.get("event_id")
+                for event in scene.get("planned_events") or []
+                if isinstance(event, dict)
+            ],
+        ]
+        for raw_event_id in candidates:
+            event_id = str(raw_event_id or "").strip()
+            if event_id and event_id not in seen:
+                seen.add(event_id)
+                event_ids.append(event_id)
+    return event_ids
 
 
 def _scene_safe_input_limit(budget: Any) -> int | None:
@@ -1009,8 +1106,71 @@ def _compact_scene_context(
     max_section_chars: int = 1_500,
     query: str = "",
     authoritative_state_source: dict[str, Any] | None = None,
+    generation_state_view_source: dict[str, Any] | None = None,
 ) -> str:
     """Retrieve complete sections/JSON items relevant to the current scene."""
+    generation_state_view = (
+        generation_state_view_source
+        if generation_state_view_source is not None
+        else generation_state_view_from_markdown(text)
+    )
+    if generation_state_view is not None:
+        scene_state_reference = build_scene_generation_state_reference(
+            generation_state_view
+        )
+        selection = compact_markdown_context(
+            text,
+            max_chars=max_section_chars * 8,
+            per_section_max_chars=max_section_chars,
+            query=query,
+            required_sections={
+                "Project Profile",
+                "Spatial State",
+                "小说生成规则契约",
+            },
+            excluded_sections={
+                "Authoritative State",
+                "Characters",
+                "Constraints",
+                "Context Digest",
+                "Director Decision",
+                "Generation State View",
+                "Generation State View Reference",
+                "Generation State View Projection",
+                "StoryProject Chapter Blueprint",
+                "Timeline",
+                "World State",
+                "Memory Index",
+                "Prompt Context Selection",
+                "Recovery Context",
+                "Requirements",
+                "Runtime Memory Metadata",
+                "Story State",
+                "Structured Context Manifest",
+            },
+            prefer_recent=True,
+            policy="scene_generation_state_reference_retrieval_v1",
+        )
+        reference_text = (
+            f"# {SCENE_GENERATION_STATE_REFERENCE_HEADING}\n"
+            + json.dumps(
+                scene_state_reference,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        compact_context = f"{reference_text}\n\n{selection.text}"
+        parsed_reference = scene_generation_state_reference_from_markdown(
+            compact_context
+        )
+        if parsed_reference != scene_state_reference:
+            raise ContextBudgetError(
+                "story_project_context_reference_mismatch",
+                "Scene generation state reference changed during compaction",
+            )
+        return compact_context
+
     authority_section_limit = min(
         AUTHORITATIVE_SCENE_SECTION_MAX_CHARS,
         max(1, max_section_chars * 7),
@@ -1065,6 +1225,7 @@ def _compact_scene_context(
 def _initial_scene_state(input_pack: str) -> dict[str, Any]:
     state = empty_scene_state()
     authority = authoritative_state_from_markdown(input_pack)
+    generation_state_view = generation_state_view_from_markdown(input_pack)
     if isinstance(authority, dict):
         for character_id, record in (authority.get("characters") or {}).items():
             if isinstance(record, dict):
@@ -1097,6 +1258,42 @@ def _initial_scene_state(input_pack: str) -> dict[str, Any]:
                 state["completed_events"].append(dict(record))
             else:
                 state["open_actions"].append(dict(record))
+        state["open_action"] = (
+            str(state["open_actions"][0].get("event_id") or "")
+            if state["open_actions"]
+            else ""
+        )
+    if generation_state_view is not None:
+        known_event_ids = {
+            str(item.get("event_id") or "").strip()
+            for item in [
+                *state["completed_events"],
+                *state["open_actions"],
+            ]
+            if isinstance(item, dict)
+        }
+        known_event_ids.update(
+            str(item).strip()
+            for item in state["completed_event_ids"]
+            if str(item).strip()
+        )
+        for event_id in generation_state_view["selected_event_item_ids"]:
+            _collection, _separator, normalized = str(event_id).partition("/")
+            event = generation_state_view["required_events"].get(normalized)
+            if (
+                not normalized
+                or normalized in known_event_ids
+                or not isinstance(event, dict)
+            ):
+                continue
+            event_record = dict(event)
+            event_record.setdefault("event_id", normalized)
+            if authoritative_event_is_open(event):
+                state["open_actions"].append(event_record)
+            else:
+                state["completed_event_ids"].append(normalized)
+                state["completed_events"].append(event_record)
+            known_event_ids.add(normalized)
         state["open_action"] = (
             str(state["open_actions"][0].get("event_id") or "")
             if state["open_actions"]

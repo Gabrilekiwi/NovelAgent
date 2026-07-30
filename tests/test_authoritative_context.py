@@ -105,6 +105,88 @@ def _first_truncating_projection(state: dict, **kwargs) -> tuple[int, dict]:
 
 
 class AuthoritativeContextTests(unittest.TestCase):
+    def test_required_only_selects_no_unrelated_records_even_with_spare_budget(
+        self,
+    ) -> None:
+        state = _authoritative_state()
+        state["characters"] = {
+            "hero": {
+                "character_id": "hero",
+                "canonical_name": "Hero",
+            },
+            "bystander": {
+                "character_id": "bystander",
+                "canonical_name": "Bystander",
+            },
+        }
+        state["events"] = {
+            "old-event": {
+                "event_id": "old-event",
+                "status": "completed",
+            }
+        }
+
+        projected = project_authoritative_state(
+            state,
+            max_chars=100_000,
+            required_item_ids={"characters/hero"},
+            selection_mode="required_only",
+            require_query_references=False,
+            require_open_events=False,
+        )
+
+        self.assertEqual({"hero"}, set(projected["characters"]))
+        self.assertEqual({}, projected["events"])
+        manifest = projected[AUTHORITATIVE_CONTEXT_SELECTION_KEY]
+        self.assertEqual("required_only", manifest["selection_mode"])
+        self.assertEqual(
+            ["characters/hero"],
+            manifest["selected_items"],
+        )
+
+    def test_compact_helpers_forward_required_only_selection(self) -> None:
+        state = _authoritative_state()
+        state["characters"] = {
+            character_id: {
+                "character_id": character_id,
+                "canonical_name": character_id,
+            }
+            for character_id in ("hero", "bystander")
+        }
+        source = (
+            "# Project Profile\nexample\n\n# Authoritative State\n"
+            + json.dumps(state, ensure_ascii=False, indent=2)
+        )
+
+        compacted = compact_authoritative_state_in_markdown(
+            source,
+            max_section_chars=10_000,
+            required_item_ids={"characters/hero"},
+            selection_mode="required_only",
+            require_query_references=False,
+            require_open_events=False,
+        )
+        projected = authoritative_state_from_markdown(compacted)
+
+        self.assertIsNotNone(projected)
+        self.assertEqual({"hero"}, set(projected["characters"]))
+        self.assertEqual(
+            "required_only",
+            projected[AUTHORITATIVE_CONTEXT_SELECTION_KEY]["selection_mode"],
+        )
+
+    def test_invalid_selection_mode_fails_closed(self) -> None:
+        with self.assertRaises(StructuredContextError) as raised:
+            project_authoritative_state(
+                _authoritative_state(),
+                max_chars=10_000,
+                selection_mode="best_effort",
+            )
+        self.assertEqual(
+            "authoritative_context_selection_mode_invalid",
+            raised.exception.code,
+        )
+
     def test_plan_projection_accounts_for_protocol_and_headroom(self) -> None:
         state = _authoritative_state()
         state["events"] = {

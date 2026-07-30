@@ -79,6 +79,8 @@ def compact_authoritative_state_section(
     *,
     max_chars: int,
     query: str = "",
+    required_item_ids: Iterable[str] = (),
+    selection_mode: str = "ranked",
     require_query_references: bool = True,
     require_open_events: bool = True,
     externalized_collections: Mapping[str, str] | None = None,
@@ -119,6 +121,8 @@ def compact_authoritative_state_section(
         value,
         max_chars=body_limit,
         query=query,
+        required_item_ids=required_item_ids,
+        selection_mode=selection_mode,
         require_query_references=require_query_references,
         require_open_events=require_open_events,
         externalized_collections=externalized_collections,
@@ -159,6 +163,8 @@ def compact_authoritative_state_in_markdown(
     *,
     max_section_chars: int,
     query: str = "",
+    required_item_ids: Iterable[str] = (),
+    selection_mode: str = "ranked",
     require_query_references: bool = True,
     require_open_events: bool = True,
     authoritative_state_source: dict[str, Any] | None = None,
@@ -197,6 +203,8 @@ def compact_authoritative_state_in_markdown(
         match.group(0).rstrip(),
         max_chars=max_section_chars,
         query=query,
+        required_item_ids=required_item_ids,
+        selection_mode=selection_mode,
         require_query_references=require_query_references,
         require_open_events=require_open_events,
         externalized_collections=externalized_collections,
@@ -212,6 +220,7 @@ def project_authoritative_state(
     max_chars: int,
     query: str = "",
     required_item_ids: Iterable[str] = (),
+    selection_mode: str = "ranked",
     require_query_references: bool = True,
     require_open_events: bool = True,
     externalized_collections: Mapping[str, str] | None = None,
@@ -228,6 +237,11 @@ def project_authoritative_state(
         raise StructuredContextError(
             "structured_context_limit_invalid",
             "max_chars must be positive",
+        )
+    if selection_mode not in {"ranked", "required_only"}:
+        raise StructuredContextError(
+            "authoritative_context_selection_mode_invalid",
+            "selection_mode must be 'ranked' or 'required_only'",
         )
     if not isinstance(value, dict):
         raise StructuredContextError(
@@ -360,6 +374,7 @@ def project_authoritative_state(
                 "query_references": bool(require_query_references),
                 "open_events": bool(require_open_events),
             },
+            "selection_mode": selection_mode,
             "required_items": required_items,
             "selected_items": selected_items,
             "omitted_count": len(records) - len(selected_ordinals),
@@ -414,6 +429,10 @@ def project_authoritative_state(
             f"authoritative metadata exceeds {max_chars} characters",
         )
 
+    chosen = set(required_ordinals)
+    if selection_mode == "required_only":
+        return render(chosen)
+
     all_ordinals = {
         record.ordinal
         for record in records
@@ -422,7 +441,6 @@ def project_authoritative_state(
     if rendered_chars(all_ordinals) <= max_chars:
         return render(all_ordinals)
 
-    chosen = set(required_ordinals)
     ranking_records = [
         record
         for record in _records_for_ranking(records)

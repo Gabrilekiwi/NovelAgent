@@ -8,6 +8,7 @@ from typing import Any
 from core.chapter_contexts import ChapterContextError, PreviousChapterContext, resolve_story_project_previous_chapter
 from core.project_profile import normalize_project_profile
 from core.structured_context import select_text_blocks
+from core.state.chapter_read_set import parse_chapter_context_read_set
 from core.story_project.model import (
     ChapterBlueprint,
     SourcePathSet,
@@ -268,6 +269,12 @@ def _prompt_excerpt(text: str, *, max_chars: int) -> dict[str, Any]:
 
 
 def _build_chapter_blueprint(*, chapter_index: int, outline_path: Path, outline_text: str) -> ChapterBlueprint:
+    source_outline_sha256 = hashlib.sha256(outline_text.encode("utf-8")).hexdigest()
+    chapter_context_read_set = parse_chapter_context_read_set(
+        outline_text,
+        chapter_index=chapter_index,
+        source_outline_sha256=source_outline_sha256,
+    )
     title = _extract_title(outline_text, outline_path)
     core_event = _extract_labeled_value(
         outline_text,
@@ -298,6 +305,7 @@ def _build_chapter_blueprint(*, chapter_index: int, outline_path: Path, outline_
         core_event=core_event,
         required_beats=required_beats,
         ending_pressure=ending_pressure,
+        chapter_context_read_set=chapter_context_read_set,
         source_path=outline_path,
         missing_fields=tuple(missing_fields),
     )

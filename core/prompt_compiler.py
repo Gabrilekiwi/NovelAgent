@@ -14,6 +14,13 @@ from core.state.authoritative_context import (
     AUTHORITATIVE_SCENE_SECTION_MAX_CHARS,
     compact_authoritative_state_section,
 )
+from core.state.generation_state_view import (
+    PLAN_GENERATION_STATE_PROJECTION_HEADING,
+    SCENE_GENERATION_STATE_REFERENCE_HEADING,
+    build_plan_generation_state_projection,
+    build_scene_generation_state_reference,
+    generation_state_view_from_markdown,
+)
 from core.structured_context import (
     StructuredContextError,
     compact_markdown_section,
@@ -24,6 +31,7 @@ from core.structured_context import (
 
 PROMPT_CONTEXT_SCHEMA_VERSION = "1.0"
 PROMPT_FINAL_REQUEST_HEADROOM_TOKENS = 512
+GENERATION_STATE_VIEW_SECTION = "Generation State View"
 PROMPT_CONTEXT_SELECTION_KEYS = frozenset(
     {
         "schema_version",
@@ -103,6 +111,30 @@ def compile_prompt_contexts(
     }
     digest = hashlib.sha256(input_pack.encode("utf-8")).hexdigest()
     raw_sections = _markdown_sections(input_pack)
+    has_generation_state_view = any(
+        name == GENERATION_STATE_VIEW_SECTION for name, _text in raw_sections
+    )
+    generation_state_view = (
+        generation_state_view_from_markdown(input_pack)
+        if has_generation_state_view
+        else None
+    )
+    explicit_view_excluded_sections = {
+        "Authoritative State",
+        "Characters",
+        "Timeline",
+        "World State",
+        "Memory Index",
+    }
+    model_sections = (
+        [
+            (name, text)
+            for name, text in raw_sections
+            if name not in explicit_view_excluded_sections
+        ]
+        if has_generation_state_view
+        else raw_sections
+    )
     query = "\n\n".join(
         [
             *[
@@ -112,6 +144,7 @@ def compile_prompt_contexts(
                 in {
                     "Director Decision",
                     "Story State",
+                    GENERATION_STATE_VIEW_SECTION,
                     "StoryProject Chapter Blueprint",
                     "Requirements",
                 }
@@ -119,28 +152,43 @@ def compile_prompt_contexts(
             *([str(query_hint)] if str(query_hint).strip() else []),
         ]
     )
-    if not raw_sections:
+    if not model_sections:
         plan_sections = [("Context", input_pack)]
         scene_sections = list(plan_sections)
         repair_sections = list(plan_sections)
         mandatory = {"Context"}
     else:
+        plan_model_sections = _project_generation_state_for_stage(
+            model_sections,
+            generation_state_view=generation_state_view,
+            stage="plan",
+        )
+        scene_model_sections = _project_generation_state_for_stage(
+            model_sections,
+            generation_state_view=generation_state_view,
+            stage="scene",
+        )
+        repair_model_sections = _project_generation_state_for_stage(
+            model_sections,
+            generation_state_view=generation_state_view,
+            stage="repair",
+        )
         plan_sections = _compact_sections_for_stage(
-            raw_sections,
+            plan_model_sections,
             query=query,
             authoritative_max_chars=AUTHORITATIVE_PLAN_SECTION_MAX_CHARS,
             require_query_references=True,
             require_open_events=True,
         )
         scene_sections = _compact_sections_for_stage(
-            raw_sections,
+            scene_model_sections,
             query=query,
             authoritative_max_chars=AUTHORITATIVE_SCENE_SECTION_MAX_CHARS,
             require_query_references=False,
             require_open_events=False,
         )
         repair_sections = _compact_sections_for_stage(
-            raw_sections,
+            repair_model_sections,
             query=query,
             authoritative_max_chars=AUTHORITATIVE_REPAIR_SECTION_MAX_CHARS,
             # The model repair path immediately replaces this baseline with a
@@ -148,9 +196,23 @@ def compile_prompt_contexts(
             require_query_references=False,
             require_open_events=False,
         )
-        mandatory = set(MANDATORY_SECTIONS)
+        mandatory = _mandatory_sections(
+            has_generation_state_view=has_generation_state_view
+        )
+    scene_preferred = _preferred_sections(
+        SCENE_SECTIONS,
+        has_generation_state_view=has_generation_state_view,
+    )
+    repair_stage_sections = _preferred_sections(
+        REPAIR_SECTIONS,
+        has_generation_state_view=has_generation_state_view,
+    )
     plan = _compile_stage_with_dynamic_authority(
-        source_sections=raw_sections,
+        source_sections=(
+            plan_model_sections
+            if model_sections
+            else model_sections
+        ),
         initial_sections=plan_sections,
         authoritative_max_chars=AUTHORITATIVE_PLAN_SECTION_MAX_CHARS,
         require_query_references=True,
@@ -169,7 +231,7 @@ def compile_prompt_contexts(
         scene_sections,
         stage="scene",
         required=mandatory,
-        preferred=set(SCENE_SECTIONS),
+        preferred=scene_preferred,
         digest=digest,
         budget=effective_budget,
         exact_counter=exact_counter,
@@ -181,8 +243,14 @@ def compile_prompt_contexts(
             protocol_texts.get("scene", ()),
         ),
     )
-    repair_required = mandatory if "Context" in mandatory else mandatory & set(REPAIR_SECTIONS)
-    repair_preferred = {"Context"} if "Context" in mandatory else set(REPAIR_SECTIONS)
+    repair_required = (
+        mandatory
+        if "Context" in mandatory
+        else mandatory & repair_stage_sections
+    )
+    repair_preferred = (
+        {"Context"} if "Context" in mandatory else repair_stage_sections
+    )
     repair = _compile_stage(
         repair_sections,
         stage="repair",
@@ -200,6 +268,26 @@ def compile_prompt_contexts(
         ),
     )
     return PromptContextBundle(context_digest=digest, plan=plan, scene=scene, repair=repair)
+
+
+def _mandatory_sections(*, has_generation_state_view: bool) -> set[str]:
+    required = set(MANDATORY_SECTIONS)
+    if has_generation_state_view:
+        required.discard("Authoritative State")
+        required.add(GENERATION_STATE_VIEW_SECTION)
+    return required
+
+
+def _preferred_sections(
+    sections: Iterable[str],
+    *,
+    has_generation_state_view: bool,
+) -> set[str]:
+    preferred = {str(name) for name in sections}
+    if has_generation_state_view:
+        preferred.discard("Authoritative State")
+        preferred.add(GENERATION_STATE_VIEW_SECTION)
+    return preferred
 
 
 def _compile_stage(
@@ -424,6 +512,45 @@ def _markdown_sections(text: str) -> list[tuple[str, str]]:
     return sections
 
 
+def _project_generation_state_for_stage(
+    sections: list[tuple[str, str]],
+    *,
+    generation_state_view: dict[str, Any] | None,
+    stage: str,
+) -> list[tuple[str, str]]:
+    if generation_state_view is None:
+        return list(sections)
+    if stage == "scene":
+        heading = SCENE_GENERATION_STATE_REFERENCE_HEADING
+        payload = build_scene_generation_state_reference(
+            generation_state_view
+        )
+    else:
+        # Planning consumes the full current working set. Explicit repair uses
+        # RepairEnvelope instead of this compiled text, but retaining the same
+        # bounded projection keeps the diagnostic bundle independently useful.
+        heading = PLAN_GENERATION_STATE_PROJECTION_HEADING
+        payload = build_plan_generation_state_projection(
+            generation_state_view
+        )
+    rendered = (
+        f"# {heading}\n"
+        + json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return [
+        (
+            name,
+            rendered if name == GENERATION_STATE_VIEW_SECTION else text,
+        )
+        for name, text in sections
+    ]
+
+
 def _render_sections(
     sections: list[tuple[str, str]],
     *,
@@ -526,6 +653,7 @@ def _compact_oversized_section(
 
 __all__ = [
     "CompiledPromptContext",
+    "GENERATION_STATE_VIEW_SECTION",
     "MANDATORY_SECTIONS",
     "PROMPT_CONTEXT_SELECTION_KEYS",
     "PROMPT_CONTEXT_SCHEMA_VERSION",

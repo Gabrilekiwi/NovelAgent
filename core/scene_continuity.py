@@ -456,11 +456,17 @@ def scene_state_summary(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def scene_state_generation_projection(state: dict[str, Any]) -> dict[str, Any]:
+def scene_state_generation_projection(
+    state: dict[str, Any],
+    *,
+    include_completed_event_records: bool = True,
+) -> dict[str, Any]:
     """Return a prompt-only Scene state while retaining full local audit state."""
 
     normalized = _normalize_state(state)
     projected = scene_state_summary(normalized)
+    if not include_completed_event_records:
+        projected["completed_events"] = []
     projected["rosters"] = {
         roster_id: project_roster_for_generation(record)
         for roster_id, record in projected["rosters"].items()

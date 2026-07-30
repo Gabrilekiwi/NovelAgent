@@ -138,6 +138,11 @@ from core.state.input_pack import (
     build_recovery_context,
     build_snapshot_input_pack,
 )
+from core.state.generation_state_view import (
+    apply_generation_state_view_to_snapshot,
+    build_generation_state_view,
+    project_snapshot_for_generation,
+)
 from core.state.memory import load_memory_context
 from core.state.memory_updates import build_memory_updates
 from core.state.memory_writer import MemoryWriter, validate_memory_writeback_result, write_memory_updates
@@ -585,6 +590,18 @@ class AgentExecutor:
         snapshot_pack = build_snapshot_input_pack(base_snapshot, memory_context)
         state_result = build_snapshot_state_with_audit(base_snapshot, memory_context)
         snapshot = self._apply_story_project_authority(state_result["snapshot"])
+        generation_state_view = self._build_generation_state_view(snapshot)
+        if generation_state_view is not None:
+            snapshot = apply_generation_state_view_to_snapshot(
+                snapshot,
+                generation_state_view,
+            )
+            workflow_snapshot = project_snapshot_for_generation(
+                snapshot,
+                generation_state_view,
+            )
+        else:
+            workflow_snapshot = snapshot
         snapshot_audit = state_result["audit"]
         memory_context["snapshot_builder_audit"] = snapshot_audit
         if self.autonomy_run_context is not None:
@@ -606,7 +623,9 @@ class AgentExecutor:
         decision_started_at = utc_now()
         reset_retry_telemetry()
         try:
-            decision = validate_decision(self.director(snapshot, memory_context))
+            decision = validate_decision(
+                self.director(workflow_snapshot, memory_context)
+            )
             context_chapter = (self._story_project_context_dict() or {}).get("chapter_index")
             if context_chapter is not None and int(decision["chapter_index"]) != int(context_chapter):
                 raise StoryProjectContextError(
@@ -671,6 +690,7 @@ class AgentExecutor:
             decision,
             memory_context,
             story_project_context=story_project_context,
+            generation_state_view=generation_state_view,
         )
         input_pack_metadata = build_input_pack_metadata(
             input_pack,
@@ -678,6 +698,7 @@ class AgentExecutor:
             decision,
             memory_context,
             story_project_context=story_project_context,
+            generation_state_view=generation_state_view,
         )
         recovery_context = build_recovery_context(memory_context)
         try:
@@ -692,7 +713,7 @@ class AgentExecutor:
             ) = self._execute_workflow(
                 workflow=workflow,
                 workflow_plan=workflow_plan,
-                snapshot=snapshot,
+                snapshot=workflow_snapshot,
                 decision=decision,
                 input_pack=input_pack,
                 recovery_context=recovery_context,
@@ -2081,6 +2102,24 @@ class AgentExecutor:
 
     def _story_project_chapter_blueprint(self) -> dict[str, Any] | None:
         return self.story_project_context_service.chapter_blueprint(self._story_project_context_dict())
+
+    def _build_generation_state_view(
+        self,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        blueprint = self._story_project_chapter_blueprint()
+        chapter_context_read_set = (
+            blueprint.get("chapter_context_read_set")
+            if isinstance(blueprint, dict)
+            else None
+        )
+        if not isinstance(chapter_context_read_set, dict):
+            return None
+        authority = seed_authoritative_state_from_snapshot(snapshot)
+        return build_generation_state_view(
+            authority,
+            chapter_context_read_set,
+        )
 
     def _locked_chapter_checkpoint(self, chapter_index: int) -> dict[str, Any] | None:
         context = self._story_project_context_dict() or {}

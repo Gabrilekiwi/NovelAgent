@@ -246,6 +246,75 @@ class PromptAssetTest(unittest.TestCase):
         self.assertNotIn('"membership"', input_pack)
         self.assertNotIn("tracking/secret.md", input_pack)
 
+    def test_explicit_chapter_context_exposes_tracking_hashes_not_text(self) -> None:
+        input_pack = build_input_pack(
+            {
+                "chapter_index": 18,
+                "world_state": {},
+                "story_state": {},
+                "spatial_state": {},
+                "characters": {},
+                "timeline": [],
+            },
+            story_project_context={
+                "chapter_index": 18,
+                "chapter_blueprint": {
+                    "required_beats": ["advance"],
+                    "chapter_context_read_set": {
+                        "schema_version": "1.0",
+                        "mode": "explicit",
+                        "contract_sha256": "c" * 64,
+                        "required_state_item_ids": ["characters/陆沉"],
+                        "required_event_item_ids": ["events/chapter-0017-close"],
+                        "narrative_constraints": [
+                            {
+                                "constraint_id": "hidden",
+                                "instruction": "READSET-PROSE-MUST-NOT-BE-DUPLICATED",
+                            }
+                        ],
+                        "expected_new_entities": [
+                            {
+                                "kind": "creature",
+                                "entity_id": "seeker",
+                            }
+                        ],
+                    },
+                },
+                "tracking_files": {
+                    "伏笔.md": {
+                        "relative_path": "追踪/伏笔.md",
+                        "sha256": "a" * 64,
+                        "chars": 12_345,
+                        "text": "TRACKING-PROSE-MUST-NOT-ENTER-CONTEXT",
+                    }
+                },
+                "setting_files": {
+                    "世界观.md": {
+                        "relative_path": "设定/世界观.md",
+                        "sha256": "b" * 64,
+                        "chars": 9_876,
+                        "text": "SETTING-PROSE-MUST-NOT-ENTER-CONTEXT",
+                    }
+                },
+            },
+        )
+
+        self.assertNotIn("TRACKING-PROSE-MUST-NOT-ENTER-CONTEXT", input_pack)
+        self.assertNotIn("SETTING-PROSE-MUST-NOT-ENTER-CONTEXT", input_pack)
+        self.assertNotIn(
+            "READSET-PROSE-MUST-NOT-BE-DUPLICATED",
+            input_pack,
+        )
+        self.assertIn('"contract_sha256": "' + ("c" * 64) + '"', input_pack)
+        self.assertIn('"required_state_item_count": 1', input_pack)
+        self.assertIn('"required_event_item_count": 1', input_pack)
+        self.assertIn('"narrative_constraint_count": 1', input_pack)
+        self.assertIn('"expected_new_entity_count": 1', input_pack)
+        self.assertIn('"relative_path": "追踪/伏笔.md"', input_pack)
+        self.assertIn('"sha256": "' + ("a" * 64) + '"', input_pack)
+        self.assertIn('"relative_path": "设定/世界观.md"', input_pack)
+        self.assertIn('"sha256": "' + ("b" * 64) + '"', input_pack)
+
     def test_story_project_metadata_persists_four_scene_plan_for_nine_beats(
         self,
     ) -> None:

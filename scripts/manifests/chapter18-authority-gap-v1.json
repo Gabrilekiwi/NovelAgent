@@ -1,0 +1,430 @@
+{
+  "schema_version": "1.0",
+  "migration_id": "chapter18-authority-gap-v1",
+  "book_id": "4aefb5be-5459-4904-a07a-5fdadd5270fb",
+  "snapshot": {
+    "path": ".novelagent/runtime/snapshot.json",
+    "sha256_before": "de0a53bd72bcb957f100e7e5d3dc71c958eb424b2c713fd1c33b36ed58c094d1"
+  },
+  "evidence": [
+    {
+      "evidence_id": "ch04-l31",
+      "path": "正文/第004章_第四章：不开主门，也要救人.md",
+      "sha256": "77fec9399734e72b82e124dff63e31df1544d5cd5289882bf74d16de0fc03711",
+      "exact_quote": "雪花闪了一下，坡道上方的车灯拉出长长的白线。那声嘶吼隔着混凝土都能震到胸腔里。陆沉的指尖按在屏幕边框，忽然想起爆发前陆遥发来的最后一条语音。她那时声音很低，说哥你先别回电话，背景里夹着一段老式防空警报，呜咽似的，一长两短，像从很远的铁皮喇叭里刮出来。那不是他现在才想起的怪事，早在他们整理线索时，林夏就把它记进了伏笔fs-siren，标了“陆遥最后语音背景音，疑似北站方向”。",
+      "line": 31
+    },
+    {
+      "evidence_id": "ch04-l276",
+      "path": "正文/第004章_第四章：不开主门，也要救人.md",
+      "sha256": "77fec9399734e72b82e124dff63e31df1544d5cd5289882bf74d16de0fc03711",
+      "exact_quote": "远处，空冷链货车的喇叭还在北侧维修坑边断续尖叫，那个冷库里追出的实验体没有死，只被声光和塌陷的车架拖住，沉重撞击一下一下传回地面。公交司机颤着手打开记录仪，杂音里先响起老式防空警报。陆沉脊背骤然绷紧，那声音和爆发前陆遥最后一条语音背景里的警报一模一样。下一秒，录音里夹出一句清晰女声：“陆沉，别来北站。”",
+      "line": 276
+    },
+    {
+      "evidence_id": "ch05-l137",
+      "path": "正文/第005章_第五章：最后一扇门.md",
+      "sha256": "2beafcd9b7b64fa0ebeaaadd2c33ce05c56b0637b9fc5515793b7ddfc68d2264",
+      "exact_quote": "【已装备：腐味屏蔽（蓝）】",
+      "line": 137
+    },
+    {
+      "evidence_id": "ch08-l141",
+      "path": "正文/第008章_第八章：回收程序.md",
+      "sha256": "217339e35e902ecf31b4f3e323a1295226373ca289db2f91d22c658bf4c8fdca",
+      "exact_quote": "就在这时，控制间那台老式电台忽然沙沙作响。赵铁冲过去拧开旋钮，背景里传出的，正是和回收信标同源的防空警报。一个女人的声音断续钻出电流，声线像极了陆遥。",
+      "line": 141
+    },
+    {
+      "evidence_id": "ch08-l143",
+      "path": "正文/第008章_第八章：回收程序.md",
+      "sha256": "217339e35e902ecf31b4f3e323a1295226373ca289db2f91d22c658bf4c8fdca",
+      "exact_quote": "“R-17核心离开回收区后，他们会来找你。”",
+      "line": 143
+    },
+    {
+      "evidence_id": "ch09-l127",
+      "path": "正文/第009章_第九章：坐标暴露.md",
+      "sha256": "17c36cdc9cc77cca6cee75e8dfe1821e4933f4f68e4252ad71631a55f1ced1df",
+      "exact_quote": "赵铁扯开旁边烧焦的线槽盖，露出两组颜色完全不同的线束。一组被他们刚刚剪断，断口还冒着细烟；另一组深埋在金属护管里，护管上印着褪色的“R-17运输网”编号。",
+      "line": 127
+    },
+    {
+      "evidence_id": "ch09-l129",
+      "path": "正文/第009章_第九章：坐标暴露.md",
+      "sha256": "17c36cdc9cc77cca6cee75e8dfe1821e4933f4f68e4252ad71631a55f1ced1df",
+      "exact_quote": "“病区广播和门锁，走的是这条。”赵铁用扳手敲了敲护管，“加密有线控制回路，沿R-17运输网铺的，跟旧天线不是一套线路。两套线路彼此独立。也就是说——方舟的定位可能被我们掐住了，但他们仍然能远程接管广播，甚至碰门锁。”",
+      "line": 129
+    },
+    {
+      "evidence_id": "ch10-l167",
+      "path": "正文/第010章_第十章：火种第一夜.md",
+      "sha256": "864e9d66bf7b94ce3a3133d01964ffb7081be34931e82c18771be9c8be4eb9c0",
+      "exact_quote": "\"北站地下，轨道检修层下面……我还活着。\"陆遥的声音被电流撕裂，却比之前任何一次都清晰，\"别按方舟给的名单找人，别相信方舟的宿主名单！他们把活人、感染者、实验编号混在一起，有些名字是诱饵，有些——\"",
+      "line": 167
+    },
+    {
+      "evidence_id": "ch16-l37",
+      "path": "正文/第016章_第十六章：黑旗的过路费.md",
+      "sha256": "c2b6da947816833b74ca6db2ec1425988effb6de42cc92f877bce6fce0239aad",
+      "exact_quote": "手台那头停了两秒，换成一个更低、更稳的男声：“这里是临江三号消防站。韩野，原消防员。站内幸存者八人，我临时负责。你们是哪边的？”",
+      "line": 37
+    },
+    {
+      "evidence_id": "ch17-l55",
+      "path": "正文/第017章_第十七章：消防站不开门.md",
+      "sha256": "77a26c5acc0dff7dfbd413734c969703ba6e2e0cd945db30c34341bb4b286c20",
+      "exact_quote": "顾岚没有在这几十秒里展开完整登记，只把火种一号的武器清单举到观察窗前，报出总类和数量：“折叠钩矛、短弩、撬棍、消防斧、两把手枪。具体弹匣和编号，警报后对表。”",
+      "line": 55
+    },
+    {
+      "evidence_id": "ch17-l59",
+      "path": "正文/第017章_第十七章：消防站不开门.md",
+      "sha256": "77a26c5acc0dff7dfbd413734c969703ba6e2e0cd945db30c34341bb4b286c20",
+      "exact_quote": "林夏跪在三号车引擎盖边，用油性笔先划出三栏：“火种一号十七人，站内八人，待检四人。任何开门动作，外面我或陆沉复核，里面韩野或护士复核。单人喊开，不算命令。”",
+      "line": 59
+    },
+    {
+      "evidence_id": "ch17-l171",
+      "path": "正文/第017章_第十七章：消防站不开门.md",
+      "sha256": "77a26c5acc0dff7dfbd413734c969703ba6e2e0cd945db30c34341bb4b286c20",
+      "exact_quote": "韩野把通信室门重新扣上，没有让陆沉先走。他走在前面，沿二层通信室外的窄走廊退到楼梯口，枪口始终压低；陆沉跟在两级台阶后，空着左手扶栏，直到两人从院内楼梯下到一层车库区入口，才由韩野喊出复核口令。",
+      "line": 171
+    },
+    {
+      "evidence_id": "ch17-l179",
+      "path": "正文/第017章_第十七章：消防站不开门.md",
+      "sha256": "77a26c5acc0dff7dfbd413734c969703ba6e2e0cd945db30c34341bb4b286c20",
+      "exact_quote": "消防站那名护士站在隔离区内门后，和苏晴一项项对表。顾岚这时才把火种一号登记过的武器逐件摆在黄线外，折叠钩矛、短弩、撬棍、消防斧、两把手枪和弹匣数量都写进塑封纸；韩野则把站内八人的枪械记录压在自己胸前的夹板上，只给看编号，不交钥匙。",
+      "line": 179
+    },
+    {
+      "evidence_id": "ch17-l189",
+      "path": "正文/第017章_第十七章：消防站不开门.md",
+      "sha256": "77a26c5acc0dff7dfbd413734c969703ba6e2e0cd945db30c34341bb4b286c20",
+      "exact_quote": "火种一号里有人刚露出松口气的神色，又僵住。苏晴立刻把“饮水待处理”写进清单，林夏在旁边加了红圈。",
+      "line": 189
+    },
+    {
+      "evidence_id": "ch17-l223",
+      "path": "正文/第017章_第十七章：消防站不开门.md",
+      "sha256": "77a26c5acc0dff7dfbd413734c969703ba6e2e0cd945db30c34341bb4b286c20",
+      "exact_quote": "陆沉接过来，看见比对结果下方标着：陆遥，真实呼吸声。不是偶然夹进警报的求救。她在主动用老式防空警报作载波。",
+      "line": 223
+    },
+    {
+      "evidence_id": "setting-suqing-l6",
+      "path": "设定/角色/苏晴.md",
+      "sha256": "68e95eb0e302aae551d9bda7712f2b9c72d8987aeeb91ebdce001a86a62aed1a",
+      "exact_quote": "| 身份 | 急诊科医生 |",
+      "line": 6
+    },
+    {
+      "evidence_id": "setting-suqing-l8",
+      "path": "设定/角色/苏晴.md",
+      "sha256": "68e95eb0e302aae551d9bda7712f2b9c72d8987aeeb91ebdce001a86a62aed1a",
+      "exact_quote": "| 专长 | 创伤救治、感染观察、有限资源分诊 |",
+      "line": 8
+    }
+  ],
+  "upserts": [
+    {
+      "collection": "characters",
+      "record_id": "陆遥",
+      "record": {
+        "character_id": "陆遥",
+        "canonical_name": "陆遥",
+        "aliases": [
+          "陆遥"
+        ],
+        "identity": "陆沉的妹妹",
+        "role": "北站线索提供者",
+        "status": "第17章确认真实呼吸声并主动使用老式防空警报载波；感染与受控情况未知",
+        "source_tier": "story_project_standard"
+      },
+      "evidence_ids": [
+        "ch04-l31",
+        "ch17-l223"
+      ]
+    },
+    {
+      "collection": "characters",
+      "record_id": "林夏",
+      "record": {
+        "character_id": "林夏",
+        "canonical_name": "林夏",
+        "aliases": [
+          "林夏"
+        ],
+        "identity": "火种一号成员",
+        "role": "规则、记录与限时决策协调者",
+        "affiliation": "火种一号",
+        "source_tier": "story_project_standard"
+      },
+      "evidence_ids": [
+        "ch17-l59",
+        "ch17-l189"
+      ]
+    },
+    {
+      "collection": "characters",
+      "record_id": "韩野",
+      "record": {
+        "character_id": "韩野",
+        "canonical_name": "韩野",
+        "aliases": [
+          "韩野"
+        ],
+        "identity": "临江三号消防站原消防员",
+        "role": "消防站八名幸存者临时负责人",
+        "affiliation": "消防站幸存者",
+        "source_tier": "story_project_standard"
+      },
+      "evidence_ids": [
+        "ch16-l37"
+      ]
+    },
+    {
+      "collection": "characters",
+      "record_id": "苏晴",
+      "record": {
+        "character_id": "苏晴",
+        "canonical_name": "苏晴",
+        "aliases": [
+          "苏晴"
+        ],
+        "identity": "急诊科医生",
+        "role": "创伤救治、感染观察与有限资源分诊负责人",
+        "affiliation": "火种一号",
+        "source_tier": "story_project_standard"
+      },
+      "evidence_ids": [
+        "setting-suqing-l6",
+        "setting-suqing-l8",
+        "ch17-l189"
+      ]
+    },
+    {
+      "collection": "characters",
+      "record_id": "顾岚",
+      "record": {
+        "character_id": "顾岚",
+        "canonical_name": "顾岚",
+        "aliases": [
+          "顾岚"
+        ],
+        "identity": "火种一号成员",
+        "role": "武器登记与现场警戒",
+        "affiliation": "火种一号",
+        "source_tier": "story_project_standard"
+      },
+      "evidence_ids": [
+        "ch17-l55",
+        "ch17-l179"
+      ]
+    },
+    {
+      "collection": "locations",
+      "record_id": "陆遥",
+      "record": {
+        "entity_id": "陆遥",
+        "location_id": "北站地下轨道检修层下方",
+        "certainty": "self_reported",
+        "status": "unverified",
+        "last_reported_chapter": 10,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch10-l167"
+      ]
+    },
+    {
+      "collection": "locations",
+      "record_id": "林夏",
+      "record": {
+        "entity_id": "林夏",
+        "location_id": "消防站一层车库区",
+        "certainty": "confirmed",
+        "status": "current",
+        "last_reported_chapter": 17,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch17-l189"
+      ]
+    },
+    {
+      "collection": "locations",
+      "record_id": "苏晴",
+      "record": {
+        "entity_id": "苏晴",
+        "location_id": "消防站一层车库区",
+        "certainty": "confirmed",
+        "status": "current",
+        "last_reported_chapter": 17,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch17-l189"
+      ]
+    },
+    {
+      "collection": "locations",
+      "record_id": "顾岚",
+      "record": {
+        "entity_id": "顾岚",
+        "location_id": "消防站一层车库区",
+        "certainty": "confirmed",
+        "status": "current",
+        "last_reported_chapter": 17,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch17-l179"
+      ]
+    },
+    {
+      "collection": "events",
+      "record_id": "history-chapter-0004-luyao-last-voice-siren",
+      "record": {
+        "event_id": "history-chapter-0004-luyao-last-voice-siren",
+        "type": "historical_signal_observation",
+        "subjects": [
+          "陆遥",
+          "陆沉"
+        ],
+        "objects": [
+          "爆发前最后语音",
+          "老式防空警报",
+          "一长两短间隔"
+        ],
+        "location": "来源地点未证实",
+        "status": "completed",
+        "source_chapter": 4,
+        "evidence_scope": "现有正文第4章首次逐字可核验；不得倒填为第1章正文事件",
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch04-l31"
+      ]
+    },
+    {
+      "collection": "events",
+      "record_id": "history-chapter-0004-dashcam-siren-warning",
+      "record": {
+        "event_id": "history-chapter-0004-dashcam-siren-warning",
+        "type": "recorded_signal_match",
+        "subjects": [
+          "陆遥",
+          "陆沉"
+        ],
+        "objects": [
+          "行车记录仪",
+          "老式防空警报",
+          "陆沉别来北站"
+        ],
+        "location": "北站线路行车记录仪",
+        "status": "completed",
+        "source_chapter": 4,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch04-l276"
+      ]
+    },
+    {
+      "collection": "events",
+      "record_id": "history-chapter-0005-luchen-equipped-rotting-odor-screen",
+      "record": {
+        "event_id": "history-chapter-0005-luchen-equipped-rotting-odor-screen",
+        "type": "ability_equipped",
+        "subjects": [
+          "陆沉"
+        ],
+        "objects": [
+          "腐味屏蔽（蓝）"
+        ],
+        "location": "地下商超",
+        "status": "completed",
+        "source_chapter": 5,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch05-l137"
+      ]
+    },
+    {
+      "collection": "events",
+      "record_id": "history-chapter-0008-r17-radio-warning",
+      "record": {
+        "event_id": "history-chapter-0008-r17-radio-warning",
+        "type": "r17_radio_intercept",
+        "subjects": [
+          "赵铁",
+          "陆遥"
+        ],
+        "objects": [
+          "老式电台",
+          "与R-17回收信标同源的防空警报",
+          "R-17核心离开回收区后的追踪警告"
+        ],
+        "location": "人防医院地下病区控制间",
+        "status": "completed",
+        "source_chapter": 8,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch08-l141",
+        "ch08-l143"
+      ]
+    },
+    {
+      "collection": "events",
+      "record_id": "history-chapter-0009-r17-wired-control",
+      "record": {
+        "event_id": "history-chapter-0009-r17-wired-control",
+        "type": "infrastructure_discovery",
+        "subjects": [
+          "赵铁"
+        ],
+        "objects": [
+          "R-17运输网",
+          "加密有线控制回路",
+          "病区广播",
+          "门锁"
+        ],
+        "location": "人防医院设备层",
+        "status": "completed",
+        "source_chapter": 9,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch09-l127",
+        "ch09-l129"
+      ]
+    },
+    {
+      "collection": "events",
+      "record_id": "history-chapter-0010-luyao-north-station-report",
+      "record": {
+        "event_id": "history-chapter-0010-luyao-north-station-report",
+        "type": "radio_location_report",
+        "subjects": [
+          "陆遥",
+          "陆沉"
+        ],
+        "objects": [
+          "北站地下",
+          "宿主名单警告"
+        ],
+        "location": "北站地下轨道检修层下方（陆遥自报）",
+        "status": "completed",
+        "source_chapter": 10,
+        "source_tier": "chapter_event"
+      },
+      "evidence_ids": [
+        "ch10-l167"
+      ]
+    }
+  ]
+}
