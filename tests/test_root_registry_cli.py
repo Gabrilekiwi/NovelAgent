@@ -304,7 +304,7 @@ class RootRegistryCliTest(unittest.TestCase):
         marker = old_story / "chapter.md"
         marker.write_text("published bytes stay with rename\n", encoding="utf-8")
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         main = registries["main"]
         request = self._project_request(main, new_story)
         argv = [
@@ -366,7 +366,7 @@ class RootRegistryCliTest(unittest.TestCase):
         old_ea = old_story / ".novelagent" / "runtime" / "ea"
         self.assertFalse(old_ea.exists())
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
 
         report = self._run_project(new_story, registries["main"])
 
@@ -429,7 +429,7 @@ class RootRegistryCliTest(unittest.TestCase):
     def test_rogue_or_nested_control_plane_is_rejected(self) -> None:
         base, old_story, registries = self._project_case("rogue")
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         rogue = new_story / ".novelagent" / "runtime" / "rogue-control"
         rogue.mkdir()
         shutil.copyfile(
@@ -524,7 +524,7 @@ class RootRegistryCliTest(unittest.TestCase):
         )
         orphan.mkdir()
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         with self.assertRaisesRegex(RootRemapBlockedError, "pending persistence"):
             self._run_project(new_story, registries["main"])
 
@@ -547,7 +547,7 @@ class RootRegistryCliTest(unittest.TestCase):
             allowed_root=old_story,
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
 
         report = self._run_project(new_story, registries["main"])
 
@@ -586,7 +586,7 @@ class RootRegistryCliTest(unittest.TestCase):
         )
         before_external = external_marker.read_bytes()
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
 
         with self.assertRaisesRegex(RootRemapBlockedError, "pending persistence"):
             self._run_project(new_story, registries["main"])
@@ -656,7 +656,7 @@ class RootRegistryCliTest(unittest.TestCase):
             allowed_root=old_story,
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         report = self._run_project(new_story, registries["main"])
         self.assertTrue(report["all_registries_rebound"])
 
@@ -696,7 +696,7 @@ class RootRegistryCliTest(unittest.TestCase):
         )
         before = external.read_bytes()
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
 
         with self.assertRaisesRegex(RootRemapBlockedError, "invalid or pending legacy"):
             self._run_project(new_story, registries["main"])
@@ -709,7 +709,7 @@ class RootRegistryCliTest(unittest.TestCase):
         legacy_runs = old_story / ".novelagent" / "runtime" / "runs"
         legacy_runs.mkdir()
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         moved_runs = new_story / ".novelagent" / "runtime" / "runs"
 
         with persistence_run_lock(moved_runs):
@@ -730,7 +730,7 @@ class RootRegistryCliTest(unittest.TestCase):
             at="2020-01-01T00:00:00+00:00",
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         with self.assertRaisesRegex(RootRemapBlockedError, "sessions/leases"):
             self._run_project(new_story, registries["main"])
 
@@ -754,7 +754,7 @@ class RootRegistryCliTest(unittest.TestCase):
             created_at="2026-07-15T00:00:00+00:00",
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         with self.assertRaisesRegex(RootRemapBlockedError, "operations/sessions/leases"):
             self._run_project(new_story, registries["main"])
 
@@ -794,14 +794,14 @@ class RootRegistryCliTest(unittest.TestCase):
             },
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         with self.assertRaisesRegex(RootRemapBlockedError, "operations/sessions/leases"):
             self._run_project(new_story, registries["main"])
 
     def test_multi_registry_crash_recovers_forward_before_claiming_complete(self) -> None:
         base, old_story, registries = self._project_case("crash_recovery")
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
 
         def crash(event, index, _path):
             if event == "after_project_registry_replace" and index == 1:
@@ -825,7 +825,7 @@ class RootRegistryCliTest(unittest.TestCase):
     def test_crash_during_intent_staging_is_quarantined_and_reprepared(self) -> None:
         base, old_story, registries = self._project_case("prepare_crash")
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         transactions = (
             new_story / ".novelagent" / "root-remap" / "transactions"
         )
@@ -853,7 +853,7 @@ class RootRegistryCliTest(unittest.TestCase):
 
         base, old_story, registries = self._project_case("toctou")
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         actual_identity = remap_module.directory_identity
         marker_published = {"value": False}
 
@@ -881,7 +881,7 @@ class RootRegistryCliTest(unittest.TestCase):
             "registry_replace_toctou", all_registries=False
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         main_path = (
             new_story
             / ".novelagent"
@@ -923,7 +923,7 @@ class RootRegistryCliTest(unittest.TestCase):
         root_map["external_store"] = external
         main = RootRegistryService(main_root).ensure(root_map)
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         held = base / "external-held"
 
         def replace_external(event, _index, _path):
@@ -943,7 +943,7 @@ class RootRegistryCliTest(unittest.TestCase):
             "embedded_target_swap", all_registries=False
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         delivery = new_story / ".novelagent" / "runtime" / "deliveries"
         held = base / "deliveries-held"
 
@@ -990,7 +990,7 @@ class RootRegistryCliTest(unittest.TestCase):
             "fence_no_create", all_registries=False
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         fence = new_story / ".novelagent" / "runtime" / ".root-remap-fence"
         original_fence = base / "original-fence"
         attacker = base / "attacker-fence"
@@ -1052,7 +1052,7 @@ class RootRegistryCliTest(unittest.TestCase):
             "fence_lock_race", all_registries=False
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         fence = new_story / ".novelagent" / "runtime" / ".root-remap-fence"
         held = base / "held-fence"
         attacker = base / "attacker-existing-lock"
@@ -1101,7 +1101,7 @@ class RootRegistryCliTest(unittest.TestCase):
             "lost_response", all_registries=False
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         first = self._run_project(new_story, registries["main"])
         main_path = new_story / ".novelagent" / "runtime" / "persistence"
         revision_after_first = RootRegistryService(main_path).load()["revision"]
@@ -1201,7 +1201,7 @@ class RootRegistryCliTest(unittest.TestCase):
             "registry_inventory_toctou", all_registries=False
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
         main_path = (
             new_story
             / ".novelagent"
@@ -1234,7 +1234,7 @@ class RootRegistryCliTest(unittest.TestCase):
             "journal_escape", all_registries=False
         )
         new_story = base / "new-book"
-        old_story.rename(new_story)
+        self._rename_story(old_story, new_story)
 
         def stop_after_intent(event, _index, _path):
             if event == "after_project_remap_intent_publish":
@@ -1274,7 +1274,7 @@ class RootRegistryCliTest(unittest.TestCase):
                     f"journal_index_{artifact_directory}", all_registries=False
                 )
                 new_story = base / "new-book"
-                old_story.rename(new_story)
+                self._rename_story(old_story, new_story)
 
                 def stop_after_intent(event, _index, _path):
                     if event == "after_project_remap_intent_publish":
