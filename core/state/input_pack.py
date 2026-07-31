@@ -103,7 +103,10 @@ def build_input_pack(
 {_dump(_memory_index(memory_context))}
 
 # Recovery Context
-{_dump(build_recovery_context(memory_context))}
+{_dump(build_recovery_context(
+    memory_context,
+    chapter_index=int(snapshot.get("chapter_index") or 1),
+))}
 {_story_project_section(story_project_context)}
 
 # Requirements
@@ -418,7 +421,12 @@ def build_input_pack_metadata(
             "source_mapping_count": len(memory_index.get("source_mappings") or []),
             "last_run_present": isinstance(memory_index.get("last_run"), dict),
         },
-        "recovery_context": build_recovery_context_metadata(build_recovery_context(memory_context)),
+        "recovery_context": build_recovery_context_metadata(
+            build_recovery_context(
+                memory_context,
+                chapter_index=int(snapshot.get("chapter_index") or 1),
+            )
+        ),
     }
     if isinstance(story_project_context, dict):
         blueprint = story_project_context.get("chapter_blueprint") or {}
@@ -516,10 +524,26 @@ def _memory_index(memory_context: dict[str, Any] | None) -> dict[str, Any]:
     return compact
 
 
-def build_recovery_context(memory_context: dict[str, Any] | None) -> dict[str, Any]:
+def build_recovery_context(
+    memory_context: dict[str, Any] | None,
+    *,
+    chapter_index: int,
+) -> dict[str, Any]:
+    if (
+        isinstance(chapter_index, bool)
+        or not isinstance(chapter_index, int)
+        or chapter_index < 1
+    ):
+        raise ValueError("chapter_index must be a positive integer")
     if not isinstance(memory_context, dict) or not isinstance(memory_context.get("last_run"), dict):
         return {"available": False}
     last_run = memory_context["last_run"]
+    if (
+        last_run.get("status") not in {"rejected", "failed"}
+        or bool(last_run.get("committed"))
+        or last_run.get("chapter_index") != chapter_index
+    ):
+        return {"available": False}
     return {
         "available": True,
         "source_run_id": last_run.get("id"),

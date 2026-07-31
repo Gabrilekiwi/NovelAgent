@@ -1952,11 +1952,11 @@ class AgentExecutorTest(unittest.TestCase):
         previous_run = build_run_record(
             started_at=started_at,
             finished_at=started_at,
-            base_snapshot={"chapter_index": 1},
-            runtime_snapshot={"chapter_index": 1},
+            base_snapshot={"chapter_index": 2},
+            runtime_snapshot={"chapter_index": 2},
             memory_context={"source": "test", "status": "ready", "items": []},
             decision={
-                "chapter_index": 1,
+                "chapter_index": 2,
                 "goal": "continue_existing_arc",
                 "actions": ["generate_chapter", "validate", "repair_if_needed"],
                 "validation_focus": ["logic"],
@@ -2043,6 +2043,109 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(previous_run["id"], captured_plans[0]["recovery"]["source_run_id"])
         self.assertEqual(["missing_conflict_marker"], captured_plans[0]["recovery"]["repeated_problem_codes"])
         self.assertIn("previous_validation_skipped", captured_plans[0]["recovery"]["failure_modes"])
+
+    def test_executor_does_not_repair_with_committed_previous_chapter_context(
+        self,
+    ) -> None:
+        tmp_path = self._case_dir("repair_excludes_committed_previous_chapter")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir(parents=True)
+        chapter_dir = tmp_path / "chapters"
+        started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        previous_chapter = (
+            "At the shelter, danger forced a costly choice and visible "
+            "conflict."
+        )
+        previous_run = build_run_record(
+            started_at=started_at,
+            finished_at=started_at,
+            base_snapshot={"chapter_index": 1},
+            runtime_snapshot={"chapter_index": 1},
+            memory_context={"source": "test", "status": "ready", "items": []},
+            decision={
+                "chapter_index": 1,
+                "goal": "complete_previous_chapter",
+                "actions": ["generate_chapter", "validate"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 0,
+                "notes": [],
+            },
+            workflow=["generate_chapter", "validate"],
+            input_pack="input",
+            chapter=previous_chapter,
+            validation={
+                "ok": True,
+                "requested_focus": ["logic"],
+                "executed_checks": ["logic"],
+                "skipped_checks": ["continuity", "spatial"],
+                "problems": [],
+            },
+            analysis={
+                "validation_ok": True,
+                "conflicts": [],
+                "events": [],
+                "character_changes": [],
+                "world_changes": [],
+                "new_locations": [],
+                "summary": "",
+            },
+            repair_attempts=0,
+            committed=True,
+        )
+        previous_run["chapter"]["artifact"] = save_chapter_artifact(
+            chapter_text=previous_chapter,
+            run=previous_run,
+            output_dir=chapter_dir,
+        )
+        (run_dir / f"{previous_run['id']}.json").write_text(
+            json.dumps({"run": previous_run}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        captured_recovery: list[dict] = []
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "generate_next_chapter",
+                "actions": [
+                    "generate_chapter",
+                    "validate",
+                    "repair_if_needed",
+                ],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 1,
+                "notes": [],
+            }
+
+        def repairer(
+            chapter: str,
+            validation: dict,
+            input_pack: str,
+            repair_plan: dict,
+            recovery_context: dict,
+        ) -> str:
+            captured_recovery.append(recovery_context)
+            return (
+                "At the shelter, danger forced the team to choose between "
+                "protecting the serum and rescuing a teammate, creating open "
+                "conflict with a visible cost."
+            )
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=run_dir,
+            chapter_dir=chapter_dir,
+            dry_run=True,
+            director=director,
+            generator=lambda input_pack: "Too short.",
+            repairer=repairer,
+        ).run_once(persist=False)
+
+        self.assertTrue(result["validation"]["ok"])
+        self.assertEqual([{"available": False}], captured_recovery)
+        self.assertFalse(result["run"]["recovery_context"]["available"])
 
     def test_repair_if_needed_trace_marks_validation_ok_skip(self) -> None:
         tmp_path = self._case_dir("repair_skipped_validation_ok")

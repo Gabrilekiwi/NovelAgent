@@ -700,7 +700,10 @@ class AgentExecutor:
             story_project_context=story_project_context,
             generation_state_view=generation_state_view,
         )
-        recovery_context = build_recovery_context(memory_context)
+        recovery_context = build_recovery_context(
+            memory_context,
+            chapter_index=int(decision["chapter_index"]),
+        )
         try:
             (
                 chapter,

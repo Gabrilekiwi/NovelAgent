@@ -12,6 +12,7 @@ from core.engine.locked_chapter_state import discarded_run_ids
 from core.memory_v2.canonical import canonical_json_hash
 from core.schema import validate_schema
 from core.quality_decision import build_quality_decision, quality_decision_accepted
+from core.state.input_pack import build_recovery_context
 
 
 def utc_now() -> datetime:
@@ -167,7 +168,10 @@ def build_run_record(
             else runtime_snapshot.get("chapter_index"),
         },
         "memory": _memory_summary(memory_context),
-        "recovery_context": _recovery_context_summary(memory_context),
+        "recovery_context": _recovery_context_summary(
+            memory_context,
+            chapter_index=chapter_index,
+        ),
         "snapshot_builder": _snapshot_pack_summary(snapshot_pack, snapshot_audit),
         "director": _director_audit(director_trace or _default_director_trace(started_at, finished_at)),
         "decision": {
@@ -266,7 +270,10 @@ def build_failed_run_record(
             "next_chapter_index": runtime_snapshot.get("chapter_index"),
         },
         "memory": _memory_summary(memory_context),
-        "recovery_context": _recovery_context_summary(memory_context),
+        "recovery_context": _recovery_context_summary(
+            memory_context,
+            chapter_index=chapter_index,
+        ),
         "snapshot_builder": _snapshot_pack_summary(snapshot_pack, snapshot_audit),
         "director": _director_audit(director_trace or _default_director_trace(started_at, finished_at)),
         "decision": {
@@ -345,7 +352,10 @@ def build_director_failed_run_record(
             "next_chapter_index": runtime_snapshot.get("chapter_index"),
         },
         "memory": _memory_summary(memory_context),
-        "recovery_context": _recovery_context_summary(memory_context),
+        "recovery_context": _recovery_context_summary(
+            memory_context,
+            chapter_index=chapter_index,
+        ),
         "snapshot_builder": _snapshot_pack_summary(snapshot_pack, snapshot_audit),
         "director": _director_audit(director_trace),
         "decision": {
@@ -430,7 +440,10 @@ def build_workflow_failed_run_record(
             "next_chapter_index": runtime_snapshot.get("chapter_index"),
         },
         "memory": _memory_summary(memory_context),
-        "recovery_context": _recovery_context_summary(memory_context),
+        "recovery_context": _recovery_context_summary(
+            memory_context,
+            chapter_index=chapter_index,
+        ),
         "snapshot_builder": _snapshot_pack_summary(snapshot_pack, snapshot_audit),
         "director": _director_audit(director_trace),
         "decision": {
@@ -1128,9 +1141,17 @@ def _known_validation_names(raw_names: Any) -> list[str]:
     return names
 
 
-def _recovery_context_summary(memory_context: dict[str, Any]) -> dict[str, Any]:
+def _recovery_context_summary(
+    memory_context: dict[str, Any],
+    *,
+    chapter_index: int,
+) -> dict[str, Any]:
+    selected = build_recovery_context(
+        memory_context,
+        chapter_index=chapter_index,
+    )
     last_run = memory_context.get("last_run")
-    if not isinstance(last_run, dict):
+    if not bool(selected.get("available")) or not isinstance(last_run, dict):
         return {
             "available": False,
             "source_run_id": None,

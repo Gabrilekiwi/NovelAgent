@@ -5,7 +5,12 @@ import unittest
 from pathlib import Path
 
 from core.schema import validate_schema
-from core.state.input_pack import build_input_pack, build_input_pack_metadata, build_snapshot_input_pack
+from core.state.input_pack import (
+    build_input_pack,
+    build_input_pack_metadata,
+    build_recovery_context,
+    build_snapshot_input_pack,
+)
 
 
 class PromptAssetTest(unittest.TestCase):
@@ -132,10 +137,10 @@ class PromptAssetTest(unittest.TestCase):
                 "source": "test",
                 "status": "ready",
                 "last_run": {
-                    "id": "chapter_1_test",
+                    "id": "chapter_2_test",
                     "status": "rejected",
                     "committed": False,
-                    "chapter_index": 1,
+                    "chapter_index": 2,
                     "goal": "recover_from_validation_failure",
                     "workflow": ["generate_chapter", "validate", "repair_if_needed"],
                     "problem_codes": ["missing_conflict_marker"],
@@ -193,7 +198,7 @@ class PromptAssetTest(unittest.TestCase):
         self.assertIn('"path": "memory.json"', input_pack)
         self.assertIn('"item_count": 1', input_pack)
         self.assertIn('"available": true', input_pack)
-        self.assertIn('"source_run_id": "chapter_1_test"', input_pack)
+        self.assertIn('"source_run_id": "chapter_2_test"', input_pack)
         self.assertIn('"missing_conflict_marker"', input_pack)
         self.assertIn('"skipped_checks"', input_pack)
         self.assertIn('"continuity"', input_pack)
@@ -216,11 +221,58 @@ class PromptAssetTest(unittest.TestCase):
         self.assertTrue(metadata["memory_index"]["last_run_present"])
         self.assertIn("recovery_context", metadata["sections"])
         self.assertTrue(metadata["recovery_context"]["available"])
-        self.assertEqual("chapter_1_test", metadata["recovery_context"]["source_run_id"])
+        self.assertEqual("chapter_2_test", metadata["recovery_context"]["source_run_id"])
         self.assertEqual(1, metadata["recovery_context"]["problem_count"])
         self.assertEqual(["logic", "llm"], metadata["recovery_context"]["executed_checks"])
         self.assertEqual(["continuity", "spatial"], metadata["recovery_context"]["skipped_checks"])
         self.assertEqual(1, metadata["recovery_context"]["repair_attempts"])
+
+    def test_recovery_context_requires_same_failed_or_rejected_chapter(self) -> None:
+        committed_previous = {
+            "last_run": {
+                "id": "chapter_18_committed",
+                "status": "committed",
+                "committed": True,
+                "chapter_index": 18,
+            }
+        }
+        failed_previous_chapter = {
+            "last_run": {
+                "id": "chapter_18_failed",
+                "status": "failed",
+                "committed": False,
+                "chapter_index": 18,
+            }
+        }
+        failed_same_chapter = {
+            "last_run": {
+                "id": "chapter_19_failed",
+                "status": "failed",
+                "committed": False,
+                "chapter_index": 19,
+            }
+        }
+
+        self.assertEqual(
+            {"available": False},
+            build_recovery_context(
+                committed_previous,
+                chapter_index=19,
+            ),
+        )
+        self.assertEqual(
+            {"available": False},
+            build_recovery_context(
+                failed_previous_chapter,
+                chapter_index=19,
+            ),
+        )
+        selected = build_recovery_context(
+            failed_same_chapter,
+            chapter_index=19,
+        )
+        self.assertTrue(selected["available"])
+        self.assertEqual("chapter_19_failed", selected["source_run_id"])
 
     def test_story_project_input_pack_exposes_read_set_digest_only(self) -> None:
         input_pack = build_input_pack(
