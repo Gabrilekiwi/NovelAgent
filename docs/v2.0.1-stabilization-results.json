@@ -1,10 +1,10 @@
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "release": "2.0.1",
-  "branch": "fix/v2.0.1-final-artifact-integrity",
+  "branch": "feature",
   "baseline_commit": "f3280656abdd95cc5cdcb64f409c306fb0e9867b",
-  "verified_code_commit": "a4717625a3373cfdf1aa4a128c9eb2bc3876363f",
-  "completed_on": "2026-07-27",
+  "verified_code_commit": "de3c1201c19ab66c2ad9c20ac44d44cac930c16b",
+  "completed_on": "2026-07-31",
   "root_cause": {
     "summary": "The chapter prose, scene evidence, and structured state were not consistently treated as one immutable audited artifact across generation, repair, final gating, StoryProject writeback, and legacy recovery.",
     "confirmed_causes": [
@@ -15,7 +15,8 @@
       "Completed events, open actions, current location, and present characters were not reconstructed with sufficiently distinct lifecycle semantics for the next scene.",
       "Run Records could omit nested pipeline integrity attempts or lose the source model-call identity for individual scene drafts.",
       "The final StoryProject persistence path did not always prove that the bytes written were the same bytes accepted by every preceding blocking gate.",
-      "A Windows Python 3.12 TemporaryDirectory ACL edge made the new end-to-end regression nondeterministic only when run late in the full suite."
+      "Recovery context selection did not require a failed or rejected run from the active chapter, so a committed or cross-chapter run could contaminate repair.",
+      "Pytest mode=0o700 temporary directories and unguarded test-only directory renames were nondeterministic under Windows Python 3.12 managed ACL and file-scanner behavior."
     ],
     "incident_classification": {
       "program_defects": [
@@ -24,7 +25,8 @@
         "authoritative-state seeding and replay",
         "canonicalization finding propagation",
         "writeback hash binding",
-        "Run Record evidence completeness"
+        "Run Record evidence completeness",
+        "chapter-scoped recovery selection"
       ],
       "environment_or_provider_failures_observed_but_not_misclassified_as_program_acceptance": [
         "provider partial responses",
@@ -51,18 +53,35 @@
     "tests": [
       "tests/test_authoritative_state.py",
       "tests/test_chapter_pipeline.py",
+      "tests/conftest.py",
       "tests/test_executor.py",
       "tests/test_final_artifact_integrity.py",
+      "tests/test_root_registry_cli.py",
       "tests/test_run_record.py",
       "tests/test_scene_continuity.py",
       "tests/test_v201_multichapter_regression.py"
+    ],
+    "post_acceptance_hardening": [
+      "core/engine/locked_chapter.py",
+      "core/engine/scene_source_provenance.py",
+      "core/state/authoritative_context.py",
+      "core/state/chapter_context_authority_migration.py",
+      "core/state/chapter_read_set.py",
+      "core/state/generation_state_view.py",
+      "core/state/input_pack.py",
+      "core/state/roster_baseline_migration.py",
+      "modules/scene_repair/envelope.py",
+      "scripts/replay_chapter_workset_budget.py",
+      "scripts/replay_scene_budget.py"
     ]
   },
   "modules": {
     "final_artifact_integrity": "Carries blocking findings only across a cryptographically and textually proven safe canonicalization, then binds the accepted hash to writeback.",
     "sequential_scene_pipeline": "Requires structured JSON for live scenes, regenerates from the first incomplete recovered scene, and carries lifecycle-aware scene state.",
     "authoritative_state": "Seeds legacy state, adapts scene deltas, validates identity, relationships, rosters, inventory, locations, counters, prose declarations, and event references, then persists state_after.",
-    "run_record": "Merges ordered integrity attempts, records distinct repair attempts, stage hashes, source call IDs, and authoritative validation evidence."
+    "run_record": "Merges ordered integrity attempts, records distinct repair attempts, stage hashes, source call IDs, and authoritative validation evidence.",
+    "chapter_workset": "Projects only blueprint-selected authoritative entities and bounded recent evidence into model context, so input size follows chapter complexity instead of book length.",
+    "recovery_context": "Exposes recovery evidence only for an uncommitted failed or rejected run whose chapter index matches the active chapter."
   },
   "problem_codes": [
     "duplicate_scene_text",
@@ -115,7 +134,9 @@
       "StoryProject canonicalization preserving prior blocking findings",
       "final-gate-to-writeback SHA equality",
       "two-chapter Scene-to-Merge-to-Gate-to-Writeback replay",
-      "Run Record earliest-stage and source-call traceability"
+      "Run Record earliest-stage and source-call traceability",
+      "same-chapter failed-run recovery selection and cross-chapter exclusion",
+      "Windows pytest temporary-directory and directory-rename repeatability"
     ]
   },
   "phases": [
@@ -195,32 +216,34 @@
     {
       "phase": "F",
       "result": "passed",
-      "commit": "a471762",
+      "commit": "de3c120",
       "delivered": [
-        "real incident artifact replay",
+        "deterministic incident-derived fixture replay",
         "two-chapter deterministic StoryProject writeback chain",
         "full regression and smoke validation",
-        "Windows test isolation correction"
+        "Windows pytest isolation and bounded rename retry"
       ]
     }
   ],
   "validation": {
     "compile": {
-      "command": "python -B -m py_compile core/engine/executor.py core/engine/run_record.py core/quality/final_artifact_integrity.py core/scene_continuity.py core/state/authoritative.py modules/chapter_generator/pipeline.py",
+      "command": "python -B -m py_compile core/engine/executor.py core/engine/run_record.py core/state/input_pack.py core/quality/final_artifact_integrity.py core/scene_continuity.py core/state/authoritative.py modules/chapter_generator/pipeline.py tests/conftest.py tests/test_root_registry_cli.py",
       "result": "passed"
     },
     "core_targeted": {
-      "result": "180 passed, 20 subtests passed, 0 failed",
-      "duration_seconds": 18.18
+      "command": "python -m pytest -p no:cacheprovider tests/test_prompt_assets.py tests/test_run_record.py tests/test_executor.py tests/test_locked_chapter.py -q",
+      "result": "120 passed, 23 subtests passed, 0 failed",
+      "duration_seconds": 26.33
     },
-    "memory_snapshot_schema": {
-      "result": "238 passed, 1 skipped, 14 subtests passed, 0 failed",
-      "duration_seconds": 13.42
+    "ci_equivalent_unittest": {
+      "command": "python -B -m unittest discover -s tests",
+      "result": "1604 tests run; OK; 7 skipped; 0 failed",
+      "duration_seconds": 416.485
     },
     "full_pytest": {
       "command": "python -m pytest -p no:cacheprovider tests",
-      "result": "1467 passed, 7 skipped, 0 failed",
-      "duration_seconds": 281.0
+      "result": "1663 passed, 7 skipped, 0 failed",
+      "duration_seconds": 414.24
     },
     "smoke": {
       "command": "python -B scripts/smoke_v1.py --skip-tests",
@@ -229,7 +252,7 @@
     "real_regressions": {
       "command": "python -B -m pytest -p no:cacheprovider tests/test_v201_regression_fixtures.py tests/test_v201_multichapter_regression.py -q",
       "result": "12 passed, 8 subtests passed, 0 failed",
-      "duration_seconds": 2.71
+      "duration_seconds": 3.83
     },
     "external_model_calls": "none"
   },
@@ -263,10 +286,29 @@
     "2731044 fix: bound long scene plans and recover terminal prefixes",
     "69c9435 fix: compact nested prompt selection audit context",
     "3da04d1 fix: retry and recover rejected scene boundaries",
-    "a471762 fix: close authoritative state and writeback audit gaps"
+    "a471762 fix: close authoritative state and writeback audit gaps",
+    "e6200c3 docs: record v2.0.1 final stabilization results",
+    "8d0db15 fix: clarify scene event location scope on retry",
+    "6a8c9c4 fix: recover rejected authoritative scene evidence",
+    "92573df fix: bound authoritative context by generation stage",
+    "cc088df fix: preserve scene request headroom",
+    "9cfe466 fix: bind review repair to complete scene evidence",
+    "e869436 fix: bind prose and relationships to scene authority",
+    "2eecc59 test: replay chapter scene budget from receipts",
+    "aad658c fix: group StoryProject beats into bounded scenes",
+    "d2e9443 fix: reconcile roster counts from prose orderings",
+    "043948b fix: bind chapter state and recovery evidence",
+    "5bd997d fix: add book-bound roster baseline migration",
+    "1f9a2b0 fix: bind chapter budget replay evidence",
+    "ab4bb3e fix: bind chapter context to authority worksets",
+    "ff154d2 fix: recover hash-bound scenes after validation interruption",
+    "9c050ba fix: scope recovery context to the active chapter",
+    "de3c120 test: stabilize Windows release verification"
   ],
   "residual_risks": [
     "No paid or external-model first-ten-chapter literary experiment was run during verification; provider availability and partial responses remain external variables.",
+    "Incident-derived deterministic fixtures preserve the reported failure shapes but are not all bound to retained original blind-run prose hashes.",
+    "Direct external Python callers of build_recovery_context must now pass the active chapter_index keyword; all repository callers have been migrated.",
     "Deterministic near-duplicate thresholds may need future calibration for genres with deliberate long refrains.",
     "Legacy projects are seeded into the authority ledger, but ambiguous historical prose cannot be upgraded into facts without explicit structured evidence.",
     "A ten-chapter generation should still be run incrementally with committed checkpoints so a provider failure does not discard earlier accepted chapters."
