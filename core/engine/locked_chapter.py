@@ -398,6 +398,16 @@ def _newer_recoverable_terminal_run(
                 "complete_draft": None,
                 "recovered_scenes": recovered_scenes,
             }
+        lineage_source = _recover_linked_checkpoint_scene_source(
+            runs,
+            terminal=item,
+            run_dir=run_dir,
+            chapter_index=chapter_index,
+            active_checkpoint=active_checkpoint,
+            language=language,
+        )
+        if lineage_source is not None:
+            return lineage_source
         complete_draft = _usable_complete_draft(item["payload"], language=language)
         if complete_draft is not None:
             return {**item, "complete_draft": complete_draft}
@@ -421,6 +431,131 @@ def _newer_recoverable_terminal_run(
                 "recovered_scenes": recovered_scenes,
             }
     return None
+
+
+def _recover_linked_checkpoint_scene_source(
+    runs: list[dict[str, Any]],
+    *,
+    terminal: dict[str, Any],
+    run_dir: Path,
+    chapter_index: int,
+    active_checkpoint: dict[str, Any] | None,
+    language: str | None,
+) -> dict[str, Any] | None:
+    """Recover Scene evidence lost by a legacy complete-draft checkpoint.
+
+    Older recovery code could downgrade a hash-verified merged chapter to a
+    ``repair_draft`` when validation stopped before the final artifact gate.
+    A later rejected run explicitly links back to that source through its
+    recovery context.  Follow only that exact, hash-bound lineage and recover
+    the source Scenes so the normal pipeline can revalidate and realign them.
+    """
+
+    if (
+        not isinstance(active_checkpoint, dict)
+        or active_checkpoint.get("action") != "repair_draft"
+    ):
+        return None
+    checkpoint_draft = active_checkpoint.get("complete_draft")
+    if (
+        not isinstance(checkpoint_draft, dict)
+        or checkpoint_draft.get("source_stage") != "chapter"
+    ):
+        return None
+    checkpoint_text = checkpoint_draft.get("text")
+    checkpoint_sha256 = checkpoint_draft.get("sha256")
+    if (
+        not isinstance(checkpoint_text, str)
+        or not isinstance(checkpoint_sha256, str)
+        or _content_sha256(checkpoint_text) != checkpoint_sha256
+    ):
+        return None
+
+    terminal_run = terminal.get("payload", {}).get("run")
+    recovery = (
+        terminal_run.get("recovery_context")
+        if isinstance(terminal_run, dict)
+        else None
+    )
+    terminal_chapter = (
+        terminal_run.get("chapter") if isinstance(terminal_run, dict) else None
+    )
+    if isinstance(terminal_chapter, dict) and "pipeline" in terminal_chapter:
+        return None
+    source_run_id = str(active_checkpoint.get("source_run_id") or "")
+    if (
+        not isinstance(recovery, dict)
+        or recovery.get("available") is not True
+        or str(recovery.get("source_run_id") or "") != source_run_id
+        or int(recovery.get("source_chapter_index") or 0) != chapter_index
+        or recovery.get("source_committed") is not False
+    ):
+        return None
+
+    source = next(
+        (
+            item
+            for item in runs
+            if str(item["payload"]["run"].get("id") or "") == source_run_id
+        ),
+        None,
+    )
+    if source is None:
+        return None
+    source_run = source["payload"]["run"]
+    source_chapter = source["payload"].get("chapter")
+    source_status = str(source_run.get("status") or "")
+    source_book_id = _run_book_id(source_run)
+    terminal_book_id = _run_book_id(terminal_run)
+    checkpoint_book_id = str(active_checkpoint.get("book_id") or "")
+    if (
+        source_run.get("committed") is True
+        or source_status not in {"failed", "rejected"}
+        or str(recovery.get("source_status") or "") != source_status
+        or int(source_run.get("chapter_index") or 0) != chapter_index
+        or source_chapter != checkpoint_text
+        or source_book_id != checkpoint_book_id
+        or terminal_book_id != checkpoint_book_id
+    ):
+        return None
+    source_finished_at = _parse_timestamp(
+        source_run.get("finished_at") or source_run.get("started_at")
+    )
+    checkpoint_created_at = _parse_timestamp(active_checkpoint.get("created_at"))
+    terminal_finished_at = _parse_timestamp(
+        terminal_run.get("finished_at") or terminal_run.get("started_at")
+    )
+    if (
+        source_finished_at is None
+        or checkpoint_created_at is None
+        or terminal_finished_at is None
+        or source_finished_at > checkpoint_created_at
+        or checkpoint_created_at >= terminal_finished_at
+    ):
+        return None
+    try:
+        expected_scene_count = _expected_scene_count(source_run)
+        terminal_scene_count = _expected_scene_count(terminal_run)
+    except LockedChapterRecoveryError:
+        return None
+    if (
+        int(active_checkpoint.get("expected_scene_count") or 0) != expected_scene_count
+        or terminal_scene_count != expected_scene_count
+    ):
+        return None
+    recovered_scenes = _recover_persisted_scene_sequence(
+        source["payload"],
+        run_dir=run_dir,
+        expected_scene_count=expected_scene_count,
+        language=language,
+    )
+    if not recovered_scenes:
+        return None
+    return {
+        **source,
+        "complete_draft": None,
+        "recovered_scenes": recovered_scenes,
+    }
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -506,11 +641,6 @@ def _recover_persisted_scene_sequence(
     artifacts = pipeline.get("artifacts") if isinstance(pipeline, dict) else None
     sources = pipeline.get("scene_sources") if isinstance(pipeline, dict) else None
     spans = pipeline.get("scene_spans") if isinstance(pipeline, dict) else None
-    final_artifact = (
-        pipeline.get("final_artifact")
-        if isinstance(pipeline, dict)
-        else None
-    )
     scene_artifacts = (
         artifacts.get("scene_drafts")
         if isinstance(artifacts, dict)
@@ -528,12 +658,15 @@ def _recover_persisted_scene_sequence(
         or not isinstance(sources, list)
         or not isinstance(spans, list)
         or not isinstance(continuity_artifact, dict)
-        or not isinstance(final_artifact, dict)
         or len(scene_artifacts) != expected_scene_count
         or len(sources) != expected_scene_count
         or len(spans) != expected_scene_count
-        or final_artifact.get("accepted") is not True
-        or str(final_artifact.get("artifact_sha256") or "") != _content_sha256(chapter)
+    ):
+        return []
+    if not _accepted_scene_sequence_integrity(
+        run_chapter,
+        pipeline,
+        chapter_sha256=_content_sha256(chapter),
     ):
         return []
     try:
@@ -584,6 +717,7 @@ def _recover_persisted_scene_sequence(
         return []
 
     recovered: list[dict[str, Any]] = []
+    expected_span_start = 0
     for index, metadata in enumerate(scene_artifacts, start=1):
         if not isinstance(metadata, dict):
             return []
@@ -615,12 +749,23 @@ def _recover_persisted_scene_sequence(
         span = span_by_index[index]
         try:
             span_chars = int(span.get("chars") or 0)
-            span_length = int(span.get("end_char") or 0) - int(
-                span.get("start_char") or 0
-            )
+            span_start = int(span.get("start_char") or 0)
+            span_end = int(span.get("end_char") or 0)
         except (TypeError, ValueError):
             return []
-        if span_chars != len(scene_text) or span_length != len(scene_text):
+        if (
+            span_start != expected_span_start
+            or span_end - span_start != len(scene_text)
+            or span_chars != len(scene_text)
+            or chapter[span_start:span_end] != scene_text
+        ):
+            return []
+        expected_span_start = span_end
+        if index < expected_scene_count:
+            if chapter[expected_span_start:expected_span_start + 2] != "\n\n":
+                return []
+            expected_span_start += 2
+        elif expected_span_start != len(chapter):
             return []
         source_provenance = _verified_scene_source_from_run(
             run_dir,
@@ -683,6 +828,100 @@ def _recover_persisted_scene_sequence(
     if merged != chapter:
         return []
     return recovered
+
+
+def _accepted_scene_sequence_integrity(
+    run_chapter: dict[str, Any],
+    pipeline: dict[str, Any],
+    *,
+    chapter_sha256: str,
+) -> bool:
+    """Prove the recovered Scene sequence against the latest available gate.
+
+    A declared final artifact is authoritative and must be accepted.  When a
+    run stopped before that gate existed, an accepted merge report may prove
+    only that the persisted Scene sequence reconstructs the merged chapter;
+    the next normal run still performs full validation and the final gate.
+    """
+
+    integrity = pipeline.get("integrity")
+    integrity = integrity if isinstance(integrity, dict) else {}
+    final_candidates: list[tuple[Any, str]] = []
+    for container, field in (
+        (pipeline, "final_artifact"),
+        (run_chapter, "final_artifact"),
+        (integrity, "final_gate"),
+    ):
+        if field in container:
+            final_candidates.append((container.get(field), "artifact_sha256"))
+    for records in (
+        pipeline.get("integrity_records"),
+        run_chapter.get("integrity_records"),
+    ):
+        if not isinstance(records, list):
+            continue
+        final_candidates.extend(
+            (record, "output_sha256")
+            for record in records
+            if isinstance(record, dict) and record.get("stage") == "final_gate"
+        )
+    if final_candidates:
+        return all(
+            _accepted_integrity_candidate(
+                candidate,
+                chapter_sha256=chapter_sha256,
+                required_hash_field=required_hash_field,
+            )
+            for candidate, required_hash_field in final_candidates
+        )
+
+    if "merge" not in integrity:
+        return False
+    merge_candidates: list[tuple[Any, str]] = [
+        (integrity.get("merge"), "artifact_sha256"),
+    ]
+    for records in (
+        pipeline.get("integrity_records"),
+        run_chapter.get("integrity_records"),
+    ):
+        if not isinstance(records, list):
+            continue
+        merge_candidates.extend(
+            (record, "output_sha256")
+            for record in records
+            if isinstance(record, dict) and record.get("stage") == "merge"
+        )
+    return bool(merge_candidates) and all(
+        _accepted_integrity_candidate(
+            candidate,
+            chapter_sha256=chapter_sha256,
+            required_hash_field=required_hash_field,
+        )
+        for candidate, required_hash_field in merge_candidates
+    )
+
+
+def _accepted_integrity_candidate(
+    candidate: Any,
+    *,
+    chapter_sha256: str,
+    required_hash_field: str,
+) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    if candidate.get("accepted") is not True:
+        return False
+    required_hash = candidate.get(required_hash_field)
+    if not isinstance(required_hash, str) or required_hash != chapter_sha256:
+        return False
+    declared_hashes = [
+        str(candidate[field])
+        for field in ("artifact_sha256", "output_sha256")
+        if isinstance(candidate.get(field), str) and candidate.get(field)
+    ]
+    return bool(declared_hashes) and all(
+        value == chapter_sha256 for value in declared_hashes
+    )
 
 
 def _verified_run_artifact_path(
