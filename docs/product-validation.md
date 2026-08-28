@@ -4,9 +4,9 @@
 
 ## 0. 当前基线与准入顺序（2026-08-28）
 
-本轮开发已经形成两个本地提交：`d41e34a` 收口本地创作工作台与恢复加固，`7c7da1c` 增加只观察、不接管执行的 Shadow Runtime 边界。针对性回归、schema/run record/provenance 测试和本地 smoke 已通过；完整测试、真实 Provider smoke、异常恢复纵切和两个十章 cohort 仍是作者手工验收门，不能用本地小测试代替。
+本轮开发的关键实现基线包括：`d41e34a` 收口本地创作工作台与恢复加固，`7c7da1c` 增加只观察、不接管执行的 Shadow Runtime 边界，`1baa11b` 补齐 Runtime schema 预检、跨字段不变量与基于真实项目状态的验收手册；最终收口还补上了可重复的第 20 章隔离恢复夹具。针对性回归、schema/run record/provenance 测试和本地 smoke 已通过；完整测试、真实 Provider smoke、异常恢复纵切和两个十章 cohort 仍是作者手工验收门，不能用本地小测试代替。
 
-目标书 `_重写V2` 当前已有 22 个正式正文文件。第 23 章存在一条 `RepairNotConvergingError` 失败运行，`accepted=false`、`committed=false`，同时保留了工作台草稿证据；因此它还不是正式正文，也不能直接作为 Cohort 1 的第一次有效尝试。仓库 `.active-book` 当前仍指向旧书，而不是 `_重写V2`。
+目标书 `_重写V2` 当前已有 22 个正式正文文件。第 23 章存在一条 `RepairNotConvergingError` 失败运行，`accepted=false`、`committed=false`，并保留了失败正文候选、chapter-pipeline 与 RunRecord 证据；工作台旧任务停在 `awaiting_input`，但没有第 23 章可编辑草稿。因此它还不是正式正文，也不能直接作为 Cohort 1 的第一次有效尝试。仓库 `.active-book` 当前仍指向旧书，而不是 `_重写V2`。
 
 基于这些事实，本轮准入顺序固定为：确认目标书与指针 → 无模型分类并关闭第 23 章旧的未提交状态 → 在隔离项目完成第 20 章恢复纵切 → 完整自动测试与真实 Provider smoke → 目标书校准并激活 Strict → Cohort 1（23–32）→ Cohort 2（33–42）。不要跳步，也不要把第 21、22 章的既有 Shadow 生成历史计入正式 Cohort。
 
@@ -45,18 +45,29 @@ API Key 只能放在本机环境配置中。不要把 Key 填入浏览器表单�
 
 验收目标是证明场景 1、2 已完成、场景 3 部分响应的中断，可以由作者在网页中安全恢复，不重复调用不确定的 Provider，也不重复提交正文。
 
-当前 `_重写V2` 已正式推进到第 22 章，所以本纵切必须在专用恢复测试项目或隔离副本中进行。不要删除、回退或伪造目标书的第 20 章正式文件来制造故障；如果书架里没有明确标识的第 20 章恢复测试项，应先停止并准备隔离项目，不能在生产书上临时注入。
+当前 `_重写V2` 已正式推进到第 22 章，所以本纵切必须在专用恢复测试项目中进行。不要删除、回退、复制或伪造目标书的第 20 章正式文件来制造故障，也不要在生产书上临时注入。仓库提供了一个只创建新目录、不调用模型、不更新工作台数据库且拒绝覆盖既有路径的合成夹具生成器：
 
-1. 从书架选择专用恢复测试项目，在“待处理”选择第 20 章恢复项，并再次确认项目路径不是正式 `_重写V2`。
-2. 点击安全恢复。该步骤只读取现有锁、调用记录和草稿证据进行分类，不调用模型。
-3. 核对页面显示的已完成场景、下一场景和保留草稿。若草稿需要调整，在网页编辑后保存；不要直接编辑正式正文文件。
-4. 点击验证。若结果仍为 `needs_revision`、`blocked` 或 `error`，任务必须继续暂停，修订后再次验证。
-5. 验证通过后检查草稿正文，再点击“确认提交并继续”。进入人工暂停分支后，即使修复已通过，也必须保留这一步作者确认，不得静默提交。
-6. 在“历史”确认事务提交成功，并能看到 Receipt 与正文 readback；刷新浏览器或重启工作台，不应重复调用模型或重复提交。
+```powershell
+$fixture = python -B scripts/prepare_chapter20_recovery_fixture.py | ConvertFrom-Json
+$fixture | Select-Object status, synthetic, target, chapter_index, expected_reusable_scene_count, expected_next_scene_index, unresolved_attempt_count, provider_calls
+```
+
+输出必须为 `status=ready`、`synthetic=true`、`chapter_index=20`、`expected_reusable_scene_count=2`、`expected_next_scene_index=3`、`unresolved_attempt_count=1`、`provider_calls=0`。脚本会先在临时副本中实际执行一次无模型恢复分类，只有确认“复用场景 1、2，从场景 3 继续”后才发布 `$fixture.target`；发布后的项目仍保持未分类，供网页验收。默认目标是 `books/_validation_chapter20_recovery`，如果它已经存在，脚本会安全失败；先核对并导入既有夹具，或使用 `--target books/<新的隔离目录名>` 创建另一个新目录，绝不能用目标书路径。
+
+这个夹具的两个已结算场景和场景 3 部分响应都是明确标记的合成证据，只证明恢复 UI、Receipt/哈希边界、断点复用和状态持久化；它不计入真实 Provider smoke、文学质量或正式 Cohort 证据。一次性准备命令发生在网页纵切之前，不是恢复命令，也不会生成恢复 checkpoint。
+
+1. 启动工作台，从书架导入 `$fixture.target`，名称标记为“第20章恢复验收（合成）”；确认下一章为 20，并再次确认项目路径不是正式 `_重写V2`。
+2. 在“待处理”选择该项目的第 20 章恢复项，核对页面显示本章可恢复、正式正文不存在并等待无模型分类；分类前不要把任何场景当成可信内容。
+3. 点击安全恢复。该步骤只读取现有锁、调用记录和草稿证据进行分类，不调用模型；结果必须显示复用 2 个场景、下一场景为 3，且新增 Provider 调用为 0。
+4. 明确确认从场景 3 继续。只有这一步之后才允许为剩余场景和后续审核调用真实模型；场景 1、2 不得重复生成。
+5. 核对页面显示的已完成场景、下一场景和保留草稿。若草稿需要调整，在网页编辑后保存；不要直接编辑正式正文文件。
+6. 点击验证。若结果仍为 `needs_revision`、`blocked` 或 `error`，任务必须继续暂停，修订后再次验证。
+7. 验证通过后检查草稿正文，再点击“确认提交并继续”。进入人工暂停分支后，即使修复已通过，也必须保留这一步作者确认，不得静默提交。
+8. 在“历史”确认事务提交成功，并能看到 Receipt 与正文 readback；刷新浏览器或重启工作台，不应重复调用模型或重复提交。
 
 如果紧急停止发生在 Provider 状态不确定时，不要点击自动重试。先执行安全恢复分类，再由作者决定保留响应、修订还是重启本章。
 
-第 20 章通过条件：作者全程不查看运行 JSON、不手工搬草稿、不输入恢复命令；正式正文只由既有事务提交链写入；刷新和服务重启后暂停状态、草稿与事件均保留。
+第 20 章通过条件：导入夹具后，作者全程不查看运行 JSON、不手工搬草稿、不输入恢复命令；无模型分类严格为 `provider_calls=0`，场景 1、2 不重复生成；正式正文只由既有事务提交链写入；刷新和服务重启后暂停状态、草稿与事件均保留。
 
 ## 4. 生产前准备
 
@@ -160,10 +171,20 @@ API Key 只能放在本机环境配置中。不要把 Key 填入浏览器表单�
 
 - [ ] 工作台明确选中 `_重写V2`；开始 CLI 验收前手工更新并核对 `.active-book`。
 - [ ] 对第 23 章旧失败运行先在工作台执行无模型分类，再使用本节给出的 `--locked-chapter-reset` 命令追加安全重置标记并停止旧暂停任务；确认正式正文止于第 22 章、下一章为 23，且失败证据仍可追溯。
-- [ ] 在隔离项目完成第 20 章异常恢复纵切，不修改目标书正式历史。
+- [ ] 运行 `python -B scripts/prepare_chapter20_recovery_fixture.py` 创建并导入新的合成隔离项目；在网页完成第 20 章异常恢复纵切，不修改目标书正式历史，也不把合成场景当作真实 Provider 或质量证据。
 - [ ] 在最终冻结提交上运行完整 `python -B -m pytest -q`。
 - [ ] 完整测试通过后运行 `python -B scripts/smoke_v1.py --skip-tests`，避免重复执行测试套件。
 - [ ] 使用真实凭据运行 `python -B scripts/provider_smoke.py --providers openai claude`；仅当正式配置依赖 Notion 时，再把 `notion` 加入 providers 并检查 read/write/readback。
-- [ ] 运行 `python -B main.py --dry-run --persist-dry-run --runtime-mode shadow --memory data/notion_memory.example.json --output-run-json`，确认 `run.runtime.authority=legacy_executor`、`execution_cutover=false`，且 execution-scoped runtime artifact 可读取。
+- [ ] 用下面的 PowerShell 检查 Execution Shadow。`--output-run-json` 的输出根对象就是 RunRecord，因此字段路径是 `$run.runtime`；artifact ref 相对于 `.tmp/runtime/runs`：
+
+  ```powershell
+  $run = python -B main.py --dry-run --persist-dry-run --runtime-mode shadow --memory data/notion_memory.example.json --output-run-json | ConvertFrom-Json
+  $run.runtime | Select-Object mode, authority, execution_cutover, artifact_ref, evidence_hash
+  $runtimeArtifact = Join-Path ".tmp/runtime/runs" $run.runtime.artifact_ref
+  $artifactRuntime = Get-Content -Raw -LiteralPath $runtimeArtifact | ConvertFrom-Json
+  $artifactRuntime | Select-Object mode, authority, execution_cutover, evidence_hash
+  ```
+
+  两处都必须为 `mode=shadow`、`authority=legacy_executor`、`execution_cutover=false` 且 `evidence_hash` 相同；`Test-Path -LiteralPath $runtimeArtifact` 必须为 `True`。
 - [ ] 完成目标书真实校准并显式激活 Strict；冻结代码、模型、Provider、配置、章纲和预算。
 - [ ] 依次运行并人工评分 Cohort 1（23–32）和 Cohort 2（33–42）；任一轮失效都保留历史并从新的连续十章范围重建，不拼接成功章节。
