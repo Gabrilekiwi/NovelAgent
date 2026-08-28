@@ -141,7 +141,7 @@ def validate_runtime_evidence(value: Mapping[str, Any]) -> dict[str, Any]:
         payload["attempts"],
         payload["checkpoints"],
     )
-    _validate_usage(payload["usage"])
+    _validate_usage(payload["workflow_snapshot"], payload["usage"])
     _parse_timestamp(payload["created_at"], "created_at")
 
     expected_hash = canonical_json_hash(
@@ -202,11 +202,13 @@ def _validate_attempts_and_checkpoints(
 ) -> None:
     node_ids = {str(item["node_id"]) for item in workflow_snapshot["nodes"]}
     attempt_ids: set[str] = set()
+    attempts_by_id: dict[str, Mapping[str, Any]] = {}
     for attempt in attempts:
         attempt_id = str(attempt["attempt_id"])
         if attempt_id in attempt_ids:
             raise RuntimeContractError(f"duplicate runtime attempt_id: {attempt_id}")
         attempt_ids.add(attempt_id)
+        attempts_by_id[attempt_id] = attempt
         if str(attempt["node_id"]) not in node_ids:
             raise RuntimeContractError(
                 f"runtime attempt references unknown node: {attempt['node_id']}"
@@ -231,13 +233,34 @@ def _validate_attempts_and_checkpoints(
                 f"runtime attempt has more than one checkpoint: {attempt_id}"
             )
         checkpoint_attempt_ids.add(attempt_id)
+        attempt = attempts_by_id[attempt_id]
+        for field in ("node_id", "trace_digest"):
+            if checkpoint[field] != attempt[field]:
+                raise RuntimeContractError(
+                    f"runtime checkpoint {field} does not match attempt: {attempt_id}"
+                )
+        expected_checkpoint_status = f"observed_{attempt['status']}"
+        if checkpoint["status"] != expected_checkpoint_status:
+            raise RuntimeContractError(
+                f"runtime checkpoint status does not match attempt: {attempt_id}"
+            )
     if checkpoint_attempt_ids != attempt_ids:
         raise RuntimeContractError("every runtime attempt must have exactly one checkpoint")
 
 
-def _validate_usage(usage: list[Mapping[str, Any]]) -> None:
+def _validate_usage(
+    workflow_snapshot: Mapping[str, Any],
+    usage: list[Mapping[str, Any]],
+) -> None:
+    allowed_node_ids = {
+        str(item["node_id"]) for item in workflow_snapshot["nodes"]
+    } | {"execution_support"}
     receipt_hashes: set[str] = set()
     for item in usage:
+        if str(item["node_id"]) not in allowed_node_ids:
+            raise RuntimeContractError(
+                f"runtime usage references unknown node: {item['node_id']}"
+            )
         hashes = [str(value) for value in item["receipt_hashes"]]
         if len(hashes) != len(set(hashes)):
             raise RuntimeContractError(

@@ -7,6 +7,7 @@ import unittest
 import uuid
 
 from core.engine.executor import AgentExecutor
+from core.engine.preflight import SCHEMA_ASSETS
 from core.engine.run_record import validate_run_result
 from core.engine.workflow import build_workflow_plan
 from core.runtime import (
@@ -68,6 +69,9 @@ class ShadowRuntimeContractTest(unittest.TestCase):
         with self.assertRaises(RuntimeContractError):
             resolve_runtime_mode("experimental")
 
+    def test_runtime_schema_is_covered_by_preflight(self) -> None:
+        self.assertIn(Path("schemas/runtime_evidence.schema.json"), SCHEMA_ASSETS)
+
     def test_shadow_projection_records_contracts_without_raw_context(self) -> None:
         evidence = build_shadow_runtime_evidence(
             self._run(),
@@ -115,6 +119,7 @@ class ShadowRuntimeContractTest(unittest.TestCase):
         self.assertEqual(2, len(evidence["checkpoints"]))
         self.assertTrue(all(not item["resume_capable"] for item in evidence["checkpoints"]))
         self.assertEqual("not_needed", evidence["recovery"]["decision"])
+        usage_by_node = {item["node_id"]: item for item in evidence["usage"]}
         self.assertEqual(
             {
                 "node_id": "generate_chapter",
@@ -126,12 +131,12 @@ class ShadowRuntimeContractTest(unittest.TestCase):
                 "total_tokens": 15,
                 "complete": True,
             },
-            evidence["usage"][0],
+            usage_by_node["generate_chapter"],
         )
-        self.assertEqual(15, evidence["usage"][1]["input_tokens"])
-        self.assertEqual(5, evidence["usage"][1]["output_tokens"])
-        self.assertEqual(20, evidence["usage"][1]["total_tokens"])
-        self.assertTrue(evidence["usage"][1]["complete"])
+        self.assertEqual(15, usage_by_node["execution_support"]["input_tokens"])
+        self.assertEqual(5, usage_by_node["execution_support"]["output_tokens"])
+        self.assertEqual(20, usage_by_node["execution_support"]["total_tokens"])
+        self.assertTrue(usage_by_node["execution_support"]["complete"])
         self.assertNotIn("PRIVATE PROMPT CONTENT", json.dumps(evidence))
         self.assertEqual(evidence, validate_runtime_evidence(evidence))
 
@@ -152,9 +157,44 @@ class ShadowRuntimeContractTest(unittest.TestCase):
             created_at="2026-08-28T00:00:02+00:00",
         )
         tampered = copy.deepcopy(evidence)
-        tampered["attempts"][0]["status"] = "failed"
+        tampered["recovery"]["reason"] = "tampered"
 
         with self.assertRaisesRegex(RuntimeContractError, "hash mismatch"):
+            validate_runtime_evidence(tampered)
+
+    def test_runtime_evidence_rejects_checkpoint_attempt_drift(self) -> None:
+        evidence = build_shadow_runtime_evidence(
+            self._run(),
+            created_at="2026-08-28T00:00:02+00:00",
+        )
+        tampered = copy.deepcopy(evidence)
+        tampered["checkpoints"][0]["trace_digest"] = "f" * 64
+
+        with self.assertRaisesRegex(RuntimeContractError, "does not match attempt"):
+            validate_runtime_evidence(tampered)
+
+    def test_runtime_evidence_rejects_usage_for_unknown_node(self) -> None:
+        evidence = build_shadow_runtime_evidence(
+            self._run(),
+            model_call_receipts=[
+                {
+                    "stage": "chapter_generation",
+                    "attempt_id": "attempt-1",
+                    "received_at": "2026-08-28T00:00:01+00:00",
+                    "receipt_hash": "a" * 64,
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                }
+            ],
+            created_at="2026-08-28T00:00:02+00:00",
+        )
+        tampered = copy.deepcopy(evidence)
+        tampered["usage"][0]["node_id"] = "unknown_node"
+
+        with self.assertRaisesRegex(RuntimeContractError, "unknown node"):
             validate_runtime_evidence(tampered)
 
 

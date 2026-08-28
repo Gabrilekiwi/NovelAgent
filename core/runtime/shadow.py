@@ -76,7 +76,10 @@ def build_shadow_runtime_evidence(
     )
     recovery = _recovery_decision(run, attempts)
     context_manifest = _build_context_manifest(context_inputs or {})
-    usage = _build_node_usage(model_call_receipts)
+    usage = _build_node_usage(
+        model_call_receipts,
+        workflow_node_ids={node.node_id for node in workflow_snapshot.nodes},
+    )
 
     evidence = {
         "schema_version": RUNTIME_SCHEMA_VERSION,
@@ -289,11 +292,19 @@ def _recovery_decision(
 
 def _build_node_usage(
     model_call_receipts: Sequence[Mapping[str, Any]],
+    *,
+    workflow_node_ids: set[str],
 ) -> tuple[NodeUsage, ...]:
     grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for receipt in model_call_receipts:
         stage = str(receipt.get("stage") or "")
-        grouped[_STAGE_TO_NODE.get(stage, "execution_support")].append(receipt)
+        mapped_node_id = _STAGE_TO_NODE.get(stage, "execution_support")
+        node_id = (
+            mapped_node_id
+            if mapped_node_id in workflow_node_ids
+            else "execution_support"
+        )
+        grouped[node_id].append(receipt)
 
     usage_items: list[NodeUsage] = []
     for node_id in sorted(grouped):

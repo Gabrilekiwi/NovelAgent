@@ -54,7 +54,7 @@ pip install -r requirements.txt
 - **待处理**：处理异常恢复、草稿修订、重验证和作者确认提交；不确定的 Provider 调用不会自动重试。
 - **历史**：追溯生成、警告、恢复、提交、Receipt/readback 和成本摘要。
 
-第 20 章异常恢复以及第 21–40 章真实生产验收的作者操作清单见 [产品验证与自用上线标准](docs/product-validation.md)。完整测试门负责保护代码和数据，真实模型连续写作与人工阅读负责证明小说是否可用；两者都必须通过。
+第 20 章隔离异常恢复以及第 23–42 章真实生产验收的作者操作清单见 [产品验证与自用上线标准](docs/product-validation.md)。第 21、22 章是既有 Shadow 预热历史，不计入两个正式十章 Cohort。完整测试门负责保护代码和数据，真实模型连续写作与人工阅读负责证明小说是否可用；两者都必须通过。
 
 工作台只监听 `127.0.0.1`，并校验 Host、Origin 和启动令牌。Provider 凭据继续由本机环境变量或 `.env` 管理；网页和工作台 SQLite 只显示脱敏就绪状态，不接收、不回显也不保存 API Key。
 
@@ -75,6 +75,7 @@ python main.py --dry-run --memory data/notion_memory.example.json
 ```
 
 Generation commands print a concise summary by default. Add `--output-json` for the full result or `--output-run-json` for only the run record. If Claude polish fails after base chapter generation, the run continues with the unpolished generated chapter and records the polish error in the run trace.
+The execution runtime remains `legacy` by default. Add `--runtime-mode shadow` or set `NOVELAGENT_RUNTIME_MODE=shadow` to record internal node contracts, trace-derived attempts, non-resumable checkpoints, context digests/token estimates, and ModelCall-receipt usage without changing the authoritative executor. This execution-level Shadow is separate from StoryProject semantic shadow; `node` execution cutover is intentionally unavailable. See [Runtime Commands](docs/runtime.md).
 If local proxy environment variables interfere with provider API calls, run with `--no-proxy` or set `NOVELAGENT_NO_PROXY=1` in `.env` to clear `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` for the NovelAgent process.
 High-confidence mojibake output is rejected before it can be committed as chapter prose. If OpenAI returns an invalid chapter-plan JSON payload, the pipeline makes one schema-focused JSON repair request before failing the generation step.
 

@@ -89,6 +89,7 @@ SCHEMA_ASSETS = (
     Path("schemas/run_arc_plan.schema.json"),
     Path("schemas/run_record.schema.json"),
     Path("schemas/run_result.schema.json"),
+    Path("schemas/runtime_evidence.schema.json"),
     Path("schemas/snapshot_builder_audit.schema.json"),
     Path("schemas/snapshot.schema.json"),
     Path("schemas/story_project_runtime_migration.schema.json"),
