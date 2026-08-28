@@ -69,9 +69,12 @@ class ReviewPipelineTests(unittest.TestCase):
         )
 
         validate_schema(summary, "review_pipeline_summary.schema.json")
-        self.assertIn(summary["status"], {"pass", "warning", "needs_revision"})
-        self.assertNotEqual("blocked", summary["status"])
+        self.assertEqual("warning", summary["status"])
+        self.assertEqual("accept_with_warnings", summary["decision"]["decision"])
+        self.assertEqual(0, summary["tasks"]["repair_task_count"])
         self.assertEqual(0, summary["tasks"]["blocking_task_count"])
+        self.assertTrue(summary["quality_decision"]["accepted"])
+        self.assertEqual("warning", summary["quality_decision"]["max_severity"])
 
     def test_output_artifacts_are_written(self) -> None:
         chapter_text, snapshot, previous = _load_case("metro_meta_output_bad")

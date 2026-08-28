@@ -7,6 +7,8 @@ from core.scene_continuity import (
     SceneBoundaryValidationError,
     empty_scene_state,
     require_scene_transition,
+    scene_state_generation_projection,
+    scene_state_hash,
     validate_scene_transition,
 )
 import modules.chapter_generator.pipeline as pipeline_module
@@ -24,6 +26,51 @@ def _empty_deltas() -> dict[str, list[dict]]:
 
 
 class SceneContinuityTests(unittest.TestCase):
+    def test_prompt_projection_can_bound_event_details_without_losing_history_proof(
+        self,
+    ) -> None:
+        state = empty_scene_state()
+        state["completed_events"] = [
+            {
+                "event_id": f"history-{index:03d}",
+                "type": "checkpoint_completed",
+                "subjects": ["hero"],
+                "objects": [f"checkpoint-{index:03d}"],
+                "location": "station",
+                "status": "completed",
+                "detail": "local audit evidence " * 20,
+            }
+            for index in range(30)
+        ]
+        state["completed_event_ids"] = [
+            event["event_id"] for event in state["completed_events"]
+        ]
+
+        full = scene_state_generation_projection(state)
+        bounded = scene_state_generation_projection(
+            state,
+            completed_event_record_limit=6,
+        )
+
+        self.assertEqual(24, len(full["completed_events"]))
+        self.assertEqual(6, len(bounded["completed_events"]))
+        for proof_field in (
+            "completed_event_ids",
+            "completed_event_ids_count",
+            "completed_event_ids_sha256",
+            "completed_event_ids_truncated",
+        ):
+            self.assertEqual(full[proof_field], bounded[proof_field])
+        self.assertEqual(30, len(state["completed_events"]))
+        self.assertEqual(
+            scene_state_hash(state),
+            bounded["context_projection"]["source_sha256"],
+        )
+        self.assertNotEqual(
+            full["context_projection"]["projection_sha256"],
+            bounded["context_projection"]["projection_sha256"],
+        )
+
     def test_plan_assigns_unique_event_scope_and_forbids_prior_ids(self) -> None:
         plan = pipeline_module.plan_scenes(
             "input",

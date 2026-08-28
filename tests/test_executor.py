@@ -14,6 +14,7 @@ from core.context_budget import ContextBudgetError, RunBudgetLimits
 from core.director import DirectorDecisionError
 from core.engine.artifacts import save_chapter_artifact
 from core.engine.executor import AgentExecutor, LoopExecutionError
+from core.engine.locked_chapter import LockedChapterRecoveryError
 from core.engine.repair_convergence import RepairNotConvergingError
 from core.execution_provenance import validate_execution_provenance
 from core.model_call_runtime import ProviderCallUncertainError, current_model_call_runtime
@@ -147,6 +148,45 @@ class AgentExecutorTest(unittest.TestCase):
             [{"index": 1}, {"index": 2}],
             expected_scene_count=9,
         )
+
+    def test_validate_recomputes_blueprint_coverage_for_the_current_draft(self) -> None:
+        blueprint = {
+            "chapter_index": 22,
+            "title": "Current draft coverage",
+            "core_event": "the team repairs the pump",
+            "required_beats": [
+                {"index": 1, "text": "the team repairs the pump"},
+                {"index": 2, "text": "the alarm reveals a second breach"},
+            ],
+            "ending_pressure": "the eastern gate starts counting down",
+            "missing_fields": [],
+        }
+        stale_coverage = {
+            "required_beat_count": 2,
+            "covered_beat_indexes": [1, 2],
+            "missing_beat_indexes": [],
+            "ending_pressure_required": True,
+            "ending_pressure_covered": True,
+        }
+        state = {
+            "chapter": "The team repairs the pump, but the chapter now ends early.",
+            "chapter_pipeline": {
+                "scene_drafts": [
+                    {"index": 1, "covered_beat_indexes": [1, 2]},
+                ],
+                "blueprint_coverage": stale_coverage,
+            },
+        }
+
+        with patch("core.engine.executor.validate_chapter") as validator:
+            validator.return_value = self._ok_validation({}, state["chapter"], {})
+            executor = AgentExecutor(story_project_context={"chapter_blueprint": blueprint})
+            executor._handle_validate(state, {}, {"chapter_index": 22})
+
+        coverage = validator.call_args.kwargs["blueprint_coverage"]
+        self.assertEqual([2], coverage["missing_beat_indexes"])
+        self.assertFalse(coverage["ending_pressure_covered"])
+        self.assertEqual(coverage, state["chapter_pipeline"]["blueprint_coverage"])
 
     def _ok_validation(self, snapshot: dict, chapter: str, decision: dict) -> dict:
         return validate_schema(
@@ -1014,38 +1054,18 @@ class AgentExecutorTest(unittest.TestCase):
             "scenes": [],
         }
 
-        with patch.object(
-            executor,
-            "_locked_chapter_checkpoint",
-            return_value=checkpoint,
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "no source run or draft evidence",
         ):
-            result = executor.run_once(persist=True)
+            with patch.object(
+                executor,
+                "_locked_chapter_checkpoint",
+                return_value=checkpoint,
+            ):
+                executor.run_once(persist=True)
 
         self.assertEqual([], generator_calls)
-        self.assertFalse(result["accepted"])
-        self.assertFalse(result["committed"])
-        coverage = result["run"]["story_project"]["blueprint_coverage"]
-        self.assertEqual([], coverage["missing_beat_indexes"])
-        self.assertTrue(coverage["ending_pressure_covered"])
-        final_artifact = result["run"]["chapter"]["final_artifact"]
-        self.assertFalse(final_artifact["accepted"])
-        stale_findings = [
-            finding
-            for finding in final_artifact["findings"]
-            if finding["code"] == "stale_scene_evidence"
-        ]
-        self.assertTrue(stale_findings)
-        self.assertIn(
-            "scene_evidence_missing",
-            {
-                problem["reason"]
-                for finding in stale_findings
-                for problem in finding["evidence"]["problems"]
-            },
-        )
-        writeback = result["run"]["story_project"]["writeback"]
-        self.assertFalse(writeback["attempted"])
-        self.assertFalse(writeback["applied"])
         self.assertFalse(canonical_prose_path(book, 2, "Audit").exists())
         self.assertEqual(before_snapshot, snapshot_path.read_text(encoding="utf-8"))
 

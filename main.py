@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
-import sys
 from pathlib import Path
+import sys
+from time import perf_counter
 from typing import Any
 
 from core.autonomy.cli import (
@@ -43,6 +44,7 @@ from core.cli.output import (
     format_loop_progress_event,
     format_persistence_reconcile_summary,
 )
+from core.cli.progress import ProgressJSONLError, ProgressJSONLWriter
 from core.director import ModelDirector
 from core.engine.artifacts import chapter_artifact_metadata, save_chapter_artifact
 from core.engine.executor import AgentExecutor, LoopExecutionError
@@ -553,6 +555,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable multi-step progress lines printed to stderr.",
     )
+    parser.add_argument(
+        "--progress-jsonl",
+        default=None,
+        metavar="ABSOLUTE_PATH",
+        help=(
+            "Append and flush stable UTF-8 NDJSON progress events for chapter generation. "
+            "The absolute path's parent directory must already exist."
+        ),
+    )
     _add_autonomy_arguments(parser)
     return parser
 
@@ -563,16 +574,98 @@ def parse_args() -> argparse.Namespace:
     return parse_arguments(parser, argv)
 
 
-def _loop_progress_observer(args: argparse.Namespace):
-    if args.no_progress or args.output_json or args.output_run_json or args.steps <= 1:
+class _LoopProgressObserver:
+    def __init__(self, *, print_human: bool, jsonl_writer: ProgressJSONLWriter | None) -> None:
+        self._print_human = print_human
+        self._jsonl_writer = jsonl_writer
+
+    def __call__(self, event: dict[str, Any]) -> None:
+        if self._print_human:
+            line = format_loop_progress_event(event)
+            if line:
+                print(line, file=sys.stderr, flush=True)
+        if self._jsonl_writer is not None:
+            self._jsonl_writer(event)
+
+    def close(self) -> None:
+        if self._jsonl_writer is not None:
+            self._jsonl_writer.close()
+
+
+def _loop_progress_observer(args: argparse.Namespace) -> _LoopProgressObserver | None:
+    print_human = not (
+        args.no_progress or args.output_json or args.output_run_json or args.steps <= 1
+    )
+    jsonl_writer = (
+        ProgressJSONLWriter(args.progress_jsonl)
+        if getattr(args, "progress_jsonl", None)
+        else None
+    )
+    if not print_human and jsonl_writer is None:
         return None
+    return _LoopProgressObserver(print_human=print_human, jsonl_writer=jsonl_writer)
 
-    def observe(event: dict) -> None:
-        line = format_loop_progress_event(event)
-        if line:
-            print(line, file=sys.stderr, flush=True)
 
-    return observe
+def _run_once_with_progress(
+    executor: AgentExecutor,
+    *,
+    persist: bool,
+    observer: _LoopProgressObserver | None,
+) -> dict[str, Any]:
+    if observer is None:
+        return executor.run_once(persist=persist)
+
+    requested_steps = 1
+    observer({"event": "loop_start", "requested_steps": requested_steps})
+    observer({"event": "step_start", "step": 1, "requested_steps": requested_steps})
+    started_at = perf_counter()
+    try:
+        result = executor.run_once(persist=persist)
+    except Exception as exc:
+        observer(
+            {
+                "event": "step_failed",
+                "step": 1,
+                "requested_steps": requested_steps,
+                "duration_ms": max(0, round((perf_counter() - started_at) * 1000)),
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            }
+        )
+        raise
+
+    observer(
+        {
+            "event": "step_end",
+            "step": 1,
+            "requested_steps": requested_steps,
+            "duration_ms": max(0, round((perf_counter() - started_at) * 1000)),
+            "run_id": result["run"]["id"],
+            "chapter_index": result["run"]["chapter_index"],
+            "committed": result["committed"],
+            "status": result["run"]["status"],
+        }
+    )
+    run_status = str(result["run"].get("status") or "")
+    if (
+        run_status == "failed"
+        or _story_project_writeback_exit_code(result)
+        or _memory_writeback_exit_code(result)
+    ):
+        stopped_reason = "failed"
+    elif run_status == "rejected":
+        stopped_reason = "rejected"
+    else:
+        stopped_reason = "max_steps"
+    observer(
+        {
+            "event": "loop_end",
+            "requested_steps": requested_steps,
+            "completed_steps": 1,
+            "stopped_reason": stopped_reason,
+        }
+    )
+    return result
 
 
 def _load_story_project_identity_for_read_command(args: argparse.Namespace):
@@ -1013,33 +1106,51 @@ def main() -> None:
         or args.story_project_writeback_dry_run
         or args.review_repair_dry_run
     )
+    try:
+        progress_observer = _loop_progress_observer(args)
+    except (OSError, ProgressJSONLError) as exc:
+        print(f"Configuration failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
     loop_exit_code = 0
     if args.steps == 1:
-        result = executor.run_once(persist=persist)
+        try:
+            result = _run_once_with_progress(
+                executor,
+                persist=persist,
+                observer=progress_observer,
+            )
+        finally:
+            if progress_observer is not None:
+                progress_observer.close()
     else:
         try:
-            loop_result = executor.run_loop(
-                steps=args.steps,
-                persist=persist,
-                stop_on_rejection=not args.continue_on_rejection,
-                observer=_loop_progress_observer(args),
-            )
-        except LoopExecutionError as exc:
-            payload = {
-                "session": exc.session,
-                "runs": exc.runs,
-                "error": {
-                    "type": type(exc.original).__name__,
-                    "message": str(exc.original),
-                },
-            }
-            if args.output_json:
-                print(json.dumps(payload, ensure_ascii=False, indent=2))
-            elif args.output_run_json and exc.runs:
-                print(json.dumps(exc.runs[-1]["run"], ensure_ascii=False, indent=2))
-            else:
-                print(format_loop_failure_summary(payload))
-            raise SystemExit(1) from exc
+            try:
+                loop_result = executor.run_loop(
+                    steps=args.steps,
+                    persist=persist,
+                    stop_on_rejection=not args.continue_on_rejection,
+                    observer=progress_observer,
+                )
+            except LoopExecutionError as exc:
+                payload = {
+                    "session": exc.session,
+                    "runs": exc.runs,
+                    "error": {
+                        "type": type(exc.original).__name__,
+                        "message": str(exc.original),
+                    },
+                }
+                if args.output_json:
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                elif args.output_run_json and exc.runs:
+                    print(json.dumps(exc.runs[-1]["run"], ensure_ascii=False, indent=2))
+                else:
+                    print(format_loop_failure_summary(payload))
+                raise SystemExit(1) from exc
+        finally:
+            if progress_observer is not None:
+                progress_observer.close()
         if args.output_json:
             print(json.dumps(loop_result, ensure_ascii=False, indent=2))
             loop_exit_code = int(loop_result.get("exit_code") or 0)

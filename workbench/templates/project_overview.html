@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% set active_nav = 'overview' %}
+
+{% block title %}{{ project.title }} · 概览{% endblock %}
+
+{% block top_actions %}
+  <a class="button button-primary button-small" href="{{ new_session_url|default(project_url ~ '/production/new') }}">继续写作</a>
+{% endblock %}
+
+{% block content %}
+<section class="page-heading project-heading">
+  <div>
+    <div class="heading-status-row">
+      <p class="eyebrow">作品概览</p>
+      {{ ui.status_badge(project.mode|default('experimental'), project.mode_label|default(none)) }}
+    </div>
+    <h1>{{ project.title }}</h1>
+    <p class="lede">{{ project.summary|default('还没有作品简介。', true) }}</p>
+  </div>
+  <div class="heading-meta">
+    <span>最近更新</span>
+    <strong>{{ project.updated_at_label|default('尚未开始') }}</strong>
+  </div>
+</section>
+
+<section class="metrics-grid overview-metrics" aria-label="作品数据">
+  {{ ui.metric('已提交正文', (project.chapter_count|default(0)) ~ ' 章', project.word_count_label|default('0 字')) }}
+  {{ ui.metric('下一章', '第 ' ~ (project.next_chapter|default(1)) ~ ' 章', project.next_outline_title|default('待规划')) }}
+  {{ ui.metric('章纲储备', (project.outline_ready_count|default(0)) ~ ' 章', project.outline_range_label|default('尚无已确认章纲'), 'jade') }}
+  {{ ui.metric('待处理', pending_count|default(0), '需要作者判断', 'attention' if pending_count|default(0) else 'default') }}
+</section>
+
+{% if attention|default(none) %}
+<section class="attention-banner">
+  <div class="attention-icon" aria-hidden="true">!</div>
+  <div>
+    <p class="eyebrow">需要你决定</p>
+    <h2>{{ attention.title }}</h2>
+    <p>{{ attention.description }}</p>
+  </div>
+  <a class="button button-light" href="{{ attention.url }}">{{ attention.action_label|default('现在处理') }}</a>
+</section>
+{% endif %}
+
+<div class="dashboard-grid">
+  <section class="panel panel-wide">
+    <div class="section-heading compact">
+      <div><p class="eyebrow">创作节奏</p><h2>接下来做什么</h2></div>
+    </div>
+    <div class="next-actions">
+      <a class="action-card primary-action" href="{{ new_session_url|default(project_url ~ '/production/new') }}">
+        <span class="action-index">01</span>
+        <div><strong>继续生成正文</strong><p>从第 {{ project.next_chapter|default(1) }} 章开始，按已确认章纲连续创作。</p></div>
+        <span aria-hidden="true">→</span>
+      </a>
+      <a class="action-card" href="{{ outline_url|default(project_url ~ '/outlines') }}">
+        <span class="action-index">02</span>
+        <div><strong>规划未来 10 章</strong><p>先生成结构化提案，编辑并确认后才发布。</p></div>
+        <span aria-hidden="true">→</span>
+      </a>
+      <a class="action-card" href="{{ chapters_url|default(project_url ~ '/chapters') }}">
+        <span class="action-index">03</span>
+        <div><strong>阅读与安全润色</strong><p>查看正文、审核结果与不可变版本。</p></div>
+        <span aria-hidden="true">→</span>
+      </a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading compact">
+      <div><p class="eyebrow">运行状态</p><h2>项目健康</h2></div>
+      <a class="text-link" href="{{ health_url|default(project_url ~ '/health') }}">查看详情</a>
+    </div>
+    <div class="health-score">
+      <div class="score-ring" style="--score: {{ health.score|default(0) }}"><strong>{{ health.score|default('—') }}</strong><small>/ 100</small></div>
+      <div>
+        {{ ui.status_badge(health.status|default('experimental'), health.label|default(none)) }}
+        <p>{{ health.summary|default('完成校准与激活后，才可作为 Strict 生产项目。') }}</p>
+      </div>
+    </div>
+    <ul class="health-checks">
+      {% for check in health.checks|default([]) %}
+      <li class="check-{{ check.state|default('pending') }}"><span aria-hidden="true">{{ '✓' if check.state == 'pass' else '—' }}</span><span>{{ check.label }}</span></li>
+      {% else %}
+      <li class="check-pending"><span aria-hidden="true">—</span><span>尚无健康检查记录</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel panel-wide">
+    <div class="section-heading compact">
+      <div><p class="eyebrow">最近章节</p><h2>正文进展</h2></div>
+      <a class="text-link" href="{{ chapters_url|default(project_url ~ '/chapters') }}">全部章节</a>
+    </div>
+    <div class="chapter-list compact-list">
+      {% for chapter in recent_chapters|default([]) %}
+      <a class="chapter-row" href="{{ chapter.url|default(project_url ~ '/chapters/' ~ chapter.number) }}">
+        <span class="chapter-number">{{ '%02d'|format(chapter.number) }}</span>
+        <span class="chapter-copy"><strong>{{ chapter.title|default('未命名章节') }}</strong><small>{{ chapter.word_count_label|default('') }}{% if chapter.updated_at_label %} · {{ chapter.updated_at_label }}{% endif %}</small></span>
+        {{ ui.status_badge(chapter.status|default('committed')) }}
+      </a>
+      {% else %}
+        {{ ui.empty_state('还没有正文', '确认第一章章纲后，就可以开始生成。') }}
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading compact">
+      <div><p class="eyebrow">最近生产</p><h2>运行摘要</h2></div>
+      <a class="text-link" href="{{ history_url|default(project_url ~ '/history') }}">全部历史</a>
+    </div>
+    <div class="activity-list">
+      {% for run in recent_runs|default([]) %}
+      <a href="{{ run.url|default('#') }}" class="activity-row">
+        <span class="activity-mark activity-{{ run.status|default('idle') }}" aria-hidden="true"></span>
+        <span><strong>{{ run.title|default('运行记录') }}</strong><small>{{ run.time_label|default('') }} · {{ run.detail|default('') }}</small></span>
+        {{ ui.status_badge(run.status|default('idle'), size='small') }}
+      </a>
+      {% else %}<p class="muted-copy">暂无运行记录。</p>{% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

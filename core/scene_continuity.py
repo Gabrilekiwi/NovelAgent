@@ -460,13 +460,40 @@ def scene_state_generation_projection(
     state: dict[str, Any],
     *,
     include_completed_event_records: bool = True,
+    completed_event_record_limit: int | None = None,
 ) -> dict[str, Any]:
-    """Return a prompt-only Scene state while retaining full local audit state."""
+    """Return a prompt-only Scene state while retaining full local audit state.
+
+    ``completed_event_record_limit`` only bounds prompt-facing historical
+    details.  The ids/count/hash summary still represents the complete local
+    history, and callers continue to use the unprojected state for boundary
+    validation.
+    """
+
+    if (
+        isinstance(completed_event_record_limit, bool)
+        or (
+            completed_event_record_limit is not None
+            and (
+                not isinstance(completed_event_record_limit, int)
+                or completed_event_record_limit < 0
+            )
+        )
+    ):
+        raise ValueError(
+            "completed_event_record_limit must be a non-negative integer or None"
+        )
 
     normalized = _normalize_state(state)
     projected = scene_state_summary(normalized)
     if not include_completed_event_records:
         projected["completed_events"] = []
+    elif completed_event_record_limit is not None:
+        projected["completed_events"] = (
+            projected["completed_events"][-completed_event_record_limit:]
+            if completed_event_record_limit
+            else []
+        )
     projected["rosters"] = {
         roster_id: project_roster_for_generation(record)
         for roster_id, record in projected["rosters"].items()

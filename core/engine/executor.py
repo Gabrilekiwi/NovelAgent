@@ -97,6 +97,7 @@ from core.engine.locked_chapter_state import (
     active_locked_chapter_checkpoint,
     resolved_execution_ids,
 )
+from core.engine.locked_chapter import load_verified_locked_chapter_pipeline
 from core.engine.persistence_v2 import (
     PersistenceV2Target,
     bind_final_run_record_receipt,
@@ -1524,13 +1525,18 @@ class AgentExecutor:
             if isinstance(locked_checkpoint, dict)
             else None
         )
+        locked_chapter_pipeline = self._locked_complete_draft_pipeline(
+            locked_checkpoint,
+            complete_draft,
+            snapshot=snapshot,
+        )
         state: dict[str, Any] = {
             "chapter": (
                 str(complete_draft["text"])
                 if isinstance(complete_draft, dict)
                 else ""
             ),
-            "chapter_pipeline": None,
+            "chapter_pipeline": locked_chapter_pipeline,
             "chapter_index": chapter_index,
             "locked_chapter_action": (
                 str(locked_checkpoint["action"])
@@ -1673,7 +1679,13 @@ class AgentExecutor:
 
     def _handle_generate(self, state: dict[str, Any], input_pack: str, snapshot: dict[str, Any]) -> None:
         if state.get("locked_chapter_action") == "repair_draft" and state.get("chapter"):
-            state["chapter_pipeline"] = None
+            if self.story_project_writeback.enabled and not isinstance(
+                state.get("chapter_pipeline"),
+                dict,
+            ):
+                raise ValueError(
+                    "StoryProject complete-draft recovery requires verified Scene evidence"
+                )
             state["validation"] = None
             return
         recovered_scene_drafts = state.get("recovered_scene_drafts") or []
@@ -1805,13 +1817,20 @@ class AgentExecutor:
             if self.validator is validate_chapter:
                 pipeline = state.get("chapter_pipeline") if isinstance(state.get("chapter_pipeline"), dict) else {}
                 blueprint = self._story_project_chapter_blueprint()
-                coverage = pipeline.get("blueprint_coverage") if isinstance(pipeline, dict) else None
-                if coverage is None and isinstance(blueprint, dict):
+                coverage = None
+                if isinstance(blueprint, dict):
+                    scene_drafts = (
+                        pipeline.get("scene_drafts")
+                        if isinstance(pipeline.get("scene_drafts"), list)
+                        else _synthetic_repaired_scene_drafts(blueprint)
+                    )
                     coverage = build_blueprint_coverage(
                         blueprint,
-                        _synthetic_repaired_scene_drafts(blueprint),
+                        scene_drafts,
                         chapter,
                     )
+                    if isinstance(pipeline, dict):
+                        pipeline["blueprint_coverage"] = coverage
                 return validate_chapter(
                     snapshot,
                     chapter,
@@ -2135,6 +2154,48 @@ class AgentExecutor:
             self.run_dir,
             chapter_index=chapter_index,
             expected_book_id=expected_book_id,
+        )
+
+    def _locked_complete_draft_pipeline(
+        self,
+        checkpoint: dict[str, Any] | None,
+        complete_draft: dict[str, Any] | None,
+        *,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if (
+            not self.story_project_writeback.enabled
+            or not isinstance(checkpoint, dict)
+            or checkpoint.get("action") != "repair_draft"
+            or not isinstance(complete_draft, dict)
+        ):
+            return None
+        chapter_blueprint = self._story_project_chapter_blueprint()
+        if not isinstance(chapter_blueprint, dict):
+            raise ValueError(
+                "complete-draft StoryProject recovery requires the current chapter blueprint"
+            )
+        pipeline = load_verified_locked_chapter_pipeline(
+            run_dir=self.run_dir,
+            checkpoint=checkpoint,
+            chapter_blueprint=chapter_blueprint,
+            language=project_language(snapshot),
+        )
+        before_chapter = str(pipeline.get("merged_chapter") or "")
+        after_chapter = str(complete_draft.get("text") or "")
+        if before_chapter == after_chapter:
+            return pipeline
+        patch = build_repair_patch_from_texts(
+            before_chapter,
+            after_chapter,
+            mode="stage_text_diff",
+        )
+        return self._realign_chapter_pipeline(
+            pipeline,
+            before_chapter=before_chapter,
+            after_chapter=after_chapter,
+            patch=patch,
+            stage="locked_complete_draft_realign",
         )
 
     def _validate_recovered_checkpoint_structure(
@@ -4504,7 +4565,76 @@ def _attach_authoritative_scene_delta(
             base_state=baseline,
         )
     result["authoritative_state_delta"] = copy.deepcopy(authority_delta)
+    result = _reconcile_story_state_with_final_scene(
+        result,
+        chapter_pipeline,
+        language=project_language(snapshot or {}),
+    )
     return result
+
+
+def _reconcile_story_state_with_final_scene(
+    analysis: dict[str, Any],
+    chapter_pipeline: dict[str, Any] | None,
+    *,
+    language: str | None = None,
+) -> dict[str, Any]:
+    """Make the verified final Scene boundary the next chapter's continuity.
+
+    The analyzer's location extraction is deliberately lexical and can mistake
+    a destination mentioned near the ending for the place where the scene
+    actually ends.  The Scene pipeline has already validated ordered events and
+    location deltas, so its final state is the stronger source for continuity.
+    """
+
+    if not isinstance(chapter_pipeline, dict):
+        return analysis
+    final_state = chapter_pipeline.get("scene_state_final")
+    if not isinstance(final_state, dict):
+        return analysis
+    location = str(final_state.get("current_location") or "").strip()
+    characters_present_declared = "characters_present" in final_state
+    characters = sorted(
+        {
+            str(item).strip()
+            for item in final_state.get("characters_present") or []
+            if str(item).strip()
+        }
+    )
+    if not location and not characters_present_declared:
+        return analysis
+    existing_story_state = analysis.get("story_state")
+    if not isinstance(existing_story_state, dict):
+        return analysis
+    result = copy.deepcopy(analysis)
+    story_state = result["story_state"]
+    if location:
+        story_state["last_scene_location"] = location
+        story_state["required_opening_bridge"] = _required_opening_bridge(
+            location,
+            characters,
+            language=language,
+        )
+    if characters_present_declared:
+        story_state["last_scene_characters"] = characters
+    return result
+
+
+def _required_opening_bridge(
+    location: str,
+    characters: list[str],
+    *,
+    language: str | None = None,
+) -> str:
+    if str(language or "").strip().casefold().startswith("zh"):
+        participants = "、".join(characters)
+        if participants:
+            return f"{location}；{participants}"
+        return location
+    participants = ", ".join(characters)
+    if participants:
+        return f"{location}; {participants}"
+    return location
 
 
 def _require_chapter(state: dict[str, Any]) -> str:

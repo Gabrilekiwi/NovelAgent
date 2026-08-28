@@ -151,16 +151,20 @@ def resolve_story_project_previous_chapter(
             "previous_chapter_missing",
             f"no prose file matched chapter {previous_index}; earlier prose exists at {sorted(earlier_chapters)}",
         )
-    raw = resolution.path.read_bytes()
-    text = _normalize_newlines(raw.decode("utf-8-sig"))
+    from core.story_project.amendments import read_current_chapter_text
+
+    text, current_path, source_sha256, source_kind = read_current_chapter_text(
+        root, previous_index
+    )
+    text = _normalize_newlines(text)
     return _previous_context_from_text(
         text=text,
         chapter_index=chapter_index - 1,
-        source_kind="story_project_prose",
-        path_ref=path_ref_for(resolution.path, root_id="story_project", root=root),
+        source_kind=source_kind,
+        path_ref=path_ref_for(current_path, root_id="story_project", root=root),
         generation_max_chars=generation_max_chars,
         review_tail_chars=review_tail_chars,
-        source_sha256=hashlib.sha256(raw).hexdigest(),
+        source_sha256=source_sha256,
     )
 
 

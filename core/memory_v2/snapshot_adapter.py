@@ -12,6 +12,7 @@ from core.state.authoritative import empty_authoritative_state, validate_authori
 
 
 PROMOTED_CHARACTER_DATA_FIELDS = ("role", "identity", "status", "current_goal")
+_CONFIRMED_LOCATION_CERTAINTIES = frozenset({"confirmed", "current"})
 
 
 def canonical_memory_to_snapshot(canonical_memory: dict[str, Any]) -> dict[str, Any]:
@@ -32,14 +33,13 @@ def canonical_memory_to_snapshot(canonical_memory: dict[str, Any]) -> dict[str, 
         else empty_authoritative_state()
     )
     characters = _authority_characters(characters, authoritative_state)
+    characters = _authority_character_locations(characters, authoritative_state)
     story_state = _story_state(memory)
     spatial_state = _spatial_state(memory, characters, locations)
-    spatial_state["character_positions"].update(
-        {
-            str(entity_id): copy.deepcopy(record.get("location_id"))
-            for entity_id, record in authoritative_state["locations"].items()
-            if isinstance(record, dict) and record.get("location_id") not in (None, "")
-        }
+    spatial_state["character_positions"] = _authority_character_positions(
+        spatial_state["character_positions"],
+        characters,
+        authoritative_state,
     )
 
     snapshot = {
@@ -125,6 +125,15 @@ def rebuild_semantic_snapshot(
         story,
     )
     snapshot["characters"] = _authority_characters(
+        snapshot["characters"],
+        snapshot["authoritative_state"],
+    )
+    snapshot["characters"] = _authority_character_locations(
+        snapshot["characters"],
+        snapshot["authoritative_state"],
+    )
+    snapshot["spatial_state"]["character_positions"] = _authority_character_positions(
+        snapshot["spatial_state"].get("character_positions"),
         snapshot["characters"],
         snapshot["authoritative_state"],
     )
@@ -259,6 +268,135 @@ def _authority_characters(
         record.setdefault("data", {})
         characters[str(character_id)] = record
     return characters
+
+
+def _authority_character_locations(
+    characters: dict[str, dict[str, Any]],
+    authority: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Project confirmed authority locations back into the legacy cache.
+
+    ``characters.current_location`` and ``spatial_state.character_positions``
+    are compatibility projections, not independent facts.  Keeping an older
+    value here while ``authoritative_state.locations`` advances creates two
+    contradictory inputs for validators and repair prompts.  Explicitly
+    unverified reports remove the stale compatibility value instead of
+    accidentally reviving it as a hard constraint.
+    """
+
+    projected = copy.deepcopy(characters)
+    locations = authority.get("locations") if isinstance(authority, dict) else {}
+    if not isinstance(locations, dict):
+        return projected
+    for character_id, raw in _authority_location_bindings(projected, authority):
+        target = projected[character_id]
+        if not isinstance(target, dict):
+            continue
+        if not _authority_location_is_confirmed(raw):
+            target.pop("current_location", None)
+            target.pop("location_id", None)
+            state = target.get("state")
+            if isinstance(state, dict):
+                state.pop("current_location", None)
+                state.pop("location_id", None)
+            continue
+        location_id = str(raw.get("location_id") or "").strip()
+        if location_id:
+            target["current_location"] = location_id
+            state = target.get("state")
+            if not isinstance(state, dict):
+                state = {}
+                target["state"] = state
+            state["current_location"] = location_id
+    return projected
+
+
+def _authority_character_positions(
+    positions: Any,
+    characters: dict[str, dict[str, Any]],
+    authority: dict[str, Any],
+) -> dict[str, Any]:
+    """Rebuild only character positions from authority-bound character facts.
+
+    The authoritative location ledger also contains vehicles, equipment and
+    rosters.  Copying every ledger entry into ``character_positions`` turns
+    those objects into phantom characters.  For a real character, remove every
+    legacy id/name/alias key first; an unverified report therefore suppresses a
+    stale position, while a confirmed record is projected once under the
+    canonical display name.
+    """
+
+    projected = copy.deepcopy(positions) if isinstance(positions, dict) else {}
+    for character_id, raw in _authority_location_bindings(characters, authority):
+        character = characters.get(character_id, {})
+        identities = _character_identities(character_id, character)
+        for key in list(projected):
+            if _identity_key(key) in identities:
+                projected.pop(key, None)
+        if not _authority_location_is_confirmed(raw):
+            continue
+        location_id = str(raw.get("location_id") or "").strip()
+        if not location_id:
+            continue
+        display_name = str(
+            character.get("name")
+            or character.get("canonical_name")
+            or character_id
+        ).strip()
+        projected[display_name or character_id] = copy.deepcopy(location_id)
+    return projected
+
+
+def _authority_location_bindings(
+    characters: dict[str, dict[str, Any]],
+    authority: dict[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    locations = authority.get("locations") if isinstance(authority, dict) else {}
+    if not isinstance(locations, dict):
+        return []
+    identity_owners: dict[str, set[str]] = {}
+    for character_id, character in characters.items():
+        for identity in _character_identities(character_id, character):
+            identity_owners.setdefault(identity, set()).add(str(character_id))
+
+    bindings: list[tuple[str, dict[str, Any]]] = []
+    for record_id, raw in locations.items():
+        if not isinstance(raw, dict):
+            continue
+        entity_key = _identity_key(raw.get("entity_id") or record_id)
+        owners = identity_owners.get(entity_key, set())
+        if len(owners) != 1:
+            continue
+        bindings.append((next(iter(owners)), raw))
+    return bindings
+
+
+def _character_identities(character_id: str, character: dict[str, Any]) -> set[str]:
+    values = {
+        character_id,
+        character.get("id"),
+        character.get("name"),
+        character.get("canonical_name"),
+    }
+    values.update(character.get("aliases") or [])
+    data = character.get("data") if isinstance(character.get("data"), dict) else {}
+    values.update(data.get("aliases") or [])
+    return {
+        normalized
+        for value in values
+        if (normalized := _identity_key(value))
+    }
+
+
+def _identity_key(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _authority_location_is_confirmed(record: dict[str, Any]) -> bool:
+    raw = record.get("certainty")
+    if raw in (None, ""):
+        return True
+    return str(raw).strip().casefold() in _CONFIRMED_LOCATION_CERTAINTIES
 
 
 def _story_state(memory: dict[str, Any]) -> dict[str, Any]:

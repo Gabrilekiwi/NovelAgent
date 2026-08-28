@@ -1,0 +1,59 @@
+{% macro status_badge(status, label=None, size='normal') -%}
+  {% set normalized = (status or 'idle')|lower %}
+  {% set labels = {
+    'idle': '空闲',
+    'draft': '草稿',
+    'ready': '就绪',
+    'queued': '排队中',
+    'preflight': '预检中',
+    'generating': '生成中',
+    'validating': '校验中',
+    'reviewing': '审核中',
+    'awaiting_author': '等待作者',
+    'committing': '提交中',
+    'committed': '已提交',
+    'pass': '通过',
+    'warning': '警告',
+    'needs_revision': '需修订',
+    'paused': '已暂停',
+    'paused_recoverable': '可恢复',
+    'paused_needs_revision': '待修订',
+    'blocked': '阻塞',
+    'failed': '失败',
+    'error': '异常',
+    'cancelled': '已停止',
+    'experimental': '实验运行',
+    'strict': 'Strict 已激活',
+    'healthy': '健康'
+  } %}
+  <span class="status-badge status-{{ normalized|replace('_', '-') }} status-{{ size }}" data-status-badge="{{ normalized }}">
+    <span class="status-dot" aria-hidden="true"></span>
+    <span data-status-label>{{ label or labels.get(normalized, status or '未知') }}</span>
+  </span>
+{%- endmacro %}
+
+{% macro metric(label, value, note=None, tone='default') -%}
+  <article class="metric-card metric-{{ tone }}">
+    <p class="eyebrow">{{ label }}</p>
+    <p class="metric-value">{{ value }}</p>
+    {% if note %}<p class="metric-note">{{ note }}</p>{% endif %}
+  </article>
+{%- endmacro %}
+
+{% macro empty_state(title, body, action_label=None, action_href=None) -%}
+  <div class="empty-state">
+    <span class="empty-mark" aria-hidden="true">◇</span>
+    <h3>{{ title }}</h3>
+    <p>{{ body }}</p>
+    {% if action_label and action_href %}
+      <a class="button button-secondary" href="{{ action_href }}">{{ action_label }}</a>
+    {% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro progress_bar(value, label=None) -%}
+  {% set safe_value = value|default(0)|int %}
+  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ safe_value }}"{% if label %} aria-label="{{ label }}"{% endif %}>
+    <span style="--progress: {{ safe_value }}%"></span>
+  </div>
+{%- endmacro %}

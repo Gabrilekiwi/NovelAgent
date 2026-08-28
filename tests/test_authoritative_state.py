@@ -9,7 +9,10 @@ from core.memory_v2 import (
     create_empty_typed_canonical_memory,
     create_memory_patch,
 )
-from core.engine.executor import _attach_authoritative_scene_delta
+from core.engine.executor import (
+    _attach_authoritative_scene_delta,
+    _reconcile_story_state_with_final_scene,
+)
 from core.memory_v2.runtime import _chapter_operations
 from core.state.authoritative import (
     adapt_scene_deltas_to_authoritative_delta,
@@ -270,6 +273,153 @@ class AuthoritativeStateTests(unittest.TestCase):
         self.assertEqual(baseline, operations[0]["value"]["baseline_state"])
         self.assertFalse(any(item["op"] == "upsert_character" for item in operations))
         self.assertFalse(any(item["op"] == "upsert_location" for item in operations))
+
+    def test_verified_final_scene_does_not_create_optional_story_state(self) -> None:
+        analysis = {"summary": "The analyzer omitted optional continuity state."}
+
+        attached = _reconcile_story_state_with_final_scene(
+            analysis,
+            {
+                "scene_state_final": {
+                    "current_location": "westbound service road",
+                    "characters_present": ["Mira", "Tao"],
+                }
+            },
+            language="en",
+        )
+
+        self.assertIs(analysis, attached)
+        self.assertNotIn("story_state", attached)
+
+    def test_verified_final_scene_replaces_lexical_ending_location(self) -> None:
+        analysis = {
+            "summary": "The prose mentions the cold store last.",
+            "events": [],
+            "character_changes": [],
+            "world_changes": [],
+            "new_locations": [],
+            "story_state": {
+                "last_chapter_ending": "A cold-store coordinate remained on screen.",
+                "last_scene_location": "cold store",
+                "last_scene_characters": ["someone else"],
+                "open_threads": [],
+                "required_opening_bridge": "Continue from the cold store.",
+            },
+        }
+        pipeline = {
+            "scene_drafts": [
+                {
+                    "index": 1,
+                    "events": [],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                }
+            ],
+            "scene_state_final": {
+                "current_location": "westbound service road",
+                "characters_present": ["Mira", "Tao"],
+            },
+        }
+
+        attached = _attach_authoritative_scene_delta(
+            analysis,
+            pipeline,
+            {
+                "authoritative_state": empty_authoritative_state(),
+                "project_profile": {"language": "en"},
+            },
+        )
+
+        story_state = attached["story_state"]
+        self.assertEqual("westbound service road", story_state["last_scene_location"])
+        self.assertEqual(["Mira", "Tao"], story_state["last_scene_characters"])
+        self.assertIn("westbound service road", story_state["required_opening_bridge"])
+        self.assertNotIn("cold store", story_state["required_opening_bridge"])
+
+    def test_verified_chinese_final_scene_builds_chinese_bridge(self) -> None:
+        analysis = {
+            "story_state": {
+                "last_chapter_ending": "屏幕仍显示冷库坐标。",
+                "last_scene_location": "冷库",
+                "last_scene_characters": [],
+                "open_threads": [],
+                "required_opening_bridge": "承接冷库。",
+            }
+        }
+        pipeline = {
+            "scene_drafts": [],
+            "scene_state_final": {
+                "current_location": "城西物流园方向通勤道",
+                "characters_present": ["陆沉", "赵铁", "顾岚"],
+            },
+        }
+
+        attached = _attach_authoritative_scene_delta(
+            analysis,
+            pipeline,
+            {"project_profile": {"language": "zh-CN"}},
+            authority_delta={
+                "source_tier": "chapter_event",
+                "character_changes": [],
+                "relationship_changes": [],
+                "roster_changes": [],
+                "numeric_changes": [],
+                "inventory_changes": [],
+                "location_changes": [],
+                "events": [],
+            },
+        )
+
+        self.assertEqual(
+            "城西物流园方向通勤道",
+            attached["story_state"]["last_scene_location"],
+        )
+        self.assertEqual(
+            ["赵铁", "陆沉", "顾岚"],
+            attached["story_state"]["last_scene_characters"],
+        )
+        self.assertIn("城西物流园方向通勤道", attached["story_state"]["required_opening_bridge"])
+        self.assertIn("陆沉", attached["story_state"]["required_opening_bridge"])
+
+    def test_explicit_empty_final_roster_clears_analyzer_characters(self) -> None:
+        attached = _attach_authoritative_scene_delta(
+            {
+                "story_state": {
+                    "last_chapter_ending": "Mira left.",
+                    "last_scene_location": "hall",
+                    "last_scene_characters": ["Mira"],
+                    "open_threads": [],
+                    "required_opening_bridge": "hall; Mira",
+                }
+            },
+            {
+                "scene_drafts": [],
+                "scene_state_final": {
+                    "current_location": "roof",
+                    "characters_present": [],
+                },
+            },
+            {"project_profile": {"language": "en"}},
+            authority_delta={
+                "source_tier": "chapter_event",
+                "character_changes": [],
+                "relationship_changes": [],
+                "roster_changes": [],
+                "numeric_changes": [],
+                "inventory_changes": [],
+                "location_changes": [],
+                "events": [],
+            },
+        )
+
+        self.assertEqual([], attached["story_state"]["last_scene_characters"])
+        self.assertEqual("roof", attached["story_state"]["required_opening_bridge"])
 
     def test_memory_event_is_the_replayable_authority(self) -> None:
         memory = create_empty_typed_canonical_memory(book_id="book-authority")

@@ -44,8 +44,10 @@ class ConfigTest(unittest.TestCase):
 
     def test_openai_timeout_defaults_and_parses_env(self) -> None:
         original_timeout = os.environ.get("OPENAI_TIMEOUT_SECONDS")
-        os.environ["OPENAI_TIMEOUT_SECONDS"] = "7"
         try:
+            os.environ.pop("OPENAI_TIMEOUT_SECONDS", None)
+            self.assertEqual(180, get_config().openai_timeout_seconds)
+            os.environ["OPENAI_TIMEOUT_SECONDS"] = "7"
             config = get_config()
         finally:
             if original_timeout is None:

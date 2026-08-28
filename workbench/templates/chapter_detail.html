@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% set active_nav = 'chapters' %}
+
+{% block title %}第 {{ chapter.number }} 章 · {{ project.title }}{% endblock %}
+{% block breadcrumb %}<span>/</span><a href="{{ chapters_url|default(project_url ~ '/chapters') }}">章节</a><span>/</span><span>第 {{ chapter.number }} 章</span>{% endblock %}
+
+{% block content %}
+<section class="page-heading chapter-heading">
+  <div>
+    <div class="heading-status-row"><p class="eyebrow">第 {{ chapter.number }} 章</p>{{ ui.status_badge(chapter.status|default('committed')) }}</div>
+    <h1>{{ chapter.title|default('未命名章节') }}</h1>
+    <p class="chapter-meta">{{ chapter.word_count_label|default('—') }} · 提交于 {{ chapter.committed_at_label|default('—') }} · Receipt {{ chapter.receipt_id|default('—')|truncate(14, true, '…') }}</p>
+  </div>
+  <div class="chapter-pagination"><a class="icon-button" href="{{ chapter.previous_url|default('#') }}"{% if not chapter.previous_url %} aria-disabled="true"{% endif %} title="上一章">←</a><a class="icon-button" href="{{ chapter.next_url|default('#') }}"{% if not chapter.next_url %} aria-disabled="true"{% endif %} title="下一章">→</a></div>
+</section>
+
+<div class="tab-shell" data-tabs data-default-tab="{{ active_tab|default('prose') }}">
+  <div class="tab-list" role="tablist" aria-label="章节内容">
+    <button role="tab" type="button" data-tab="prose">正文</button>
+    <button role="tab" type="button" data-tab="outline">章纲</button>
+    <button role="tab" type="button" data-tab="review">审核{% if chapter.review.issue_count|default(0) %}<span class="tab-count">{{ chapter.review.issue_count }}</span>{% endif %}</button>
+    <button role="tab" type="button" data-tab="versions">版本历史</button>
+  </div>
+
+  <section class="tab-panel" role="tabpanel" data-tab-panel="prose">
+    <div class="reading-layout">
+      <article class="prose-paper">
+        <header><span>CHAPTER {{ '%02d'|format(chapter.number) }}</span><h2>{{ chapter.title }}</h2></header>
+        <div class="prose-content">{{ chapter.content }}</div>
+      </article>
+      <aside class="reading-aside">
+        <section class="panel compact-panel"><p class="eyebrow">当前版本</p><dl class="version-facts"><div><dt>类型</dt><dd>{{ chapter.version_type_label|default('原始提交') }}</dd></div><div><dt>修订</dt><dd>r{{ chapter.revision|default(1) }}</dd></div><div><dt>SHA</dt><dd><code>{{ chapter.sha|default('—')|truncate(14, true, '…') }}</code></dd></div></dl></section>
+        <button class="button button-secondary button-wide" type="button" data-tab-target="versions">发起安全润色</button>
+        <p class="safety-note">润色会创建新 amendment，不直接覆盖历史正文。</p>
+      </aside>
+    </div>
+  </section>
+
+  <section class="tab-panel" role="tabpanel" data-tab-panel="outline">
+    <div class="panel outline-readonly">
+      <p class="eyebrow">已冻结章纲</p><h2>{{ chapter.outline.title|default(chapter.title) }}</h2>
+      <dl><div><dt>核心事件</dt><dd>{{ chapter.outline.core_event|default('—') }}</dd></div><div><dt>必写节拍</dt><dd><ul>{% for beat in chapter.outline.required_beats|default([]) %}<li>{{ beat }}</li>{% else %}<li>—</li>{% endfor %}</ul></dd></div><div><dt>结尾压力</dt><dd>{{ chapter.outline.ending_pressure|default('—') }}</dd></div></dl>
+    </div>
+  </section>
+
+  <section class="tab-panel" role="tabpanel" data-tab-panel="review">
+    <div class="review-grid">
+      <section class="panel review-score-card"><p class="eyebrow">审核结果</p><div class="review-score"><strong>{{ chapter.review.score|default('—') }}</strong><span>/ 5.0</span></div>{{ ui.status_badge(chapter.review.status|default('pass')) }}<p>{{ chapter.review.summary|default('本章通过质量检查。') }}</p></section>
+      <section class="panel review-dimensions"><div class="section-heading compact"><div><p class="eyebrow">人工评分</p><h2>九项可用性指标</h2></div></div>
+        <div class="dimension-list">{% for dimension in chapter.review.dimensions|default([]) %}<div><span>{{ dimension.label }}</span><div class="mini-score"><i style="--score: {{ (dimension.score|default(0) * 20)|int }}%"></i></div><strong>{{ dimension.score|default('—') }}</strong></div>{% else %}<p class="muted-copy">尚未进行人工评分。</p>{% endfor %}</div>
+      </section>
+      <section class="panel review-issues panel-wide"><div class="section-heading compact"><div><p class="eyebrow">发现</p><h2>审核项</h2></div></div>
+        <div class="issue-list">{% for item in chapter.review.issues|default([]) %}<article class="review-issue issue-{{ item.severity|default('info') }}"><span>{{ item.severity_label|default('提示') }}</span><div><strong>{{ item.title }}</strong><p>{{ item.detail }}</p></div></article>{% else %}<p class="muted-copy">没有需要作者处理的问题。</p>{% endfor %}</div>
+      </section>
+    </div>
+  </section>
+
+  <section class="tab-panel" role="tabpanel" data-tab-panel="versions">
+    <div class="versions-layout">
+      <section class="panel">
+        <div class="section-heading compact"><div><p class="eyebrow">不可变历史</p><h2>版本时间线</h2></div></div>
+        <ol class="version-timeline">{% for version in chapter.versions|default([]) %}<li class="{% if version.is_current %}is-current{% endif %}"><span class="version-node" aria-hidden="true"></span><div><div class="version-title"><strong>{{ version.label }}</strong>{% if version.is_current %}<span>当前</span>{% endif %}</div><p>{{ version.summary|default('') }}</p><small>r{{ version.revision }} · {{ version.created_at_label }} · <code>{{ version.sha|truncate(12, true, '…') }}</code></small></div></li>{% else %}<li><span class="version-node"></span><div><strong>原始提交</strong></div></li>{% endfor %}</ol>
+      </section>
+      <section class="panel amendment-editor">
+        <p class="eyebrow">安全润色</p><h2>创建 amendment</h2><p>只允许表达润色。如果人物身份、关系、数量、地点、时间线、资源或关键情节发生变化，校验会拒绝。</p>
+        <form action="{{ chapter.amendment_url|default('/api/chapters/' ~ chapter.number ~ '/amendments') }}" method="post" data-async-form data-json-form data-cas-revision="{{ chapter.revision|default(1) }}" data-cas-sha="{{ chapter.sha|default('') }}" data-success-message="Amendment 草稿已创建，正在校验。">
+          <input type="hidden" name="base_revision" value="{{ chapter.revision|default(1) }}"><input type="hidden" name="base_sha" value="{{ chapter.sha|default('') }}">
+          <label class="field"><span>润色说明</span><textarea name="intent" rows="3" required placeholder="例：收紧场景节奏，减少重复表达，不改变任何事实。"></textarea></label>
+          <label class="field"><span>润色后正文</span><textarea class="prose-editor" name="content" rows="24" required>{{ chapter.content }}</textarea></label>
+          <div class="form-error" data-form-error role="alert" hidden></div><button class="button button-primary button-wide" type="submit" data-confirm="将创建不可变 amendment 并进入事实与语义等价校验。继续吗？">保存并校验</button>
+        </form>
+      </section>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import unittest
@@ -14,6 +15,53 @@ import modules.chapter_generator.pipeline as pipeline_module
 
 
 class ChapterPipelineTest(unittest.TestCase):
+    def test_scene_response_repairs_one_premature_close_after_prose(self) -> None:
+        expected = {
+            "prose": "The garage team verifies the relay chain while the countdown keeps advancing.",
+            "events": [
+                {
+                    "event_id": "chapter-0021-beat-003",
+                    "type": "required_beat_3_completed",
+                    "subjects": ["team"],
+                    "objects": ["relay chain"],
+                    "location": "garage",
+                    "status": "completed",
+                }
+            ],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "The team remains in the garage.",
+        }
+        prose_only = json.dumps(
+            {"prose": expected["prose"]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        remainder = json.dumps(
+            {key: value for key, value in expected.items() if key != "prose"},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )[1:]
+
+        result = pipeline_module._load_scene_response(f"{prose_only},{remainder}")
+
+        self.assertEqual(expected["prose"], result["prose"])
+        self.assertEqual(expected["events"], result["events"])
+        self.assertEqual(expected["deltas"], result["deltas"])
+        self.assertEqual(expected["continuity_note"], result["continuity_note"])
+
+    def test_scene_response_does_not_repair_ambiguous_extra_data(self) -> None:
+        payload = '{"prose":"usable text"},{"events":[]}'
+
+        with self.assertRaisesRegex(ValueError, "not valid structured JSON"):
+            pipeline_module._load_scene_response(payload)
+
     def test_scene_prompt_uses_roster_generation_view_without_losing_local_audit(
         self,
     ) -> None:
@@ -783,6 +831,216 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(500, len(payload["previous_scene_tail"]))
         self.assertTrue(
             all("goal" not in item for item in payload["prior_scene_summaries"])
+        )
+
+    def test_boundary_retry_reserves_headroom_by_dropping_only_old_summary_tails(self) -> None:
+        class RetryHeadroomBudget:
+            hard_input_limit = 32_000
+
+            def __init__(self) -> None:
+                self.measured_payloads: list[dict] = []
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+                payload = json.loads(text)
+                self.measured_payloads.append(payload)
+                compact_enough = (
+                    len(payload["previous_scene_tail"]) <= 200
+                    and all(not item["tail"] for item in payload["prior_scene_summaries"])
+                )
+                tokens = 29_700 if compact_enough else 30_253
+                return {
+                    "within_budget": True,
+                    "budgeted_input_tokens": tokens,
+                    "hard_input_limit": self.hard_input_limit,
+                }
+
+            def require_input(self, *_: object, **__: object) -> dict:
+                raise AssertionError("the final prompt-only compaction candidate should fit")
+
+        budget = RetryHeadroomBudget()
+        summaries = [
+            {
+                "index": index,
+                "goal": f"Scene {index}",
+                "tail": "旧场景连续性证据" * 50,
+                "event_ids": [f"event-{index}"],
+            }
+            for index in range(1, 5)
+        ]
+        with patch.object(pipeline_module, "default_context_budget", return_value=budget):
+            payload = json.loads(
+                pipeline_module._scene_request_payload(
+                    input_pack="# Requirements\nPreserve the chapter arc.",
+                    plan={
+                        "goal": "Retry the rejected boundary only.",
+                        "scenes": [{"index": index} for index in range(1, 6)],
+                    },
+                    scene={"index": 5},
+                    scene_required_beats=[],
+                    blueprint=None,
+                    previous_scene_tail="上一场景衔接正文" * 80,
+                    prior_scene_summaries=summaries,
+                    boundary_retry={
+                        "attempt": 1,
+                        "scene_index": 5,
+                        "findings": [{"code": "location_before_mismatch"}],
+                    },
+                )
+            )
+
+        self.assertGreaterEqual(len(budget.measured_payloads), 7)
+        self.assertEqual(200, len(payload["previous_scene_tail"]))
+        self.assertTrue(all(item["tail"] == "" for item in payload["prior_scene_summaries"]))
+        self.assertEqual(
+            [f"event-{index}" for index in range(1, 5)],
+            [item["event_ids"][0] for item in payload["prior_scene_summaries"]],
+        )
+        self.assertEqual(1, payload["boundary_retry"]["attempt"])
+
+    def test_legacy_scene_budget_reduces_only_prompt_history_details(self) -> None:
+        state = pipeline_module.empty_scene_state()
+        state["characters"] = {
+            "hero": {
+                "character_id": "hero",
+                "canonical_name": "Mira",
+                "status": "ready",
+            }
+        }
+        state["relationships"] = {
+            "hero->ally": {"status": "trusted"},
+        }
+        state["locations"] = {"hero": "station"}
+        state["inventories"] = {"hero:filter": 2}
+        state["counters"] = {"erosion": 6}
+        state["current_location"] = "station"
+        state["characters_present"] = ["hero"]
+        state["open_action"] = "open-threat"
+        state["open_actions"] = [
+            {
+                "event_id": "open-threat",
+                "type": "threat_ongoing",
+                "subjects": ["hero"],
+                "objects": ["north-gate"],
+                "location": "station",
+                "status": "ongoing",
+            }
+        ]
+        state["completed_events"] = [
+            {
+                "event_id": f"historical-event-{index:03d}",
+                "type": "checkpoint_completed",
+                "subjects": ["hero"],
+                "objects": [f"checkpoint-{index:03d}"],
+                "location": "station",
+                "status": "completed",
+                "detail": "large historical evidence " * 30,
+            }
+            for index in range(30)
+        ]
+        state["completed_event_ids"] = [
+            event["event_id"] for event in state["completed_events"]
+        ]
+        original_state = copy.deepcopy(state)
+
+        class PromptHistoryBudget:
+            hard_input_limit = 32_000
+
+            def __init__(self) -> None:
+                self.record_counts: list[int] = []
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+                request = json.loads(text)
+                record_count = len(
+                    request["current_scene_state"]["completed_events"]
+                )
+                self.record_counts.append(record_count)
+                tokens = 29_000 if record_count <= 6 else 31_000
+                return {
+                    "within_budget": True,
+                    "budgeted_input_tokens": tokens,
+                    "hard_input_limit": self.hard_input_limit,
+                }
+
+            def require_input(self, *_: object, **__: object) -> dict:
+                raise AssertionError("the bounded prompt projection should fit")
+
+        budget = PromptHistoryBudget()
+        plan = {
+            "goal": "Advance without replaying history.",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "Handle the open threat.",
+                    "required_event_ids": ["chapter-0018-event-001"],
+                    "forbidden_event_ids": [],
+                }
+            ],
+        }
+        with patch.object(
+            pipeline_module,
+            "default_context_budget",
+            return_value=budget,
+        ):
+            payload = json.loads(
+                pipeline_module._scene_request_payload(
+                    input_pack="# Requirements\nPreserve continuity.",
+                    plan=plan,
+                    scene=plan["scenes"][0],
+                    scene_required_beats=[],
+                    blueprint=None,
+                    scene_state=state,
+                )
+            )
+
+        projected = payload["current_scene_state"]
+        self.assertEqual(24, budget.record_counts[0])
+        self.assertIn(12, budget.record_counts)
+        self.assertEqual(6, budget.record_counts[-1])
+        self.assertEqual(6, len(projected["completed_events"]))
+        self.assertEqual(
+            original_state["completed_event_ids"][-24:],
+            projected["completed_event_ids"],
+        )
+        self.assertEqual(30, projected["completed_event_ids_count"])
+        self.assertTrue(projected["completed_event_ids_truncated"])
+        self.assertEqual("station", projected["current_location"])
+        self.assertEqual(["hero"], projected["characters_present"])
+        self.assertEqual(original_state["open_actions"], projected["open_actions"])
+        self.assertEqual(2, projected["inventories"]["hero:filter"])
+        self.assertEqual(6, projected["counters"]["erosion"])
+        self.assertEqual(original_state, state)
+        self.assertEqual(
+            scene_state_hash(original_state),
+            projected["context_projection"]["source_sha256"],
+        )
+
+        oldest = original_state["completed_events"][0]
+        self.assertNotIn(
+            oldest["event_id"],
+            projected["completed_event_ids"],
+        )
+        local_report, _ = pipeline_module.validate_scene_transition(
+            scene_index=1,
+            state_before=state,
+            events=[oldest],
+            deltas={
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            required_event_ids=[oldest["event_id"]],
+            planned_events=[oldest],
+        )
+        self.assertIn(
+            "repeated_completed_event_id",
+            {finding["code"] for finding in local_report["findings"]},
         )
 
     def test_second_scene_uses_lossless_transport_after_state_advances(

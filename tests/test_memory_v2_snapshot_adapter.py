@@ -96,6 +96,117 @@ class MemoryV2SnapshotAdapterTest(unittest.TestCase):
         self.assertEqual("crew", character["data"]["role"])
         self.assertEqual("backup tunnel", snapshot["spatial_state"]["character_positions"]["Lin Xue"])
 
+    def test_confirmed_authority_location_overrides_stale_character_and_spatial_cache(self) -> None:
+        canonical = create_empty_canonical_memory(
+            book_id="book-1",
+            title="Metro",
+            language="zh-CN",
+            schema_version="2.2",
+        )
+        canonical["characters"]["char_lin_xue"] = {
+            "id": "char_lin_xue",
+            "name": "Lin Xue",
+            "status": "active",
+            "data": {"role": "crew"},
+            "state": {"current_location": "old shelter"},
+        }
+        canonical["current_state"]["chapter_index"] = 23
+        canonical["current_state"]["spatial_state"] = {
+            "character_positions": {"char_lin_xue": "old shelter"}
+        }
+        canonical["characters"]["char_lin_xue"]["current_location"] = "old shelter"
+        canonical["authoritative_state"]["locations"]["char_lin_xue"] = {
+            "entity_id": "char_lin_xue",
+            "location_id": "westbound service road",
+            "certainty": "confirmed",
+            "source_tier": "chapter_event",
+        }
+
+        snapshot = canonical_memory_to_snapshot(canonical)
+
+        self.assertEqual(
+            "westbound service road",
+            snapshot["characters"]["char_lin_xue"]["current_location"],
+        )
+        self.assertEqual(
+            "westbound service road",
+            snapshot["characters"]["char_lin_xue"]["state"]["current_location"],
+        )
+        self.assertEqual(
+            "westbound service road",
+            snapshot["spatial_state"]["character_positions"]["Lin Xue"],
+        )
+        self.assertNotIn(
+            "char_lin_xue",
+            snapshot["spatial_state"]["character_positions"],
+        )
+
+    def test_unverified_authority_location_does_not_revive_legacy_position(self) -> None:
+        canonical = create_empty_canonical_memory(
+            book_id="book-1",
+            title="Metro",
+            language="zh-CN",
+            schema_version="2.2",
+        )
+        canonical["characters"]["char_lin_xue"] = {
+            "id": "char_lin_xue",
+            "name": "Lin Xue",
+            "status": "active",
+            "data": {"role": "crew"},
+            "state": {"current_location": "old shelter"},
+        }
+        canonical["current_state"]["chapter_index"] = 23
+        canonical["current_state"]["spatial_state"] = {
+            "character_positions": {
+                "char_lin_xue": "old shelter",
+                "Lin Xue": "old shelter",
+            }
+        }
+        canonical["characters"]["char_lin_xue"]["current_location"] = "old shelter"
+        canonical["authoritative_state"]["locations"]["char_lin_xue"] = {
+            "entity_id": "char_lin_xue",
+            "location_id": "reported station",
+            "certainty": "self_reported",
+            "source_tier": "model_inference",
+        }
+
+        snapshot = canonical_memory_to_snapshot(canonical)
+
+        self.assertNotIn("current_location", snapshot["characters"]["char_lin_xue"])
+        self.assertNotIn(
+            "current_location",
+            snapshot["characters"]["char_lin_xue"]["state"],
+        )
+        self.assertNotIn(
+            "char_lin_xue",
+            snapshot["spatial_state"]["character_positions"],
+        )
+        self.assertNotIn(
+            "Lin Xue",
+            snapshot["spatial_state"]["character_positions"],
+        )
+
+    def test_authority_object_location_is_not_projected_as_a_character(self) -> None:
+        canonical = create_empty_canonical_memory(
+            book_id="book-1",
+            title="Metro",
+            language="zh-CN",
+            schema_version="2.2",
+        )
+        canonical["authoritative_state"]["locations"]["rescue_truck"] = {
+            "entity_id": "rescue_truck",
+            "location_id": "westbound service road",
+            "certainty": "confirmed",
+            "source_tier": "chapter_event",
+        }
+
+        snapshot = canonical_memory_to_snapshot(canonical)
+
+        self.assertNotIn(
+            "rescue_truck",
+            snapshot["spatial_state"]["character_positions"],
+        )
+
     def test_location_maps_to_locations_and_spatial_spaces(self) -> None:
         snapshot = canonical_memory_to_snapshot(self._canonical())
 

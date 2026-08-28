@@ -27,7 +27,12 @@ from core.state.authoritative_context import (
     compact_authoritative_state_in_markdown,
 )
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
-from core.structured_context import compact_markdown_context, select_json_items, sha256_text
+from core.structured_context import (
+    StructuredContextError,
+    compact_markdown_context,
+    select_json_items,
+    sha256_text,
+)
 from modules.scene_repair.envelope import (
     build_repair_envelope,
     generation_state_view_sha256,
@@ -37,6 +42,29 @@ from modules.scene_repair.plan import build_repair_plan
 
 
 _PROMPT_PATH = Path("prompts/repair_prompt.md")
+_REPAIR_INPUT_HEADROOM_TOKENS = 2_000
+_LEGACY_REPAIR_CONTEXT_POLICIES = (
+    {
+        "authority_section_chars": 8_000,
+        "context_chars": 14_000,
+        "per_section_chars": 2_500,
+    },
+    {
+        "authority_section_chars": 12_000,
+        "context_chars": 18_000,
+        "per_section_chars": 2_500,
+    },
+    {
+        "authority_section_chars": 16_000,
+        "context_chars": 22_000,
+        "per_section_chars": 2_500,
+    },
+    {
+        "authority_section_chars": 22_000,
+        "context_chars": 28_000,
+        "per_section_chars": 2_500,
+    },
+)
 _EXPLICIT_REPAIR_PROMPT_SUFFIX = """
 
 ## Explicit RepairEnvelope V1
@@ -218,49 +246,165 @@ def _build_legacy_repair_messages(
         ensure_ascii=False,
         sort_keys=True,
     )
-    compact_context = _compact_repair_context(
-        compile_prompt_contexts(input_pack, query_hint=repair_query).repair.text,
-        query=repair_query,
-        authoritative_state_source=authoritative_state_from_markdown(input_pack),
+    compiled_context = compile_prompt_contexts(
+        input_pack,
+        query_hint=repair_query,
+    ).repair.text
+    authoritative_state_source = authoritative_state_from_markdown(input_pack)
+    prompt = _load_prompt()
+    budget = default_context_budget()
+    safe_target = max(
+        1,
+        budget.hard_input_limit - _REPAIR_INPUT_HEADROOM_TOKENS,
     )
-    payload = json.dumps(
-        {
-            "chapter": chapter_text,
-            "base_chapter_sha256": sha256_text(chapter_text),
-            "validation": _compact_validation(validation),
-            "repair_plan": repair_plan,
-            "recovery_context": recovery_context or {"available": False},
-            "repair_context": {
-                "language": _normalized_language(repair_context.language),
-                "allow_new_facts": repair_context.allow_new_facts,
-                "known_conflict_hint": repair_context.known_conflict_hint,
-            },
-            "context_digest_and_excerpts": compact_context,
-            "response_contract": {
-                "preferred": "RepairPatch JSON",
-                "schema_version": "1.0",
-                "operation": "replace",
-                "model_required_hashes": [
-                    "base_chapter_sha256",
-                    "expected_text_sha256",
-                ],
-                "runtime_bound_hashes": [
-                    "output_chapter_sha256",
-                    "patch_sha256",
-                ],
-                "fallback": "complete replacement chapter prose",
-            },
-        },
-        ensure_ascii=False,
-        indent=2,
+    last_context_error: StructuredContextError | None = None
+
+    try:
+        compact_context = _compact_repair_context(
+            compiled_context,
+            query=repair_query,
+            authoritative_state_source=authoritative_state_source,
+        )
+        payload = _legacy_repair_payload(
+            chapter_text,
+            validation,
+            repair_plan,
+            recovery_context,
+            repair_context,
+            compact_context,
+        )
+        report = budget.measure(
+            payload,
+            stage="repair",
+            protocol_texts=(prompt,),
+        )
+        if report["budgeted_input_tokens"] <= safe_target:
+            return _repair_messages(prompt, payload)
+    except StructuredContextError as exc:
+        last_context_error = exc
+
+    lean_validation = _legacy_validation_summary(validation)
+    measured_candidates: list[tuple[int, str]] = []
+    for policy in _LEGACY_REPAIR_CONTEXT_POLICIES:
+        try:
+            compact_context = _compact_repair_context(
+                compiled_context,
+                query=repair_query,
+                authoritative_state_source=authoritative_state_source,
+                authority_section_chars=policy["authority_section_chars"],
+                context_chars=policy["context_chars"],
+                per_section_chars=policy["per_section_chars"],
+                authority_selection_mode="required_only",
+                policy="repair_markdown_json_retrieval_required_only_v2",
+            )
+        except StructuredContextError as exc:
+            last_context_error = exc
+            continue
+        payload = _legacy_repair_payload(
+            chapter_text,
+            validation,
+            repair_plan,
+            recovery_context,
+            repair_context,
+            compact_context,
+            validation_projection=lean_validation,
+            compact_json=True,
+        )
+        report = budget.measure(
+            payload,
+            stage="repair",
+            protocol_texts=(prompt,),
+        )
+        measured_tokens = int(report["budgeted_input_tokens"])
+        measured_candidates.append((measured_tokens, payload))
+        if measured_tokens <= safe_target:
+            return _repair_messages(prompt, payload)
+
+    if measured_candidates:
+        required_tokens, _payload = min(measured_candidates, key=lambda item: item[0])
+        raise ContextBudgetError(
+            "story_project_repair_context_headroom_exceeded",
+            f"repair input requires {required_tokens} tokens; safe target is "
+            f"{safe_target}; hard limit is {budget.hard_input_limit}",
+        )
+    if last_context_error is not None:
+        raise ContextBudgetError(
+            "story_project_repair_authority_unfit",
+            "repair context cannot preserve all required authoritative records "
+            f"within the available prompt projection: {last_context_error}",
+        ) from last_context_error
+    raise ContextBudgetError(
+        "story_project_repair_context_unavailable",
+        "repair context could not be projected without dropping required facts",
     )
+
+
+def _repair_messages(prompt: str, payload: str) -> list[dict[str, str]]:
     return [
-        {"role": "system", "content": _load_prompt()},
-        {
-            "role": "user",
-            "content": payload,
-        },
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": payload},
     ]
+
+
+def _legacy_repair_payload(
+    chapter_text: str,
+    validation: dict[str, Any],
+    repair_plan: dict[str, Any],
+    recovery_context: dict[str, Any] | None,
+    repair_context: RepairContext,
+    compact_context: str,
+    *,
+    validation_projection: dict[str, Any] | None = None,
+    compact_json: bool = False,
+) -> str:
+    payload = {
+        "chapter": chapter_text,
+        "base_chapter_sha256": sha256_text(chapter_text),
+        "validation": (
+            validation_projection
+            if validation_projection is not None
+            else _compact_validation(validation)
+        ),
+        "repair_plan": repair_plan,
+        "recovery_context": recovery_context or {"available": False},
+        "repair_context": {
+            "language": _normalized_language(repair_context.language),
+            "allow_new_facts": repair_context.allow_new_facts,
+            "known_conflict_hint": repair_context.known_conflict_hint,
+        },
+        "context_digest_and_excerpts": compact_context,
+        "response_contract": {
+            "preferred": "RepairPatch JSON",
+            "schema_version": "1.0",
+            "operation": "replace",
+            "model_required_hashes": [
+                "base_chapter_sha256",
+                "expected_text_sha256",
+            ],
+            "runtime_bound_hashes": [
+                "output_chapter_sha256",
+                "patch_sha256",
+            ],
+            "fallback": "complete replacement chapter prose",
+        },
+    }
+    if compact_json:
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _legacy_validation_summary(validation: dict[str, Any]) -> dict[str, Any]:
+    compact = _compact_validation(validation)
+    return {
+        key: value
+        for key, value in compact.items()
+        if key != "problems"
+    } | {"problem_details_source": "repair_plan.steps"}
 
 
 def _explicit_recovery_context(
@@ -448,22 +592,42 @@ def _compact_repair_context(
     max_section_chars: int = 4_000,
     query: str = "",
     authoritative_state_source: dict[str, Any] | None = None,
+    authority_section_chars: int | None = None,
+    context_chars: int | None = None,
+    per_section_chars: int | None = None,
+    authority_selection_mode: str = "ranked",
+    policy: str = "repair_markdown_json_retrieval_v1",
 ) -> str:
     """Retrieve complete repair-relevant sections, paragraphs, and JSON items."""
-    authority_section_limit = min(
-        AUTHORITATIVE_REPAIR_SECTION_MAX_CHARS,
-        max(1, max_section_chars * 5),
+    authority_section_limit = (
+        max(1, int(authority_section_chars))
+        if authority_section_chars is not None
+        else min(
+            AUTHORITATIVE_REPAIR_SECTION_MAX_CHARS,
+            max(1, max_section_chars * 5),
+        )
+    )
+    context_limit = (
+        max(1, int(context_chars))
+        if context_chars is not None
+        else max_section_chars * 5
+    )
+    per_section_limit = (
+        max(1, int(per_section_chars))
+        if per_section_chars is not None
+        else max_section_chars
     )
     projected_text = compact_authoritative_state_in_markdown(
         text,
         max_section_chars=authority_section_limit,
         query=query,
         authoritative_state_source=authoritative_state_source,
+        selection_mode=authority_selection_mode,
     )
     selection = compact_markdown_context(
         projected_text,
-        max_chars=max_section_chars * 5,
-        per_section_max_chars=max_section_chars,
+        max_chars=context_limit,
+        per_section_max_chars=per_section_limit,
         query=query,
         required_sections={
             "Context Digest",
@@ -491,7 +655,7 @@ def _compact_repair_context(
             "Authoritative State": authority_section_limit,
         },
         prefer_recent=True,
-        policy="repair_markdown_json_retrieval_v1",
+        policy=policy,
     )
     return selection.text
 

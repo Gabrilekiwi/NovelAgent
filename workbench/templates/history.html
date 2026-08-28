@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% set active_nav = 'history' %}
+
+{% block title %}历史 · {{ project.title }}{% endblock %}
+{% block breadcrumb %}<span>/</span><span>历史</span>{% endblock %}
+
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">可追溯运行</p><h1>历史</h1><p class="lede">每次生成、校验、恢复和提交都保留可读摘要，原始记录仍在 StoryProject 中。</p></div></section>
+
+<section class="metrics-grid history-metrics" aria-label="历史摘要">
+  {{ ui.metric('运行总数', stats.total_runs|default(0), stats.range_label|default('全部时间')) }}
+  {{ ui.metric('首次通过率', stats.first_pass_rate|default('—'), stats.first_pass_note|default(''), 'jade') }}
+  {{ ui.metric('人工介入', stats.manual_interventions|default(0), stats.intervention_note|default('')) }}
+  {{ ui.metric('估算总费用', stats.cost_label|default('—'), stats.token_label|default('')) }}
+</section>
+
+<section class="panel history-panel">
+  <div class="toolbar history-toolbar">
+    <label class="search-field"><span class="sr-only">搜索历史</span><span aria-hidden="true">⌕</span><input type="search" placeholder="搜索章号、运行 ID" data-table-search data-search-target="history-table"></label>
+    <div class="filter-fields">
+      <label><span>结果</span><select data-filter-select data-filter-column="status"><option value="all">全部</option><option value="committed">已提交</option><option value="warning">Warning</option><option value="failed">失败</option><option value="cancelled">已停止</option></select></label>
+      <label><span>类型</span><select data-filter-select data-filter-column="kind"><option value="all">全部</option><option value="generation">正文生成</option><option value="recovery">恢复</option><option value="outline">章纲</option><option value="amendment">润色</option></select></label>
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table" id="history-table">
+      <thead><tr><th>时间</th><th>章节 / 操作</th><th>结果</th><th>用时</th><th>Tokens</th><th>费用</th><th><span class="sr-only">详情</span></th></tr></thead>
+      <tbody>
+      {% for run in runs|default([]) %}
+        <tr data-filter-status="{{ run.status|default('idle') }}" data-filter-kind="{{ run.kind|default('generation') }}" data-search-value="{{ run.chapter|default('') }} {{ run.id }} {{ run.title|default('') }}">
+          <td><time datetime="{{ run.created_at|default('') }}">{{ run.created_at_label|default('—') }}</time></td>
+          <td><strong>{{ run.title|default('第 ' ~ run.chapter ~ ' 章') }}</strong><small>{{ run.kind_label|default('正文生成') }} · <code>{{ run.id|truncate(12, true, '…') }}</code></small></td>
+          <td>{{ ui.status_badge(run.status|default('idle'), size='small') }}</td><td>{{ run.duration_label|default('—') }}</td><td>{{ run.token_label|default('—') }}</td><td>{{ run.cost_label|default('—') }}</td><td><a class="icon-button" href="{{ run.url|default(project_url ~ '/history/' ~ run.id) }}" aria-label="查看运行详情">›</a></td>
+        </tr>
+      {% else %}<tr><td colspan="7"><div class="empty-inline">暂无运行记录。</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if pagination|default(none) %}<nav class="pagination" aria-label="历史分页"><a class="button button-ghost button-small" href="{{ pagination.previous_url|default('#') }}"{% if not pagination.previous_url %} aria-disabled="true"{% endif %}>上一页</a><span>第 {{ pagination.page }} / {{ pagination.pages }} 页</span><a class="button button-ghost button-small" href="{{ pagination.next_url|default('#') }}"{% if not pagination.next_url %} aria-disabled="true"{% endif %}>下一页</a></nav>{% endif %}
+</section>
+{% endblock %}

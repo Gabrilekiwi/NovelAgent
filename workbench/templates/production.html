@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% set active_nav = 'production' %}
+
+{% block title %}生产 · {{ project.title }}{% endblock %}
+{% block breadcrumb %}<span>/</span><span>生产</span>{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <div class="heading-status-row"><p class="eyebrow">连续创作</p>{% if session|default(none) %}{{ ui.status_badge(session.status|default('generating')) }}{% endif %}</div>
+    <h1>{% if session|default(none) %}正在写第 {{ session.current_chapter|default('—') }} 章{% else %}开始新的生产批次{% endif %}</h1>
+    <p class="lede">Pass 或 Warning 会完成事务提交并自动继续；任何需要判断的异常都会立即暂停。</p>
+  </div>
+  {% if session|default(none) %}
+  <div class="session-clock"><span>本轮已运行</span><strong data-elapsed-seconds="{{ session.elapsed_seconds|default(0) }}">{{ session.elapsed_label|default('00:00') }}</strong></div>
+  {% endif %}
+</section>
+
+{% if not session|default(none) %}
+<section class="panel launch-panel">
+  <div class="launch-copy">
+    <p class="eyebrow">生产设置</p>
+    <h2>让章纲变成可阅读的正文</h2>
+    <p>开始前将检查章纲连续性、项目状态、Provider 配置和作品锁。</p>
+  </div>
+  <form class="launch-form" action="{{ create_session_url|default('/api/projects/' ~ project.id ~ '/sessions') }}" method="post" data-async-form data-json-form data-success-message="生产批次已启动。">
+    <div class="form-grid">
+      <label class="field"><span>起始章</span><input type="number" name="from_chapter" min="1" required value="{{ project.next_chapter|default(1) }}"></label>
+      <label class="field"><span>连续章数</span><select name="count"><option value="1">1 章</option><option value="4">4 章</option><option value="10" selected>10 章</option></select></label>
+    </div>
+    <div class="policy-card">
+      <span class="policy-icon" aria-hidden="true">⇄</span>
+      <div><strong>受监督的自动继续</strong><p>Pass / Warning 自动提交并继续；Needs revision / Blocked / Error 暂停等待你。</p></div>
+    </div>
+    <label class="check-field"><input type="checkbox" name="pause_after_chapter" value="true"><span><strong>完成当前章后暂停</strong><small>适合先阅读一章，再决定是否继续。</small></span></label>
+    <div class="form-error" data-form-error role="alert" hidden></div>
+    <button class="button button-primary button-wide" type="submit"{% if not provider_ready|default(false) %} disabled title="请先完成 Provider 配置"{% endif %}>预检并开始</button>
+  </form>
+</section>
+{% else %}
+<div class="production-layout" data-job-stream data-job-id="{{ session.job_id }}" data-events-url="{{ session.events_url|default('/api/jobs/' ~ session.job_id ~ '/events') }}" data-status-url="{{ session.status_url|default('/api/jobs/' ~ session.job_id) }}" data-last-event-id="{{ session.last_event_id|default('') }}">
+  <div class="production-main">
+    <section class="panel current-chapter-card">
+      <header class="current-chapter-header">
+        <div>
+          <p class="eyebrow">当前章节</p>
+          <h2>第 {{ session.current_chapter }} 章 · {{ session.chapter_title|default('未命名章节') }}</h2>
+        </div>
+        <span class="live-state" data-connection-state><span class="pulse" aria-hidden="true"></span>实时连接</span>
+      </header>
+      {% include "partials/stage_timeline.html" %}
+      <div class="scene-progress">
+        <div class="progress-copy"><span data-progress-label>{{ session.progress_label|default('正在准备…') }}</span><strong data-progress-percent>{{ session.progress_percent|default(0) }}%</strong></div>
+        {{ ui.progress_bar(session.progress_percent|default(0), '当前章进度') }}
+      </div>
+      <div class="live-message" data-live-message role="status">
+        <span class="live-message-mark" aria-hidden="true">···</span>
+        <div><strong data-live-title>{{ session.live_title|default('正在等待新事件') }}</strong><p data-live-detail>{{ session.live_detail|default('生成进度会在这里实时更新。') }}</p></div>
+      </div>
+    </section>
+
+    <section class="panel event-panel">
+      <div class="section-heading compact"><div><p class="eyebrow">运行信号</p><h2>最新事件</h2></div><span class="muted-copy">自动保存</span></div>
+      <ol class="event-feed" data-event-feed aria-live="polite">
+        {% for event in session.events|default([]) %}
+        <li data-event-id="{{ event.id }}"><time>{{ event.time_label }}</time><span class="event-dot event-{{ event.level|default('info') }}" aria-hidden="true"></span><div><strong>{{ event.title }}</strong><p>{{ event.detail|default('') }}</p></div></li>
+        {% else %}
+        <li data-empty-event><time>—</time><span class="event-dot" aria-hidden="true"></span><div><strong>等待第一个运行事件</strong></div></li>
+        {% endfor %}
+      </ol>
+    </section>
+  </div>
+
+  <aside class="production-side">
+    <section class="panel queue-panel">
+      <div class="section-heading compact"><div><p class="eyebrow">批次队列</p><h2>{{ session.completed_count|default(0) }} / {{ session.total_count|default(10) }} 章</h2></div></div>
+      <ol class="chapter-queue" data-chapter-queue>
+        {% for item in session.chapters|default([]) %}
+        <li class="queue-{{ item.status|default('queued') }}" data-queue-chapter="{{ item.number }}"><span class="queue-number">{{ item.number }}</span><span><strong>{{ item.title|default('未命名') }}</strong><small>{{ item.status_label|default('等待中') }}</small></span><span class="queue-result" aria-hidden="true">{{ '✓' if item.status == 'committed' else '•' }}</span></li>
+        {% endfor %}
+      </ol>
+    </section>
+
+    <section class="panel safety-panel">
+      <p class="eyebrow">生产控制</p>
+      <form action="{{ pause_job_url|default('/api/jobs/' ~ session.job_id ~ '/pause') }}" method="post" data-async-form data-confirm="将在当前章安全提交后暂停，确认吗？">
+        <button class="button button-secondary button-wide" type="submit">本章完成后暂停</button>
+      </form>
+      <form action="{{ cancel_job_url|default('/api/jobs/' ~ session.job_id ~ '/cancel') }}" method="post" data-async-form data-confirm="立即停止可能产生 Provider 不确定状态，停止后不会自动重试。仍要继续吗？" data-confirm-tone="danger">
+        <button class="button button-danger-ghost button-wide" type="submit">紧急停止</button>
+      </form>
+      <p class="safety-note">紧急停止不会删除已完成的可恢复场景。</p>
+    </section>
+
+    <section class="panel cost-panel">
+      <p class="eyebrow">本轮用量</p>
+      <dl><div><dt>模型调用</dt><dd data-model-calls>{{ session.model_calls|default(0) }}</dd></div><div><dt>Tokens</dt><dd data-token-count>{{ session.token_count_label|default('0') }}</dd></div><div><dt>估算费用</dt><dd data-cost>{{ session.cost_label|default('—') }}</dd></div></dl>
+    </section>
+  </aside>
+</div>
+{% endif %}
+{% endblock %}

@@ -42,6 +42,22 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+## Windows 本地创作工作台
+
+完成依赖安装后，双击仓库根目录的 `启动创作工作台.bat`。工作台会自动打开浏览器；关闭启动窗口即可停止服务。作者日常使用不需要进入运行目录、查看 JSON 或输入恢复命令。
+
+工作台固定为五个主区域：
+
+- **概览**：查看作品进度、当前任务、待处理数量与项目健康状态。
+- **章节**：对照章纲和正文，查看审核、状态与不可变版本历史，并发起安全润色。
+- **生产**：确认已批准章纲后启动连续生成，可选择“本章完成后暂停”或紧急停止。
+- **待处理**：处理异常恢复、草稿修订、重验证和作者确认提交；不确定的 Provider 调用不会自动重试。
+- **历史**：追溯生成、警告、恢复、提交、Receipt/readback 和成本摘要。
+
+第 20 章异常恢复以及第 21–40 章真实生产验收的作者操作清单见 [产品验证与自用上线标准](docs/product-validation.md)。完整测试门负责保护代码和数据，真实模型连续写作与人工阅读负责证明小说是否可用；两者都必须通过。
+
+工作台只监听 `127.0.0.1`，并校验 Host、Origin 和启动令牌。Provider 凭据继续由本机环境变量或 `.env` 管理；网页和工作台 SQLite 只显示脱敏就绪状态，不接收、不回显也不保存 API Key。
+
 Run preflight without model calls:
 
 ```bash
@@ -94,12 +110,12 @@ StoryProject multi-step mode requires real writeback. Context, previous prose, s
 
 StoryProject remains in non-authoritative shadow mode unless a target-book calibration report passes every strict gate and is explicitly activated. See [Story State Calibration and Strict Activation](docs/story-state-activation.md). Persistent strict runs require `--story-project-writeback`; parser/schema/layout drift fails closed. The opt-in, billable two-chapter real OpenAI gate is documented in [Real StoryProject Two-Chapter E2E](docs/real-storyproject-e2e.md).
 
-Multi-step runs print progress lines to stderr by default, including step start/end, commit status, run id, and duration. Add `--no-progress` to suppress those lines, or use `--output-json` for a clean machine-readable loop result.
+Multi-step runs print progress lines to stderr by default, including step start/end, commit status, run id, and duration. Add `--no-progress` to suppress those lines, or use `--output-json` for a clean machine-readable loop result. Local supervisors can also pass `--progress-jsonl C:\absolute\existing\parent\events.jsonl` to receive a flushed, append-only NDJSON event stream without changing stdout or stderr.
 
 Run tests:
 
 ```bash
-python -B -m unittest discover -s tests
+python -B -m pytest -q
 ```
 
 Run the local v1 smoke gate:
@@ -204,3 +220,4 @@ The v1.5 project contract keeps the established directory layout and legacy wrap
 - [Real StoryProject Two-Chapter E2E](docs/real-storyproject-e2e.md)
 - [Reliability and autonomy capability status](docs/reliability-autonomy-capability-status.md)
 - [Operator-run real autonomy validation](docs/real-autonomy-e2e.md)
+- [产品验证与自用上线标准](docs/product-validation.md)

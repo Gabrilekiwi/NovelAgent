@@ -140,6 +140,47 @@ class ReviewRepairLoopTests(unittest.TestCase):
         self.assertEqual(1, calls["validate"])
         self.assertEqual(1, calls["review"])
 
+    def test_repairer_receives_schema_valid_scene_plan_while_audit_wrapper_is_preserved(self) -> None:
+        received_plans: list[dict] = []
+        received_validations: list[dict] = []
+
+        def repair(chapter: str, validation: dict, plan: dict) -> str:
+            received_validations.append(validation)
+            received_plans.append(plan)
+            validate_schema(validation, "validation_result.schema.json")
+            validate_schema(plan, "repair_plan.schema.json")
+            self.assertNotIn("scene_repair_plan", plan)
+            self.assertIn("steps", plan)
+            self.assertEqual(len(validation["problems"]), plan["problem_count"])
+            self.assertEqual(
+                list(range(1, len(validation["problems"]) + 1)),
+                [step["index"] for step in plan["steps"]],
+            )
+            return chapter + " fixed"
+
+        result = run_review_repair_loop(
+            chapter_text="original",
+            validation=_validation(),
+            before_review={"enabled": True, "status": "needs_revision", "decision": "needs_revision"},
+            config=ReviewRepairConfig(enabled=True),
+            repair=repair,
+            validate=lambda _chapter: _validation(),
+            review=lambda _chapter, _attempt: {
+                "enabled": True,
+                "status": "pass",
+                "decision": "accept",
+            },
+        )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(1, len(received_validations))
+        self.assertEqual(1, len(received_plans))
+        audit_plan = result["repair_plan"]
+        self.assertTrue(audit_plan["enabled"])
+        self.assertEqual("review_pipeline", audit_plan["source"])
+        self.assertIn("repair_tasks", audit_plan)
+        self.assertEqual(audit_plan["scene_repair_plan"], received_plans[0])
+
     def test_warning_gate_is_advisory_and_skips_repair(self) -> None:
         calls = {"repair": 0, "review": 0}
 

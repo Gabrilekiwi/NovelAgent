@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% set active_nav = 'chapters' %}
+
+{% block title %}章节 · {{ project.title }}{% endblock %}
+{% block breadcrumb %}<span>/</span><span>章节</span>{% endblock %}
+{% block top_actions %}<a class="button button-primary button-small" href="{{ outline_url|default(project_url ~ '/outlines') }}">规划未来 10 章</a>{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">正文与章纲</p><h1>章节</h1><p class="lede">阅读正文、对照章纲，或在批次结束后发起安全润色。</p></div>
+  <div class="heading-meta"><span>已提交</span><strong>{{ chapters|default([])|length }} 章</strong></div>
+</section>
+
+<section class="panel chapter-index-panel">
+  <div class="toolbar">
+    <label class="search-field"><span class="sr-only">搜索章节</span><span aria-hidden="true">⌕</span><input type="search" placeholder="搜索标题或章号" data-table-search data-search-target="chapter-index"></label>
+    <div class="segmented" role="group" aria-label="章节筛选"><button type="button" class="is-active" data-filter="all">全部</button><button type="button" data-filter="committed">已提交</button><button type="button" data-filter="draft">草稿</button><button type="button" data-filter="warning">有警告</button></div>
+  </div>
+  <div class="chapter-index" id="chapter-index" data-filter-list>
+    {% for chapter in chapters|default([]) %}
+    <a class="chapter-index-row" href="{{ chapter.url|default(project_url ~ '/chapters/' ~ chapter.number) }}" data-filter-value="{{ chapter.status|default('committed') }}" data-search-value="{{ chapter.number }} {{ chapter.title }}">
+      <span class="chapter-number">{{ '%02d'|format(chapter.number) }}</span>
+      <span class="chapter-copy"><strong>{{ chapter.title|default('未命名章节') }}</strong><small>{{ chapter.word_count_label|default('—') }} · {{ chapter.updated_at_label|default('—') }}</small></span>
+      <span class="chapter-outline-note">{{ chapter.outline_summary|default('暂无章纲摘要')|truncate(72) }}</span>
+      {{ ui.status_badge(chapter.status|default('committed')) }}
+      <span class="row-arrow" aria-hidden="true">›</span>
+    </a>
+    {% else %}{{ ui.empty_state('还没有章节', '从规划未来章纲开始。', '规划未来 10 章', outline_url|default(project_url ~ '/outlines')) }}{% endfor %}
+  </div>
+</section>
+{% endblock %}

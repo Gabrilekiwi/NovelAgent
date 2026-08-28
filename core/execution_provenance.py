@@ -5,9 +5,11 @@ from dataclasses import dataclass, field
 import hashlib
 from importlib import metadata as importlib_metadata
 import json
+import os
 from pathlib import Path, PurePosixPath
 import platform
 import re
+import shutil
 import subprocess
 from types import MappingProxyType
 from typing import Any, ClassVar
@@ -663,11 +665,60 @@ def _code_bundle_hash(file_hashes: Mapping[str, str]) -> str:
     return hashlib.sha256(_canonical_json_bytes(manifest)).hexdigest()
 
 
+def _git_executable() -> Path:
+    configured = os.environ.get("NOVELAGENT_GIT_EXECUTABLE")
+    candidate: str | None
+    if configured:
+        candidate = configured
+    else:
+        candidate = shutil.which("git")
+    try:
+        if not candidate:
+            raise OSError("Git executable is unavailable")
+        path = Path(candidate)
+        if configured and not path.is_absolute():
+            raise OSError("configured Git executable must be absolute")
+        resolved = path.resolve(strict=True)
+        if not resolved.is_file() or resolved.name.casefold() not in {"git", "git.exe"}:
+            raise OSError("configured Git executable is invalid")
+        return resolved
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ProvenanceCaptureError("Git metadata capture is unavailable") from exc
+
+
+def _git_subprocess_environment(git_executable: Path) -> dict[str, str]:
+    allowed = {
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "HOME",
+        "PATHEXT",
+    }
+    environment: dict[str, str] = {}
+    for key, value in os.environ.items():
+        normalized = key.upper()
+        if normalized in allowed:
+            environment[normalized] = value
+    path_parts = [str(git_executable.parent)]
+    system_root = environment.get("SYSTEMROOT") or environment.get("WINDIR")
+    if system_root:
+        path_parts.append(str(Path(system_root) / "System32"))
+    environment["PATH"] = os.pathsep.join(dict.fromkeys(path_parts))
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    return environment
+
+
 def _capture_git_state(root: Path) -> tuple[str | None, bool]:
+    git_executable = _git_executable()
+    git_environment = _git_subprocess_environment(git_executable)
     try:
         commit_process = subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD"],
+            [str(git_executable), "rev-parse", "--verify", "HEAD"],
             cwd=root,
+            env=git_environment,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -675,8 +726,9 @@ def _capture_git_state(root: Path) -> tuple[str | None, bool]:
             encoding="utf-8",
             errors="strict",
             check=False,
+            timeout=5.0,
         )
-    except (OSError, UnicodeError) as exc:
+    except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
         raise ProvenanceCaptureError("Git metadata capture is unavailable") from exc
     if commit_process.returncode != 0:
         # A source archive or unborn repository has no commit to claim.  Treat
@@ -685,14 +737,21 @@ def _capture_git_state(root: Path) -> tuple[str | None, bool]:
     commit = _normalize_git_commit(commit_process.stdout.strip())
     try:
         status_process = subprocess.run(
-            ["git", "status", "--porcelain=v1", "--untracked-files=normal"],
+            [
+                str(git_executable),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=normal",
+            ],
             cwd=root,
+            env=git_environment,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=5.0,
         )
-    except OSError as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
         raise ProvenanceCaptureError("Git dirty-state capture is unavailable") from exc
     if status_process.returncode != 0:
         raise ProvenanceCaptureError("Git dirty-state capture failed")

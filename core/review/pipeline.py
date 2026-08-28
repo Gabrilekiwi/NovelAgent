@@ -69,6 +69,7 @@ def run_review_pipeline(
     )
     rule_repair_plan = build_rule_repair_plan(
         rule_validation_report=rule_validation_report,
+        include_warnings=False,
     )
 
     repair_prompt: dict[str, Any] | None = None

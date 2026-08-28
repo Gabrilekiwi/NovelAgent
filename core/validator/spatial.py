@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from core.validator.common import get_location_terms, get_locations
@@ -64,8 +65,20 @@ def validate_spatial(
     for name, data in characters.items():
         if not isinstance(data, dict):
             continue
-        current_location = data.get("current_location")
+        current_location, location_source = _resolved_character_location(
+            snapshot,
+            str(name),
+            data,
+        )
         if not current_location:
+            continue
+        if location_source == "legacy" and not _character_location_is_fresh(snapshot, data):
+            # ``current_location`` is a last observation, not an eternal
+            # constraint.  Legacy/imported projects often retain a location
+            # for many chapters when later analyses contain no explicit
+            # character-position delta.  Treating that stale observation as
+            # current makes every later mention look spatially invalid and
+            # sends the repairer backwards in time.
             continue
         if current_location not in locations:
             problems.append(
@@ -84,7 +97,7 @@ def validate_spatial(
         character_mentioned = str(name).lower() in lowered
         if character_mentioned:
             terms = get_location_terms(str(current_location), locations[current_location])
-            if not any(term.lower() in lowered for term in terms):
+            if not _contains_location_signal(chapter_text, terms):
                 problems.append(
                     {
                         "code": "character_location_not_mentioned",
@@ -263,6 +276,25 @@ def _validate_character_positions(
         expected = str(expected_location).strip()
         if not character_name or not expected or character_name.lower() not in lowered:
             continue
+        character_data = snapshot.get("characters", {}).get(character_name)
+        resolved, source = _resolved_character_location(
+            snapshot,
+            character_name,
+            character_data if isinstance(character_data, dict) else {},
+        )
+        if resolved:
+            expected = resolved
+        if source == "unverified_authority":
+            # A self-reported or otherwise unverified authority observation
+            # must suppress the stale compatibility cache, not silently fall
+            # back to it as a deterministic position constraint.
+            continue
+        if (
+            source == "legacy"
+            and isinstance(character_data, dict)
+            and not _character_location_is_fresh(snapshot, character_data)
+        ):
+            continue
         actual = _first_mentioned_location_near_character(chapter_text, character_name, locations)
         if actual and actual != expected and not _transition_allowed(spatial_state, expected, actual):
             problems.append(
@@ -280,6 +312,95 @@ def _validate_character_positions(
                 }
             )
     return problems
+
+
+def _character_location_is_fresh(snapshot: dict[str, Any], character: dict[str, Any]) -> bool:
+    """Return whether a stored character location can constrain this chapter.
+
+    ``snapshot.chapter_index`` is the chapter about to be written, while
+    ``last_seen_chapter`` records the chapter that actually established the
+    character position.  Only the immediately preceding chapter is fresh
+    enough to serve as a strict spatial precondition.  Chapter-one snapshots
+    predate this metadata, so their explicit locations retain the legacy
+    behavior.
+    """
+
+    chapter_index = snapshot.get("chapter_index")
+    if isinstance(chapter_index, bool) or not isinstance(chapter_index, int):
+        return True
+    last_seen = character.get("last_seen_chapter")
+    if chapter_index <= 1 and last_seen is None:
+        return True
+    if isinstance(last_seen, bool) or not isinstance(last_seen, int):
+        return False
+    return last_seen >= chapter_index - 1
+
+
+def _resolved_character_location(
+    snapshot: dict[str, Any],
+    character_id: str,
+    character: dict[str, Any],
+) -> tuple[str, str]:
+    """Resolve one position with authoritative state before legacy caches.
+
+    An explicit unverified authority record suppresses the legacy fallback:
+    evidence may be shown to a model, but it must not become a deterministic
+    spatial constraint.
+    """
+
+    authority = snapshot.get("authoritative_state")
+    locations = authority.get("locations") if isinstance(authority, dict) else {}
+    aliases = {
+        _entity_key(character_id),
+        _entity_key(character.get("id")),
+        _entity_key(character.get("name")),
+        _entity_key(character.get("canonical_name")),
+    }
+    for value in character.get("aliases") or []:
+        aliases.add(_entity_key(value))
+    aliases.discard("")
+    if isinstance(locations, dict):
+        for record_id, raw in locations.items():
+            if not isinstance(raw, dict):
+                continue
+            entity_id = _entity_key(raw.get("entity_id") or record_id)
+            if entity_id not in aliases:
+                continue
+            if not _authority_location_is_confirmed(raw):
+                return "", "unverified_authority"
+            return str(raw.get("location_id") or "").strip(), "authority"
+    return str(character.get("current_location") or "").strip(), "legacy"
+
+
+def _authority_location_is_confirmed(record: dict[str, Any]) -> bool:
+    raw = record.get("certainty")
+    if raw in (None, ""):
+        return True
+    return str(raw).strip().casefold() in {"confirmed", "current"}
+
+
+def _entity_key(value: Any) -> str:
+    return unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+
+
+def _contains_location_signal(text: str, terms: list[str]) -> bool:
+    normalized_text = _normalize_location_text(text)
+    for term in terms:
+        normalized = _normalize_location_text(term)
+        if normalized and normalized in normalized_text:
+            return True
+        cjk = "".join(re.findall(r"[\u4e00-\u9fff]", normalized))
+        # Natural Chinese commonly inserts/removes qualifiers such as “的” or
+        # expands a known compound (消防站 -> 消防站一层车库区).  A stable
+        # three-character anchor is sufficient for this advisory check only;
+        # explicit conflicts still use the stricter near-character rule.
+        if len(cjk) >= 3 and cjk[:3] in normalized_text:
+            return True
+    return False
+
+
+def _normalize_location_text(value: str) -> str:
+    return re.sub(r"[\s\W_的]+", "", str(value).casefold(), flags=re.UNICODE)
 
 
 def _opening_text(chapter_text: str) -> str:

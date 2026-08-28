@@ -388,8 +388,232 @@ class ValidatorTest(unittest.TestCase):
         self.assertIn("character_location_not_mentioned", {p["code"] for p in result["problems"]})
         problem = [p for p in result["problems"] if p["code"] == "character_location_not_mentioned"][0]
         self.assertEqual("spatial", problem["validator"])
-        self.assertEqual("add_character_location", problem["repair_action"])
+        self.assertEqual("manual_review", problem["repair_action"])
+        self.assertFalse(problem["blocking"])
         self.assertEqual({"character": "Mira", "location": "shelter"}, problem["repair_parameters"])
+
+    def test_ignores_stale_character_location_in_later_chapter(self) -> None:
+        snapshot = {
+            "chapter_index": 23,
+            "world_state": {"locations": {"fire station": {}, "logistics park": {}}},
+            "characters": {
+                "Mira": {
+                    "current_location": "fire station",
+                    "last_seen_chapter": 10,
+                },
+                "Jon": {"current_location": "fire station"},
+            },
+            "timeline": [],
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "The rescue truck continued toward the logistics park. Mira and Jon checked the route.",
+        )
+
+        stale_codes = {
+            problem["code"]
+            for problem in result["problems"]
+            if problem.get("character") in {"Mira", "Jon"}
+        }
+        self.assertNotIn("character_location_not_mentioned", stale_codes)
+
+    def test_rejects_fresh_character_location_without_prior_anchor(self) -> None:
+        snapshot = {
+            "chapter_index": 23,
+            "world_state": {"locations": {"fire station": {}, "logistics park": {}}},
+            "characters": {
+                "Mira": {
+                    "current_location": "fire station",
+                    "last_seen_chapter": 22,
+                }
+            },
+            "timeline": [],
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "Mira reached the logistics park while danger escalated.",
+        )
+
+        self.assertIn(
+            "character_location_not_mentioned",
+            {problem["code"] for problem in result["problems"]},
+        )
+
+    def test_ignores_stale_character_position_conflict(self) -> None:
+        snapshot = {
+            "chapter_index": 23,
+            "world_state": {"locations": {"fire station": {}, "logistics park": {}}},
+            "characters": {
+                "Mira": {
+                    "current_location": "fire station",
+                    "last_seen_chapter": 10,
+                }
+            },
+            "spatial_state": {
+                "spaces": {},
+                "connections": [{"from": "fire station", "to": "safe road"}],
+                "character_positions": {"Mira": "fire station"},
+                "blocked_paths": [],
+            },
+            "timeline": [],
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "At the logistics park, Mira checked the locked service door.",
+            {"validation_focus": ["spatial"]},
+        )
+
+        self.assertNotIn(
+            "character_position_conflict",
+            {problem["code"] for problem in result["problems"]},
+        )
+
+    def test_authoritative_character_location_wins_over_fresh_legacy_cache(self) -> None:
+        snapshot = {
+            "chapter_index": 23,
+            "world_state": {"locations": {}},
+            "characters": {
+                "Mira": {
+                    "current_location": "fire station",
+                    "last_seen_chapter": 22,
+                }
+            },
+            "authoritative_state": {
+                "locations": {
+                    "Mira": {
+                        "entity_id": "Mira",
+                        "location_id": "westbound service road",
+                        "certainty": "confirmed",
+                    }
+                }
+            },
+            "spatial_state": {
+                "spaces": {},
+                "connections": [],
+                "character_positions": {"Mira": "fire station"},
+                "blocked_paths": [],
+            },
+            "timeline": [],
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "On the westbound service road, Mira checked the rescue truck while danger closed in.",
+            {"validation_focus": ["spatial"]},
+        )
+
+        self.assertNotIn(
+            "character_location_not_mentioned",
+            {problem["code"] for problem in result["problems"]},
+        )
+        self.assertNotIn(
+            "character_position_conflict",
+            {problem["code"] for problem in result["problems"]},
+        )
+
+    def test_unverified_authority_location_suppresses_stale_legacy_constraint(self) -> None:
+        snapshot = {
+            "chapter_index": 23,
+            "world_state": {"locations": {"fire station": {}}},
+            "characters": {
+                "Mira": {
+                    "current_location": "fire station",
+                    "last_seen_chapter": 22,
+                }
+            },
+            "authoritative_state": {
+                "locations": {
+                    "Mira": {
+                        "entity_id": "Mira",
+                        "location_id": "reported tunnel",
+                        "certainty": "self_reported",
+                    }
+                }
+            },
+            "spatial_state": {
+                "spaces": {
+                    "fire station": {},
+                    "old shelter": {},
+                    "storage": {},
+                },
+                "connections": [{"from": "old shelter", "to": "storage"}],
+                "character_positions": {"Mira": "fire station"},
+                "blocked_paths": [],
+            },
+            "timeline": [],
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "Mira answered over the radio while the team faced danger.",
+            {"validation_focus": ["spatial"]},
+        )
+
+        self.assertNotIn(
+            "character_location_not_mentioned",
+            {problem["code"] for problem in result["problems"]},
+        )
+        self.assertNotIn(
+            "character_position_conflict",
+            {problem["code"] for problem in result["problems"]},
+        )
+
+    def test_authoritative_character_identity_matching_is_nfkc_casefolded(self) -> None:
+        snapshot = {
+            "chapter_index": 23,
+            "world_state": {
+                "locations": {
+                    "westbound service road": {},
+                    "warehouse": {},
+                }
+            },
+            "characters": {
+                "Mira": {
+                    "id": "CHAR_MIRA",
+                    "name": "Ｍｉｒａ",
+                    "aliases": ["Scout"],
+                    "current_location": "old shelter",
+                }
+            },
+            "authoritative_state": {
+                "locations": {
+                    "mira_location": {
+                        "entity_id": "char_mira",
+                        "location_id": "westbound service road",
+                        "certainty": "confirmed",
+                    }
+                }
+            },
+            "spatial_state": {
+                "spaces": {
+                    "westbound service road": {},
+                    "warehouse": {},
+                },
+                "connections": [
+                    {"from": "westbound service road", "to": "safe road"}
+                ],
+                "character_positions": {"Mira": "old shelter"},
+                "blocked_paths": [],
+            },
+            "timeline": [],
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "At the warehouse, Mira checked the shutter.",
+            {"validation_focus": ["spatial"]},
+        )
+
+        conflicts = [
+            problem
+            for problem in result["problems"]
+            if problem["code"] == "character_position_conflict"
+        ]
+        self.assertEqual(1, len(conflicts))
+        self.assertEqual("westbound service road", conflicts[0]["expected"])
 
     def test_rejects_missing_opening_bridge_with_dedicated_code(self) -> None:
         snapshot = {

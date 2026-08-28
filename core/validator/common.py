@@ -48,10 +48,10 @@ PROBLEM_METADATA = {
         "repair_hint": "Use a known location for the character or keep the scene spatially explicit.",
     },
     "character_location_not_mentioned": {
-        "severity": "medium",
-        "blocking": True,
-        "repair_action": "add_character_location",
-        "repair_hint": "Mention the character together with their current known location.",
+        "severity": "low",
+        "blocking": False,
+        "repair_action": "manual_review",
+        "repair_hint": "Treat this as an advisory narration check; do not add a location fact automatically.",
     },
     "missing_opening_bridge": {
         "severity": "high",
@@ -177,7 +177,23 @@ def get_locations(snapshot: dict[str, Any]) -> dict[str, Any]:
     if isinstance(spaces, dict):
         for name, data in spaces.items():
             normalized.setdefault(str(name), data)
+    authority = snapshot.get("authoritative_state")
+    authority_locations = authority.get("locations") if isinstance(authority, dict) else {}
+    if isinstance(authority_locations, dict):
+        for record in authority_locations.values():
+            if not isinstance(record, dict) or not _authority_location_is_confirmed(record):
+                continue
+            location_id = str(record.get("location_id") or "").strip()
+            if location_id:
+                normalized.setdefault(location_id, {})
     return normalized
+
+
+def _authority_location_is_confirmed(record: dict[str, Any]) -> bool:
+    raw = record.get("certainty")
+    if raw in (None, ""):
+        return True
+    return str(raw).strip().casefold() in {"confirmed", "current"}
 
 
 def get_location_terms(name: str, data: Any) -> list[str]:

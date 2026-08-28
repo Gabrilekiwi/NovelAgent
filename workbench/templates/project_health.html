@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% set active_nav = 'overview' %}
+
+{% block title %}项目健康 · {{ project.title }}{% endblock %}
+{% block breadcrumb %}<span>/</span><span>项目健康</span>{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <div><div class="heading-status-row"><p class="eyebrow">生产资格</p>{{ ui.status_badge(health.status|default('experimental'), health.status_label|default(none)) }}</div><h1>项目健康</h1><p class="lede">把引擎报告翻译成作者能采取的动作。未完成校准和显式激活的作品，只能进行实验运行。</p></div>
+  <div class="health-grade"><strong>{{ health.score|default('—') }}</strong><span>/ 100</span></div>
+</section>
+
+<div class="health-layout">
+  <section class="panel health-checklist-panel">
+    <div class="section-heading compact"><div><p class="eyebrow">就绪检查</p><h2>Strict 生产资格</h2></div></div>
+    <ol class="health-step-list">
+      {% for check in health.checks|default([]) %}
+      <li class="health-step-{{ check.state|default('pending') }}">
+        <span class="health-step-mark" aria-hidden="true">{{ '✓' if check.state == 'pass' else '!' if check.state == 'failed' else loop.index }}</span>
+        <div><strong>{{ check.label }}</strong><p>{{ check.detail|default('') }}</p>{% if check.action_url %}<a class="text-link" href="{{ check.action_url }}">{{ check.action_label|default('现在处理') }} →</a>{% endif %}</div>
+        {{ ui.status_badge(check.state|default('idle'), check.state_label|default(none), 'small') }}
+      </li>
+      {% else %}
+      <li class="health-step-pending"><span class="health-step-mark">—</span><div><strong>尚未执行项目预检</strong><p>运行预检后会显示校准、shadow 报告和激活状态。</p></div></li>
+      {% endfor %}
+    </ol>
+  </section>
+
+  <aside class="health-side">
+    <section class="panel">
+      <p class="eyebrow">当前模式</p><h2 class="side-title">{{ health.mode_label|default('实验运行') }}</h2><p class="side-copy">{{ health.mode_description|default('Shadow 结果可用于观察与调整，但不作为稳定生产批次的通过证据。') }}</p>
+      {% if health.can_activate|default(false) %}
+      <form action="{{ activate_url|default('/api/projects/' ~ project.id ~ '/health/activate') }}" method="post" data-async-form data-json-form data-json-file-field="calibration_report" data-confirm="激活 Strict 后，后续生产将使用当前冻结的校准配置。确认吗？" data-success-message="Strict 模式已显式激活。"><input type="hidden" name="confirmed" value="true"><label class="field"><span>选择校准报告 JSON</span><input type="file" name="calibration_report_file" data-json-file accept="application/json,.json" required></label><p class="form-hint">工作台会复核哈希、项目身份、证据门槛和运行时版本。</p><button class="button button-primary button-wide" type="submit">校验并显式激活 Strict</button><div class="form-error" data-form-error role="alert" hidden tabindex="-1"></div></form>
+      {% endif %}
+    </section>
+    <section class="panel"><p class="eyebrow">Provider</p><dl class="version-facts"><div><dt>服务</dt><dd>{{ provider_name|default('未配置') }}</dd></div><div><dt>凭据</dt><dd>{{ '已就绪' if provider_ready|default(false) else '缺失' }}</dd></div><div><dt>秘钥存储</dt><dd>本地环境</dd></div></dl><p class="safety-note">工作台不读取或保存完整 API Key，只检查脱敏就绪状态。</p></section>
+  </aside>
+</div>
+
+{% if health.latest_report|default(none) %}
+<section class="panel report-panel">
+  <div class="section-heading compact"><div><p class="eyebrow">最新报告</p><h2>{{ health.latest_report.title|default('Shadow 与校准摘要') }}</h2></div><time>{{ health.latest_report.created_at_label|default('') }}</time></div>
+  <div class="report-facts">{% for item in health.latest_report.items|default([]) %}<article class="report-{{ item.state|default('info') }}"><strong>{{ item.value|default('—') }}</strong><span>{{ item.label }}</span><p>{{ item.note|default('') }}</p></article>{% endfor %}</div>
+</section>
+{% endif %}
+{% endblock %}

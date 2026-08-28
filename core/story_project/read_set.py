@@ -10,6 +10,7 @@ from core.path_refs import path_ref_for
 from core.schema import validate_schema
 from core.story_project.identity import ProjectIdentity, ProjectIdentityError, load_project_identity
 from core.story_project.paths import resolve_outline, resolve_prose
+from core.story_project.amendments import resolve_active_amendment
 from core.story_project.semantic_parser import SEMANTIC_PARSER_VERSION
 
 
@@ -222,6 +223,9 @@ def _source_entries(root: Path, chapter_index: int) -> list[dict[str, Any]]:
         previous = resolve_prose(root, chapter_index - 1)
         if previous.path is not None:
             paths.append(("previous_prose", previous.path))
+        active = resolve_active_amendment(root, chapter_index - 1)
+        if active is not None:
+            paths.append(("previous_prose_amendment", active.path))
     for directory_name in ("追踪", "设定"):
         directory = root / directory_name
         if not directory.is_dir():
@@ -269,9 +273,20 @@ def _candidate_fingerprints(root: Path, chapter_index: int) -> dict[str, Any]:
     previous = resolve_prose(root, chapter_index - 1) if chapter_index > 1 else None
     outline_names = [path.relative_to(root).as_posix() for path in outline.candidates]
     previous_names = [path.relative_to(root).as_posix() for path in previous.candidates] if previous else []
+    active = resolve_active_amendment(root, chapter_index - 1) if chapter_index > 1 else None
+    amendment_names = [active.relative_path] if active is not None else []
+    amendment_binding = (
+        [{"path": active.relative_path, "sha256": active.sha256}]
+        if active is not None
+        else []
+    )
     return {
         "outline": {"members": outline_names, "fingerprint": _canonical_digest(outline_names)},
         "previous_prose": {"members": previous_names, "fingerprint": _canonical_digest(previous_names)},
+        "previous_prose_amendment": {
+            "members": amendment_names,
+            "fingerprint": _canonical_digest(amendment_binding),
+        },
     }
 
 

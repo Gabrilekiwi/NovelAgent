@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import unittest
+from unittest.mock import patch
 import uuid
 
 from core.execution_provenance import (
     ExecutionProvenanceError,
+    ProvenanceCaptureError,
     UnsafeProvenanceError,
     build_execution_provenance,
     canonical_provenance_hash,
     canonical_provenance_json_bytes,
     capture_execution_provenance,
+    _capture_git_state,
     validate_execution_provenance,
 )
 from core.schema import validate_schema, validate_schema_keywords
@@ -202,6 +207,54 @@ class ExecutionProvenanceTest(unittest.TestCase):
         self.assertNotIn(str(root).replace("\\", "/"), rendered)
         self.assertNotIn("diff", record["code"]["git"])
         self.assertNotIn("status", record["code"]["git"])
+
+    def test_git_capture_uses_absolute_executable_and_minimal_environment(self) -> None:
+        root = self._writable_temp_root()
+        git_executable = root / "Git" / "cmd" / "git.exe"
+        git_executable.parent.mkdir(parents=True)
+        git_executable.write_bytes(b"fake")
+        completed = [
+            subprocess.CompletedProcess([], 0, stdout="a" * 40),
+            subprocess.CompletedProcess([], 0, stdout=b""),
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "NOVELAGENT_GIT_EXECUTABLE": str(git_executable.resolve()),
+                "OPENAI_API_KEY": "sentinel-provider-secret",
+                "ANTHROPIC_AUTH_TOKEN": "sentinel-anthropic-secret",
+                "SYSTEMROOT": r"C:\Windows",
+                "PATHEXT": ".EXE;.CMD",
+            },
+            clear=True,
+        ), patch("core.execution_provenance.subprocess.run", side_effect=completed) as runner:
+            commit, dirty = _capture_git_state(root)
+
+        self.assertEqual("a" * 40, commit)
+        self.assertFalse(dirty)
+        self.assertEqual(2, runner.call_count)
+        for call in runner.call_args_list:
+            command = call.args[0]
+            environment = call.kwargs["env"]
+            self.assertEqual(str(git_executable.resolve()), command[0])
+            self.assertTrue(Path(command[0]).is_absolute())
+            self.assertNotIn("OPENAI_API_KEY", environment)
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", environment)
+            self.assertNotIn("NOVELAGENT_GIT_EXECUTABLE", environment)
+            self.assertEqual("0", environment["GIT_TERMINAL_PROMPT"])
+
+    def test_configured_git_executable_must_be_absolute(self) -> None:
+        root = self._writable_temp_root()
+        with patch.dict(
+            os.environ,
+            {"NOVELAGENT_GIT_EXECUTABLE": "git.exe"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(
+                ProvenanceCaptureError, "Git metadata capture is unavailable"
+            ):
+                _capture_git_state(root)
 
     def test_code_bundle_hash_changes_with_code_bytes_not_file_order(self) -> None:
         root = self._writable_temp_root()

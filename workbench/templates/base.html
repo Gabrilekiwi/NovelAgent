@@ -1,0 +1,129 @@
+{% import "macros.html" as ui %}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="workbench-token" content="{{ workbench_token|default('') }}">
+  <meta name="csrf-token" content="{{ csrf_token|default('') }}">
+  <title>{% block title %}{{ page_title|default('概览') }} · NovelAgent{% endblock %}</title>
+  <link rel="stylesheet" href="{{ static_prefix|default('/static') }}/workbench.css">
+  {% block head %}{% endblock %}
+</head>
+<body data-page="{{ active_nav|default('overview') }}">
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  {% set current_project = project|default(none) %}
+  {% set project_root = project_url|default('/projects/' ~ current_project.id if current_project else '/') %}
+  <div class="app-shell">
+    <aside class="sidebar" id="app-sidebar" aria-label="主导航">
+      <div class="brand-block">
+        <a class="brand" href="{{ home_url|default('/') }}" aria-label="NovelAgent 书架">
+          <span class="brand-seal" aria-hidden="true">章</span>
+          <span>
+            <strong>NovelAgent</strong>
+            <small>长篇创作工作台</small>
+          </span>
+        </a>
+        <span class="local-chip" title="仅在本机运行">
+          <span aria-hidden="true">●</span> 本机
+        </span>
+      </div>
+
+      {% if current_project %}
+      <div class="project-switcher">
+        <p class="eyebrow">当前作品</p>
+        <a href="{{ project_root }}" title="{{ current_project.title }}">
+          <span class="book-spine" aria-hidden="true"></span>
+          <span>
+            <strong>{{ current_project.title }}</strong>
+            <small>{{ current_project.genre|default('未设定题材') }} · {{ current_project.language|default('中文') }}</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </a>
+      </div>
+      {% endif %}
+
+      <nav class="primary-nav">
+        {% set nav_items = [
+          ('overview', '概览', '◫', project_root if current_project else home_url|default('/')),
+          ('chapters', '章节', '≡', chapters_url|default(project_root ~ '/chapters')),
+          ('production', '生产', '▷', production_url|default(project_root ~ '/production')),
+          ('pending', '待处理', '!', pending_url|default(project_root ~ '/pending')),
+          ('history', '历史', '⌚', history_url|default(project_root ~ '/history'))
+        ] %}
+        {% for key, label, icon, href in nav_items %}
+          <a href="{{ href }}" class="nav-item{% if active_nav|default('overview') == key %} is-active{% endif %}"{% if active_nav|default('overview') == key %} aria-current="page"{% endif %}>
+            <span class="nav-icon" aria-hidden="true">{{ icon }}</span>
+            <span>{{ label }}</span>
+            {% if key == 'pending' and pending_count|default(0) %}
+              <span class="nav-count" aria-label="{{ pending_count }} 个待处理项">{{ pending_count }}</span>
+            {% endif %}
+          </a>
+        {% endfor %}
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="provider-state">
+          <span class="provider-light{% if provider_ready|default(false) %} is-ready{% endif %}" aria-hidden="true"></span>
+          <span>
+            <strong>{{ provider_name|default('模型服务') }}</strong>
+            <small>{{ '配置就绪' if provider_ready|default(false) else '待配置' }}</small>
+          </span>
+        </div>
+        <a class="text-link" href="{{ health_url|default(project_root ~ '/health') }}">项目健康</a>
+      </div>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <button class="icon-button mobile-menu-button" type="button" data-toggle-sidebar aria-controls="app-sidebar" aria-expanded="false" aria-label="打开导航">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="breadcrumb" aria-label="面包屑">
+          <a href="{{ home_url|default('/') }}">书架</a>
+          {% if current_project %}<span>/</span><span>{{ current_project.title }}</span>{% endif %}
+          {% block breadcrumb %}{% endblock %}
+        </div>
+        <div class="topbar-actions">
+          {% if active_job|default(none) %}
+            <a class="running-pill" href="{{ active_job.url|default(production_url|default(project_root ~ '/production')) }}">
+              <span class="pulse" aria-hidden="true"></span>
+              <span>第 {{ active_job.chapter|default('—') }} 章正在{{ active_job.stage_label|default('处理') }}</span>
+            </a>
+          {% endif %}
+          {% block top_actions %}{% endblock %}
+        </div>
+      </header>
+
+      <main class="page-content" id="main-content" tabindex="-1">
+        {% if flash_error|default(none) %}
+          <div class="notice notice-danger" role="alert"><strong>操作未完成</strong><p>{{ flash_error }}</p></div>
+        {% endif %}
+        {% if flash_message|default(none) %}
+          <div class="notice notice-success" role="status"><strong>{{ flash_message }}</strong></div>
+        {% endif %}
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  <dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-dialog-title">
+    <form method="dialog">
+      <div class="dialog-mark" aria-hidden="true">?</div>
+      <h2 id="confirm-dialog-title">确认操作</h2>
+      <p data-confirm-message>请确认是否继续。</p>
+      <div class="dialog-actions">
+        <button class="button button-ghost" value="cancel">取消</button>
+        <button class="button button-primary" value="confirm" data-confirm-button>确认</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast-region" data-toast-region aria-live="polite" aria-atomic="true"></div>
+  <div class="sidebar-scrim" data-sidebar-scrim></div>
+  <script src="{{ static_prefix|default('/static') }}/workbench.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

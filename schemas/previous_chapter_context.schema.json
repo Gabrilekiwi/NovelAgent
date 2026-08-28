@@ -6,7 +6,7 @@
   "properties": {
     "schema_version": {"type": "string", "enum": ["1.0"]},
     "chapter_index": {"type": "integer", "minimum": 1},
-    "source_kind": {"type": "string", "enum": ["story_project_prose", "committed_artifact"]},
+    "source_kind": {"type": "string", "enum": ["story_project_prose", "committed_artifact", "amendment_current"]},
     "path_ref": {"type": "object"},
     "sha256": {"type": "string", "minLength": 64},
     "original_chars": {"type": "integer", "minimum": 0},

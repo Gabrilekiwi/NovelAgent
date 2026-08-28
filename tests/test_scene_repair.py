@@ -5,12 +5,14 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from core.context_budget import ContextBudgetError
+from core.context_budget import ContextBudgetError, default_context_budget
 from core.prompt_compiler import compile_prompt_contexts
 from core.schema import validate_schema
 from core.state.authoritative_context import authoritative_state_from_markdown
 from modules.scene_repair import apply_repair_plan, build_repair_plan, repair_scene
 from modules.scene_repair.repairer import (
+    RepairContext,
+    build_repair_messages,
     _compact_repair_context,
     _compact_validation,
     _repair_max_output_tokens,
@@ -284,6 +286,142 @@ class SceneRepairTest(unittest.TestCase):
         self.assertTrue(all(len(item["value"]) == 1_000 for item in compact["problems"][0]["evidence"]))
         self.assertEqual(64, len(compact["selection"]["source_sha256"]))
         self.assertGreater(compact["problems"][0]["evidence_selection"]["omitted_count"], 0)
+
+    def test_legacy_repair_prompt_adapts_without_dropping_required_authority(self) -> None:
+        names = ["林夏", "苏晴", "赵铁", "陆沉", "韩野", "顾岚"]
+        authority = {
+            "schema_version": "1.0",
+            "characters": {
+                name: {
+                    "character_id": name,
+                    "canonical_name": name,
+                    "condition": "stable",
+                    "audit": (f"{name} authority evidence " * 34).strip(),
+                }
+                for name in names
+            },
+            "relationships": {},
+            "roster": {},
+            "numeric_counters": {
+                "陆沉侵蚀值": {
+                    "counter_id": "陆沉侵蚀值",
+                    "owner_id": "陆沉",
+                    "current_value": 6,
+                }
+            },
+            "inventory": {},
+            "locations": {
+                name: {
+                    "location_id": name,
+                    "entity_id": name,
+                    "current_location": "消防站一层车库区",
+                }
+                for name in names
+            },
+            "events": {},
+        }
+        input_pack = "\n\n".join(
+            [
+                "# Context Digest\nlegacy chapter repair",
+                "# Project Profile\n" + json.dumps({"language": "zh-CN"}, ensure_ascii=False),
+                "# Story State\n"
+                + json.dumps(
+                    {
+                        "last_chapter_ending": "警报响起。",
+                        "last_scene_location": "消防站一层车库区",
+                        "last_scene_characters": names,
+                        "open_threads": ["九小时清扫令"],
+                        "required_opening_bridge": "承接车库警报。",
+                    },
+                    ensure_ascii=False,
+                ),
+                "# Spatial State\n" + json.dumps({"current_location": "消防站一层车库区"}, ensure_ascii=False),
+                "# Authoritative State\n" + json.dumps(authority, ensure_ascii=False),
+                "# StoryProject Chapter Blueprint\n"
+                + json.dumps(
+                    {
+                        "chapter_blueprint": {
+                            "chapter_index": 21,
+                            "title": "九小时清扫令",
+                            "required_beats": [{"index": 1, "text": "六人仍在车库区。"}],
+                        },
+                        "read_set_context_digest": "legacy",
+                    },
+                    ensure_ascii=False,
+                ),
+                "# Requirements\nOnly repair reported continuity problems.",
+            ]
+        )
+        validation = {
+            "ok": False,
+            "requested_focus": ["spatial"],
+            "executed_checks": ["spatial"],
+            "skipped_checks": [],
+            "problems": [
+                {
+                    "code": "character_location_not_mentioned",
+                    "message": f"Character {name} appears without current location 消防站一层车库区.",
+                    "validator": "spatial",
+                    "severity": "medium",
+                    "blocking": True,
+                    "repair_action": "add_character_location",
+                    "repair_hint": "Mention the character together with their current known location.",
+                    "repair_parameters": {
+                        "character": name,
+                        "location": "消防站一层车库区",
+                    },
+                    "evidence": [
+                        {"kind": "character", "value": name},
+                        {"kind": "current_location", "value": "消防站一层车库区"},
+                    ],
+                }
+                for name in names
+            ],
+        }
+        plan = build_repair_plan(validation)
+
+        with self.assertRaisesRegex(
+            Exception,
+            "required_authoritative_records_exceed_budget",
+        ):
+            _compact_repair_context(
+                compile_prompt_contexts(input_pack).repair.text,
+                query=json.dumps(plan, ensure_ascii=False),
+                authoritative_state_source=authority,
+            )
+
+        messages = build_repair_messages(
+            "\n\n".join(f"{name}在消防站处理警报。" for name in names) * 24,
+            validation,
+            input_pack,
+            plan,
+            {"available": False},
+            RepairContext(language="zh-CN"),
+        )
+        payload = json.loads(messages[1]["content"])
+        report = default_context_budget().measure(
+            messages[1]["content"],
+            stage="repair",
+            protocol_texts=(messages[0]["content"],),
+        )
+        projected = authoritative_state_from_markdown(
+            payload["context_digest_and_excerpts"]
+        )
+
+        self.assertNotIn("problems", payload["validation"])
+        self.assertEqual(
+            "repair_plan.steps",
+            payload["validation"]["problem_details_source"],
+        )
+        self.assertEqual("required_only", projected["context_selection"]["selection_mode"])
+        self.assertTrue(
+            set(projected["context_selection"]["required_items"])
+            <= set(projected["context_selection"]["selected_items"])
+        )
+        self.assertLessEqual(
+            report["budgeted_input_tokens"],
+            report["hard_input_limit"] - 2_000,
+        )
 
     def test_build_repair_plan_orders_actions_by_priority(self) -> None:
         plan = build_repair_plan(

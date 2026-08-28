@@ -76,7 +76,10 @@ def get_config() -> RuntimeConfig:
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_base_url=_env("OPENAI_BASE_URL"),
         openai_model=_env("OPENAI_MODEL") or "gpt-4.1-mini",
-        openai_timeout_seconds=_int_env("OPENAI_TIMEOUT_SECONDS", 90),
+        # Long-context reasoning and validation calls routinely exceed 90s.
+        # Keep the physical request timeout aligned with the fail-closed
+        # provider deadline; callers may still lower it explicitly.
+        openai_timeout_seconds=_int_env("OPENAI_TIMEOUT_SECONDS", 180),
         # A full chapter target is 3,000-4,500 Chinese characters.  Keep the
         # cold-start default compatible even when the conservative estimator
         # has no model tokenizer or provider usage yet.

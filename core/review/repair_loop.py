@@ -185,7 +185,15 @@ def run_review_repair_loop(
         before_attempt_review = current_review
         before_attempt_gate = current_gate
         try:
-            repaired_chapter = repair(current_chapter, current_validation, attempt_plan)
+            repair_validation = _synthetic_validation(
+                attempt_plan["repair_tasks"],
+                current_validation,
+            )
+            repaired_chapter = repair(
+                current_chapter,
+                repair_validation,
+                attempt_plan["scene_repair_plan"],
+            )
             repaired_validation = validate(repaired_chapter)
             repaired_review = review(repaired_chapter, attempt)
             repaired_decision = decide_quality(repaired_validation, repaired_review)

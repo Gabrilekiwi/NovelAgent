@@ -9,11 +9,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api.contracts import ModelResponse
-from core.engine.artifacts import save_chapter_pipeline_artifacts
+from core.engine.artifacts import save_chapter_artifact, save_chapter_pipeline_artifacts
 from core.engine.executor import AgentExecutor, _unresolved_provider_calls
 from core.engine.locked_chapter import (
     LockedChapterRecoveryError,
     _expected_scene_count,
+    load_verified_locked_chapter_pipeline,
     recover_locked_chapter,
 )
 from core.engine.locked_chapter_state import (
@@ -29,7 +30,13 @@ from core.engine.run_record import (
 )
 from core.memory_v2.canonical import canonical_json_hash
 from core.model_calls import ModelCallStore, build_scene_generation_call_id
+from core.quality.final_artifact_integrity import (
+    FinalArtifactIntegrityGate,
+    build_integrity_stage_record,
+)
 from core.state.snapshot import save_snapshot
+from core.story_project.coverage import build_blueprint_plan
+from core.story_project.writer import StoryProjectWritebackConfig
 
 
 class LockedChapterRecoveryTest(unittest.TestCase):
@@ -336,6 +343,48 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertEqual("scene_repair", checkpoint["complete_draft"]["source_stage"])
         self.assertNotIn("source_attempt_id", checkpoint["complete_draft"])
 
+    def test_manual_draft_supersedes_an_existing_active_checkpoint(self) -> None:
+        execution_id = "execution_manual_after_checkpoint"
+        model_draft = "陆沉先按旧方案检查车门，再等待赵铁确认触发线路。" * 45
+        manual_draft = "陆沉先隔离车门触发线，再由赵铁确认座椅与后窗锁扣。" * 45
+        self._write_execution(execution_id, successful=[], missing_stage="llm_validation")
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=model_draft,
+            scene_count=3,
+        )
+        first = self._recover()
+        self.assertEqual("repair_draft", first["action"])
+
+        draft_path = self.story_root / ".novelagent" / "workbench" / "drafts" / "manual.md"
+        draft_path.parent.mkdir(parents=True)
+        draft_path.write_text(manual_draft, encoding="utf-8")
+        self.now += timedelta(minutes=5)
+
+        result = recover_locked_chapter(
+            story_project_root=self.story_root,
+            run_dir=self.run_dir,
+            snapshot_path=self.snapshot_path,
+            expected_book_id=self.book_id,
+            language="zh-CN",
+            manual_draft_path=draft_path,
+            clock=lambda: self.now,
+            id_factory=lambda: "manualaftercheckpoint",
+        )
+
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual("recovered", result["status"])
+        self.assertEqual("manual_repaired_draft_provided", result["reason"])
+        self.assertEqual(manual_draft, checkpoint["complete_draft"]["text"])
+        self.assertEqual(
+            2,
+            len(list((self.run_dir / "locked_chapter_resolutions").glob("*.json"))),
+        )
+
     def test_manual_draft_must_stay_inside_story_project(self) -> None:
         execution_id = "execution_external_manual_draft"
         draft = "陆沉在防爆门旁完成验伤和名册核对，队伍随后进入缓冲区。" * 45
@@ -453,6 +502,148 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertEqual("claude_polish", repeated_checkpoint["complete_draft"]["source_stage"])
         self.assertEqual(attempt_id, repeated_checkpoint["complete_draft"]["source_attempt_id"])
 
+    def test_nonconverging_repair_prefers_complete_receipt_backed_scene_sequence(
+        self,
+    ) -> None:
+        execution_id = "execution_nonconverging_complete_scenes"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            f"陆沉保留第{index}场的原始行动、人物和状态证据，等待整章重新校验。" * 24
+            for index in range(1, 5)
+        ]
+        call_ids = [build_scene_generation_call_id(index) for index in range(1, 5)]
+        responses = [
+            json.dumps(
+                {
+                    "prose": text,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["陆沉"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"scene {index} complete",
+                },
+                ensure_ascii=False,
+            )
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+            call_ids=call_ids,
+        )
+        polished = "陆沉保留原始润色稿，但它尚未通过最终完整性门。" * 45
+        regressed_repair = "修订稿引入了更严重的新问题，不得压过原始场景证据。" * 45
+        self._write_complete_transform(
+            execution_id,
+            stage="claude_polish",
+            text=polished,
+            offset_seconds=10,
+        )
+        self._write_complete_transform(
+            execution_id,
+            stage="scene_repair",
+            text=regressed_repair,
+            offset_seconds=11,
+        )
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=polished,
+            scene_count=4,
+        )
+        self._mark_repair_not_converging()
+
+        result = self._recover()
+
+        self.assertEqual("resume_scenes", result["action"])
+        self.assertEqual(
+            "complete_scene_sequence_requires_revalidation",
+            result["reason"],
+        )
+        self.assertEqual(4, result["reusable_scene_count"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertIsNone(checkpoint["complete_draft"])
+        self.assertEqual(scene_texts, [scene["text"] for scene in checkpoint["scenes"]])
+        self.assertEqual(
+            call_ids,
+            [scene["source_provenance"]["call_id"] for scene in checkpoint["scenes"]],
+        )
+        self.assertEqual(
+            [f"attempt-{index}" for index in range(1, 5)],
+            [scene["source_attempt_id"] for scene in checkpoint["scenes"]],
+        )
+
+    def test_nonconverging_repair_rejects_tampered_scene_and_regressed_transform(
+        self,
+    ) -> None:
+        execution_id = "execution_nonconverging_tampered_scene"
+        scene_text = "陆沉核对原始场景回执，任何被改写的响应文件都不得进入恢复点。" * 24
+        self._write_valid_single_scene_execution(
+            execution_id,
+            scene_text=scene_text,
+            missing_stage=None,
+        )
+        polished = "陆沉保留修订前的完整润色稿，等待重新校验。" * 45
+        regressed_repair = "这个修订版本造成了新的严重连续性问题，必须被排除。" * 45
+        self._write_complete_transform(
+            execution_id,
+            stage="claude_polish",
+            text=polished,
+            offset_seconds=10,
+        )
+        self._write_complete_transform(
+            execution_id,
+            stage="scene_repair",
+            text=regressed_repair,
+            offset_seconds=11,
+        )
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=polished,
+            scene_count=1,
+        )
+        self._mark_repair_not_converging()
+        scene_artifact = (
+            self.run_dir
+            / "executions"
+            / execution_id
+            / "model_calls"
+            / "responses"
+            / "attempt-1.txt"
+        )
+        scene_artifact.write_bytes(scene_artifact.read_bytes() + b"tampered")
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        self.assertEqual("durable_polished_draft_available", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(polished, checkpoint["complete_draft"]["text"])
+        self.assertNotEqual(regressed_repair, checkpoint["complete_draft"]["text"])
+
     def test_recovered_scene_repair_is_not_polished_again(self) -> None:
         repaired = "陆沉已经完成针对验证问题的修订，正文只应继续验证而不应再次润色。" * 45
         executor = AgentExecutor(
@@ -469,6 +660,438 @@ class LockedChapterRecoveryTest(unittest.TestCase):
 
         self.assertEqual(repaired, state["chapter"])
         self.assertIsNone(state["validation"])
+
+    def test_hash_gated_final_candidate_supersedes_older_polish_response(self) -> None:
+        execution_id = "execution_final_candidate_after_patch_repair"
+        generated = "陆沉检查通勤车的触发线路，并记录车辆尚未移动。" * 45
+        polished = "陆沉检查通勤车的触发线路，赵铁判断只要车辆移动就会触发。" * 45
+        final_candidate = (
+            "陆沉检查通勤车的触发线路，赵铁确认车门、座椅或后窗锁扣移动才会触发。"
+            * 45
+        )
+        raw_final_candidate = final_candidate + "\n"
+        chapter_blueprint = {
+            "chapter_index": 1,
+            "title": "Verified recovery",
+            "core_event": "verify persisted Scene provenance",
+            "required_beats": [
+                {"index": 1, "text": "verify persisted Scene provenance"},
+            ],
+            "ending_pressure": "the verified alarm remains active",
+            "missing_fields": [],
+        }
+        expected_plan = build_blueprint_plan(chapter_blueprint)
+        call_id = self._write_valid_single_scene_execution(
+            execution_id,
+            scene_text=generated,
+            missing_stage=None,
+        )
+        store = ModelCallStore(
+            self.run_dir / "executions" / execution_id / "model_calls"
+        )
+        for offset, stage, response in (
+            (2, "claude_polish", polished),
+            (
+                3,
+                "scene_repair",
+                '{"patches":[{"start_char":10,"end_char":10,"replacement":"修订"}]}',
+            ),
+        ):
+            attempt_id = f"attempt-{stage}"
+            created_at = self.now + timedelta(seconds=offset)
+            store.create_intent(
+                call_id=f"call-{stage}",
+                attempt_id=attempt_id,
+                provider="openai",
+                model="gpt-test",
+                stage=stage,
+                budget_reservation={
+                    "reserved_input_tokens": 10,
+                    "reserved_output_tokens": 100,
+                },
+                request={"messages": [{"role": "user", "content": generated}]},
+                created_at=created_at,
+            )
+            relative = f"responses/{attempt_id}.txt"
+            artifact = store.root / relative
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text(response, encoding="utf-8")
+            store.create_receipt(
+                attempt_id,
+                response=ModelResponse(
+                    response,
+                    usage={"input_tokens": 10, "output_tokens": 20},
+                    finish_reason="stop",
+                    actual_model="gpt-test",
+                    endpoint_type="official",
+                ),
+                response_artifact_ref=relative,
+                status="succeeded",
+                received_at=created_at,
+            )
+
+        self._write_rejected_single_scene_artifact_run(
+            execution_id=execution_id,
+            source_attempt_id="attempt-1",
+            source_call_id=call_id,
+            scene_text=generated,
+        )
+        run_path = next(self.run_dir.glob("chapter_1_*.json"))
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        final_sha256 = hashlib.sha256(raw_final_candidate.encode("utf-8")).hexdigest()
+        payload["chapter"] = raw_final_candidate
+        payload["run"]["chapter"]["chars"] = len(raw_final_candidate)
+        pipeline = payload["run"]["chapter"]["pipeline"]
+        original_continuity_path = Path(
+            pipeline["artifacts"]["scene_continuity"]["path"]
+        )
+        original_continuity = json.loads(
+            original_continuity_path.read_text(encoding="utf-8")
+        )
+        source_evidence = original_continuity["scenes"][0]
+        gate = FinalArtifactIntegrityGate()
+        merge_report = gate.evaluate(
+            artifact_text=generated,
+            stage="merge",
+        )
+        polish_report = gate.evaluate(
+            artifact_text=polished,
+            stage="polish",
+            source_text=generated,
+        )
+        repair_report = gate.evaluate(
+            artifact_text=final_candidate,
+            stage="repair",
+            source_text=polished,
+        )
+        canonical_report = gate.evaluate(
+            artifact_text=raw_final_candidate,
+            stage="writeback_canonicalization",
+            source_text=final_candidate,
+        )
+        final_report = gate.evaluate(
+            artifact_text=raw_final_candidate,
+            stage="final_gate",
+        )
+        records = [
+            build_integrity_stage_record(
+                stage="merge",
+                input_text=None,
+                output_text=generated,
+                report=merge_report,
+            ),
+            build_integrity_stage_record(
+                stage="polish",
+                input_text=generated,
+                output_text=polished,
+                report=polish_report,
+            ),
+            build_integrity_stage_record(
+                stage="repair",
+                input_text=polished,
+                output_text=final_candidate,
+                report=repair_report,
+            ),
+            build_integrity_stage_record(
+                stage="writeback_canonicalization",
+                input_text=final_candidate,
+                output_text=raw_final_candidate,
+                report=canonical_report,
+            ),
+            build_integrity_stage_record(
+                stage="final_gate",
+                input_text=None,
+                output_text=raw_final_candidate,
+                report=final_report,
+            ),
+        ]
+        evidence_history = [
+            {
+                "stage": stage,
+                "before_sha256": hashlib.sha256(before.encode("utf-8")).hexdigest(),
+                "after_sha256": hashlib.sha256(after.encode("utf-8")).hexdigest(),
+                "modified_scene_indexes": [1],
+                "operation_count": 1,
+                "patch_sha256": hashlib.sha256(
+                    f"{stage}:{before}:{after}".encode("utf-8")
+                ).hexdigest(),
+            }
+            for stage, before, after in (
+                ("polish", generated, polished),
+                ("repair", polished, final_candidate),
+                (
+                    "writeback_canonicalization",
+                    final_candidate,
+                    raw_final_candidate,
+                ),
+            )
+        ]
+        pipeline["integrity"] = {
+            "merge": merge_report,
+            "polish": polish_report,
+            "repair": repair_report,
+            "writeback_canonicalization": canonical_report,
+            "final_gate": final_report,
+        }
+        pipeline["integrity_records"] = records
+        pipeline["final_artifact"] = final_report
+        pipeline["scene_spans"] = [
+            {
+                "index": 1,
+                "start_char": 0,
+                "end_char": len(raw_final_candidate),
+                "chars": len(raw_final_candidate),
+            }
+        ]
+        pipeline["scene_sources"][0]["text_sha256"] = final_sha256
+        pipeline["scene_evidence_history"] = evidence_history
+        final_scene = {
+            "index": 1,
+            "goal": expected_plan["scenes"][0]["goal"],
+            "text": raw_final_candidate,
+            "source_attempt_id": "attempt-1",
+            "source_call_id": call_id,
+            "events": source_evidence["events"],
+            "deltas": source_evidence["deltas"],
+            "continuity_note": source_evidence["continuity_note"],
+            "covered_beat_indexes": [1],
+        }
+        artifact_pipeline = {
+            **pipeline,
+            "plan": expected_plan,
+            "scene_drafts": [final_scene],
+            "merged_chapter": raw_final_candidate,
+        }
+        pipeline["artifacts"] = save_chapter_pipeline_artifacts(
+            pipeline=artifact_pipeline,
+            validation=None,
+            repair_deltas=[],
+            run=payload["run"],
+            output_dir=self.run_dir / "chapter_pipeline",
+        )
+        story_metadata = payload["run"]["input_pack"]["metadata"]["story_project"]
+        story_metadata.update(
+            {
+                "planned_scene_count": 1,
+                "planned_scene_scopes": [
+                    {"index": 1, "required_beat_indexes": [1]},
+                ],
+                "required_beat_count": 1,
+                "scene_plan_hash": canonical_json_hash(
+                    expected_plan,
+                    exclude_environment_fields=False,
+                ),
+            }
+        )
+        payload["run"]["story_project"]["chapter_blueprint"] = chapter_blueprint
+        run_chapter = payload["run"]["chapter"]
+        run_chapter["final_artifact"] = final_report
+        run_chapter["integrity_records"] = records
+        run_chapter["integrity_audit"] = {
+            "record_count": len(records),
+            "earliest_blocking_stage": None,
+            "earliest_blocking_problem_codes": [],
+            "stage_hashes": [
+                {
+                    "stage": record["stage"],
+                    "input_sha256": record["input_sha256"],
+                    "output_sha256": record["output_sha256"],
+                    "accepted": record["accepted"],
+                    "timestamp": record["timestamp"],
+                    "blocking_problem_codes": [],
+                    "record_sha256": canonical_json_hash(
+                        record,
+                        exclude_environment_fields=False,
+                    ),
+                }
+                for record in records
+            ],
+            "final_chapter_sha256": final_sha256,
+            "final_gate_sha256": final_sha256,
+            "final_hash_matches_gate": True,
+        }
+        payload["run"]["repair_attempts"] = 1
+        payload["accepted"] = False
+        payload["committed"] = False
+        payload["repair_attempts"] = 1
+        payload["run"]["chapter"]["artifact"] = save_chapter_artifact(
+            chapter_text=raw_final_candidate,
+            run=payload["run"],
+            output_dir=self.run_dir.parent / "chapters",
+        )
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        legacy_created_at = self.now + timedelta(minutes=2)
+        legacy_marker = {
+            "schema_version": "1.2",
+            "id": "resolution_legacy_polish_checkpoint",
+            "created_at": legacy_created_at.isoformat(),
+            "book_id": self.book_id,
+            "chapter_index": 1,
+            "action": "repair_draft",
+            "source_run_id": payload["run"]["id"],
+            "resolved_execution_ids": [],
+            "resolved_attempt_ids": [],
+            "discarded_run_ids": [],
+            "expected_scene_count": 1,
+            "complete_draft": {
+                "text": polished,
+                "sha256": hashlib.sha256(polished.encode("utf-8")).hexdigest(),
+                "problem_codes": [],
+                "source_stage": "claude_polish",
+                "source_attempt_id": "attempt-claude_polish",
+            },
+            "scenes": [],
+            "reason": "durable_polished_draft_available",
+        }
+        legacy_marker["resolution_hash"] = canonical_json_hash(
+            legacy_marker,
+            exclude_fields=("resolution_hash",),
+            exclude_environment_fields=False,
+        )
+        marker_dir = self.run_dir / "locked_chapter_resolutions"
+        marker_dir.mkdir(parents=True)
+        (marker_dir / "resolution_legacy_polish_checkpoint.json").write_text(
+            json.dumps(legacy_marker, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "superseded by a newer verified final candidate",
+        ):
+            load_verified_locked_chapter_pipeline(
+                run_dir=self.run_dir,
+                checkpoint=legacy_marker,
+                chapter_blueprint=chapter_blueprint,
+                language="zh-CN",
+            )
+        self.now += timedelta(minutes=5)
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        self.assertEqual("durable_repaired_draft_available", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual(final_candidate, checkpoint["complete_draft"]["text"])
+        self.assertEqual(
+            hashlib.sha256(final_candidate.encode("utf-8")).hexdigest(),
+            checkpoint["complete_draft"]["sha256"],
+        )
+        self.assertEqual("scene_repair", checkpoint["complete_draft"]["source_stage"])
+        self.assertNotEqual(polished, checkpoint["complete_draft"]["text"])
+        self.assertEqual(
+            2,
+            len(list(marker_dir.glob("resolution_*.json"))),
+        )
+
+        rehydrated = load_verified_locked_chapter_pipeline(
+            run_dir=self.run_dir,
+            checkpoint=checkpoint,
+            chapter_blueprint=chapter_blueprint,
+            language="zh-CN",
+        )
+        self.assertEqual(raw_final_candidate, rehydrated["merged_chapter"])
+        self.assertEqual(
+            raw_final_candidate,
+            "\n\n".join(item["text"] for item in rehydrated["scene_drafts"]),
+        )
+        self.assertEqual(call_id, rehydrated["scene_drafts"][0]["source_call_id"])
+        self.assertEqual(
+            "attempt-1",
+            rehydrated["scene_drafts"][0]["source_attempt_id"],
+        )
+        drifted_blueprint = {
+            **chapter_blueprint,
+            "required_beats": [
+                {"index": 1, "text": "a materially different approved beat"},
+            ],
+        }
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "no longer matches the approved chapter blueprint",
+        ):
+            load_verified_locked_chapter_pipeline(
+                run_dir=self.run_dir,
+                checkpoint=checkpoint,
+                chapter_blueprint=drifted_blueprint,
+                language="zh-CN",
+            )
+        executor = AgentExecutor(
+            run_dir=self.run_dir,
+            story_project_context={"chapter_blueprint": chapter_blueprint},
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            enable_execution_provenance=False,
+        )
+        realigned = executor._locked_complete_draft_pipeline(
+            checkpoint,
+            checkpoint["complete_draft"],
+            snapshot={"language": "zh-CN"},
+        )
+        self.assertEqual(final_candidate, realigned["merged_chapter"])
+        self.assertEqual(
+            final_candidate,
+            "\n\n".join(item["text"] for item in realigned["scene_drafts"]),
+        )
+
+        repeated = self._recover()
+        self.assertEqual("already_recovered", repeated["status"])
+        self.assertEqual(
+            2,
+            len(list(marker_dir.glob("resolution_*.json"))),
+        )
+
+        scene_artifact = Path(pipeline["artifacts"]["scene_drafts"][0]["path"])
+        scene_artifact_bytes = scene_artifact.read_bytes()
+        scene_artifact.write_bytes(scene_artifact_bytes + b"tampered")
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "no verified accepted final artifact",
+        ):
+            load_verified_locked_chapter_pipeline(
+                run_dir=self.run_dir,
+                checkpoint=checkpoint,
+                chapter_blueprint=chapter_blueprint,
+                language="zh-CN",
+            )
+        scene_artifact.write_bytes(scene_artifact_bytes)
+
+        rejected_artifact = Path(payload["run"]["chapter"]["artifact"]["path"])
+        rejected_bytes = rejected_artifact.read_bytes()
+        rejected_artifact.write_bytes(rejected_bytes + b"tampered")
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "no verified accepted final artifact",
+        ):
+            load_verified_locked_chapter_pipeline(
+                run_dir=self.run_dir,
+                checkpoint=checkpoint,
+                chapter_blueprint=chapter_blueprint,
+                language="zh-CN",
+            )
+        rejected_artifact.write_bytes(rejected_bytes)
+
+        receipt_path = store.receipt_path("attempt-scene_repair")
+        receipt_bytes = receipt_path.read_bytes()
+        receipt_path.unlink()
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "no verified accepted final artifact",
+        ):
+            load_verified_locked_chapter_pipeline(
+                run_dir=self.run_dir,
+                checkpoint=checkpoint,
+                chapter_blueprint=chapter_blueprint,
+                language="zh-CN",
+            )
+        receipt_path.write_bytes(receipt_bytes)
 
     def test_newer_terminal_budget_failure_supersedes_partial_checkpoint_with_complete_draft(self) -> None:
         execution_id = "execution_partial_before_terminal_failure"
@@ -1722,6 +2345,66 @@ class LockedChapterRecoveryTest(unittest.TestCase):
                 request={"messages": [{"role": "user", "content": "missing"}]},
                 created_at=self.now + timedelta(seconds=missing_index),
             )
+
+    def _write_complete_transform(
+        self,
+        execution_id: str,
+        *,
+        stage: str,
+        text: str,
+        offset_seconds: int,
+    ) -> None:
+        store = ModelCallStore(
+            self.run_dir / "executions" / execution_id / "model_calls"
+        )
+        attempt_id = f"attempt-{stage}"
+        created_at = self.now + timedelta(seconds=offset_seconds)
+        store.create_intent(
+            call_id=f"call-{stage}",
+            attempt_id=attempt_id,
+            provider="openai",
+            model="gpt-test",
+            stage=stage,
+            budget_reservation={
+                "reserved_input_tokens": 10,
+                "reserved_output_tokens": 100,
+            },
+            request={"messages": [{"role": "user", "content": "transform"}]},
+            created_at=created_at,
+        )
+        relative = f"responses/{attempt_id}.txt"
+        artifact = store.root / relative
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(text, encoding="utf-8")
+        store.create_receipt(
+            attempt_id,
+            response=ModelResponse(
+                text,
+                usage={"input_tokens": 10, "output_tokens": 20},
+                finish_reason="stop",
+                actual_model="gpt-test",
+                endpoint_type="official",
+            ),
+            response_artifact_ref=relative,
+            status="succeeded",
+            received_at=created_at,
+        )
+
+    def _mark_repair_not_converging(self) -> None:
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["run"]["error"] = {
+            "type": "RepairNotConvergingError",
+            "message": (
+                "chapter_repair_not_converging: repair validation did not "
+                "converge; problem_counts=6 -> 2; reason=new_more_severe_problem"
+            ),
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def _write_failed_run(
         self,

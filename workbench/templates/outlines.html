@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% set active_nav = 'chapters' %}
+
+{% block title %}未来 10 章 · {{ project.title }}{% endblock %}
+{% block breadcrumb %}<span>/</span><span>章纲提案</span>{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <div class="heading-status-row"><p class="eyebrow">结构化提案</p>{{ ui.status_badge(batch.status|default('draft')) }}</div>
+    <h1>未来 10 章</h1>
+    <p class="lede">先调整整体节奏，再一次性确认。确认后章纲将冻结，成为连续生产的唯一依据。</p>
+  </div>
+  <div class="heading-meta">
+    <span>覆盖范围</span>
+    <strong>第 {{ batch.start_chapter|default(project.next_chapter|default(1)) }}–{{ batch.end_chapter|default((batch.start_chapter|default(project.next_chapter|default(1))) + 9) }} 章</strong>
+  </div>
+</section>
+
+{% if batch.state_drifted|default(false) %}
+<div class="notice notice-danger" role="alert">
+  <strong>项目状态已变化，暂时不能发布</strong>
+  <p>提案创建后，正文或权威状态发生了外部变更。请重新生成提案，避免旧章纲覆盖新事实。</p>
+</div>
+{% endif %}
+
+<section class="outline-context panel">
+  <div>
+    <p class="eyebrow">本轮方向</p>
+    <h2>{{ batch.direction_title|default('推进当前主线') }}</h2>
+    <p>{{ batch.direction|default('未提供额外阶段方向，提案将以总纲和当前权威状态为主。') }}</p>
+  </div>
+  <dl class="context-facts">
+    <div><dt>基于正文</dt><dd>截至第 {{ batch.based_on_chapter|default((batch.start_chapter|default(1)) - 1) }} 章</dd></div>
+    <div><dt>状态指纹</dt><dd><code>{{ batch.source_state_sha|default('—')|truncate(14, true, '…') }}</code></dd></div>
+    <div><dt>提案版本</dt><dd>r{{ batch.revision|default(1) }}</dd></div>
+  </dl>
+</section>
+
+<form class="outline-editor" action="{{ update_batch_url|default('/api/outline-batches/' ~ batch.id) }}" method="post" data-async-form data-json-form data-method="PUT" data-cas-revision="{{ batch.revision|default(1) }}" data-cas-sha="{{ batch.source_state_sha|default('') }}" data-success-message="章纲草稿已保存。">
+  <input type="hidden" name="revision" value="{{ batch.revision|default(1) }}">
+  <input type="hidden" name="source_state_sha" value="{{ batch.source_state_sha|default('') }}">
+  <div class="outline-stack">
+    {% set items = batch.items|default([]) %}
+    {% set first_chapter = batch.start_chapter|default(project.next_chapter|default(1)) %}
+    {% for index in range(10) %}
+      {% set item = items[index] if items|length > index else none %}
+      {% set chapter_number = item.chapter_index if item and item.chapter_index is defined else first_chapter + index %}
+      <article class="outline-card" id="outline-{{ chapter_number }}">
+        <header class="outline-card-header">
+          <div class="outline-number"><span>第</span><strong>{{ chapter_number }}</strong><span>章</span></div>
+          <label class="field title-field">
+            <span class="sr-only">第 {{ chapter_number }} 章标题</span>
+            <input name="items.{{ index }}.title" required maxlength="120" value="{{ item.title|default('') if item else '' }}" placeholder="输入章节标题">
+          </label>
+          <button class="icon-button outline-toggle" type="button" data-outline-toggle aria-expanded="true" aria-controls="outline-body-{{ chapter_number }}" aria-label="收起第 {{ chapter_number }} 章">⌃</button>
+        </header>
+        <div class="outline-card-body" id="outline-body-{{ chapter_number }}">
+          <input type="hidden" name="items.{{ index }}.chapter_index" value="{{ chapter_number }}">
+          <div class="outline-fields">
+            <label class="field field-span-2">
+              <span>核心事件 <em>必填</em></span>
+              <textarea name="items.{{ index }}.core_event" required rows="3" maxlength="1000" placeholder="这一章必须发生的核心变化是什么？">{{ item.core_event|default('') if item else '' }}</textarea>
+            </label>
+            <label class="field">
+              <span>必写节拍 <em>每行一项</em></span>
+              <textarea name="items.{{ index }}.required_beats" required rows="5" placeholder="发现新线索&#10;角色做出选择&#10;付出具体代价">{{ item.required_beats|join('\n') if item and item.required_beats is not string else item.required_beats|default('') if item else '' }}</textarea>
+            </label>
+            <label class="field">
+              <span>结尾压力 <em>必填</em></span>
+              <textarea name="items.{{ index }}.ending_pressure" required rows="5" maxlength="700" placeholder="结尾留下什么未解问题或迫近威胁？">{{ item.ending_pressure|default('') if item else '' }}</textarea>
+            </label>
+          </div>
+        </div>
+      </article>
+    {% endfor %}
+  </div>
+  <div class="sticky-savebar">
+    <div>
+      <span class="unsaved-dot" data-unsaved-indicator aria-hidden="true"></span>
+      <span data-save-state>所有修改已保存</span>
+    </div>
+    <div class="button-row">
+      <button class="button button-secondary" type="submit">保存草稿</button>
+      <button class="button button-primary" type="button" data-submit-form="approve-outline-form" data-confirm="确认发布这 10 章章纲？发布后将冻结，用于连续生产。"{% if batch.state_drifted|default(false) or batch.status|default('draft') == 'approved' %} disabled{% endif %}>确认并发布 10 章</button>
+    </div>
+  </div>
+  <div class="form-error" data-form-error role="alert" hidden></div>
+</form>
+
+<form id="approve-outline-form" action="{{ approve_batch_url|default('/api/outline-batches/' ~ batch.id ~ '/approve') }}" method="post" data-async-form data-json-form data-cas-revision="{{ batch.revision|default(1) }}" data-cas-sha="{{ batch.source_state_sha|default('') }}" data-success-message="10 章章纲已确认并冻结。" hidden>
+  <input type="hidden" name="revision" value="{{ batch.revision|default(1) }}">
+  <input type="hidden" name="source_state_sha" value="{{ batch.source_state_sha|default('') }}">
+</form>
+{% endblock %}

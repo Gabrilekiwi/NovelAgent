@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% set active_nav = 'pending' %}
+
+{% block title %}待处理 · {{ project.title }}{% endblock %}
+{% block breadcrumb %}<span>/</span><span>待处理</span>{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">作者决策队列</p>
+    <h1>{{ pending_items|default([])|length }} 项需要你处理</h1>
+    <p class="lede">自动生产在不确定处停下。这里只展示必须由作者做决定的内容。</p>
+  </div>
+</section>
+
+{% if pending_items|default([]) %}
+<div class="pending-layout">
+  <aside class="pending-list panel" aria-label="待处理项">
+    {% for item in pending_items %}
+    <a class="pending-item{% if selected_pending and item.id == selected_pending.id %} is-active{% endif %}" href="{{ item.url|default(project_url ~ '/pending?item=' ~ item.id) }}"{% if selected_pending and item.id == selected_pending.id %} aria-current="true"{% endif %}>
+      <span class="pending-symbol pending-{{ item.kind|default('review') }}" aria-hidden="true">{{ '!' if item.severity|default('attention') in ['danger', 'attention'] else '◇' }}</span>
+      <span><strong>{{ item.title }}</strong><small>{{ item.reason|default('') }}</small><time>{{ item.created_at_label|default('') }}</time></span>
+      <span aria-hidden="true">›</span>
+    </a>
+    {% endfor %}
+  </aside>
+
+  {% set issue = selected_pending|default(pending_items[0]) %}
+  <div class="pending-detail">
+    <section class="panel recovery-hero">
+      <div class="recovery-heading">
+        <div>
+          <div class="heading-status-row"><p class="eyebrow">{{ issue.kind_label|default('可恢复生成') }}</p>{{ ui.status_badge(issue.status|default('paused_recoverable')) }}</div>
+          <h2>{{ issue.title|default('第 20 章在场景 3 中断') }}</h2>
+          <p>{{ issue.summary|default('Provider 在返回场景 3 时产生部分响应。场景 1、2 已经通过内容哈希绑定，可以安全复用。') }}</p>
+        </div>
+        <div class="recovery-chapter"><span>章节</span><strong>{{ issue.chapter|default(20) }}</strong></div>
+      </div>
+      <dl class="run-facts">
+        <div><dt>中断时间</dt><dd>{{ issue.failed_at_label|default('—') }}</dd></div>
+        <div><dt>运行 ID</dt><dd><code>{{ issue.run_id|default('—')|truncate(24, true, '…') }}</code></dd></div>
+        <div><dt>失败类型</dt><dd>{{ issue.failure_type|default('provider_partial_response') }}</dd></div>
+      </dl>
+    </section>
+
+    <section class="panel scene-recovery-panel">
+      <div class="section-heading compact">
+        <div><p class="eyebrow">恢复边界</p><h2>已完成内容不会重写</h2></div>
+        <span class="safe-chip"><span aria-hidden="true">✓</span> 哈希绑定</span>
+      </div>
+      <ol class="scene-recovery-list">
+        {% for scene in issue.scenes|default([
+          {'number': 1, 'title': '已完成场景 1', 'status': 'trusted', 'detail': '回执完整，内容哈希一致'},
+          {'number': 2, 'title': '已完成场景 2', 'status': 'trusted', 'detail': '回执完整，内容哈希一致'},
+          {'number': 3, 'title': '场景 3', 'status': 'partial', 'detail': 'Provider 部分响应，不作为可信正文'}
+        ]) %}
+        <li class="scene-{{ scene.status }}">
+          <span class="scene-node" aria-hidden="true">{{ '✓' if scene.status == 'trusted' else '!' }}</span>
+          <div><strong>{{ scene.title }}</strong><p>{{ scene.detail }}</p>{% if scene.sha %}<code>{{ scene.sha|truncate(18, true, '…') }}</code>{% endif %}</div>
+          <span class="scene-action">{{ '保留' if scene.status == 'trusted' else '从此重试' }}</span>
+        </li>
+        {% endfor %}
+      </ol>
+      <div class="recovery-callout">
+        <span aria-hidden="true">→</span>
+        <p><strong>建议动作：从场景 {{ issue.next_scene|default(3) }} 继续</strong><br>恢复会创建追加式检查点，不修改正式正文或历史快照。</p>
+      </div>
+      <form action="{{ issue.recover_url|default('/api/jobs/' ~ issue.job_id ~ '/recover') }}" method="post" data-async-form data-json-form data-confirm="将复用已验证的场景 1、2，从场景 3 重新调用模型。确认继续吗？" data-success-message="恢复任务已启动。">
+        <input type="hidden" name="strategy" value="reuse_trusted_scenes">
+        <input type="hidden" name="run_id" value="{{ issue.run_id|default('') }}">
+        <input type="hidden" name="expected_sha" value="{{ issue.recovery_sha|default('') }}">
+        <button class="button button-primary button-wide" type="submit">从场景 {{ issue.next_scene|default(3) }} 安全继续</button>
+        <div class="form-error" data-form-error role="alert" hidden></div>
+      </form>
+    </section>
+
+    {% if issue.draft|default(none) %}
+    <section class="panel draft-review-panel">
+      <div class="section-heading compact"><div><p class="eyebrow">恢复草稿</p><h2>编辑后重新校验</h2></div>{{ ui.status_badge(issue.draft.status|default('draft')) }}</div>
+      <form action="{{ issue.draft.update_url|default('/api/drafts/' ~ issue.draft.id) }}" method="post" data-async-form data-json-form data-method="PUT" data-cas-revision="{{ issue.draft.revision }}" data-cas-sha="{{ issue.draft.sha }}" data-success-message="草稿已保存。">
+        <input type="hidden" name="revision" value="{{ issue.draft.revision }}">
+        <textarea class="prose-editor" name="content" rows="24" aria-label="第 {{ issue.chapter }} 章恢复草稿">{{ issue.draft.content }}</textarea>
+        <div class="editor-footer"><span><code>r{{ issue.draft.revision }}</code> · <code>{{ issue.draft.sha|truncate(12, true, '…') }}</code></span><button class="button button-secondary" type="submit">保存草稿</button></div>
+        <div class="form-error" data-form-error role="alert" hidden></div>
+      </form>
+      <div class="button-row right-aligned">
+        <form action="{{ issue.draft.validate_url|default('/api/drafts/' ~ issue.draft.id ~ '/validate') }}" method="post" data-async-form data-json-form><input type="hidden" name="revision" value="{{ issue.draft.revision }}"><input type="hidden" name="sha" value="{{ issue.draft.sha }}"><button class="button button-secondary" type="submit">重新校验</button></form>
+        <form action="{{ issue.draft.confirm_url|default('/api/drafts/' ~ issue.draft.id ~ '/confirm') }}" method="post" data-async-form data-json-form data-confirm="确认提交这份已校验草稿，并继续原生产批次吗？"><input type="hidden" name="revision" value="{{ issue.draft.revision }}"><input type="hidden" name="sha" value="{{ issue.draft.sha }}"><button class="button button-primary" type="submit"{% if issue.draft.status != 'pass' %} disabled{% endif %}>确认提交并继续</button></form>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+  {{ ui.empty_state('没有待处理项', '连续生产没有被阻塞。你可以回到生产页继续写作。', '前往生产', production_url|default(project_url ~ '/production')) }}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,19 @@
+{% set stages = stages|default([
+  {'key': 'preflight', 'label': '预检', 'description': '检查章纲、状态与模型'},
+  {'key': 'generating', 'label': '生成', 'description': '逐场景生成正文'},
+  {'key': 'validating', 'label': '校验', 'description': '事实、连续性与长度'},
+  {'key': 'reviewing', 'label': '审核', 'description': '质量门与自动修复'},
+  {'key': 'committing', 'label': '提交', 'description': '写入正文并校验 Receipt'}
+]) %}
+<ol class="stage-timeline" data-stage-timeline>
+  {% for stage in stages %}
+    {% set state = stage.state|default('pending') %}
+    <li class="stage stage-{{ state }}" data-stage="{{ stage.key }}" data-stage-state="{{ state }}">
+      <span class="stage-node" aria-hidden="true"><span>{{ loop.index }}</span></span>
+      <div>
+        <strong>{{ stage.label }}</strong>
+        <small data-stage-detail>{{ stage.detail|default(stage.description) }}</small>
+      </div>
+    </li>
+  {% endfor %}
+</ol>

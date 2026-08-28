@@ -43,7 +43,11 @@ from core.state.generation_state_view import (
     scene_generation_state_reference_from_markdown,
 )
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
-from core.structured_context import compact_markdown_context, select_text_blocks
+from core.structured_context import (
+    StructuredContextError,
+    compact_markdown_context,
+    select_text_blocks,
+)
 from core.story_project.coverage import (
     blueprint_to_dict,
     build_blueprint_coverage,
@@ -76,6 +80,7 @@ _CHAPTER_PLAN_PROMPT = (
 _SCENE_BOUNDARY_REGENERATION_LIMIT = 1
 _SCENE_BOUNDARY_FEEDBACK_FINDING_LIMIT = 4
 _SCENE_BOUNDARY_FEEDBACK_EVIDENCE_MAX_CHARS = 480
+_LEGACY_SCENE_COMPLETED_EVENT_RECORD_LIMITS = (None, 12, 6, 0)
 _EVENT_LOCATION_CONTRACT = (
     "Use one exact, non-compound location for each event.location. Every known entity "
     "listed in event.subjects or event.objects is asserted to be physically present "
@@ -84,27 +89,66 @@ _EVENT_LOCATION_CONTRACT = (
 )
 _SCENE_CONTEXT_PAYLOAD_POLICIES = (
     {
+        "context_section_chars": 1_500,
         "previous_tail_chars": 600,
         "summary_limit": 8,
         "summary_tail_chars": 280,
         "include_summary_goal": True,
     },
     {
+        "context_section_chars": 1_500,
         "previous_tail_chars": 500,
         "summary_limit": 8,
         "summary_tail_chars": 200,
         "include_summary_goal": False,
     },
     {
+        "context_section_chars": 1_500,
         "previous_tail_chars": 400,
         "summary_limit": 8,
         "summary_tail_chars": 120,
         "include_summary_goal": False,
     },
     {
+        "context_section_chars": 1_500,
         "previous_tail_chars": 360,
         "summary_limit": 6,
         "summary_tail_chars": 120,
+        "include_summary_goal": False,
+    },
+    {
+        "context_section_chars": 1_500,
+        "previous_tail_chars": 300,
+        "summary_limit": 4,
+        "summary_tail_chars": 80,
+        "include_summary_goal": False,
+    },
+    {
+        "context_section_chars": 1_500,
+        "previous_tail_chars": 240,
+        "summary_limit": 4,
+        "summary_tail_chars": 40,
+        "include_summary_goal": False,
+    },
+    {
+        "context_section_chars": 1_500,
+        "previous_tail_chars": 200,
+        "summary_limit": 4,
+        "summary_tail_chars": 0,
+        "include_summary_goal": False,
+    },
+    {
+        "context_section_chars": 1_450,
+        "previous_tail_chars": 160,
+        "summary_limit": 4,
+        "summary_tail_chars": 0,
+        "include_summary_goal": False,
+    },
+    {
+        "context_section_chars": 1_400,
+        "previous_tail_chars": 120,
+        "summary_limit": 4,
+        "summary_tail_chars": 0,
         "include_summary_goal": False,
     },
 )
@@ -408,10 +452,7 @@ def _request_chapter_plan_json_repair(
 
 
 def _load_plan_json(payload: str) -> Any:
-    text = str(payload or "").strip()
-    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
-    if fenced:
-        text = fenced.group(1).strip()
+    text = _structured_json_text(payload)
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -422,11 +463,44 @@ def _load_plan_json(payload: str) -> Any:
         return json.loads(text[start : end + 1])
 
 
+def _structured_json_text(payload: str) -> str:
+    text = str(payload or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    return text
+
+
+def _repair_premature_scene_object_close(payload: str) -> dict[str, Any] | None:
+    """Repair one unambiguous extra top-level brace after the prose field."""
+
+    text = _structured_json_text(payload)
+    try:
+        prefix, prefix_end = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(prefix, dict) or set(prefix) != {"prose"}:
+        return None
+    remainder = text[prefix_end:]
+    if not remainder.lstrip().startswith(',"events"'):
+        return None
+    if prefix_end <= 0 or text[prefix_end - 1] != "}":
+        return None
+    repaired_text = text[: prefix_end - 1] + remainder
+    try:
+        repaired = json.loads(repaired_text)
+    except json.JSONDecodeError:
+        return None
+    return repaired if isinstance(repaired, dict) else None
+
+
 def _load_scene_response(payload: str) -> dict[str, Any]:
     try:
         value = _load_plan_json(payload)
     except json.JSONDecodeError as exc:
-        raise ValueError("Scene response was not valid structured JSON") from exc
+        value = _repair_premature_scene_object_close(payload)
+        if value is None:
+            raise ValueError("Scene response was not valid structured JSON") from exc
     if not isinstance(value, dict):
         raise ValueError("Scene response must be a JSON object")
     prose = validate_text_output(value.get("prose"), CHAPTER_CONTRACT)
@@ -835,6 +909,10 @@ def _scene_request_payload(
         ensure_ascii=False,
         sort_keys=True,
     )
+    scene_state_projections = _scene_state_projection_candidates(
+        prompt_scene_state,
+        has_generation_state_view=generation_state_view is not None,
+    )
     payload_body = {
         "chapter_plan": chapter_plan_context,
         "scene": scene,
@@ -843,12 +921,7 @@ def _scene_request_payload(
         "story_project_chapter_contract": _scene_blueprint_contract(
             blueprint
         ),
-        "current_scene_state": scene_state_generation_projection(
-            prompt_scene_state,
-            include_completed_event_records=(
-                generation_state_view is None
-            ),
-        ),
+        "current_scene_state": scene_state_projections[0],
         **(
             {
                 "expected_new_entities": list(
@@ -924,41 +997,64 @@ def _scene_request_payload(
     budget = default_context_budget()
     safe_input_limit = _scene_safe_input_limit(budget)
     protocol_texts = (_load_scene_prompt(),)
-    compact_scene_context = _compact_scene_context(
-        input_pack,
-        query=context_query,
-        authoritative_state_source=authoritative_state_source,
-        generation_state_view_source=generation_state_view,
-    )
+    compact_scene_contexts: dict[int, str] = {}
     payload = ""
-    for policy in _SCENE_CONTEXT_PAYLOAD_POLICIES:
-        compact_summaries = _compact_prior_scene_summaries(
-            prior_scene_summaries,
-            limit=int(policy["summary_limit"]),
-            tail_chars=int(policy["summary_tail_chars"]),
-            include_goal=bool(policy["include_summary_goal"]),
-        )
-        # This payload is machine-readable transport JSON. Compact only its
-        # formatting so admission headroom is not consumed by indentation;
-        # every authoritative fact and continuity field remains unchanged.
-        payload = json.dumps(
-            {
-                "shared_context": compact_scene_context,
-                **payload_body,
-                "previous_scene_tail": str(previous_scene_tail)[
-                    -int(policy["previous_tail_chars"]) :
-                ],
-                "prior_scene_summaries": compact_summaries,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        report = budget.measure(payload, stage="scene", protocol_texts=protocol_texts)
-        if report["within_budget"] and _scene_report_within_safe_limit(
-            report,
-            safe_input_limit=safe_input_limit,
-        ):
-            return payload
+    for scene_state_projection in scene_state_projections:
+        candidate_payload_body = dict(payload_body)
+        candidate_payload_body["current_scene_state"] = scene_state_projection
+        for policy in _SCENE_CONTEXT_PAYLOAD_POLICIES:
+            context_section_chars = int(policy["context_section_chars"])
+            compact_scene_context = compact_scene_contexts.get(context_section_chars)
+            if compact_scene_context is None:
+                try:
+                    compact_scene_context = _compact_scene_context(
+                        input_pack,
+                        max_section_chars=context_section_chars,
+                        query=context_query,
+                        authoritative_state_source=authoritative_state_source,
+                        generation_state_view_source=generation_state_view,
+                    )
+                except StructuredContextError as exc:
+                    if context_section_chars >= 1_500 or exc.code not in {
+                        "required_json_item_exceeds_budget",
+                        "required_markdown_context_exceeds_budget",
+                    }:
+                        raise
+                    continue
+                compact_scene_contexts[context_section_chars] = compact_scene_context
+            compact_summaries = _compact_prior_scene_summaries(
+                prior_scene_summaries,
+                limit=int(policy["summary_limit"]),
+                tail_chars=int(policy["summary_tail_chars"]),
+                include_goal=bool(policy["include_summary_goal"]),
+            )
+            # This payload is machine-readable transport JSON. Compact only
+            # its formatting so admission headroom is not consumed by
+            # indentation. Legacy completed-event details are reduced only
+            # after the otherwise-compatible payload candidates do not fit;
+            # the full state remains local for deterministic validation.
+            payload = json.dumps(
+                {
+                    "shared_context": compact_scene_context,
+                    **candidate_payload_body,
+                    "previous_scene_tail": str(previous_scene_tail)[
+                        -int(policy["previous_tail_chars"]) :
+                    ],
+                    "prior_scene_summaries": compact_summaries,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            report = budget.measure(
+                payload,
+                stage="scene",
+                protocol_texts=protocol_texts,
+            )
+            if report["within_budget"] and _scene_report_within_safe_limit(
+                report,
+                safe_input_limit=safe_input_limit,
+            ):
+                return payload
     report = budget.require_input(payload, stage="scene", protocol_texts=protocol_texts)
     if not _scene_report_within_safe_limit(
         report,
@@ -994,6 +1090,37 @@ def _compact_chapter_plan_context(plan: dict[str, Any]) -> dict[str, Any]:
         "goal": str(plan.get("goal") or ""),
         "scenes": scenes,
     }
+
+
+def _scene_state_projection_candidates(
+    scene_state: dict[str, Any],
+    *,
+    has_generation_state_view: bool,
+) -> list[dict[str, Any]]:
+    """Build prompt-only state candidates without weakening local validation."""
+
+    limits = (
+        (0,)
+        if has_generation_state_view
+        else _LEGACY_SCENE_COMPLETED_EVENT_RECORD_LIMITS
+    )
+    candidates: list[dict[str, Any]] = []
+    previous_completed_events: list[dict[str, Any]] | None = None
+    for limit in limits:
+        projection = scene_state_generation_projection(
+            scene_state,
+            include_completed_event_records=(limit != 0),
+            completed_event_record_limit=limit,
+        )
+        completed_events = projection["completed_events"]
+        if (
+            previous_completed_events is not None
+            and completed_events == previous_completed_events
+        ):
+            continue
+        candidates.append(projection)
+        previous_completed_events = completed_events
+    return candidates
 
 
 def _scene_blueprint_contract(
@@ -1080,9 +1207,10 @@ def _compact_prior_scene_summaries(
     for raw in list(summaries or [])[-bounded_limit:]:
         if not isinstance(raw, dict):
             continue
+        raw_tail = str(raw.get("tail") or "")
         item = {
             "index": int(raw.get("index") or 0),
-            "tail": str(raw.get("tail") or "")[-max(0, tail_chars) :],
+            "tail": raw_tail[-tail_chars:] if tail_chars > 0 else "",
             "event_ids": [str(value) for value in raw.get("event_ids") or [] if str(value)],
         }
         if include_goal:
