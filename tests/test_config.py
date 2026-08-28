@@ -42,6 +42,19 @@ class ConfigTest(unittest.TestCase):
 
         self.assertEqual(Path(DEFAULT_MEMORY_PATH), config.memory_path)
 
+    def test_runtime_mode_defaults_to_legacy_and_reads_env(self) -> None:
+        original = os.environ.get("NOVELAGENT_RUNTIME_MODE")
+        try:
+            os.environ["NOVELAGENT_RUNTIME_MODE"] = ""
+            self.assertEqual("legacy", get_config().runtime_mode)
+            os.environ["NOVELAGENT_RUNTIME_MODE"] = "shadow"
+            self.assertEqual("shadow", get_config().runtime_mode)
+        finally:
+            if original is None:
+                os.environ.pop("NOVELAGENT_RUNTIME_MODE", None)
+            else:
+                os.environ["NOVELAGENT_RUNTIME_MODE"] = original
+
     def test_openai_timeout_defaults_and_parses_env(self) -> None:
         original_timeout = os.environ.get("OPENAI_TIMEOUT_SECONDS")
         try:

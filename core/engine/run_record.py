@@ -12,6 +12,7 @@ from core.engine.locked_chapter_state import discarded_run_ids
 from core.memory_v2.canonical import canonical_json_hash
 from core.schema import validate_schema
 from core.quality_decision import build_quality_decision, quality_decision_accepted
+from core.runtime import validate_runtime_evidence
 from core.state.input_pack import build_recovery_context
 
 
@@ -33,6 +34,9 @@ def validate_run_result(result: dict[str, Any]) -> dict[str, Any]:
     run_workflow_plan = result["run"].get("workflow_plan")
     if isinstance(run_workflow_plan, dict):
         validate_workflow_plan(run_workflow_plan)
+    run_runtime = result["run"].get("runtime")
+    if isinstance(run_runtime, dict):
+        validate_runtime_evidence(run_runtime)
     if isinstance(result.get("memory_write"), dict):
         validate_schema(result["memory_write"], "memory_writeback.schema.json")
     run_memory = result["run"].get("memory")

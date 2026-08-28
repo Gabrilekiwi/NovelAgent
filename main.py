@@ -117,6 +117,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Persist snapshot and run records even when --dry-run is enabled.",
     )
     parser.add_argument(
+        "--runtime-mode",
+        choices=("legacy", "shadow"),
+        default=None,
+        help=(
+            "Runtime boundary mode. Defaults to NOVELAGENT_RUNTIME_MODE or legacy; "
+            "shadow records node evidence without taking over execution."
+        ),
+    )
+    parser.add_argument(
         "--snapshot",
         default=str(DEFAULT_SNAPSHOT_PATH),
         help="Snapshot file path.",
@@ -644,6 +653,7 @@ def _run_once_with_progress(
             "chapter_index": result["run"]["chapter_index"],
             "committed": result["committed"],
             "status": result["run"]["status"],
+            **_runtime_progress_fields(result),
         }
     )
     run_status = str(result["run"].get("status") or "")
@@ -666,6 +676,18 @@ def _run_once_with_progress(
         }
     )
     return result
+
+
+def _runtime_progress_fields(result: dict[str, Any]) -> dict[str, Any]:
+    run = result.get("run") if isinstance(result, dict) else None
+    runtime = run.get("runtime") if isinstance(run, dict) else None
+    if not isinstance(runtime, dict):
+        return {}
+    attempts = runtime.get("attempts")
+    return {
+        "runtime_mode": str(runtime.get("mode") or "shadow"),
+        "node_attempt_count": len(attempts) if isinstance(attempts, list) else 0,
+    }
 
 
 def _load_story_project_identity_for_read_command(args: argparse.Namespace):
@@ -1088,6 +1110,7 @@ def main() -> None:
         scene_limit=args.scene_limit,
         director=ModelDirector(model=args.director_model) if args.director_model else None,
         enable_llm_validator=args.llm_validator,
+        runtime_mode=args.runtime_mode,
         memory_writer=build_memory_writer(
             mode=args.memory_writeback,
             outbox_path=args.memory_outbox,
@@ -1549,6 +1572,13 @@ def format_run_summary(result: dict) -> str:
         f"- workflow: {' -> '.join(str(action) for action in run.get('workflow', []))}",
         f"- repair_attempts: {run.get('repair_attempts', 0)}",
     ]
+    runtime = run.get("runtime") if isinstance(run.get("runtime"), dict) else None
+    if runtime is not None:
+        lines.append(
+            "- runtime: "
+            f"{runtime.get('mode')} (authority={runtime.get('authority')}, "
+            f"attempts={len(runtime.get('attempts') or [])}, cutover=False)"
+        )
     if isinstance(loop, dict):
         lines.extend(
             [

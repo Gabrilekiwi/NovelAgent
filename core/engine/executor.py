@@ -8,7 +8,7 @@ import os
 import threading
 import uuid
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
 from api.contracts import ModelCallError, ModelOutputError
@@ -54,6 +54,12 @@ from core.review.index import build_review_index_entry, review_index_path, updat
 from core.review.repair_loop import ReviewRepairConfig, run_review_repair_loop, validate_review_repair_config
 from core.review.runtime import RuntimeReviewConfig, run_runtime_review, validate_runtime_review_config
 from core.runtime_paths import DEFAULT_CHAPTER_DIR, DEFAULT_RUN_DIR, DEFAULT_SNAPSHOT_PATH, RuntimePaths
+from core.runtime import (
+    RUNTIME_MODE_SHADOW,
+    build_shadow_runtime_evidence,
+    resolve_runtime_mode,
+    validate_runtime_evidence,
+)
 from core.state.authoritative import (
     adapt_scene_deltas_to_authoritative_delta,
     merge_authoritative_report_into_validation,
@@ -218,6 +224,7 @@ class AgentExecutor:
         final_artifact_integrity_config: FinalArtifactIntegrityConfig | None = None,
         repository_root: str | Path | None = None,
         enable_execution_provenance: bool = True,
+        runtime_mode: str | None = None,
         run_budget_limits: RunBudgetLimits | None = None,
         file_delivery_profile: Mapping[str, Any] | None = None,
         delivery_queue: DeliveryQueue | None = None,
@@ -263,6 +270,9 @@ class AgentExecutor:
             else Path(__file__).resolve().parents[2]
         )
         self.enable_execution_provenance = bool(enable_execution_provenance)
+        self.runtime_mode = resolve_runtime_mode(
+            runtime_mode if runtime_mode is not None else get_config().runtime_mode
+        )
         self.run_budget_limits = run_budget_limits or RunBudgetLimits()
         if (file_delivery_profile is None) != (delivery_queue is None):
             raise ValueError(
@@ -384,6 +394,7 @@ class AgentExecutor:
             "llm_validator": self.enable_llm_validator,
             "memory_v2": True,
             "review_gate": self.review_config.enabled,
+            "runtime_shadow": self.runtime_mode == RUNTIME_MODE_SHADOW,
             "story_project_writeback": self.story_project_writeback.enabled,
         }
         provenance = _capture_execution_provenance_cached(
@@ -440,6 +451,76 @@ class AgentExecutor:
             if self._run_budget_tracker is not None:
                 evidence["budget"] = self._run_budget_tracker.report()
             run["execution_evidence"] = evidence
+
+    def _attach_shadow_runtime(
+        self,
+        result: dict[str, Any],
+        *,
+        context_inputs: Mapping[str, Any] | None = None,
+    ) -> None:
+        if self.runtime_mode != RUNTIME_MODE_SHADOW:
+            return
+        run = result.get("run") if isinstance(result, dict) else None
+        if not isinstance(run, dict):
+            return
+        existing = run.get("runtime")
+        if isinstance(existing, dict):
+            validate_runtime_evidence(existing)
+            return
+
+        artifact_ref = self._shadow_runtime_artifact_ref(run)
+        evidence = build_shadow_runtime_evidence(
+            run,
+            context_inputs=context_inputs,
+            model_call_receipts=self._model_call_receipts(),
+            artifact_ref=artifact_ref,
+            created_at=str(run.get("finished_at") or utc_now().isoformat()),
+        )
+        if artifact_ref is not None:
+            artifact_path = self.run_dir.joinpath(*PurePosixPath(artifact_ref).parts)
+            try:
+                atomic_create_json(artifact_path, evidence)
+            except OSError as exc:
+                if not artifact_path.is_file():
+                    raise
+                try:
+                    existing_artifact = json.loads(
+                        artifact_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, UnicodeError, json.JSONDecodeError) as read_exc:
+                    raise PersistencePreparationError(
+                        "shadow runtime evidence artifact is unreadable"
+                    ) from read_exc
+                if existing_artifact != evidence:
+                    raise PersistencePreparationError(
+                        "shadow runtime evidence artifact changed across retry"
+                    ) from exc
+        run["runtime"] = evidence
+
+    def _shadow_runtime_artifact_ref(self, run: Mapping[str, Any]) -> str | None:
+        execution = self._execution_evidence
+        if not isinstance(execution, dict):
+            return None
+        model_calls_ref = execution.get("model_calls_ref")
+        if not isinstance(model_calls_ref, str) or not model_calls_ref:
+            return None
+        execution_root = PurePosixPath(model_calls_ref).parent
+        return str(
+            execution_root / "runtime" / f"{str(run.get('id') or 'run')}.json"
+        )
+
+    def _model_call_receipts(self) -> list[dict[str, Any]]:
+        runtime = self._model_call_runtime
+        if runtime is None or not runtime.store.receipts_dir.is_dir():
+            return []
+        receipts: list[dict[str, Any]] = []
+        for path in sorted(runtime.store.receipts_dir.glob("*.json")):
+            receipt = runtime.store.load_receipt(path.stem)
+            intent = runtime.store.load_intent(path.stem)
+            projected = dict(receipt)
+            projected["stage"] = str(intent.get("stage") or "")
+            receipts.append(projected)
+        return receipts
 
     def _invoke_once(
         self,
@@ -781,6 +862,17 @@ class AgentExecutor:
                     _trace_repair_deltas(exc.trace),
                 )
                 self._attach_chapter_artifact(failed_result)
+                self._attach_shadow_runtime(
+                    failed_result,
+                    context_inputs={
+                        "snapshot": workflow_snapshot,
+                        "input_pack": input_pack,
+                        "workflow_plan": workflow_plan,
+                        "chapter": exc.chapter,
+                        "validation": exc.validation,
+                        "analysis": failed_result["analysis"],
+                    },
+                )
                 self._attach_execution_evidence(failed_result)
                 self._save_run_record(failed_result)
             raise exc.original from exc
@@ -1068,6 +1160,17 @@ class AgentExecutor:
                     _trace_repair_deltas(workflow_trace),
                 )
                 self._attach_chapter_artifact(failed_result)
+                self._attach_shadow_runtime(
+                    failed_result,
+                    context_inputs={
+                        "snapshot": workflow_snapshot,
+                        "input_pack": input_pack,
+                        "workflow_plan": workflow_plan,
+                        "chapter": chapter,
+                        "validation": validation,
+                        "analysis": failed_result["analysis"],
+                    },
+                )
                 self._attach_execution_evidence(failed_result)
                 self._save_run_record(failed_result)
             raise
@@ -1125,6 +1228,17 @@ class AgentExecutor:
         }
         self._attach_precomputed_runtime_review(result, review_pipeline, review_gate, review_repair)
         self._attach_story_project_audit(result)
+        self._attach_shadow_runtime(
+            result,
+            context_inputs={
+                "snapshot": workflow_snapshot,
+                "input_pack": input_pack,
+                "workflow_plan": workflow_plan,
+                "chapter": chapter,
+                "validation": validation,
+                "analysis": analysis,
+            },
+        )
         self._attach_execution_evidence(result)
 
         if persist:
@@ -2669,6 +2783,7 @@ class AgentExecutor:
 
     def _save_run_record(self, result: dict[str, Any]) -> None:
         self._attach_story_project_audit(result)
+        self._attach_shadow_runtime(result)
         self._attach_execution_evidence(result)
         validate_run_result(result)
         self.run_dir.mkdir(parents=True, exist_ok=True)

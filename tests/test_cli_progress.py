@@ -41,6 +41,16 @@ class ProgressJSONLTest(unittest.TestCase):
 
         self.assertEqual(path, args.progress_jsonl)
 
+    def test_parser_accepts_shadow_runtime_mode(self) -> None:
+        with patch.object(
+            cli.sys,
+            "argv",
+            ["main.py", "--dry-run", "--runtime-mode", "shadow"],
+        ):
+            args = cli.parse_args()
+
+        self.assertEqual("shadow", args.runtime_mode)
+
     def test_record_has_stable_envelope_and_omits_error_details(self) -> None:
         record = build_progress_jsonl_record(
             {
@@ -73,6 +83,24 @@ class ProgressJSONLTest(unittest.TestCase):
             record["payload"],
         )
         self.assertNotIn("secret-value", json.dumps(record))
+
+    def test_record_adds_node_fields_only_when_supplied(self) -> None:
+        record = build_progress_jsonl_record(
+            {
+                "event": "step_end",
+                "runtime_mode": "shadow",
+                "node_id": "validate",
+                "node_attempt_id": "run-1:validate:1",
+                "node_attempt_count": 2,
+            },
+            sequence=1,
+            timestamp="2026-08-28T00:00:00+00:00",
+        )
+
+        self.assertEqual("shadow", record["runtime_mode"])
+        self.assertEqual("validate", record["node_id"])
+        self.assertEqual("run-1:validate:1", record["node_attempt_id"])
+        self.assertEqual(2, record["payload"]["node_attempt_count"])
 
     def test_writer_flushes_and_continues_append_only_sequence(self) -> None:
         path = self._case_dir("append") / "events.jsonl"

@@ -55,6 +55,7 @@ class RuntimeConfig:
     provider_retry_max_delay_seconds: float = 8.0
     provider_retry_jitter_ratio: float = 0.2
     provider_retry_deadline_seconds: float = 180.0
+    runtime_mode: str = "legacy"
 
     @property
     def has_notion_api(self) -> bool:
@@ -104,6 +105,7 @@ def get_config() -> RuntimeConfig:
         provider_retry_max_delay_seconds=max(0.0, _float_env("PROVIDER_RETRY_MAX_DELAY_SECONDS", 8.0)),
         provider_retry_jitter_ratio=min(1.0, max(0.0, _float_env("PROVIDER_RETRY_JITTER_RATIO", 0.2))),
         provider_retry_deadline_seconds=max(1.0, _float_env("PROVIDER_RETRY_DEADLINE_SECONDS", 180.0)),
+        runtime_mode=_env("NOVELAGENT_RUNTIME_MODE") or "legacy",
     )
 
 

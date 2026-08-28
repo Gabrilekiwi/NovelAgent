@@ -78,6 +78,26 @@
       },
       "additionalProperties": false
     },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "mode",
+        "authority",
+        "execution_cutover",
+        "artifact_ref",
+        "evidence_hash"
+      ],
+      "properties": {
+        "schema_version": {"type": "string", "enum": ["1.0"]},
+        "mode": {"type": "string", "enum": ["shadow"]},
+        "authority": {"type": "string", "enum": ["legacy_executor"]},
+        "execution_cutover": {"type": "boolean", "enum": [false]},
+        "artifact_ref": {"type": ["string", "null"]},
+        "evidence_hash": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": true
+    },
     "committed": {
       "type": "boolean"
     },

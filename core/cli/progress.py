@@ -20,6 +20,7 @@ _SAFE_PAYLOAD_FIELDS = (
     "status",
     "stopped_reason",
     "error_type",
+    "node_attempt_count",
 )
 
 
@@ -46,7 +47,7 @@ def build_progress_jsonl_record(
         for key in _SAFE_PAYLOAD_FIELDS
         if key in event
     }
-    return {
+    record = {
         "schema_version": PROGRESS_JSONL_SCHEMA_VERSION,
         "sequence": sequence,
         "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
@@ -56,6 +57,11 @@ def build_progress_jsonl_record(
         "run_id": _optional_identifier(event.get("run_id")),
         "payload": payload,
     }
+    for key in ("runtime_mode", "node_id", "node_attempt_id"):
+        value = _optional_identifier(event.get(key))
+        if value is not None:
+            record[key] = value
+    return record
 
 
 class ProgressJSONLWriter:
