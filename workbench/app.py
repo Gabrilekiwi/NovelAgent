@@ -431,6 +431,18 @@ def create_app(
         )
         return {"batch": batch.to_dict()}
 
+    @app.post("/api/outline-batches/{batch_id}/adopt-existing")
+    async def adopt_existing_outline_batch(
+        batch_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        batch = outlines.adopt_existing_and_approve_batch(
+            batch_id,
+            expected_revision=int(payload.get("expected_revision") or 0),
+            expected_sha256=str(payload.get("expected_sha256") or payload.get("source_state_sha") or ""),
+        )
+        return {"batch": batch.to_dict()}
+
     @app.post("/api/projects/{project_id}/sessions", status_code=202)
     async def create_session(project_id: str, payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
         project = projects.get(project_id)

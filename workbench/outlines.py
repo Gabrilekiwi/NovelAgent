@@ -219,6 +219,7 @@ class OutlineBatchService:
         *,
         expected_revision: int,
         expected_sha256: str,
+        adopt_existing: bool = False,
     ) -> OutlineBatchRecord:
         _validate_cas(expected_revision, expected_sha256)
         with self.database.transaction() as connection:
@@ -246,16 +247,17 @@ class OutlineBatchService:
             if recovered is not None:
                 return self._mark_approved(connection, batch, recovered)
 
-            collisions = [
-                path
-                for item in batch.items
-                for path in resolve_outline(project.root, item.chapter_index).candidates
-            ]
-            if collisions:
+            collisions = _existing_outline_paths(project.root, batch)
+            if collisions and not adopt_existing:
                 raise OutlineBatchConflict(
                     "outline publication refused because chapter files already exist: "
                     + ", ".join(str(path) for path in collisions)
                 )
+            existing_chapters = (
+                _matching_existing_outline_chapters(project.root, batch)
+                if adopt_existing
+                else frozenset()
+            )
             actual_source = compute_source_fingerprint(project)
             if actual_source != batch.source_fingerprint:
                 raise OutlineBatchConflict(
@@ -267,12 +269,21 @@ class OutlineBatchService:
                 )
 
             runtime.mkdir(parents=True, exist_ok=True)
-            publication = _build_publication(batch, project, runtime)
+            publication = _build_publication(
+                batch,
+                project,
+                runtime,
+                adopted_existing_chapters=existing_chapters,
+            )
             lock_root = project.root / ".novelagent" / "runtime" / "wb" / "outline.lock"
             with persistence_run_lock(lock_root):
                 if compute_source_fingerprint(project) != batch.source_fingerprint:
                     raise OutlineBatchConflict(
                         "StoryProject sources changed while approval was starting"
+                    )
+                if existing_chapters != _matching_existing_outline_chapters(project.root, batch):
+                    raise OutlineBatchConflict(
+                        "existing outline files changed while approval was starting"
                     )
                 result = _publish_batch(batch, project, runtime, publication)
             if not result["committed"]:
@@ -289,6 +300,45 @@ class OutlineBatchService:
         if row is None:
             raise OutlineBatchError(f"unknown outline batch: {batch_id}")
         return _record_from_row(row)
+
+    def adopt_existing_and_approve_batch(
+        self,
+        batch_id: str,
+        *,
+        expected_revision: int,
+        expected_sha256: str,
+    ) -> OutlineBatchRecord:
+        """Preserve canonical existing outlines while publishing the missing batch files.
+
+        An author may already have written part of the next batch outside the
+        workbench.  Replacing those files would be unsafe, so this path first
+        imports only byte-for-byte canonical files into the draft, then records
+        them in the same immutable approval manifest as newly published files.
+        """
+
+        _validate_cas(expected_revision, expected_sha256)
+        batch = self.get_batch(batch_id)
+        if batch.status != "draft":
+            raise OutlineBatchConflict("only a draft outline batch can adopt existing files")
+        if batch.revision != expected_revision or batch.proposal_sha256 != expected_sha256:
+            raise OutlineBatchConflict("outline batch changed; reload before adopting existing files")
+        project = self.projects.get(batch.project_id)
+        adopted_items, adopted_chapters = _adopt_existing_outline_items(project.root, batch)
+        if not adopted_chapters:
+            raise OutlineBatchConflict("there are no existing canonical outline files to adopt")
+        if adopted_items != batch.items:
+            batch = self.update_batch(
+                batch.id,
+                [item.to_dict() for item in adopted_items],
+                expected_revision=batch.revision,
+                expected_sha256=batch.proposal_sha256,
+            )
+        return self.approve_batch(
+            batch.id,
+            expected_revision=batch.revision,
+            expected_sha256=batch.proposal_sha256,
+            adopt_existing=True,
+        )
 
     def list_batches(self, project_id: str) -> tuple[OutlineBatchRecord, ...]:
         self.projects.get(project_id)
@@ -380,6 +430,87 @@ def validate_outline_items(value: Sequence[Mapping[str, Any]]) -> tuple[OutlineI
     return tuple(items)
 
 
+def _existing_outline_paths(project_root: Path, batch: OutlineBatchRecord) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for item in batch.items:
+        paths.extend(resolve_outline(project_root, item.chapter_index).candidates)
+    return tuple(paths)
+
+
+def _adopt_existing_outline_items(
+    project_root: Path,
+    batch: OutlineBatchRecord,
+) -> tuple[tuple[OutlineItem, ...], frozenset[int]]:
+    items: list[OutlineItem] = []
+    adopted_chapters: set[int] = set()
+    for item in batch.items:
+        resolution = resolve_outline(project_root, item.chapter_index)
+        if not resolution.candidates:
+            items.append(item)
+            continue
+        if len(resolution.candidates) != 1 or resolution.path != resolution.canonical_path:
+            raise OutlineBatchConflict(
+                f"existing outline for chapter {item.chapter_index} is ambiguous or non-canonical"
+            )
+        items.append(_parse_existing_canonical_outline(resolution.path, item.chapter_index))
+        adopted_chapters.add(item.chapter_index)
+    return tuple(items), frozenset(adopted_chapters)
+
+
+def _matching_existing_outline_chapters(
+    project_root: Path,
+    batch: OutlineBatchRecord,
+) -> frozenset[int]:
+    existing_items, chapters = _adopt_existing_outline_items(project_root, batch)
+    for expected, existing in zip(batch.items, existing_items):
+        if expected.chapter_index in chapters and expected != existing:
+            raise OutlineBatchConflict(
+                f"existing outline for chapter {expected.chapter_index} does not match the adopted draft"
+            )
+    return chapters
+
+
+def _parse_existing_canonical_outline(path: Path, chapter_index: int) -> OutlineItem:
+    """Parse only the exact canonical outline form that can be safely adopted."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise OutlineBatchConflict(f"cannot read existing outline: {path}") from exc
+    lines = text.splitlines()
+    heading = f"# 第{chapter_index}章 "
+    if (
+        not text.endswith("\n")
+        or "\r" in text
+        or len(lines) < 9
+        or not lines[0].startswith(heading)
+        or lines[1] != ""
+        or not lines[2].startswith("核心事件：")
+        or lines[3] != ""
+        or lines[4] != "## 必写节拍"
+        or lines[5] != ""
+        or lines[-2] != ""
+        or not lines[-1].startswith("结尾压力：")
+        or any(not line.startswith("- ") for line in lines[6:-2])
+    ):
+        raise OutlineBatchConflict(
+            f"existing outline for chapter {chapter_index} is not in canonical workbench format"
+        )
+    item = OutlineItem(
+        chapter_index=chapter_index,
+        title=lines[0][len(heading) :],
+        core_event=lines[2][len("核心事件：") :],
+        required_beats=tuple(line[2:] for line in lines[6:-2]),
+        ending_pressure=lines[-1][len("结尾压力：") :],
+    )
+    checked = validate_outline_items([item.to_dict()])[0]
+    if render_canonical_outline(checked) != text:
+        raise OutlineBatchConflict(
+            f"existing outline for chapter {chapter_index} is not byte-for-byte canonical"
+        )
+    return checked
+
+
 def render_canonical_outline(item: OutlineItem) -> str:
     beats = "\n".join(f"- {beat}" for beat in item.required_beats)
     return (
@@ -468,6 +599,8 @@ def _build_publication(
     batch: OutlineBatchRecord,
     project: ProjectRecord,
     runtime: Path,
+    *,
+    adopted_existing_chapters: frozenset[int] = frozenset(),
 ) -> dict[str, Any]:
     approved_at = _utc_now()
     files = []
@@ -481,6 +614,7 @@ def _build_publication(
                 "sha256": _sha256(text.encode("utf-8")),
                 "content": text,
                 "path": path,
+                "adopted_existing": item.chapter_index in adopted_existing_chapters,
             }
         )
     manifest = {
@@ -498,6 +632,8 @@ def _build_publication(
             for entry in files
         ],
     }
+    if adopted_existing_chapters:
+        manifest["adopted_existing_chapters"] = sorted(adopted_existing_chapters)
     manifest["manifest_sha256"] = _canonical_hash(manifest)
     receipt = {
         "schema_version": "1.0",
@@ -536,6 +672,7 @@ def _publish_batch(
             expected_before_exists=False,
         )
         for entry in publication["files"]
+        if not entry["adopted_existing"]
     ]
     targets.extend(
         (

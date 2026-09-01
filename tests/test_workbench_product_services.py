@@ -11,14 +11,19 @@ from core.chapter_contexts import resolve_story_project_previous_chapter
 from core.story_project.activation import activate_story_state, build_story_state_calibration_report
 from core.story_project.amendments import read_current_chapter_text
 from core.story_project.identity import load_project_identity
-from core.story_project.paths import canonical_prose_path
+from core.story_project.paths import canonical_outline_path, canonical_prose_path
 from core.story_project.semantic_contracts import STORY_PROJECT_SEMANTIC_STATE_SCHEMA_VERSION
 from core.story_project.semantic_parser import SEMANTIC_PARSER_VERSION
 from workbench.amendments import AmendmentService, deterministic_fact_check
 from workbench.cohorts import CohortError, CohortService, SCORE_DIMENSIONS
 from workbench.database import WorkbenchDatabase
 from workbench.jobs import JobStore
-from workbench.outlines import OutlineBatchService
+from workbench.outlines import (
+    OutlineBatchConflict,
+    OutlineBatchService,
+    OutlineItem,
+    render_canonical_outline,
+)
 from workbench.planning import OutlinePlanner, OutlinePlanningError, parse_outline_proposal
 from workbench.projects import ProjectRegistry
 
@@ -113,6 +118,68 @@ def test_outline_planner_derives_idempotency_and_refuses_mid_call_source_drift()
     with pytest.raises(OutlinePlanningError, match="changed while the model was planning"):
         drifting.propose(drift_project.id, direction="推进撤离计划。")
     assert drift_outlines.list_batches(drift_project.id) == ()
+
+
+def test_outline_batch_adopts_canonical_existing_files_without_overwriting_them() -> None:
+    _, _, _, project, outlines = product_case("outline_adoption")
+    proposal = json.loads(proposal_payload())["chapters"]
+    for raw in proposal[:8]:
+        item = OutlineItem(
+            chapter_index=raw["chapter_index"],
+            title=f"保留{raw['title']}",
+            core_event=raw["core_event"],
+            required_beats=tuple(raw["required_beats"]),
+            ending_pressure=raw["ending_pressure"],
+        )
+        canonical_outline_path(project.root, item.chapter_index).write_text(
+            render_canonical_outline(item),
+            encoding="utf-8",
+        )
+
+    batch = outlines.create_batch(project.id, proposal)
+    original = {
+        chapter: canonical_outline_path(project.root, chapter).read_bytes()
+        for chapter in range(1, 9)
+    }
+
+    approved = outlines.adopt_existing_and_approve_batch(
+        batch.id,
+        expected_revision=batch.revision,
+        expected_sha256=batch.proposal_sha256,
+    )
+
+    assert approved.status == "approved"
+    assert approved.revision == 2
+    assert all(
+        canonical_outline_path(project.root, chapter).read_bytes() == source
+        for chapter, source in original.items()
+    )
+    assert canonical_outline_path(project.root, 9).is_file()
+    assert canonical_outline_path(project.root, 10).is_file()
+    manifest = json.loads(Path(approved.approval_manifest_path).read_text(encoding="utf-8"))
+    assert manifest["adopted_existing_chapters"] == list(range(1, 9))
+
+
+def test_outline_batch_refuses_to_adopt_noncanonical_author_outline() -> None:
+    _, _, _, project, outlines = product_case("outline_adoption_noncanonical")
+    proposal = json.loads(proposal_payload())["chapters"]
+    canonical_outline_path(project.root, 1).write_text(
+        "# 作者自由编写的细纲\n\n这一份文件绝不能被工作台覆盖。\n",
+        encoding="utf-8",
+    )
+    batch = outlines.create_batch(project.id, proposal)
+
+    with pytest.raises(OutlineBatchConflict, match="not in canonical workbench format"):
+        outlines.adopt_existing_and_approve_batch(
+            batch.id,
+            expected_revision=batch.revision,
+            expected_sha256=batch.proposal_sha256,
+        )
+
+    assert canonical_outline_path(project.root, 1).read_text(encoding="utf-8").startswith(
+        "# 作者自由编写的细纲"
+    )
+    assert not canonical_outline_path(project.root, 9).exists()
 
 
 def test_outline_parser_rejects_missing_or_non_contiguous_chapters() -> None:

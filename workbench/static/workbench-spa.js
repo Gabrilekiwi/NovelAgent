@@ -1601,6 +1601,18 @@
     } catch (error) { showError(error); UI.showToast(UI.errorMessage(error.payload, error.status), "error"); }
   });
 
+  one("[data-spa-adopt-existing-outline]")?.addEventListener("click", async () => {
+    const batch = state.batch;
+    if (!batch) return;
+    if (!await UI.confirmAction("将保留格式一致的已有细纲，并只发布缺失章节；所有文件会写入同一冻结回执。确认继续吗？")) return;
+    try {
+      const expected = batch.proposal_sha256 || batch.sha256 || "";
+      const { payload } = await api(`/api/outline-batches/${encodeURIComponent(batch.id)}/adopt-existing`, { method: "POST", headers: { "X-Expected-Revision": String(batch.revision || 1), "X-Expected-SHA256": expected, "If-Match": `"${expected}"` }, json: { expected_revision: batch.revision || 1, expected_sha256: expected, source_state_sha: batch.source_state_sha || "" } });
+      UI.showToast(payload.message || "已有细纲已保留并纳入冻结批次。");
+      await loadOutlines();
+    } catch (error) { showError(error); UI.showToast(UI.errorMessage(error.payload, error.status), "error"); }
+  });
+
   one("[data-close-cohort]")?.addEventListener("click", async () => {
     const cohort = state.cohort;
     if (!cohort || cohort.status !== "active") return;
