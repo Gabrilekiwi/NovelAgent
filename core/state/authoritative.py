@@ -617,12 +617,31 @@ def _adapt_character_field_delta(
         result["canonical_name"] = str(canonical_name)
     if character_id:
         next_record = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+        # A canonical name implicitly becomes an alias when the authoritative
+        # ledger applies the first field delta for a character.  Mirror that
+        # behavior in the staged adapter so a later, same-batch aliases delta
+        # is checked against the state it actually follows.  The marker is
+        # adapter-only: it distinguishes a newly introduced character from an
+        # existing character whose aliases must still provide an exact before
+        # value.
+        introduced_in_delta = not isinstance(existing, dict)
+        if introduced_in_delta:
+            next_record["_introduced_in_delta"] = True
+        if (
+            field == "aliases"
+            and result.get("before") is None
+            and next_record.get("_introduced_in_delta") is True
+            and isinstance(next_record.get("aliases"), list)
+        ):
+            result["before"] = copy.deepcopy(next_record["aliases"])
         next_record.update(
             {
                 "character_id": character_id,
                 "canonical_name": str(canonical_name or character_id),
             }
         )
+        if "aliases" not in next_record:
+            next_record["aliases"] = [str(canonical_name or character_id)]
         if field and "after" in result:
             next_record[field] = copy.deepcopy(result["after"])
         else:

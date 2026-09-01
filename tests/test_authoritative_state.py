@@ -39,6 +39,85 @@ def _context() -> dict:
 
 
 class AuthoritativeStateTests(unittest.TestCase):
+    def test_new_character_alias_delta_uses_implicit_canonical_alias_as_before_state(self) -> None:
+        adapted = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 1,
+                    "deltas": {
+                        "characters": [
+                            {
+                                "character_id": "仓管员",
+                                "field": "canonical_name",
+                                "before": None,
+                                "after": "仓管员",
+                            },
+                            {
+                                "character_id": "仓管员",
+                                "field": "aliases",
+                                "before": None,
+                                "after": ["仓管员"],
+                            },
+                            {
+                                "character_id": "仓管员",
+                                "field": "status",
+                                "before": None,
+                                "after": "临时受保护者",
+                            },
+                        ]
+                    },
+                }
+            ],
+            base_state=empty_authoritative_state(),
+        )
+
+        self.assertEqual(["仓管员"], adapted["character_changes"][1]["before"])
+        report = validate_authoritative_state_delta(
+            base_state=empty_authoritative_state(),
+            chapter_text="",
+            state_delta=adapted,
+        )
+
+        self.assertTrue(report["accepted"])
+        self.assertEqual(
+            ["仓管员"],
+            report["state_after"]["characters"]["仓管员"]["aliases"],
+        )
+
+    def test_existing_character_alias_delta_still_requires_exact_before_state(self) -> None:
+        base = empty_authoritative_state()
+        base["characters"]["仓管员"] = {
+            "character_id": "仓管员",
+            "canonical_name": "仓管员",
+            "aliases": ["仓管员"],
+        }
+        adapted = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 1,
+                    "deltas": {
+                        "characters": [
+                            {
+                                "character_id": "仓管员",
+                                "field": "aliases",
+                                "before": None,
+                                "after": ["仓管员", "北院仓管"],
+                            }
+                        ]
+                    },
+                }
+            ],
+            base_state=base,
+        )
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            chapter_text="",
+            state_delta=adapted,
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn("character_state_rollback", _codes(report))
+
     def test_valid_changes_advance_all_ledgers(self) -> None:
         base = empty_authoritative_state()
         report = validate_authoritative_state_delta(
