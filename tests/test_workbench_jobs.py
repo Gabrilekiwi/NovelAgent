@@ -1368,6 +1368,121 @@ def test_manual_draft_validation_preserves_the_edited_revision(
     )
 
 
+def test_validated_manual_draft_unblocks_recovery_after_unaccepted_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id)
+    paused = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={"code": "engine_result_unreadable"},
+        uncertain=False,
+    )
+    project_root = tmp_path / "books" / "test-book"
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True)
+    run_id = "chapter_1_rejected"
+    (run_dir / f"{run_id}.json").write_text(
+        json.dumps(
+            {
+                "run": {
+                    "id": run_id,
+                    "chapter_index": 1,
+                    "status": "failed",
+                    "committed": False,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    manual_text = "陆沉将扩音器的启用窗口写进撤离计时表。" * 40
+    draft = store.upsert_draft(
+        project_id=project_id,
+        chapter=1,
+        text=manual_text,
+        source_run_id=run_id,
+    )
+    draft_path = (
+        project_root
+        / ".novelagent"
+        / "workbench"
+        / "drafts"
+        / f"{draft.id}_r{draft.revision}.md"
+    )
+    draft_path.parent.mkdir(parents=True, exist_ok=True)
+    draft_path.write_text(draft.text, encoding="utf-8")
+    checkpoint_path = run_dir / "locked_chapter_resolutions" / "resolution_manual.json"
+    checkpoint_path.parent.mkdir(exist_ok=True)
+    checkpoint_path.write_text(
+        json.dumps(
+            {
+                "chapter_index": 1,
+                "source_run_id": run_id,
+                "reason": "manual_repaired_draft_provided",
+                "complete_draft": {
+                    "text": draft.text,
+                    "sha256": draft.sha256,
+                    "source_stage": "scene_repair",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    recovery = store.create_job(
+        project_id=project_id,
+        kind="locked_chapter_recovery",
+        start_chapter=1,
+        end_chapter=1,
+        config={
+            "parent_job_id": parent.id,
+            "parent_failure_revision": paused.revision,
+            "draft_id": draft.id,
+            "draft_revision": draft.revision,
+            "manual_draft_path": str(draft_path),
+        },
+    )
+    claimed = store.claim_next()
+    assert claimed is not None and claimed.id == recovery.id
+    result = {
+        "ok": True,
+        "status": "recovered",
+        "action": "repair_draft",
+        "reason": "manual_repaired_draft_provided",
+        "checkpoint_path": str(checkpoint_path),
+        "provider_calls": 0,
+    }
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_execute_subprocess",
+        lambda *_args, **_kwargs: {
+            "cancelled": False,
+            "exit_code": 0,
+            "result": result,
+            "stderr_tail": "",
+        },
+    )
+    monkeypatch.setattr(
+        "workbench.jobs._git_provenance_preflight",
+        lambda _root: {"ok": True, "dependency": "git"},
+    )
+
+    supervisor._run_recovery(claimed)
+
+    assert store.get_draft(draft.id).state == "validated"
+    assert store.resume_ready(parent.id) is True
+    assert store.resume(parent.id, confirmed=True).state == "queued"
+
+
 def test_recovery_source_upgrade_replaces_only_an_untouched_draft(tmp_path: Path) -> None:
     _, store, project_id = _job_store(tmp_path)
     original = store.upsert_draft(

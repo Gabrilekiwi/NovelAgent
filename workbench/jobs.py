@@ -3791,6 +3791,74 @@ def _has_pre_provider_provenance_retry_evidence(connection: Any, parent: Any) ->
     return _git_provenance_preflight(project_root)["ok"] is True
 
 
+def _manual_recovery_draft_matches(
+    connection: Any,
+    *,
+    config: Mapping[str, Any],
+    checkpoint: Path,
+    payload: Mapping[str, Any],
+    project_root: Path,
+    project_id: str,
+    chapter: int,
+    latest_run_id: str | None,
+) -> bool:
+    """Verify the exact validated author draft behind a manual recovery receipt."""
+
+    draft_id = config.get("draft_id")
+    expected_revision = config.get("draft_revision")
+    manual_path_value = config.get("manual_draft_path")
+    complete_draft = payload.get("complete_draft")
+    if (
+        not isinstance(draft_id, str)
+        or not isinstance(expected_revision, int)
+        or not isinstance(manual_path_value, str)
+        or not isinstance(complete_draft, Mapping)
+    ):
+        return False
+    text = complete_draft.get("text")
+    digest = complete_draft.get("sha256")
+    if not isinstance(text, str) or not isinstance(digest, str) or _sha256_text(text) != digest:
+        return False
+    draft = connection.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,)).fetchone()
+    if draft is None:
+        return False
+    try:
+        revision = int(draft["revision"])
+    except (TypeError, ValueError):
+        return False
+    if (
+        str(draft["project_id"]) != project_id
+        or int(draft["chapter"]) != chapter
+        or str(draft["state"]) != "validated"
+        or revision != expected_revision + 1
+        or str(draft["text"]) != text
+        or str(draft["sha256"]) != digest
+    ):
+        return False
+    draft_source_run_id = str(draft["source_run_id"] or "").strip() or None
+    if draft_source_run_id != latest_run_id:
+        return False
+    try:
+        archive_path = Path(manual_path_value).resolve(strict=True)
+        archive_path.relative_to(project_root)
+        if _is_reparse_or_link(archive_path) or not archive_path.is_file():
+            return False
+        if archive_path.read_text(encoding="utf-8") != text:
+            return False
+        validation = json.loads(str(draft["validation_json"]))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(validation, Mapping) or validation.get("ok") is not True:
+        return False
+    checkpoint_value = validation.get("checkpoint_path")
+    if not isinstance(checkpoint_value, str) or not checkpoint_value:
+        return False
+    try:
+        return Path(checkpoint_value).resolve(strict=True) == checkpoint
+    except OSError:
+        return False
+
+
 def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
     candidates = connection.execute(
         """
@@ -3870,7 +3938,19 @@ def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
             if "source_run_id" in config and configured_run_id != latest_run_id:
                 continue
         complete_draft = payload.get("complete_draft")
-        if isinstance(complete_draft, dict):
+        if payload.get("reason") == "manual_repaired_draft_provided":
+            if not _manual_recovery_draft_matches(
+                connection,
+                config=config,
+                checkpoint=checkpoint,
+                payload=payload,
+                project_root=project_root,
+                project_id=str(parent["project_id"]),
+                chapter=int(parent["next_chapter"]),
+                latest_run_id=latest_run_id,
+            ):
+                continue
+        elif isinstance(complete_draft, dict):
             verified_source = verified_final_recovery_draft(
                 run_dir=project_root / ".novelagent" / "runtime" / "runs",
                 run_id=latest_run_id or "",
