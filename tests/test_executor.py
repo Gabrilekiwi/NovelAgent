@@ -130,6 +130,49 @@ class AgentExecutorTest(unittest.TestCase):
             context["revalidation"]["prior_problems"],
         )
 
+    def test_unverified_manual_complete_draft_regenerates_instead_of_reusing_it(
+        self,
+    ) -> None:
+        generator_calls: list[str] = []
+        regenerated = "A fresh chapter is generated after the evidence gate rejects the old draft."
+        executor = AgentExecutor(
+            generator=lambda input_pack: generator_calls.append(input_pack) or regenerated,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+        )
+        checkpoint = {
+            "action": "repair_draft",
+            "reason": "manual_repaired_draft_provided",
+            "complete_draft": {"text": "old draft"},
+        }
+
+        with (
+            patch.object(
+                executor,
+                "_locked_chapter_checkpoint",
+                return_value=checkpoint,
+            ),
+            patch.object(
+                executor,
+                "_locked_complete_draft_pipeline",
+                side_effect=LockedChapterRecoveryError(
+                    "complete-draft source has no verified accepted final artifact"
+                ),
+            ),
+        ):
+            chapter, validation, *_ = executor._execute_workflow(
+                workflow=["generate_chapter"],
+                workflow_plan={},
+                snapshot={"language": "en"},
+                decision={"chapter_index": 2},
+                input_pack="fresh-input",
+                recovery_context={},
+            )
+
+        self.assertEqual(["fresh-input"], generator_calls)
+        self.assertEqual(regenerated, chapter)
+        self.assertTrue(validation["ok"])
+
     def test_recovered_checkpoint_count_mismatch_is_allowed_for_scope_replay(self) -> None:
         executor = AgentExecutor(
             story_project_context={

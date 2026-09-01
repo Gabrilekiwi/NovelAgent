@@ -103,7 +103,10 @@ from core.engine.locked_chapter_state import (
     active_locked_chapter_checkpoint,
     resolved_execution_ids,
 )
-from core.engine.locked_chapter import load_verified_locked_chapter_pipeline
+from core.engine.locked_chapter import (
+    LockedChapterRecoveryError,
+    load_verified_locked_chapter_pipeline,
+)
 from core.engine.persistence_v2 import (
     PersistenceV2Target,
     bind_final_run_record_receipt,
@@ -1639,11 +1642,25 @@ class AgentExecutor:
             if isinstance(locked_checkpoint, dict)
             else None
         )
-        locked_chapter_pipeline = self._locked_complete_draft_pipeline(
-            locked_checkpoint,
-            complete_draft,
-            snapshot=snapshot,
-        )
+        try:
+            locked_chapter_pipeline = self._locked_complete_draft_pipeline(
+                locked_checkpoint,
+                complete_draft,
+                snapshot=snapshot,
+            )
+        except LockedChapterRecoveryError as exc:
+            if not _must_regenerate_unverified_manual_draft(
+                locked_checkpoint,
+                exc,
+            ):
+                raise
+            # A manually repaired draft is useful author evidence, but it must
+            # never be reused for strict StoryProject writeback without the
+            # receipt-backed final Scene artifact. Keep its append-only
+            # checkpoint intact and generate a new candidate instead.
+            locked_checkpoint = None
+            complete_draft = None
+            locked_chapter_pipeline = None
         state: dict[str, Any] = {
             "chapter": (
                 str(complete_draft["text"])
@@ -4860,6 +4877,25 @@ def _model_trace(
         "model_name": model,
         "model_invocation": invocation,
     }
+
+
+def _must_regenerate_unverified_manual_draft(
+    checkpoint: dict[str, Any] | None,
+    error: LockedChapterRecoveryError,
+) -> bool:
+    """Keep an unverifiable manual draft out of strict writeback reuse.
+
+    Manual recovery drafts deliberately have no fabricated Scene receipt chain.
+    If their source has no accepted final artifact, the only safe production
+    path is to preserve the checkpoint and regenerate a fresh candidate.
+    """
+
+    return (
+        isinstance(checkpoint, dict)
+        and checkpoint.get("action") == "repair_draft"
+        and checkpoint.get("reason") == "manual_repaired_draft_provided"
+        and "no verified accepted final artifact" in str(error)
+    )
 
 
 def _workflow_steps_by_action(workflow_plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
