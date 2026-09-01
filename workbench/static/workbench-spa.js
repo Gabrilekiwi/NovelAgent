@@ -766,6 +766,7 @@
     });
     one("[data-pause-job-form]").action = `/api/jobs/${encodeURIComponent(jobId)}/pause`;
     one("[data-cancel-job-form]").action = `/api/jobs/${encodeURIComponent(jobId)}/cancel`;
+    one("[data-close-paused-job-form]").action = `/api/jobs/${encodeURIComponent(jobId)}/cancel`;
     const safetyPanel = one("[data-production-controls]");
     const attentionPanel = one("[data-production-attention]");
     if (safetyPanel) safetyPanel.hidden = paused;
@@ -1638,7 +1639,7 @@
       return;
     }
     if (form.matches("[data-create-outline-form], [data-outline-editor]")) await loadOutlines();
-    else if (form.matches("[data-session-form], [data-cohort-create-form]")) await loadProduction();
+    else if (form.matches("[data-session-form], [data-cohort-create-form], [data-close-paused-job-form]")) await loadProduction();
     else if (form.matches("[data-cohort-evaluation-form]")) await loadCohort(state.cohort.id);
     else if (form.matches("[data-recover-form]")) {
       await loadPending();

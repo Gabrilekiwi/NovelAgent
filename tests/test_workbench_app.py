@@ -216,6 +216,42 @@ def test_job_poll_and_sse_replay_events_from_last_event_id(tmp_path: Path) -> No
     assert "event: test.progress" not in stream.text
 
 
+def test_cancel_paused_job_releases_generation_session_slot(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="close-paused-session")
+    store = client.app.state.jobs
+    paused = store.create_job(
+        project_id=project["id"],
+        kind="generation_session",
+        start_chapter=1,
+        end_chapter=10,
+    )
+    store.chapter_failed(
+        paused.id,
+        chapter=1,
+        error={"code": "scene_boundary_state_mismatch"},
+        uncertain=False,
+    )
+    assert store.get(paused.id).state == "awaiting_input"
+
+    cancelled = client.post(
+        f"/api/jobs/{paused.id}/cancel",
+        headers={"origin": "http://testserver"},
+    )
+
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["job"]["state"] == "cancelled"
+    replacement = store.create_job(
+        project_id=project["id"],
+        kind="generation_session",
+        start_chapter=1,
+        end_chapter=10,
+    )
+    assert replacement.id != paused.id
+    assert replacement.state == "queued"
+
+
 def test_job_api_exposes_reconciled_pre_provider_retry_readiness(
     tmp_path: Path,
 ) -> None:
