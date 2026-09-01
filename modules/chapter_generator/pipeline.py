@@ -81,6 +81,19 @@ _SCENE_BOUNDARY_REGENERATION_LIMIT = 1
 _SCENE_BOUNDARY_FEEDBACK_FINDING_LIMIT = 4
 _SCENE_BOUNDARY_FEEDBACK_EVIDENCE_MAX_CHARS = 480
 _LEGACY_SCENE_COMPLETED_EVENT_RECORD_LIMITS = (None, 12, 6, 0)
+_SCENE_ADMISSION_COMPLETED_EVENT_ID_LIMIT = 8
+_SCENE_PROMPT_AUDIT_RECORD_FIELDS = frozenset(
+    {
+        "after",
+        "before",
+        "field",
+        "reason",
+        "scene_index",
+        "source_event_id",
+        "source_tier",
+        "last_seen_chapter",
+    }
+)
 _EVENT_LOCATION_CONTRACT = (
     "Use one exact, non-compound location for each event.location. Every known entity "
     "listed in event.subjects or event.objects is asserted to be physically present "
@@ -1179,7 +1192,62 @@ def _scene_state_projection_candidates(
             continue
         candidates.append(projection)
         previous_completed_events = completed_events
+    # Keep a final, prompt-only admission candidate for legacy packs that do
+    # not yet carry a Generation State View.  The complete normalized state is
+    # still used for transition validation; this only removes provenance and
+    # historical audit fields the model must not treat as current story facts.
+    for projection in tuple(candidates):
+        admission_projection = _scene_state_admission_projection(projection)
+        if admission_projection != projection:
+            candidates.append(admission_projection)
     return candidates
+
+
+def _scene_state_admission_projection(
+    projection: dict[str, Any],
+) -> dict[str, Any]:
+    """Reduce legacy prompt state only after normal scene candidates fail.
+
+    Character and relationship records carry local provenance for receipts and
+    deterministic validation.  They are not dynamic story facts and can
+    consume enough Chinese-token budget to prevent a safe retry.  Preserve all
+    remaining current-state fields plus hashes/counts that bind this prompt to
+    the complete local history.
+    """
+
+    compact = dict(projection)
+    for collection_name in ("characters", "relationships"):
+        records = projection.get(collection_name)
+        if not isinstance(records, dict):
+            continue
+        compact[collection_name] = {
+            str(record_id): {
+                str(key): value
+                for key, value in record.items()
+                if str(key) not in _SCENE_PROMPT_AUDIT_RECORD_FIELDS
+            }
+            if isinstance(record, dict)
+            else record
+            for record_id, record in records.items()
+        }
+    completed_event_ids = list(projection.get("completed_event_ids") or [])
+    compact["completed_event_ids"] = completed_event_ids[
+        -_SCENE_ADMISSION_COMPLETED_EVENT_ID_LIMIT:
+    ]
+    compact["completed_event_ids_truncated"] = (
+        bool(projection.get("completed_event_ids_truncated"))
+        or len(completed_event_ids) > _SCENE_ADMISSION_COMPLETED_EVENT_ID_LIMIT
+    )
+    context_projection = projection.get("context_projection")
+    if isinstance(context_projection, dict):
+        compact["context_projection"] = {
+            **context_projection,
+            "admission_projection_policy": "scene_prompt_audit_compaction_v1",
+            "admission_completed_event_id_limit": (
+                _SCENE_ADMISSION_COMPLETED_EVENT_ID_LIMIT
+            ),
+        }
+    return compact
 
 
 def _scene_blueprint_contract(

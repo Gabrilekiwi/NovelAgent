@@ -1101,6 +1101,115 @@ class ChapterPipelineTest(unittest.TestCase):
             {finding["code"] for finding in local_report["findings"]},
         )
 
+    def test_scene_admission_projection_removes_audit_only_after_normal_candidates_fail(
+        self,
+    ) -> None:
+        state = pipeline_module.empty_scene_state()
+        state["characters"] = {
+            "hero": {
+                "character_id": "hero",
+                "canonical_name": "Mira",
+                "status": "injured",
+                "current_goal": "keep the relay secure",
+                "before": "healthy",
+                "after": "injured",
+                "field": "status",
+                "reason": "chapter-0026-beat-001",
+                "scene_index": 26,
+                "source_tier": "chapter_event",
+                "last_seen_chapter": 25,
+            }
+        }
+        state["relationships"] = {
+            "hero->ally": {
+                "relationship_id": "hero->ally",
+                "source_character_id": "hero",
+                "target_character_id": "ally",
+                "trust": "earned under fire",
+                "before": "guarded",
+                "after": "earned under fire",
+                "field": "trust",
+                "reason": "chapter-0025-beat-004",
+                "scene_index": 25,
+                "source_event_id": "chapter-0025-beat-004",
+                "source_tier": "chapter_event",
+            }
+        }
+        state["completed_event_ids"] = [
+            f"historical-event-{index:03d}" for index in range(24)
+        ]
+        original_state = copy.deepcopy(state)
+
+        class AdmissionBudget:
+            hard_input_limit = 32_000
+
+            def __init__(self) -> None:
+                self.saw_normal_candidate = False
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+                request = json.loads(text)
+                projected = request["current_scene_state"]
+                hero = projected["characters"]["hero"]
+                relationship = projected["relationships"]["hero->ally"]
+                compact = (
+                    "source_tier" not in hero
+                    and "source_event_id" not in relationship
+                    and len(projected["completed_event_ids"]) == 8
+                )
+                self.saw_normal_candidate = self.saw_normal_candidate or not compact
+                return {
+                    "within_budget": True,
+                    "budgeted_input_tokens": 29_900 if compact else 30_100,
+                    "hard_input_limit": self.hard_input_limit,
+                }
+
+            def require_input(self, *_: object, **__: object) -> dict:
+                raise AssertionError("the admission projection should fit safely")
+
+        budget = AdmissionBudget()
+        plan = {
+            "goal": "Secure the relay.",
+            "scenes": [{"index": 1, "goal": "Hold the relay."}],
+        }
+        with patch.object(
+            pipeline_module,
+            "default_context_budget",
+            return_value=budget,
+        ):
+            payload = json.loads(
+                pipeline_module._scene_request_payload(
+                    input_pack="# Requirements\nPreserve continuity.",
+                    plan=plan,
+                    scene=plan["scenes"][0],
+                    scene_required_beats=[],
+                    blueprint=None,
+                    scene_state=state,
+                )
+            )
+
+        projected = payload["current_scene_state"]
+        self.assertTrue(budget.saw_normal_candidate)
+        self.assertEqual("injured", projected["characters"]["hero"]["status"])
+        self.assertEqual(
+            "keep the relay secure",
+            projected["characters"]["hero"]["current_goal"],
+        )
+        self.assertNotIn("reason", projected["characters"]["hero"])
+        self.assertEqual(
+            "earned under fire",
+            projected["relationships"]["hero->ally"]["trust"],
+        )
+        self.assertNotIn("source_event_id", projected["relationships"]["hero->ally"])
+        self.assertEqual(original_state["completed_event_ids"][-8:], projected["completed_event_ids"])
+        self.assertTrue(projected["completed_event_ids_truncated"])
+        self.assertEqual(
+            "scene_prompt_audit_compaction_v1",
+            projected["context_projection"]["admission_projection_policy"],
+        )
+        self.assertEqual(original_state, state)
+
     def test_second_scene_uses_lossless_transport_after_state_advances(
         self,
     ) -> None:
