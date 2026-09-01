@@ -620,6 +620,32 @@ def generate_scenes(
             )
             if boundary["accepted"]:
                 break
+            if _recovered_opening_has_stale_state(
+                scene_index=scene_index,
+                recovered_scene=scene_index in recovered,
+                boundary=boundary,
+            ):
+                # A receipt-backed Scene can still have been generated against
+                # an earlier committed chapter state.  Its evidence remains
+                # useful for audit, but retry feedback would be misleading:
+                # this is a fresh opening against a different story boundary,
+                # not a repair of the current candidate.  Drop the recovered
+                # sequence and restart the chapter from the current state.
+                recovered = {}
+                scene_result = _request_scene_candidate(
+                    input_pack=input_pack,
+                    plan=plan,
+                    scene=scene,
+                    scene_required_beats=scene_required_beats,
+                    blueprint=blueprint,
+                    previous_scene_tail=previous_scene_tail,
+                    prior_scene_summaries=prior_scene_summaries,
+                    state_before=state_before,
+                    language=language,
+                    authoritative_state_source=authoritative_state_source,
+                    generation_state_view_source=generation_state_view_source,
+                )
+                continue
             feedback = _scene_boundary_retry_feedback(
                 boundary,
                 attempt=local_regeneration_attempts + 1,
@@ -701,6 +727,25 @@ def generate_scenes(
             }
         )
     return _validate_scene_drafts(scene_drafts)
+
+
+def _recovered_opening_has_stale_state(
+    *,
+    scene_index: int,
+    recovered_scene: bool,
+    boundary: dict[str, Any],
+) -> bool:
+    """Return whether a recovered opening predates the current story state."""
+    if not recovered_scene or scene_index != 1:
+        return False
+    findings = boundary.get("findings")
+    if not isinstance(findings, list):
+        return False
+    return any(
+        isinstance(finding, dict)
+        and str(finding.get("code") or "").endswith("_state_rollback")
+        for finding in findings
+    )
 
 
 def _request_scene_candidate(

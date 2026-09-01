@@ -2388,6 +2388,108 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(recovered[0]["text"], drafts[0]["text"])
         self.assertEqual("核心已经隔离", drafts[1]["deltas"]["relationships"][0]["after"])
 
+    def test_stale_recovered_opening_restarts_without_boundary_retry(self) -> None:
+        plan = {
+            "goal": "从当前仓库办公区撤离",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "从仓库办公区撤离并前往屋顶",
+                    "required_beats": ["完成撤离"],
+                    "required_beat_indexes": [1],
+                    "required_event_ids": ["chapter-0026-beat-001"],
+                    "forbidden_event_ids": [],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0026-beat-001",
+                            "type": "required_beat_1_completed",
+                            "subjects": ["陆沉"],
+                            "objects": [],
+                            "location": "物流园主控塔屋顶",
+                            "status": "completed",
+                        }
+                    ],
+                }
+            ],
+        }
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        recovered = [
+            {
+                "index": 1,
+                "text": "陆沉从物流园外围维修道登上主控塔屋顶。",
+                "events": [plan["scenes"][0]["planned_events"][0]],
+                "deltas": {
+                    **empty_deltas,
+                    "locations": [
+                        {
+                            "entity_id": "陆沉",
+                            "before": "物流园外围维修道",
+                            "after": "物流园主控塔屋顶",
+                            "reason": "沿外梯登上屋顶",
+                        }
+                    ],
+                },
+            }
+        ]
+        initial_state = pipeline_module.empty_scene_state()
+        initial_state["locations"]["陆沉"] = "仓库办公区废墟"
+        requests: list[dict] = []
+
+        def fresh_completion(messages, **_kwargs):
+            request = json.loads(messages[-1]["content"])
+            requests.append(request)
+            return json.dumps(
+                {
+                    "prose": "陆沉从仓库办公区废墟沿外梯登上主控塔屋顶。",
+                    "events": [request["scene"]["planned_events"][0]],
+                    "deltas": {
+                        **empty_deltas,
+                        "locations": [
+                            {
+                                "entity_id": "陆沉",
+                                "before": "仓库办公区废墟",
+                                "after": "物流园主控塔屋顶",
+                                "reason": "沿外梯登上屋顶",
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(
+            pipeline_module,
+            "chat_completion",
+            side_effect=fresh_completion,
+        ):
+            drafts = pipeline_module.generate_scenes(
+                "input pack",
+                plan,
+                dry_run=False,
+                language="zh-CN",
+                recovered_scene_drafts=recovered,
+                initial_scene_state=initial_state,
+            )
+
+        self.assertEqual(1, len(requests))
+        self.assertNotIn("boundary_retry", requests[0])
+        self.assertEqual(
+            "仓库办公区废墟",
+            requests[0]["current_scene_state"]["locations"]["陆沉"],
+        )
+        self.assertNotEqual(recovered[0]["text"], drafts[0]["text"])
+        self.assertNotIn(
+            "local_regeneration_attempts",
+            drafts[0]["boundary_validation"],
+        )
+
     def test_live_plain_prose_scene_is_rejected_instead_of_synthesizing_events(
         self,
     ) -> None:
