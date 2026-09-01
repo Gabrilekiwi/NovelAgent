@@ -836,7 +836,20 @@ class CliTest(unittest.TestCase):
             cli._delivery_command_requested(args)
 
     def test_story_project_real_writeback_failure_exits_nonzero(self) -> None:
-        context_loader = type("ContextLoader", (), {"story_project_root": Path("book")})()
+        case_dir = self._case_dir("story_project_real_writeback_failure")
+        story_project_root = case_dir / "book"
+        story_project_root.mkdir()
+        context_loader = type(
+            "ContextLoader", (), {"story_project_root": story_project_root}
+        )()
+        identity = SimpleNamespace(book_id="book-1", authority={})
+
+        def apply_runtime_defaults(args):
+            args._resolved_story_project_root = story_project_root
+            args.run_dir = str(case_dir / "runs")
+            args.chapter_dir = str(case_dir / "chapters")
+            args.persistence_dir = str(case_dir / "persistence")
+            return None
 
         class FakeExecutor:
             def __init__(self, **kwargs):
@@ -879,6 +892,14 @@ class CliTest(unittest.TestCase):
             sys,
             "argv",
             ["main.py", "--story-project", "auto", "--story-project-writeback"],
+        ), patch.object(
+            cli,
+            "_apply_story_project_runtime_defaults",
+            side_effect=apply_runtime_defaults,
+        ), patch.object(
+            cli,
+            "project_identity_for_operation",
+            return_value=identity,
         ), patch.object(
             cli,
             "build_generation_story_project_context_loader",

@@ -57,6 +57,18 @@ def test_production_view_reloads_canonical_state_after_a_terminal_job() -> None:
     assert 'if (state.route?.area === "production") await loadProduction();' in spa
 
 
+def test_outline_planner_does_not_reuse_a_stale_draft_range() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+
+    assert 'const nextChapter = Number(state.project?.next_chapter || 0);' in spa
+    assert 'const isCurrentRange = (item) => Number(item?.start_chapter || 0) === nextChapter;' in spa
+    assert '["draft", "ready"].includes(item.status) && isCurrentRange(item)' in spa
+    assert 'batches[0] || null' not in spa.split("const loadOutlines = async () =>", 1)[1].split("const renderCohortEvaluation", 1)[0]
+    assert 'all("[data-project-route]").forEach((link) => { link.href = projectHash(link.dataset.projectRoute); });' in spa
+    assert html.count('data-project-route="outlines"') >= 2
+
+
 def test_recovery_confirmation_resumes_the_paused_parent_and_toast_keeps_three_items() -> None:
     ui = (STATIC / "workbench.js").read_text(encoding="utf-8")
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")

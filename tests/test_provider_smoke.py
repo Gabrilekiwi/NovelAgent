@@ -83,6 +83,7 @@ class ProviderSmokeScriptTest(unittest.TestCase):
         self.assertFalse(report["request"]["no_proxy"])
         self.assertEqual(1, report["limits"]["steps"])
         self.assertEqual(800, report["limits"]["max_output_tokens"])
+        self.assertEqual(90, report["limits"]["request_timeout"])
         self.assertEqual(0, report["limits"]["openai_max_retries"])
         self.assertEqual(1, report["limits"]["openai_scene_limit"])
         self.assertEqual(0, report["limits"]["retries"])
@@ -208,6 +209,40 @@ class ProviderSmokeScriptTest(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         report = json.loads(completed.stdout)
         self.assertTrue(report["request"]["no_proxy"])
+        self.assertEqual("missing", report["config_status"]["proxy"]["http_proxy"])
+        self.assertEqual("missing", report["config_status"]["proxy"]["https_proxy"])
+        self.assertEqual("missing", report["config_status"]["proxy"]["all_proxy"])
+        self.assertEqual([], report["config_status"]["proxy"]["proxy_endpoints"])
+        self.assertIs(report, validate_schema(report, "provider_smoke_report.schema.json"))
+
+    def test_provider_smoke_respects_project_no_proxy_environment(self) -> None:
+        work_dir = Path.cwd() / ".tmp" / "test_provider_smoke" / uuid.uuid4().hex
+        env = dict(os.environ)
+        env["NOVELAGENT_NO_PROXY"] = "true"
+        env["HTTP_PROXY"] = "http://127.0.0.1:9"
+        env["HTTPS_PROXY"] = "http://127.0.0.1:9"
+        env["ALL_PROXY"] = "http://127.0.0.1:9"
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "scripts/provider_smoke.py",
+                "--allow-missing",
+                "--ignore-dotenv",
+                "--work-dir",
+                str(work_dir),
+            ],
+            cwd=Path.cwd(),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        report = json.loads(completed.stdout)
+        self.assertFalse(report["request"]["no_proxy"])
         self.assertEqual("missing", report["config_status"]["proxy"]["http_proxy"])
         self.assertEqual("missing", report["config_status"]["proxy"]["https_proxy"])
         self.assertEqual("missing", report["config_status"]["proxy"]["all_proxy"])

@@ -52,6 +52,7 @@ from workbench.jobs import (
     PAUSED_JOB_STATES,
     TERMINAL_JOB_STATES,
     compute_project_state_head,
+    verify_committed_chapter,
 )
 from workbench.outlines import OutlineBatchConflict, OutlineBatchError, OutlineBatchService
 from workbench.planning import OutlinePlanner, OutlinePlanningError
@@ -297,6 +298,60 @@ def create_app(
         return {
             "jobs": [item.to_dict() for item in jobs.list_jobs(project_id=record.id, limit=100)],
             "runs": _run_history(record.root),
+        }
+
+    @app.get("/api/projects/{project_id}/history/{entry_id}")
+    async def project_history_detail(
+        project_id: str,
+        entry_id: str,
+        source: str = Query("run"),
+    ) -> dict[str, Any]:
+        if source not in {"job", "run"}:
+            raise HTTPException(status_code=422, detail="source must be 'job' or 'run'")
+
+        record = projects.get(project_id)
+        job_summary: dict[str, Any] | None = None
+        run_id = entry_id
+        if source == "job":
+            try:
+                job = jobs.get(entry_id)
+            except JobError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            if job.project_id != record.id:
+                raise HTTPException(status_code=404, detail="job not found for this project")
+            job_summary = {
+                "id": job.id,
+                "kind": job.kind,
+                "state": job.state,
+                "created_at": job.created_at,
+                "started_at": job.started_at,
+                "finished_at": job.finished_at,
+                "next_chapter": job.next_chapter,
+            }
+            run_id = str(job.result.get("run_id") or "").strip()
+            if not run_id:
+                return {
+                    "source": source,
+                    "job": job_summary,
+                    "run": None,
+                    "verification": None,
+                }
+
+        payload = _history_run_by_id(record.root, run_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="run record not found for this project")
+        run = _compact_run(payload)
+        if run is None:
+            raise HTTPException(status_code=404, detail="invalid run record")
+
+        verification: dict[str, Any] | None = None
+        if run.get("committed") is True and isinstance(run.get("chapter_index"), int):
+            verification = verify_committed_chapter(record.root, run["chapter_index"], payload)
+        return {
+            "source": source,
+            "job": job_summary,
+            "run": run,
+            "verification": verification,
         }
 
     @app.get("/api/projects/{project_id}/production")
@@ -1285,6 +1340,23 @@ def _run_history(root: Path) -> list[dict[str, Any]]:
     return [value for _, value in values[:100]]
 
 
+def _history_run_by_id(root: Path, run_id: str) -> dict[str, Any] | None:
+    if not run_id:
+        return None
+    runtime = RuntimePaths.for_story_project(root)
+    if not runtime.run_dir.is_dir():
+        return None
+    for path in runtime.run_dir.glob("chapter_*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        compact = _compact_run(payload)
+        if compact is not None and compact.get("id") == run_id:
+            return payload
+    return None
+
+
 def _latest_run_for_chapter(root: Path, chapter: int) -> dict[str, Any] | None:
     runtime = RuntimePaths.for_story_project(root)
     candidates: list[tuple[int, dict[str, Any]]] = []
@@ -1429,7 +1501,20 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
         if isinstance(verified_source, Mapping)
         else None
     )
-    recoverable = bool(run and run_record.get("committed") is not True)
+    reset_discards_latest_run = bool(
+        latest_checkpoint
+        and latest_checkpoint.get("action") == "reset"
+        and latest_run_id
+        and latest_checkpoint.get("source_run_id") == latest_run_id
+    )
+    # A reset is append-only evidence that its source run was deliberately
+    # abandoned.  Keep both records visible in history, but do not surface the
+    # discarded run as a fresh recovery task after the workbench restarts.
+    recoverable = bool(
+        run
+        and run_record.get("committed") is not True
+        and not reset_discards_latest_run
+    )
     checkpoint_matches_latest_run = bool(
         latest_checkpoint
         and latest_checkpoint.get("action") != "reset"

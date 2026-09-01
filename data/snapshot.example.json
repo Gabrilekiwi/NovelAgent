@@ -1,5 +1,5 @@
 {
-  "chapter_index": 3,
+  "chapter_index": 4,
   "world_state": {
     "infection_level": "medium",
     "locations": {
@@ -28,45 +28,6 @@
       "role": "lead",
       "current_location": "shelter",
       "current_goal": "protect the serum sample"
-    }
-  },
-  "story_state": {
-    "last_chapter_ending": "She had to choose between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict.",
-    "last_scene_location": "shelter",
-    "last_scene_characters": [
-      "protagonist"
-    ],
-    "open_threads": [
-      "The serum choice is unresolved.",
-      "The safe route has been cut off by a new infection zone."
-    ],
-    "required_opening_bridge": "Continue from shelter: resolve the immediate consequence of the serum choice before moving toward the sealed gate."
-  },
-  "spatial_state": {
-    "spaces": {
-      "shelter": {
-        "risk": "rising",
-        "status": "unstable"
-      },
-      "sealed gate": {
-        "status": "blocked"
-      }
-    },
-    "connections": [
-      {
-        "from": "shelter",
-        "to": "sealed gate",
-        "bidirectional": true
-      }
-    ],
-    "character_positions": {
-      "protagonist": "shelter"
-    },
-    "blocked_paths": [],
-    "last_transition": {
-      "from": "shelter",
-      "to": "sealed gate",
-      "reason": "safe route cut off"
     }
   },
   "timeline": [
@@ -133,8 +94,253 @@
         ],
         "problems": []
       }
+    },
+    {
+      "chapter_index": 3,
+      "memory_id": "chapter_3:timeline_event:chapter_3_summary",
+      "memory_ids": [
+        "chapter_3:timeline_event:chapter_3_summary",
+        "chapter_3:timeline_event:chapter_3_event_1",
+        "chapter_3:timeline_event:chapter_3_event_2",
+        "chapter_3:timeline_event:chapter_3_event_3"
+      ],
+      "name": "chapter_3_summary",
+      "summary": "Continue from shelter, the first alarm sounded just as the shelter lights dimmed. The protagonist stood before the sealed gate and saw that the route once marked safe had been cut off by a new infection zone.",
+      "events": [
+        {
+          "text": "Continue from shelter, the first alarm sounded just as the shelter lights dimmed."
+        },
+        {
+          "text": "The protagonist stood before the sealed gate and saw that the route once marked safe had been cut off by a new infection zone."
+        },
+        {
+          "text": "She had to choose between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict."
+        }
+      ],
+      "character_changes": [],
+      "world_changes": [
+        {
+          "type": "infection_pressure",
+          "text": "Infection pressure is active in the chapter."
+        },
+        {
+          "type": "serum_focus",
+          "text": "Serum remains narratively relevant."
+        }
+      ],
+      "new_locations": [
+        "shelter",
+        "sealed gate"
+      ],
+      "story_state": {
+        "last_chapter_ending": "She had to choose between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict.",
+        "last_scene_location": "shelter",
+        "last_scene_characters": [
+          "protagonist"
+        ],
+        "open_threads": [
+          "She had to choose between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict."
+        ],
+        "required_opening_bridge": "shelter; protagonist"
+      },
+      "spatial_state": {
+        "spaces": {
+          "shelter": {
+            "source": "chapter_analysis"
+          },
+          "sealed gate": {
+            "source": "chapter_analysis"
+          }
+        },
+        "connections": [],
+        "character_positions": {},
+        "blocked_paths": [],
+        "last_transition": {
+          "to": "sealed gate",
+          "source": "chapter_analysis"
+        }
+      },
+      "conflicts": [
+        "conflict",
+        "choice",
+        "choose",
+        "infection",
+        "serum"
+      ],
+      "validation": {
+        "ok": true,
+        "requested_focus": [
+          "continuity",
+          "spatial",
+          "logic"
+        ],
+        "executed_checks": [
+          "continuity",
+          "spatial",
+          "logic",
+          "final_artifact_integrity",
+          "authoritative_state"
+        ],
+        "skipped_checks": [],
+        "checks": [
+          {
+            "name": "continuity",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "name": "spatial",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "name": "logic",
+            "ok": true,
+            "problems": []
+          },
+          {
+            "name": "final_artifact_integrity",
+            "ok": true,
+            "problems": [],
+            "artifact_sha256": "d4361fbd8ca91b5a7de0ec6e5df4c2d1bfdf6adde518c88a1b09c0be6b1408cf",
+            "gate_version": "2.0.1",
+            "stage": "final_gate"
+          },
+          {
+            "name": "authoritative_state",
+            "ok": true,
+            "problems": [],
+            "schema_version": "1.0",
+            "applied_source_tier": "chapter_event"
+          }
+        ],
+        "problems": [],
+        "blocking_problem_count": 0,
+        "warning_count": 0,
+        "severity_counts": [
+          {
+            "severity": "critical",
+            "count": 0
+          },
+          {
+            "severity": "high",
+            "count": 0
+          },
+          {
+            "severity": "medium",
+            "count": 0
+          },
+          {
+            "severity": "low",
+            "count": 0
+          }
+        ],
+        "deterministic_repair_count": 0,
+        "manual_review_count": 0,
+        "repair_action_counts": [
+          {
+            "action": "seed_conflict_scene",
+            "count": 0
+          },
+          {
+            "action": "expand_scene",
+            "count": 0
+          },
+          {
+            "action": "add_conflict_signal",
+            "count": 0
+          },
+          {
+            "action": "remove_forbidden_term",
+            "count": 0
+          },
+          {
+            "action": "add_required_term",
+            "count": 0
+          },
+          {
+            "action": "anchor_known_location",
+            "count": 0
+          },
+          {
+            "action": "insert_opening_bridge",
+            "count": 0
+          },
+          {
+            "action": "rewrite_spatial_transition",
+            "count": 0
+          },
+          {
+            "action": "anchor_last_scene_state",
+            "count": 0
+          },
+          {
+            "action": "repair_character_position",
+            "count": 0
+          },
+          {
+            "action": "add_transition_event",
+            "count": 0
+          },
+          {
+            "action": "flag_unknown_location",
+            "count": 0
+          },
+          {
+            "action": "add_character_location",
+            "count": 0
+          },
+          {
+            "action": "rewrite_inactive_character_action",
+            "count": 0
+          },
+          {
+            "action": "correct_chapter_index",
+            "count": 0
+          },
+          {
+            "action": "manual_review",
+            "count": 0
+          }
+        ]
+      },
+      "source_run_id": "chapter_3_20260831T013346234687Z"
     }
   ],
+  "story_state": {
+    "last_chapter_ending": "She had to choose between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict.",
+    "last_scene_location": "shelter",
+    "last_scene_characters": [
+      "protagonist"
+    ],
+    "open_threads": [
+      "She had to choose between rescuing a teammate and protecting the serum sample, and that choice pushed the team into open conflict."
+    ],
+    "required_opening_bridge": "shelter; protagonist"
+  },
+  "spatial_state": {
+    "spaces": {
+      "shelter": {
+        "source": "chapter_analysis",
+        "last_seen_chapter": 3
+      },
+      "sealed gate": {
+        "source": "chapter_analysis",
+        "last_seen_chapter": 3
+      }
+    },
+    "connections": [],
+    "character_positions": {
+      "protagonist": "shelter"
+    },
+    "blocked_paths": [],
+    "last_transition": {
+      "from": "shelter",
+      "to": "sealed gate",
+      "reason": "safe route cut off",
+      "source": "chapter_analysis"
+    }
+  },
   "constraints": [
     {
       "rule": "Keep serum in focus.",
@@ -146,6 +352,130 @@
   "memory": {
     "source": "notion-export",
     "status": "ready",
-    "item_count": 4
+    "item_count": 6
+  },
+  "authoritative_state": {
+    "schema_version": "1.0",
+    "source_precedence": [
+      "story_project_standard",
+      "chapter_event",
+      "model_inference"
+    ],
+    "characters": {
+      "protagonist": {
+        "character_id": "protagonist",
+        "canonical_name": "protagonist",
+        "aliases": [
+          "protagonist"
+        ],
+        "source_tier": "model_inference",
+        "identity": "lead",
+        "role": "lead",
+        "current_goal": "protect the serum sample"
+      }
+    },
+    "relationships": {},
+    "roster": {},
+    "numeric_counters": {},
+    "inventory": {},
+    "locations": {
+      "protagonist": {
+        "entity_id": "protagonist",
+        "location_id": "shelter",
+        "source_tier": "model_inference"
+      }
+    },
+    "events": {
+      "chapter-0003-scene-001-event-001": {
+        "event_id": "chapter-0003-scene-001-event-001",
+        "type": "opening_bridge_advance_1_1",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 1,
+        "source_tier": "chapter_event"
+      },
+      "chapter-0003-scene-001-event-002": {
+        "event_id": "chapter-0003-scene-001-event-002",
+        "type": "opening_bridge_advance_1_2",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 1,
+        "source_tier": "chapter_event"
+      },
+      "chapter-0003-scene-001-event-003": {
+        "event_id": "chapter-0003-scene-001-event-003",
+        "type": "opening_bridge_advance_1_3",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 1,
+        "source_tier": "chapter_event"
+      },
+      "chapter-0003-scene-002-event-001": {
+        "event_id": "chapter-0003-scene-002-event-001",
+        "type": "development_advance_2_1",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 2,
+        "source_tier": "chapter_event"
+      },
+      "chapter-0003-scene-002-event-002": {
+        "event_id": "chapter-0003-scene-002-event-002",
+        "type": "development_advance_2_2",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 2,
+        "source_tier": "chapter_event"
+      },
+      "chapter-0003-scene-002-event-003": {
+        "event_id": "chapter-0003-scene-002-event-003",
+        "type": "development_advance_2_3",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 2,
+        "source_tier": "chapter_event"
+      },
+      "chapter-0003-scene-003-event-001": {
+        "event_id": "chapter-0003-scene-003-event-001",
+        "type": "development_advance_3_1",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 3,
+        "source_tier": "chapter_event"
+      },
+      "chapter-0003-scene-003-event-002": {
+        "event_id": "chapter-0003-scene-003-event-002",
+        "type": "development_advance_3_2",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 3,
+        "source_tier": "chapter_event"
+      },
+      "chapter-0003-scene-003-event-003": {
+        "event_id": "chapter-0003-scene-003-event-003",
+        "type": "development_advance_3_3",
+        "subjects": [],
+        "objects": [],
+        "location": "",
+        "status": "completed",
+        "scene_index": 3,
+        "source_tier": "chapter_event"
+      }
+    }
   }
 }

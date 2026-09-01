@@ -175,12 +175,16 @@ $fixture | Select-Object status, synthetic, target, chapter_index, expected_reus
 - [ ] 在最终冻结提交上运行完整 `python -B -m pytest -q`。
 - [ ] 完整测试通过后运行 `python -B scripts/smoke_v1.py --skip-tests`，避免重复执行测试套件。
 - [ ] 使用真实凭据运行 `python -B scripts/provider_smoke.py --providers openai claude`；仅当正式配置依赖 Notion 时，再把 `notion` 加入 providers 并检查 read/write/readback。
-- [ ] 用下面的 PowerShell 检查 Execution Shadow。`--output-run-json` 的输出根对象就是 RunRecord，因此字段路径是 `$run.runtime`；artifact ref 相对于 `.tmp/runtime/runs`：
+- [ ] 用下面的 PowerShell 检查 Execution Shadow。该命令每次建立独立的临时运行目录，避免本机既有 `.tmp/runtime` 的章节历史影响验收；`--output-run-json` 的输出根对象就是 RunRecord，因此字段路径是 `$run.runtime`，artifact ref 相对于 `$shadowWork/runs`：
 
   ```powershell
-  $run = python -B main.py --dry-run --persist-dry-run --runtime-mode shadow --memory data/notion_memory.example.json --output-run-json | ConvertFrom-Json
+  $shadowWork = Join-Path ".tmp/manual_acceptance" ("execution_shadow_" + (Get-Date -Format "yyyyMMddTHHmmss"))
+  New-Item -ItemType Directory -Path $shadowWork -Force | Out-Null
+  Copy-Item -LiteralPath data/snapshot.example.json -Destination (Join-Path $shadowWork "snapshot.json")
+  Copy-Item -LiteralPath data/notion_memory.example.json -Destination (Join-Path $shadowWork "memory.json")
+  $run = python -B main.py --dry-run --persist-dry-run --runtime-mode shadow --snapshot (Join-Path $shadowWork "snapshot.json") --memory (Join-Path $shadowWork "memory.json") --run-dir (Join-Path $shadowWork "runs") --chapter-dir (Join-Path $shadowWork "chapters") --output-run-json | ConvertFrom-Json
   $run.runtime | Select-Object mode, authority, execution_cutover, artifact_ref, evidence_hash
-  $runtimeArtifact = Join-Path ".tmp/runtime/runs" $run.runtime.artifact_ref
+  $runtimeArtifact = Join-Path (Join-Path $shadowWork "runs") $run.runtime.artifact_ref
   $artifactRuntime = Get-Content -Raw -LiteralPath $runtimeArtifact | ConvertFrom-Json
   $artifactRuntime | Select-Object mode, authority, execution_cutover, evidence_hash
   ```

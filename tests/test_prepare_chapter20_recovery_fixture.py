@@ -19,6 +19,7 @@ from core.state.snapshot import load_snapshot
 from core.story_project.identity import load_project_identity
 from core.story_project.paths import infer_next_chapter, resolve_outline, resolve_prose, scan_prose_chapters
 from core.story_project.runtime import build_generation_story_project_context
+from core.validator.spatial import validate_bridge_preconditions
 from modules.chapter_generator.pipeline import run_chapter_pipeline
 from scripts.prepare_chapter20_recovery_fixture import (
     CHAPTER_INDEX,
@@ -87,9 +88,12 @@ def test_prepared_fixture_classifies_two_scenes_without_provider_calls(
     assert infer_next_chapter(target) == CHAPTER_INDEX
     assert resolve_prose(target, CHAPTER_INDEX).path is None
     assert resolve_outline(target, CHAPTER_INDEX).path is not None
-    assert load_snapshot(
+    fixture_snapshot = load_snapshot(
         target / ".novelagent" / "runtime" / "snapshot.json"
-    )["chapter_index"] == CHAPTER_INDEX
+    )
+    assert fixture_snapshot["chapter_index"] == CHAPTER_INDEX
+    bridge_precheck = validate_bridge_preconditions(fixture_snapshot)
+    assert bridge_precheck["ok"] is True, bridge_precheck
 
     run_dir = target / ".novelagent" / "runtime" / "runs"
     run_path = next(run_dir.glob("chapter_20_*.json"))

@@ -565,6 +565,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .data-table td small { margin-top: 3px; color: var(--muted); font-size: 8px; }
 .data-table .icon-button { width: 30px; height: 30px; }
 .empty-inline { padding: 38px; color: var(--muted); text-align: center; }
+.history-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 18px 0; }
+.history-detail-fact { padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fbfaf6; }
+.history-detail-fact dt { color: var(--muted); font-size: 9px; }
+.history-detail-fact dd { margin: 5px 0 0; color: var(--ink); font-size: 11px; overflow-wrap: anywhere; }
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
 
 /* Project health */

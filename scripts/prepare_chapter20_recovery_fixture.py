@@ -266,6 +266,18 @@ def _populate_fixture(
                 "open_threads": ["隧道深处的求救信号来源不明"],
                 "required_opening_bridge": "从地下站入口的停电现场直接继续。",
             },
+            # The recovery snapshot says the next scene resumes at the station
+            # entrance.  Register that exact location in the canonical world
+            # state as well, so the real bridge pre-validation used by the
+            # Workbench can verify the continuation before it reaches a model
+            # call.
+            "world_state": {
+                "locations": {
+                    "地下站入口": {
+                        "status": "停电",
+                    },
+                },
+            },
         },
         snapshot_path,
     )

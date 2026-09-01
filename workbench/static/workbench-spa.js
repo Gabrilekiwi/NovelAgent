@@ -349,6 +349,7 @@
     setText("[data-project-title]", projectTitleOf(state.project));
     setText("[data-project-meta]", `${projectGenreOf(state.project)} · ${projectLanguageOf(state.project)}`);
     all("[data-nav-area]").forEach((link) => { link.href = projectHash(link.dataset.navArea); });
+    all("[data-project-route]").forEach((link) => { link.href = projectHash(link.dataset.projectRoute); });
     const projectLink = one("[data-nav-project-overview]");
     if (projectLink) projectLink.href = projectHash("overview");
     const healthLink = one("[data-health-link]");
@@ -602,7 +603,11 @@
   const loadOutlines = async () => {
     const { payload } = await api(`/api/projects/${encodeURIComponent(state.projectId)}/outline-batches`);
     const batches = arrayFrom(payload, "items", "batches");
-    let batch = payload.batch || batches.find((item) => ["draft", "ready"].includes(item.status)) || batches[0] || null;
+    const nextChapter = Number(state.project?.next_chapter || 0);
+    const isCurrentRange = (item) => Number(item?.start_chapter || 0) === nextChapter;
+    let batch = payload.batch && isCurrentRange(payload.batch)
+      ? payload.batch
+      : batches.find((item) => ["draft", "ready"].includes(item.status) && isCurrentRange(item)) || null;
     if (batch?.id && !batch.items && !batch.proposal) {
       const detail = await api(`/api/outline-batches/${encodeURIComponent(batch.id)}`);
       batch = detail.payload.batch || detail.payload;
@@ -1361,13 +1366,14 @@
     const jobRecords = arrayFrom(payload.jobs, "items").map((job) => ({
       ...job,
       id: job.id,
+      history_source: "job",
       chapter: job.next_chapter,
       title: job.kind === "locked_chapter_recovery" ? `第 ${job.next_chapter} 章恢复` : `第 ${job.start_chapter}–${job.end_chapter} 章生产批次`,
       status: job.state,
       kind_label: job.kind === "locked_chapter_recovery" ? "安全恢复" : "连续生产",
       created_at_label: job.created_at ? new Date(job.created_at).toLocaleString("zh-CN") : "—"
     }));
-    state.runs = [...jobRecords, ...runRecords];
+    state.runs = [...jobRecords, ...runRecords.map((run) => ({ ...run, history_source: "run" }))];
     const stats = payload.stats || {};
     setText("[data-history-total]", stats.total_runs ?? state.runs.length);
     const completed = jobRecords.filter((job) => ["completed", "committed"].includes(job.status)).length;
@@ -1379,14 +1385,75 @@
       const row = el("tr"); row.dataset.searchValue = `${run.chapter || ""} ${run.id || ""} ${run.title || ""}`;
       row.append(el("td", "", run.created_at_label || run.time_label || "—"));
       const subject = el("td"); subject.append(el("strong", "", run.title || (run.chapter ? `第 ${run.chapter} 章` : "运行记录")), el("small", "", `${run.kind_label || "正文生成"} · ${(run.id || "—").slice(0, 12)}`)); row.append(subject);
-      const result = el("td"); result.append(statusBadge(run.status || "idle", run.status_label)); row.append(result, el("td", "", run.duration_label || "—"), el("td", "", run.token_label || "—"), el("td", "", run.cost_label || "—")); tbody.append(row);
+      const result = el("td"); result.append(statusBadge(run.status || "idle", run.status_label));
+      const detail = el("td");
+      const detailButton = el("button", "text-link", "查看详情");
+      detailButton.type = "button";
+      detailButton.dataset.historyDetailId = String(run.id || "");
+      detailButton.dataset.historyDetailSource = run.history_source || "run";
+      detailButton.disabled = !run.id;
+      detail.append(detailButton);
+      row.append(result, el("td", "", run.duration_label || "—"), el("td", "", run.token_label || "—"), el("td", "", run.cost_label || "—"), detail); tbody.append(row);
     });
-    if (!tbody.children.length) { const row = el("tr"); const cell = el("td", "empty-inline", "暂无运行记录。"); cell.colSpan = 6; row.append(cell); tbody.append(row); }
+    if (!tbody.children.length) { const row = el("tr"); const cell = el("td", "empty-inline", "暂无运行记录。"); cell.colSpan = 7; row.append(cell); tbody.append(row); }
   };
 
   const loadHistory = async () => {
     const { payload } = await api(`/api/projects/${encodeURIComponent(state.projectId)}/history`);
     renderHistory(payload);
+  };
+
+  const renderHistoryDetail = (payload) => {
+    const panel = one("[data-history-detail]");
+    if (!panel) return;
+    clear(panel);
+    panel.hidden = false;
+    const run = payload.run;
+    const heading = el("div", "section-heading compact");
+    const headingCopy = el("div");
+    headingCopy.append(el("p", "eyebrow", "运行凭据与正文回读"));
+    headingCopy.append(el("h2", "", run?.chapter_index ? `第 ${run.chapter_index} 章运行详情` : "生产任务详情"));
+    heading.append(headingCopy);
+    panel.append(heading);
+
+    if (!run) {
+      panel.append(el("p", "muted-copy", "该生产任务尚未写入可读取的运行记录。"));
+      return;
+    }
+
+    const facts = el("dl", "history-detail-grid");
+    const addFact = (label, value) => {
+      const item = el("div", "history-detail-fact");
+      item.append(el("dt", "", label), el("dd", "", value ?? "—"));
+      facts.append(item);
+    };
+    addFact("运行 ID", run.id || "—");
+    addFact("结果", run.committed ? "已提交" : run.status || "—");
+    addFact("持久化", run.persistence_state || "—");
+    addFact("审校", run.review_status || "—");
+    addFact("自动修订", `${Number(run.repair_attempts || 0)} 次`);
+    addFact("模型调用", run.provider_calls == null ? "—" : `${run.provider_calls} 次`);
+    panel.append(facts);
+
+    const verification = payload.verification;
+    const evidence = el("div", "recovery-callout");
+    if (verification) {
+      const receipt = verification.receipt_verified ? `已验证（${verification.receipt_kind || "receipt"}）` : "未验证";
+      evidence.append(el("strong", "", `提交凭据：${receipt}`));
+      evidence.append(el("p", "", verification.prose_path ? `正式正文回读：${verification.prose_path} · SHA-256 ${String(verification.prose_sha256 || "—").slice(0, 16)}` : "正式正文回读：未找到"));
+      const errors = Array.isArray(verification.errors) ? verification.errors : [];
+      if (errors.length) evidence.append(el("p", "", `校验说明：${errors.join("；")}`));
+    } else {
+      evidence.append(el("strong", "", "提交凭据：该运行尚未提交正式正文"));
+      if (run.error_message) evidence.append(el("p", "", `失败信息：${run.error_message}`));
+    }
+    panel.append(evidence);
+  };
+
+  const loadHistoryDetail = async (entryId, source) => {
+    const path = `/api/projects/${encodeURIComponent(state.projectId)}/history/${encodeURIComponent(entryId)}?source=${encodeURIComponent(source || "run")}`;
+    const { payload } = await api(path);
+    renderHistoryDetail(payload);
   };
 
   const renderHealth = () => {
@@ -1442,7 +1509,12 @@
     const blockerText = shadow
       ? arrayFrom(shadow.strict_blockers, "items").map((item) => blockerLabels[item] || item).join("；")
       : health.shadow_error?.message || "当前无法生成 Shadow 报告。";
-    setText("[data-shadow-blockers]", shadow ? `当前仍需处理：${blockerText || "无"}` : blockerText);
+    setText(
+      "[data-shadow-blockers]",
+      health.production_eligible
+        ? "当前 Strict 已有效；本摘要仅显示激活前的非权威 Shadow 观察，不影响生产资格。"
+        : (shadow ? `当前仍需处理：${blockerText || "无"}` : blockerText)
+    );
   };
 
   const loadHealth = async () => {
@@ -1505,6 +1577,16 @@
   one("[data-spa-history-search]")?.addEventListener("input", (event) => {
     const query = event.target.value.trim().toLocaleLowerCase("zh-CN");
     all("[data-history-rows] tr[data-search-value]").forEach((row) => { row.hidden = Boolean(query) && !(row.dataset.searchValue || "").toLocaleLowerCase("zh-CN").includes(query); });
+  });
+  one("[data-history-rows]")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-history-detail-id]");
+    if (!button || button.disabled) return;
+    try {
+      clearError();
+      await loadHistoryDetail(button.dataset.historyDetailId, button.dataset.historyDetailSource);
+    } catch (error) {
+      showError(error);
+    }
   });
 
   one("[data-spa-approve-outline]")?.addEventListener("click", async () => {

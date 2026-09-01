@@ -476,6 +476,26 @@ def test_recovery_summary_marks_missing_current_and_stale_checkpoints(tmp_path: 
     assert stale["checkpoint_matches_latest_run"] is False
     assert stale["needs_reclassification"] is True
 
+    (resolution_dir / "resolution_reset.json").write_text(
+        json.dumps(
+            {
+                "chapter_index": 20,
+                "action": "reset",
+                "reason": "operator_requested_reset",
+                "source_run_id": "run-newer-failure",
+                "expected_scene_count": 3,
+                "scenes": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    reset = recovery_summary()
+    assert reset["latest_run"]["id"] == "run-newer-failure"
+    assert reset["checkpoint"]["action"] == "reset"
+    assert reset["recoverable"] is False
+    assert reset["needs_reclassification"] is False
+
 
 def test_existing_chapter_20_recovery_is_only_queued_without_worker_or_model(
     tmp_path: Path,
@@ -995,6 +1015,51 @@ def test_pending_resume_requeues_the_same_uncertain_session_without_creating_ano
     assert pending_after_resume["chapter_20_recovery"]["recoverable"] is False
     assert pending_after_resume["chapter_20_recovery"]["active_job_id"] == parent.id
     assert client.app.state.supervisor._thread is None
+
+
+def test_history_detail_reads_scoped_run_record_and_rejects_invalid_lookup(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="历史详情测试")
+    other_project = _create_project(client, workspace, name="历史详情隔离测试")
+    run_id = "chapter_1_history_detail"
+    run_dir = Path(project["root"]) / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True)
+    (run_dir / f"{run_id}.json").write_text(
+        json.dumps(
+            {
+                "run": {
+                    "id": run_id,
+                    "chapter_index": 1,
+                    "status": "failed",
+                    "committed": False,
+                    "started_at": "2026-08-31T14:00:00+08:00",
+                    "finished_at": "2026-08-31T14:01:00+08:00",
+                    "repair_attempts": 0,
+                    "persistence": {"state": "failed"},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    detail = client.get(
+        f"/api/projects/{project['id']}/history/{run_id}?source=run"
+    )
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["source"] == "run"
+    assert body["run"]["id"] == run_id
+    assert body["run"]["chapter_index"] == 1
+    assert body["verification"] is None
+
+    cross_project = client.get(
+        f"/api/projects/{other_project['id']}/history/{run_id}?source=run"
+    )
+    assert cross_project.status_code == 404
+    assert client.get(f"/api/projects/{project['id']}/history/missing?source=run").status_code == 404
+    assert client.get(f"/api/projects/{project['id']}/history/{run_id}?source=other").status_code == 422
 
 
 def test_health_accepts_browser_selected_report_and_keeps_strict_gate_fail_closed(
