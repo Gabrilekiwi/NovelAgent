@@ -151,6 +151,20 @@ _SCENE_CONTEXT_PAYLOAD_POLICIES = (
         "summary_tail_chars": 0,
         "include_summary_goal": False,
     },
+    {
+        "context_section_chars": 1_000,
+        "previous_tail_chars": 80,
+        "summary_limit": 3,
+        "summary_tail_chars": 0,
+        "include_summary_goal": False,
+    },
+    {
+        "context_section_chars": 800,
+        "previous_tail_chars": 0,
+        "summary_limit": 2,
+        "summary_tail_chars": 0,
+        "include_summary_goal": False,
+    },
 )
 
 

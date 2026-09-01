@@ -899,6 +899,64 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         self.assertEqual(1, payload["boundary_retry"]["attempt"])
 
+    def test_boundary_retry_can_compact_shared_context_below_1400_chars(self) -> None:
+        class RetryBudget:
+            hard_input_limit = 32_000
+
+            def __init__(self) -> None:
+                self.context_limits: list[int] = []
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+                payload = json.loads(text)
+                context_chars = len(payload["shared_context"])
+                self.context_limits.append(context_chars)
+                return {
+                    "within_budget": True,
+                    "budgeted_input_tokens": 29_900 if context_chars <= 1_000 else 30_526,
+                    "hard_input_limit": self.hard_input_limit,
+                }
+
+            def require_input(self, *_: object, **__: object) -> dict:
+                raise AssertionError("the compact shared-context fallback should fit")
+
+        budget = RetryBudget()
+
+        def compact_context(
+            _input_pack: str,
+            *,
+            max_section_chars: int,
+            **_: object,
+        ) -> str:
+            return "x" * max_section_chars
+
+        with (
+            patch.object(pipeline_module, "default_context_budget", return_value=budget),
+            patch.object(pipeline_module, "_compact_scene_context", side_effect=compact_context),
+        ):
+            payload = json.loads(
+                pipeline_module._scene_request_payload(
+                    input_pack="# Requirements\nPreserve the chapter arc.",
+                    plan={
+                        "goal": "Retry the rejected boundary only.",
+                        "scenes": [{"index": 1}],
+                    },
+                    scene={"index": 1},
+                    scene_required_beats=[],
+                    blueprint=None,
+                    boundary_retry={
+                        "attempt": 1,
+                        "scene_index": 1,
+                        "findings": [{"code": "location_state_rollback"}],
+                    },
+                )
+            )
+
+        self.assertGreater(max(budget.context_limits), 1_000)
+        self.assertEqual(1_000, len(payload["shared_context"]))
+        self.assertEqual(1, payload["boundary_retry"]["attempt"])
+
     def test_legacy_scene_budget_reduces_only_prompt_history_details(self) -> None:
         state = pipeline_module.empty_scene_state()
         state["characters"] = {
