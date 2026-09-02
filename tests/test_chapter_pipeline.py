@@ -2257,6 +2257,10 @@ class ChapterPipelineTest(unittest.TestCase):
             retry_request["boundary_retry"]["findings"][0]["evidence"]["expected_before"],
         )
         self.assertEqual(
+            plan["scenes"][1]["planned_events"],
+            retry_request["boundary_retry"]["canonical_planned_events"],
+        )
+        self.assertEqual(
             "危险核心进入独立隔离柜，双方仍不合并组织",
             drafts[1]["deltas"]["relationships"][0]["after"],
         )

@@ -754,6 +754,7 @@ def generate_scenes(
                 boundary,
                 attempt=local_regeneration_attempts + 1,
                 state_before=state_before,
+                planned_events=scene.get("planned_events") or [],
             )
             rejected_boundaries.append(feedback)
             if (
@@ -916,6 +917,7 @@ def _scene_boundary_retry_feedback(
     *,
     attempt: int,
     state_before: dict[str, Any] | None = None,
+    planned_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     raw_findings = [
         item
@@ -939,6 +941,14 @@ def _scene_boundary_retry_feedback(
         )
         if str(entity_id).strip() and str(location_id).strip()
     }
+    canonical_events = [
+        {
+            key: item.get(key)
+            for key in ("event_id", "type", "subjects", "objects", "location", "status")
+        }
+        for item in (planned_events or [])
+        if isinstance(item, dict) and str(item.get("event_id") or "").strip()
+    ]
     return {
         "attempt": int(attempt),
         "scene_index": int(report.get("scene_index") or 0),
@@ -951,10 +961,13 @@ def _scene_boundary_retry_feedback(
             if canonical_locations
             else {}
         ),
+        **({"canonical_planned_events": canonical_events} if canonical_events else {}),
         "instruction": (
             "Regenerate this same scene only. Treat current_scene_state and "
             "canonical_location_state as the exclusive authoritative state. "
             "Shared context describes earlier chapter context and must never override them. "
+            "Copy every canonical_planned_events descriptor exactly; do not rewrite its type, "
+            "subjects, objects, location, or status. "
             "Correct or remove every rejected delta; each before value must exactly equal "
             "the current value. Do not repeat any earlier scene or event. "
             + _EVENT_LOCATION_CONTRACT
@@ -1159,6 +1172,8 @@ def _scene_request_payload(
             "bound as a hard limit and stop the scene before exceeding it. "
             "Every required_event_id must appear exactly once in events. Do not restart, duplicate, or retell "
             "a completed event; never use a forbidden_event_id or roll state back. "
+            "For every event in scene.planned_events, copy event_id, type, subjects, objects, location, and "
+            "status exactly; these are an immutable bookkeeping contract, not prose to rewrite. "
             f"{_EVENT_LOCATION_CONTRACT} "
             "Deltas must follow the exact type-specific fields and delta_rules in this request. Do not emit a "
             "delta merely to restate an unchanged fact. Continue directly from previous_scene_tail and "
