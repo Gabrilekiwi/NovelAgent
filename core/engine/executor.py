@@ -45,7 +45,10 @@ from core.quality.repair_patch import (
     build_repair_patch_from_texts,
     coerce_repair_patch,
 )
-from core.quality.scene_evidence import realign_scene_evidence
+from core.quality.scene_evidence import (
+    canonicalize_scene_local_repair_patch,
+    realign_scene_evidence,
+)
 from core.quality_decision import (
     QualityPolicy,
     resolve_quality_policy,
@@ -2064,11 +2067,18 @@ class AgentExecutor:
                 repaired,
                 problem_codes=_problem_codes(before_validation),
             )
+            repair_patch, separator_canonicalization = canonicalize_scene_local_repair_patch(
+                state.get("chapter_pipeline"),
+                before_chapter=before_chapter,
+                patch=repair_patch,
+            )
             repaired_text, patch_audit = apply_repair_patch(
                 before_chapter,
                 repair_patch,
             )
             patch_audit["attempt"] = attempt
+            if separator_canonicalization is not None:
+                patch_audit["scene_separator_canonicalization"] = separator_canonicalization
             state["repair_patches"].append(patch_audit)
             state["chapter_pipeline"] = self._realign_chapter_pipeline(
                 state.get("chapter_pipeline"),
