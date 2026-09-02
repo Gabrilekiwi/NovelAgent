@@ -774,6 +774,8 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         self.assertNotIn("stable_entity_id", json.dumps(delta_schema))
         self.assertTrue(any("does not actually change" in rule for rule in payload["delta_rules"]))
+        self.assertIn("deltas.locations", payload["instruction"])
+        self.assertIn("赵铁 remains downstairs on radio", payload["instruction"])
         self.assertIn("resolve", delta_schema["rosters"][0]["operation"])
         self.assertTrue(
             any(
@@ -782,6 +784,43 @@ class ChapterPipelineTest(unittest.TestCase):
                 for rule in payload["delta_rules"]
             )
         )
+
+    def test_primary_scene_request_uses_low_temperature_for_structured_state(self) -> None:
+        calls: list[dict] = []
+
+        def completion(_messages: list[dict], **kwargs: object) -> str:
+            calls.append(dict(kwargs))
+            return json.dumps(
+                {
+                    "prose": "陆沉留在维修道，先核对远程读数。",
+                    "events": [],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "场景状态未变化。",
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(pipeline_module, "chat_completion", side_effect=completion):
+            pipeline_module._request_scene_candidate(
+                input_pack="# Chapter Index\n1",
+                plan={"scenes": [{"index": 1}]},
+                scene={"index": 1},
+                scene_required_beats=[],
+                blueprint=None,
+                previous_scene_tail="",
+                prior_scene_summaries=[],
+                state_before=pipeline_module.empty_scene_state(),
+                language="zh-CN",
+            )
+
+        self.assertEqual(0.2, calls[0]["temperature"])
 
     def test_scene_request_compacts_global_plan_but_keeps_current_scene_complete(self) -> None:
         scenes = [

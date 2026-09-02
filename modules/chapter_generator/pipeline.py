@@ -98,7 +98,11 @@ _EVENT_LOCATION_CONTRACT = (
     "Use one exact, non-compound location for each event.location. Every known entity "
     "listed in event.subjects or event.objects is asserted to be physically present "
     "there. Omit remote or differently located entities from that event, and make each "
-    "matching location delta.after exactly equal event.location."
+    "matching deltas.locations delta.after exactly equal event.location. A "
+    "deltas.characters location field does not establish physical presence for an event. "
+    "For example, if 赵铁 remains downstairs on radio while 陆沉 and 顾岚 are on the roof, "
+    "the roof event must omit 赵铁 from subjects and objects; prose may still describe "
+    "his remote coordination."
 )
 _SCENE_CONTEXT_PAYLOAD_POLICIES = (
     {
@@ -871,6 +875,9 @@ def _request_scene_candidate(
             scene_index,
             boundary_retry=boundary_retry_attempt,
         ),
+        # Scene metadata drives deterministic safety gates. Favor repeatable
+        # adherence to the structured contract over stylistic variance.
+        "temperature": 0.2,
     }
     if boundary_retry is not None:
         call_kwargs["temperature"] = 0.0
