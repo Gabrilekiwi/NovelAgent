@@ -753,6 +753,7 @@ def generate_scenes(
             feedback = _scene_boundary_retry_feedback(
                 boundary,
                 attempt=local_regeneration_attempts + 1,
+                state_before=state_before,
             )
             rejected_boundaries.append(feedback)
             if (
@@ -914,6 +915,7 @@ def _scene_boundary_retry_feedback(
     report: dict[str, Any],
     *,
     attempt: int,
+    state_before: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw_findings = [
         item
@@ -929,6 +931,14 @@ def _scene_boundary_retry_feedback(
                 "evidence": _bounded_boundary_evidence(item.get("evidence")),
             }
         )
+    canonical_locations = {
+        str(entity_id): str(location_id)
+        for entity_id, location_id in sorted(
+            ((state_before or {}).get("locations") or {}).items(),
+            key=lambda item: str(item[0]),
+        )
+        if str(entity_id).strip() and str(location_id).strip()
+    }
     return {
         "attempt": int(attempt),
         "scene_index": int(report.get("scene_index") or 0),
@@ -936,8 +946,15 @@ def _scene_boundary_retry_feedback(
         "finding_count": len(raw_findings),
         "omitted_finding_count": max(0, len(raw_findings) - len(findings)),
         "findings": findings,
+        **(
+            {"canonical_location_state": canonical_locations}
+            if canonical_locations
+            else {}
+        ),
         "instruction": (
-            "Regenerate this same scene only. Treat current_scene_state as authoritative. "
+            "Regenerate this same scene only. Treat current_scene_state and "
+            "canonical_location_state as the exclusive authoritative state. "
+            "Shared context describes earlier chapter context and must never override them. "
             "Correct or remove every rejected delta; each before value must exactly equal "
             "the current value. Do not repeat any earlier scene or event. "
             + _EVENT_LOCATION_CONTRACT
@@ -1165,6 +1182,7 @@ def _scene_request_payload(
                         query=context_query,
                         authoritative_state_source=authoritative_state_source,
                         generation_state_view_source=generation_state_view,
+                        exclude_authoritative_state=boundary_retry is not None,
                     )
                 except StructuredContextError as exc:
                     if context_section_chars >= 1_500 or exc.code not in {
@@ -1442,6 +1460,7 @@ def _compact_scene_context(
     query: str = "",
     authoritative_state_source: dict[str, Any] | None = None,
     generation_state_view_source: dict[str, Any] | None = None,
+    exclude_authoritative_state: bool = False,
 ) -> str:
     """Retrieve complete sections/JSON items relevant to the current scene."""
     generation_state_view = (
@@ -1510,33 +1529,44 @@ def _compact_scene_context(
         AUTHORITATIVE_SCENE_SECTION_MAX_CHARS,
         max(1, max_section_chars * 7),
     )
-    projected_text = compact_authoritative_state_in_markdown(
-        text,
-        max_section_chars=authority_section_limit,
-        query=query,
-        require_query_references=False,
-        require_open_events=False,
-        authoritative_state_source=authoritative_state_source,
-        externalized_collections={"roster": "current_scene_state.rosters"},
+    projected_text = (
+        text
+        if exclude_authoritative_state
+        else compact_authoritative_state_in_markdown(
+            text,
+            max_section_chars=authority_section_limit,
+            query=query,
+            require_query_references=False,
+            require_open_events=False,
+            authoritative_state_source=authoritative_state_source,
+            externalized_collections={"roster": "current_scene_state.rosters"},
+        )
     )
+    required_sections = {
+        "Context Digest",
+        "Prompt Context Selection",
+        "Project Profile",
+        "Director Decision",
+        "Story State",
+        "Spatial State",
+        "Authoritative State",
+        "StoryProject Chapter Blueprint",
+        "Requirements",
+        "灏忚鐢熸垚瑙勫垯濂戠害",
+    }
+    if exclude_authoritative_state:
+        required_sections.discard("Authoritative State")
     selection = compact_markdown_context(
         projected_text,
         max_chars=max_section_chars * 7,
         per_section_max_chars=max_section_chars,
         query=query,
-        required_sections={
-            "Context Digest",
-            "Prompt Context Selection",
-            "Project Profile",
-            "Director Decision",
-            "Story State",
-            "Spatial State",
-            "Authoritative State",
-            "StoryProject Chapter Blueprint",
-            "Requirements",
-            "灏忚鐢熸垚瑙勫垯濂戠害",
-        },
-        excluded_sections={"Memory Index", "Structured Context Manifest"},
+        required_sections=required_sections,
+        excluded_sections=(
+            {"Memory Index", "Structured Context Manifest", "Authoritative State"}
+            if exclude_authoritative_state
+            else {"Memory Index", "Structured Context Manifest"}
+        ),
         required_json_keys={
             "Prompt Context Selection": PROMPT_CONTEXT_SELECTION_KEYS,
             "Story State": STORY_STATE_CONTEXT_KEYS,
@@ -1552,7 +1582,11 @@ def _compact_scene_context(
             "StoryProject Chapter Blueprint": _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS,
         },
         prefer_recent=True,
-        policy="scene_markdown_json_retrieval_v1",
+        policy=(
+            "scene_boundary_retry_retrieval_v1"
+            if exclude_authoritative_state
+            else "scene_markdown_json_retrieval_v1"
+        ),
     )
     return selection.text
 

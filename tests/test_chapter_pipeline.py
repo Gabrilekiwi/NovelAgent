@@ -1048,6 +1048,54 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(1_000, len(payload["shared_context"]))
         self.assertEqual(1, payload["boundary_retry"]["attempt"])
 
+    def test_boundary_retry_excludes_stale_authoritative_context(self) -> None:
+        input_pack = (
+            "# Requirements\nContinue only the current scene.\n\n"
+            "# Story State\n"
+            + json.dumps({"last_scene_location": "物流园主控塔屋顶"}, ensure_ascii=False)
+            + "\n\n# Authoritative State\n"
+            + json.dumps(
+                {
+                    "locations": {
+                        "顾岚": {
+                            "entity_id": "顾岚",
+                            "location_id": "梁魁办公室外接点",
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            )
+        )
+        state = pipeline_module.empty_scene_state()
+        state["locations"] = {"顾岚": "物流园主控塔屋顶"}
+        payload = json.loads(
+            pipeline_module._scene_request_payload(
+                input_pack=input_pack,
+                plan={"goal": "撤离", "scenes": [{"index": 1}]},
+                scene={"index": 1, "goal": "下楼撤离"},
+                scene_required_beats=[],
+                blueprint=None,
+                scene_state=state,
+                boundary_retry={
+                    "attempt": 1,
+                    "scene_index": 1,
+                    "canonical_location_state": state["locations"],
+                    "findings": [{"code": "roster_count_mismatch"}],
+                },
+            )
+        )
+
+        self.assertEqual(
+            "物流园主控塔屋顶",
+            payload["current_scene_state"]["locations"]["顾岚"],
+        )
+        self.assertEqual(
+            {"顾岚": "物流园主控塔屋顶"},
+            payload["boundary_retry"]["canonical_location_state"],
+        )
+        self.assertNotIn("# Authoritative State", payload["shared_context"])
+        self.assertNotIn("梁魁办公室外接点", payload["shared_context"])
+
     def test_legacy_scene_budget_reduces_only_prompt_history_details(self) -> None:
         state = pipeline_module.empty_scene_state()
         state["characters"] = {
