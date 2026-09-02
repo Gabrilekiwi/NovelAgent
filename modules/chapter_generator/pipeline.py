@@ -499,17 +499,25 @@ def _structured_json_text(payload: str) -> str:
 
 
 def _repair_premature_scene_object_close(payload: str) -> dict[str, Any] | None:
-    """Repair one unambiguous extra top-level brace after the prose field."""
+    """Repair one extra top-level brace at an unambiguous scene-field boundary."""
 
     text = _structured_json_text(payload)
     try:
         prefix, prefix_end = json.JSONDecoder().raw_decode(text)
     except json.JSONDecodeError:
         return None
-    if not isinstance(prefix, dict) or set(prefix) != {"prose"}:
+    if not isinstance(prefix, dict):
         return None
     remainder = text[prefix_end:]
-    if not remainder.lstrip().startswith(',"events"'):
+    boundary = (set(prefix), remainder.lstrip())
+    valid_boundaries = (
+        ({"prose"}, ',"events"'),
+        ({"prose", "events", "deltas"}, ',"continuity_note"'),
+    )
+    if not any(
+        prefix_keys == boundary[0] and boundary[1].startswith(next_field)
+        for prefix_keys, next_field in valid_boundaries
+    ):
         return None
     if prefix_end <= 0 or text[prefix_end - 1] != "}":
         return None

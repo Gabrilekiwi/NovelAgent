@@ -62,6 +62,37 @@ class ChapterPipelineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not valid structured JSON"):
             pipeline_module._load_scene_response(payload)
 
+    def test_scene_response_repairs_one_premature_close_before_continuity_note(
+        self,
+    ) -> None:
+        expected = {
+            "prose": "The relay has stopped, but the crowd is still moving toward the east street.",
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "The team remains on the rooftop.",
+        }
+        prefix = json.dumps(
+            {key: expected[key] for key in ("prose", "events", "deltas")},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        continuity_field = json.dumps(
+            {"continuity_note": expected["continuity_note"]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )[1:]
+
+        result = pipeline_module._load_scene_response(f"{prefix},{continuity_field}")
+
+        self.assertEqual(expected, result)
+
     def test_scene_response_escapes_unambiguous_dialogue_quotes_in_prose(self) -> None:
         expected = {
             "prose": '电容回流端亮起红光。"主核在囊体和电容之间。"楼下的读数器继续报警。',
