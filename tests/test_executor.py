@@ -13,7 +13,11 @@ from core.chapter_contexts import ChapterContextError
 from core.context_budget import ContextBudgetError, RunBudgetLimits
 from core.director import DirectorDecisionError
 from core.engine.artifacts import save_chapter_artifact
-from core.engine.executor import AgentExecutor, LoopExecutionError
+from core.engine.executor import (
+    AgentExecutor,
+    LoopExecutionError,
+    _must_regenerate_unverified_complete_draft,
+)
 from core.engine.locked_chapter import LockedChapterRecoveryError
 from core.engine.repair_convergence import RepairNotConvergingError
 from core.execution_provenance import validate_execution_provenance
@@ -172,6 +176,32 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(["fresh-input"], generator_calls)
         self.assertEqual(regenerated, chapter)
         self.assertTrue(validation["ok"])
+
+    def test_unverified_durable_scene_repair_draft_is_regenerated(self) -> None:
+        error = LockedChapterRecoveryError(
+            "complete-draft source has no verified accepted final artifact"
+        )
+
+        self.assertTrue(
+            _must_regenerate_unverified_complete_draft(
+                {
+                    "action": "repair_draft",
+                    "reason": "durable_repaired_draft_available",
+                    "complete_draft": {"source_stage": "scene_repair"},
+                },
+                error,
+            )
+        )
+        self.assertFalse(
+            _must_regenerate_unverified_complete_draft(
+                {
+                    "action": "repair_draft",
+                    "reason": "durable_polished_draft_available",
+                    "complete_draft": {"source_stage": "claude_polish"},
+                },
+                error,
+            )
+        )
 
     def test_recovered_checkpoint_count_mismatch_is_allowed_for_scope_replay(self) -> None:
         executor = AgentExecutor(
