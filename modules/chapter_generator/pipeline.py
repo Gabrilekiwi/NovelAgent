@@ -1145,6 +1145,8 @@ def _scene_request_payload(
             "Never emit migration audit metadata.",
             "Every relationship delta must include source_event_id and it must reference an event declared "
             "by this Scene; never reuse an earlier Scene event to justify a new relationship state.",
+            "Use deltas.locations exclusively for physical location changes. Never emit a deltas.characters "
+            "delta whose field is location or current_location.",
         ],
         **({"boundary_retry": boundary_retry} if boundary_retry is not None else {}),
         "instruction": (

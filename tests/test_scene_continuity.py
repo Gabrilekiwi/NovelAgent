@@ -308,6 +308,78 @@ class SceneContinuityTests(unittest.TestCase):
         self.assertEqual(1, after["inventories"]["hero:serum"])
         self.assertEqual(13, after["counters"]["survivors"])
 
+    def test_exact_character_location_mirror_does_not_reject_location_transition(self) -> None:
+        state = empty_scene_state()
+        state["locations"]["hero"] = "gate"
+        state["characters"]["hero"] = {"location": "stale-profile-location"}
+        event = {
+            "event_id": "scene-2-arrival",
+            "type": "arrival_completed",
+            "subjects": ["hero"],
+            "objects": [],
+            "location": "shelter",
+            "status": "completed",
+        }
+
+        report, after = validate_scene_transition(
+            scene_index=2,
+            state_before=state,
+            events=[event],
+            deltas={
+                **_empty_deltas(),
+                "characters": [
+                    {
+                        "character_id": "hero",
+                        "field": "location",
+                        "before": "gate",
+                        "after": "shelter",
+                        "reason": "legacy mirror",
+                    }
+                ],
+                "locations": [
+                    {
+                        "entity_id": "hero",
+                        "before": "gate",
+                        "after": "shelter",
+                        "reason": "crossed the gate",
+                    }
+                ],
+            },
+            required_event_ids=[event["event_id"]],
+            planned_events=[event],
+        )
+
+        self.assertTrue(report["accepted"], report["findings"])
+        self.assertEqual("shelter", after["locations"]["hero"])
+        self.assertEqual("stale-profile-location", after["characters"]["hero"]["location"])
+
+    def test_character_location_without_matching_location_delta_is_rejected(self) -> None:
+        state = empty_scene_state()
+        state["locations"]["hero"] = "gate"
+        report, _after = validate_scene_transition(
+            scene_index=2,
+            state_before=state,
+            events=[],
+            deltas={
+                **_empty_deltas(),
+                "characters": [
+                    {
+                        "character_id": "hero",
+                        "field": "current_location",
+                        "before": "gate",
+                        "after": "shelter",
+                        "reason": "wrong ledger",
+                    }
+                ],
+            },
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn(
+            "invalid_character_location_delta",
+            {item["code"] for item in report["findings"]},
+        )
+
     def test_event_location_requires_matching_entity_transition(self) -> None:
         state = empty_scene_state()
         state["locations"]["hero"] = "gate"

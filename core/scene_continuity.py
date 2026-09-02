@@ -18,6 +18,7 @@ from core.state.roster import (
 SCENE_CONTINUITY_SCHEMA_VERSION = "1.0"
 SCENE_STATE_GENERATION_PROJECTION_POLICY = "scene_state_generation_v1"
 _DELTA_KINDS = ("characters", "relationships", "rosters", "locations", "inventory", "counters")
+_CHARACTER_LOCATION_FIELDS = frozenset({"location", "current_location"})
 _COMPLETED_EVENT_SUMMARY_LIMIT = 24
 _OPEN_ACTION_SUMMARY_LIMIT = 12
 
@@ -316,6 +317,12 @@ def validate_scene_transition(
                     )
                     break
 
+    character_delta_findings, normalized_character_deltas = (
+        _normalize_character_location_mirrors(normalized_deltas)
+    )
+    normalized_deltas["characters"] = normalized_character_deltas
+    findings.extend(character_delta_findings)
+
     after = copy.deepcopy(before)
     findings.extend(_apply_character_deltas(after, normalized_deltas["characters"]))
     findings.extend(
@@ -613,6 +620,49 @@ def _normalize_deltas(value: dict[str, Any] | None) -> dict[str, list[dict[str, 
         key: [copy.deepcopy(item) for item in source.get(key) or [] if isinstance(item, dict)]
         for key in _DELTA_KINDS
     }
+
+
+def _normalize_character_location_mirrors(
+    deltas: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep location as a single ledger while tolerating an exact legacy mirror.
+
+    ``deltas.locations`` is the sole physical-location ledger.  Some model
+    responses still duplicate an otherwise exact transition in the generic
+    character ledger.  Applying that duplicate against an older character
+    profile can reject a valid current location transition, so discard only an
+    exact mirror and reject every other character-location delta.
+    """
+
+    findings: list[dict[str, Any]] = []
+    retained: list[dict[str, Any]] = []
+    location_deltas = deltas.get("locations") or []
+    for delta in deltas.get("characters") or []:
+        field = str(delta.get("field") or "").strip()
+        if field not in _CHARACTER_LOCATION_FIELDS:
+            retained.append(delta)
+            continue
+        character_id = str(delta.get("character_id") or "").strip()
+        mirrored = next(
+            (
+                location_delta
+                for location_delta in location_deltas
+                if str(location_delta.get("entity_id") or "").strip() == character_id
+                and location_delta.get("before") == delta.get("before")
+                and location_delta.get("after") == delta.get("after")
+            ),
+            None,
+        )
+        if isinstance(mirrored, dict):
+            continue
+        findings.append(
+            _finding(
+                "invalid_character_location_delta",
+                "Physical location changes must use deltas.locations only.",
+                delta,
+            )
+        )
+    return findings, retained
 
 
 def _apply_character_deltas(
