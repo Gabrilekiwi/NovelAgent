@@ -1585,7 +1585,7 @@ class ChapterPipelineTest(unittest.TestCase):
                     initial_scene_state=initial_state,
                 )
 
-        self.assertEqual(2, len(requests))
+        self.assertEqual(3, len(requests))
         self.assertEqual(
             24,
             len(requests[0]["current_scene_state"]["completed_events"]),
@@ -2471,7 +2471,80 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         self.assertTrue(drafts[0]["boundary_validation"]["accepted"])
 
-    def test_scene_boundary_failure_raises_after_one_local_regeneration(self) -> None:
+    def test_scene_boundary_allows_second_regeneration_before_rejecting(self) -> None:
+        state = pipeline_module.empty_scene_state()
+        state["locations"]["hero"] = "gate"
+        event = {
+            "event_id": "chapter-0017-beat-001",
+            "type": "arrival_completed",
+            "subjects": ["hero"],
+            "objects": [],
+            "location": "shelter",
+            "status": "completed",
+        }
+        plan = {
+            "goal": "hero reaches the shelter",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "cross the gate",
+                    "required_beats": ["hero reaches the shelter"],
+                    "required_beat_indexes": [1],
+                    "required_event_ids": [event["event_id"]],
+                    "forbidden_event_ids": [],
+                    "planned_events": [event],
+                }
+            ],
+        }
+        calls: list[dict] = []
+
+        def completion(messages, **_kwargs):
+            request = json.loads(messages[-1]["content"])
+            calls.append(request)
+            return json.dumps(
+                {
+                    "prose": "hero crosses the gate and reaches the shelter.",
+                    "events": [event],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": (
+                            [
+                                {
+                                    "entity_id": "hero",
+                                    "before": "gate",
+                                    "after": "shelter",
+                                    "reason": "crossed the gate",
+                                }
+                            ]
+                            if len(calls) == 3
+                            else []
+                        ),
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "hero moved once.",
+                }
+            )
+
+        with patch.object(pipeline_module, "chat_completion", side_effect=completion):
+            drafts = pipeline_module.generate_scenes(
+                "input pack",
+                plan,
+                dry_run=False,
+                initial_scene_state=state,
+            )
+
+        self.assertEqual(3, len(calls))
+        self.assertEqual(2, drafts[0]["boundary_validation"]["local_regeneration_attempts"])
+        self.assertEqual(
+            2,
+            len(drafts[0]["boundary_validation"]["local_regeneration_rejections"]),
+        )
+        self.assertTrue(drafts[0]["boundary_validation"]["accepted"])
+
+    def test_scene_boundary_failure_raises_after_two_local_regenerations(self) -> None:
         calls = 0
         authority = {
             "relationships": {
@@ -2549,7 +2622,7 @@ class ChapterPipelineTest(unittest.TestCase):
                     language="zh-CN",
                 )
 
-        self.assertEqual(2, calls)
+        self.assertEqual(3, calls)
 
     def test_recovered_invalid_scene_regenerates_without_recalling_valid_prefix(
         self,
