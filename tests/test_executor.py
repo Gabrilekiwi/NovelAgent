@@ -2345,6 +2345,72 @@ class AgentExecutorTest(unittest.TestCase):
             [record["stage"] for record in result["run"]["chapter"]["integrity_records"]],
         )
 
+    def test_duplicate_only_polish_falls_back_to_verified_merge(self) -> None:
+        tmp_path = self._case_dir("duplicate_polish_fallback")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        opening = (
+            "Mara braced the flooded gate while the alarm rose behind the team, "
+            "keeping the service corridor clear for the injured scout."
+        )
+        first = (
+            "Jian counted the remaining filter cartridges and assigned the least damaged "
+            "ones to the rear vehicle before the patrol reached the plaza."
+        )
+        repeated_scene = (
+            "When the outer lock released, they chose the narrow service route instead "
+            "of the exposed plaza, accepting a slower escape to keep the group together."
+        )
+        fourth = (
+            "The scout marked a submerged cable trench that would hide their tracks, "
+            "while Mara kept the gate from slamming shut behind them."
+        )
+        ending = (
+            "The pursuing patrol turned toward the plaza, leaving the team one narrow "
+            "window to reach the waiting transport."
+        )
+        source = "\n\n".join((opening, first, repeated_scene, fourth, ending))
+        duplicated = "\n\n".join(
+            (opening, first, repeated_scene, repeated_scene, fourth, ending)
+        )
+        repair_calls: list[str] = []
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "discard_duplicate_polish",
+                "actions": ["generate_chapter", "polish", "validate", "repair_if_needed"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 1,
+                "notes": [],
+            }
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            dry_run=True,
+            director=director,
+            generator=lambda _input_pack: source,
+            polisher=lambda _chapter: duplicated,
+            repairer=lambda *_args: repair_calls.append("called") or source,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+        ).run_once(persist=False)
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(source, result["chapter"])
+        self.assertEqual([], repair_calls)
+        records = result["run"]["chapter"]["integrity_records"]
+        self.assertEqual(
+            ["merge", "polish", "final_gate"],
+            [record["stage"] for record in records],
+        )
+        self.assertFalse(records[1]["accepted"])
+        self.assertEqual(
+            hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            records[-1]["output_sha256"],
+        )
+
     def test_director_actions_skip_polish_handler(self) -> None:
         tmp_path = self._case_dir("skip_polish")
         snapshot_path = tmp_path / "snapshot.json"

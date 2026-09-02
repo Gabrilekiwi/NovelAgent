@@ -1916,6 +1916,36 @@ class AgentExecutor:
         else:
             polished = self._polish(chapter)
         polished_text = str(polished)
+        prior_integrity = state.get("active_integrity_report")
+        source_sha256 = hashlib.sha256(chapter.encode("utf-8")).hexdigest()
+        source_integrity_is_accepted = (
+            isinstance(prior_integrity, dict)
+            and prior_integrity.get("accepted") is True
+            and prior_integrity.get("artifact_sha256") == source_sha256
+        )
+        polish_integrity = self._record_integrity_transition(
+            state,
+            stage="polish",
+            input_text=chapter,
+            output_text=polished_text,
+        )
+        # A whole-scene duplication is a transport/output corruption, not a
+        # narrative revision to repair. When the receipt-backed merge is
+        # already integrity-clean, retain that exact source artifact instead
+        # of inflating an otherwise small repair request with every duplicate
+        # finding. The rejected polish report stays in the immutable audit.
+        if (
+            source_integrity_is_accepted
+            and _is_duplicate_only_integrity_failure(polish_integrity)
+        ):
+            state["active_integrity_report"] = prior_integrity
+            state["polish_fallback"] = {
+                "reason": "duplicate_only_integrity_failure",
+                "source_sha256": source_sha256,
+                "rejected_polish_sha256": polish_integrity["artifact_sha256"],
+            }
+            state["validation"] = None
+            return
         polish_patch = build_repair_patch_from_texts(
             chapter,
             polished_text,
@@ -1928,12 +1958,6 @@ class AgentExecutor:
             after_chapter=polished_text,
             patch=polish_patch,
             stage="polish",
-        )
-        self._record_integrity_transition(
-            state,
-            stage="polish",
-            input_text=chapter,
-            output_text=state["chapter"],
         )
         state["validation"] = None
 
@@ -4784,6 +4808,23 @@ def _require_chapter(state: dict[str, Any]) -> str:
     if not isinstance(chapter, str) or not chapter:
         raise ValueError("Workflow action requires chapter text")
     return chapter
+
+
+def _is_duplicate_only_integrity_failure(report: dict[str, Any]) -> bool:
+    if report.get("accepted") is True:
+        return False
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        return False
+    blocking = [
+        finding
+        for finding in findings
+        if isinstance(finding, dict) and finding.get("blocking") is True
+    ]
+    return bool(blocking) and all(
+        str(finding.get("code") or "") == "duplicate_scene_text"
+        for finding in blocking
+    )
 
 
 def _repairer_accepts_plan(repairer: ChapterRepairer) -> bool:
