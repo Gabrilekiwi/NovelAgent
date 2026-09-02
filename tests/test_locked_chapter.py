@@ -316,7 +316,10 @@ class LockedChapterRecoveryTest(unittest.TestCase):
     def test_manual_draft_supersedes_failed_model_draft_without_mutating_evidence(self) -> None:
         execution_id = "execution_manual_draft"
         model_draft = "陆沉守在防爆门旁，按原有顺序核对每一个进入缓冲区的人。" * 45
-        manual_draft = "陆沉先验伤，再让幸存者依次通过防爆门，最后核对十七人名册。" * 45
+        manual_draft = "".join(
+            f"陆沉先验伤，再让第{i}名幸存者通过防爆门，最后核对第{i}项名册记录。"
+            for i in range(1, 46)
+        )
         self._write_execution(execution_id, successful=[], missing_stage="llm_validation")
         self._write_failed_run(execution_id=execution_id, chapter=model_draft, scene_count=3)
         draft_path = self.story_root / ".novelagent" / "runtime" / "manual_draft.md"
@@ -343,10 +346,38 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertEqual("scene_repair", checkpoint["complete_draft"]["source_stage"])
         self.assertNotIn("source_attempt_id", checkpoint["complete_draft"])
 
+    def test_manual_draft_rejects_duplicate_prose_before_validation(self) -> None:
+        execution_id = "execution_manual_duplicate_draft"
+        model_draft = "陆沉守在防爆门旁，按原有顺序核对每一个进入缓冲区的人。" * 45
+        repeated = "陆沉在车旁逐项核对滤芯箱封条，确认每一名幸存者都已扣紧安全带，又检查车门闭锁和救援车的防护隔板是否到位。"
+        manual_draft = "\n\n".join([repeated] * 24)
+        self._write_execution(execution_id, successful=[], missing_stage="llm_validation")
+        self._write_failed_run(execution_id=execution_id, chapter=model_draft, scene_count=3)
+        draft_path = self.story_root / ".novelagent" / "runtime" / "duplicate_manual_draft.md"
+        draft_path.write_text(manual_draft, encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "manual recovery draft failed final artifact integrity: duplicate_scene_text",
+        ):
+            recover_locked_chapter(
+                story_project_root=self.story_root,
+                run_dir=self.run_dir,
+                snapshot_path=self.snapshot_path,
+                expected_book_id=self.book_id,
+                language="zh-CN",
+                manual_draft_path=draft_path,
+                clock=lambda: self.now,
+                id_factory=lambda: "manualduplicatemarker",
+            )
+
     def test_manual_draft_supersedes_an_existing_active_checkpoint(self) -> None:
         execution_id = "execution_manual_after_checkpoint"
         model_draft = "陆沉先按旧方案检查车门，再等待赵铁确认触发线路。" * 45
-        manual_draft = "陆沉先隔离车门触发线，再由赵铁确认座椅与后窗锁扣。" * 45
+        manual_draft = "".join(
+            f"陆沉第{i}次隔离车门触发线，再由赵铁确认第{i}处座椅与后窗锁扣。"
+            for i in range(1, 46)
+        )
         self._write_execution(execution_id, successful=[], missing_stage="llm_validation")
         self._write_failed_run(
             execution_id=execution_id,

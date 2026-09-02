@@ -31,6 +31,7 @@ from core.model_calls import (
     model_response_artifact_hash,
     parse_scene_generation_call_id,
 )
+from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
 from core.schema import validate_schema
 from core.state.snapshot import load_snapshot
 from core.story_project.coverage import build_blueprint_plan
@@ -335,6 +336,20 @@ def _load_manual_recovery_draft(
     if len(text.strip()) < 500:
         raise LockedChapterRecoveryError(
             "manual recovery draft is too short to be treated as a complete chapter"
+        )
+    integrity = FinalArtifactIntegrityGate().evaluate(
+        artifact_text=text,
+        stage="manual_recovery",
+    )
+    if not integrity["accepted"]:
+        codes = ", ".join(
+            str(item["code"])
+            for item in integrity["findings"]
+            if item["blocking"]
+        )
+        raise LockedChapterRecoveryError(
+            "manual recovery draft failed final artifact integrity: "
+            f"{codes or 'unknown'}"
         )
     validation = source_payload.get("validation")
     problems = validation.get("problems") if isinstance(validation, dict) else []
