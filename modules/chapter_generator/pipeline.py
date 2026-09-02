@@ -521,11 +521,76 @@ def _repair_premature_scene_object_close(payload: str) -> dict[str, Any] | None:
     return repaired if isinstance(repaired, dict) else None
 
 
+def _repair_unescaped_scene_string_quotes(payload: str) -> dict[str, Any] | None:
+    """Escape only quotes that cannot terminate a JSON string.
+
+    Some otherwise complete scene responses put dialogue quotes directly into
+    ``prose``.  A quote can end a JSON string only before a structural
+    delimiter.  Quotes followed by ordinary prose are therefore unambiguous
+    string content and can be escaped without accepting malformed structure.
+    """
+    text = _structured_json_text(payload)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    candidate = text[start : end + 1]
+    repaired_text = _escape_nonterminating_json_string_quotes(candidate)
+    if repaired_text is None:
+        return None
+    try:
+        repaired = json.loads(repaired_text)
+    except json.JSONDecodeError:
+        return None
+    return repaired if isinstance(repaired, dict) else None
+
+
+def _escape_nonterminating_json_string_quotes(value: str) -> str | None:
+    repaired: list[str] = []
+    in_string = False
+    escaped = False
+    changed = False
+    for index, char in enumerate(value):
+        if not in_string:
+            if char == '"':
+                in_string = True
+            repaired.append(char)
+            continue
+        if escaped:
+            repaired.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            repaired.append(char)
+            escaped = True
+            continue
+        if char != '"':
+            repaired.append(char)
+            continue
+        if _json_string_can_end_at(value, index):
+            repaired.append(char)
+            in_string = False
+            continue
+        repaired.append('\\"')
+        changed = True
+    return "".join(repaired) if changed and not in_string else None
+
+
+def _json_string_can_end_at(value: str, quote_index: int) -> bool:
+    cursor = quote_index + 1
+    while cursor < len(value) and value[cursor].isspace():
+        cursor += 1
+    return cursor == len(value) or value[cursor] in ",}]:"
+
+
 def _load_scene_response(payload: str) -> dict[str, Any]:
     try:
         value = _load_plan_json(payload)
     except json.JSONDecodeError as exc:
-        value = _repair_premature_scene_object_close(payload)
+        value = (
+            _repair_premature_scene_object_close(payload)
+            or _repair_unescaped_scene_string_quotes(payload)
+        )
         if value is None:
             raise ValueError("Scene response was not valid structured JSON") from exc
     if not isinstance(value, dict):

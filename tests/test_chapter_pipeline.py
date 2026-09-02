@@ -62,6 +62,27 @@ class ChapterPipelineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not valid structured JSON"):
             pipeline_module._load_scene_response(payload)
 
+    def test_scene_response_escapes_unambiguous_dialogue_quotes_in_prose(self) -> None:
+        expected = {
+            "prose": '电容回流端亮起红光。"主核在囊体和电容之间。"楼下的读数器继续报警。',
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "场景仍停留在主控塔屋顶。",
+        }
+        payload = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
+        malformed = payload.replace('\\"', '"')
+
+        result = pipeline_module._load_scene_response(malformed)
+
+        self.assertEqual(expected, result)
+
     def test_scene_prompt_uses_roster_generation_view_without_losing_local_audit(
         self,
     ) -> None:
