@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from core.engine.safe_paths import assert_safe_local_tree
 from core.memory_v2.canonical import canonical_json_hash
@@ -26,6 +26,7 @@ from core.story_project.runtime import (
     build_generation_story_project_context,
 )
 from core.story_project.semantic_parser import SEMANTIC_PARSER_VERSION
+from core.story_project.reviewed_state_context import validated_reviewed_state_context
 
 
 CHAPTER_CANDIDATE_CONTEXT_VERSION = "1.0"
@@ -68,13 +69,17 @@ class TrustedChapterCandidateContext:
 class ChapterCandidateContextBuilder:
     """Build trusted Candidate inputs without adopting or repairing runtime caches."""
 
-    def __init__(self, story_project_root: str | Path) -> None:
+    def __init__(self, story_project_root: str | Path, *,
+                 reviewed_state_loader: Callable[[dict[str, Any]], dict[str, Any]] | None = None) -> None:
         self.story_project_root = Path(story_project_root).resolve()
         if not self.story_project_root.is_dir():
             raise ChapterCandidateContextError(
                 f"StoryProject root is not a directory: {self.story_project_root}"
             )
         assert_safe_local_tree(self.story_project_root)
+        # Internal dependency injection for the D1 source experiment. Production
+        # entry points do not provide a loader until format/upgrade gates exist.
+        self.reviewed_state_loader = reviewed_state_loader
 
     def build(self, chapter_index: int) -> TrustedChapterCandidateContext:
         chapter_index = _validated_chapter_index(chapter_index)
@@ -220,6 +225,9 @@ class ChapterCandidateContextBuilder:
             identity=identity,
             chapter_index=chapter_index,
         )
+        if self.reviewed_state_loader is not None:
+            context["reviewed_state"] = self.reviewed_state_loader(copy.deepcopy(context))
+            validated_reviewed_state_context(context)
         read_set = context["read_set"]
         verification = verify_story_project_read_set(read_set, phase="prepare")
         verify_story_project_read_set(before_read_set, phase="prepare")

@@ -20,7 +20,7 @@ from core.story_project.managed_block import (
 )
 
 
-FORMAT = "d1-reviewed-state-experiment-1"
+FORMAT = "d1-reviewed-state-experiment-2"
 RELATIVE_PATH = "追踪/已审核事实.md"
 HEADER = "# 已审核事实（D1 隔离试验，禁止用于正式作品）\n"
 
@@ -63,24 +63,30 @@ def capture_sources(root: Path) -> dict[str, Any]:
     return {"entries": entries, "sha256": digest(entries)}
 
 
-def baseline_request(*, book_id: str, chapter: int, state: dict, sources: dict) -> dict:
+def baseline_request(*, book_id: str, chapter: int, state: dict, sources: dict,
+                     static_references: list[dict] | None = None) -> dict:
     if not book_id or type(chapter) is not int or chapter < 1:
         raise SourceRuleError("baseline_identity_invalid")
     state = validate_authoritative_state(copy.deepcopy(state))
     return {"book_id": book_id, "chapter": chapter, "state_sha256": digest(state),
-            "source_sha256": sources["sha256"], "decision": "accept_baseline_as_of_chapter"}
+            "source_sha256": sources["sha256"], "static_references_sha256": digest(static_references or []),
+            "decision": "accept_baseline_as_of_chapter"}
 
 
 def create_baseline(*, root: Path, book_id: str, chapter: int, state: dict,
-                    confirmed_baseline: dict) -> bytes:
+                    confirmed_baseline: dict, static_references: list[dict] | None = None) -> bytes:
     sources = capture_sources(root)
     state = validate_authoritative_state(copy.deepcopy(state))
-    expected = baseline_request(book_id=book_id, chapter=chapter, state=state, sources=sources)
+    references = copy.deepcopy(static_references or [])
+    _verify_static_references(root, references)
+    expected = baseline_request(book_id=book_id, chapter=chapter, state=state, sources=sources,
+                                static_references=references)
     if confirmed_baseline != expected:
         raise SourceRuleError("baseline_confirmation_stale_or_missing")
     value = {"format": FORMAT, "initial_baseline": {"state": state, "confirmation": expected},
              "source_revision": sources, "current_state": copy.deepcopy(state),
-             "committed_through": chapter, "source_decisions": [], "last_transition": None}
+             "committed_through": chapter, "source_decisions": [], "last_transition": None,
+             "static_references": references}
     return _render(HEADER.encode("utf-8"), value, book_id=book_id, previous="baseline")
 
 
@@ -97,7 +103,7 @@ def _read(document: bytes, *, book_id: str) -> tuple[dict, dict]:
     if not isinstance(value, dict) or value.get("format") != FORMAT:
         raise SourceRuleError("reviewed_state_format_invalid")
     if set(value) != {"format", "initial_baseline", "source_revision", "current_state",
-                      "committed_through", "source_decisions", "last_transition"}:
+                      "committed_through", "source_decisions", "last_transition", "static_references"}:
         raise SourceRuleError("reviewed_state_shape_invalid")
     source = value["source_revision"]
     if source.get("sha256") != digest(source.get("entries")):
@@ -114,6 +120,7 @@ def read_current(*, root: Path, document: bytes, book_id: str, next_chapter: int
     value, _ = _read(document, book_id=book_id)
     if value["source_revision"] != capture_sources(root):
         raise SourceRuleError("manual_source_changed")
+    _verify_static_references(root, value["static_references"])
     if type(next_chapter) is not int or next_chapter != value["committed_through"] + 1:
         raise SourceRuleError("next_chapter_mismatch")
     return copy.deepcopy(value)
@@ -145,6 +152,7 @@ def resolve_source_conflict(*, root: Path, document: bytes, book_id: str, decisi
             or not isinstance(decision.get("reason"), str) or not decision["reason"].strip()):
         raise SourceRuleError("source_decision_stale_or_invalid")
     value, projection = _read(document, book_id=book_id)
+    _verify_static_references(root, value["static_references"])
     current = capture_sources(root)
     if current["sha256"] != expected["to_source"]:
         raise SourceRuleError("manual_source_changed")
@@ -212,3 +220,35 @@ def _render(document: bytes, value: dict, *, book_id: str, previous: str) -> byt
         base_source_digest=value["source_revision"]["sha256"],
         owned_fields=["reviewed_state"], values={"reviewed_state": value})
     return write_managed_block(document, projection)
+
+
+def load_runtime_view(context: dict) -> dict:
+    """Explicit source adapter for the real candidate/context APIs in D1 only."""
+    from core.story_project.reviewed_state_context import build_reviewed_state_context
+    root = Path(context["story_project_root"])
+    document = (root / RELATIVE_PATH).read_bytes()
+    value = read_current(root=root, document=document, book_id=context["project_identity"]["book_id"],
+                         next_chapter=context["chapter_index"])
+    return build_reviewed_state_context(context, authoritative_state=value["current_state"],
+        source_relative_path=RELATIVE_PATH, source_sha256=digest(document),
+        manual_sources_sha256=value["source_revision"]["sha256"],
+        committed_through=value["committed_through"], static_references=value["static_references"])
+
+
+def _verify_static_references(root: Path, references: list[dict]) -> None:
+    if not isinstance(references, list):
+        raise SourceRuleError("static_reference_invalid")
+    for ref in references:
+        if not isinstance(ref, dict) or set(ref) != {"relative_path", "sha256", "text"}:
+            raise SourceRuleError("static_reference_invalid")
+        relative = ref["relative_path"]
+        if (not isinstance(relative, str) or not relative.startswith(("追踪/", "设定/"))
+                or "\\" in relative or ".." in Path(relative).parts or ":" in relative):
+            raise SourceRuleError("static_reference_invalid")
+        path = (root / relative).resolve(strict=True)
+        if not path.is_relative_to(root.resolve()):
+            raise SourceRuleError("static_reference_invalid")
+        raw = path.read_bytes()
+        if (digest(raw) != ref["sha256"] or not isinstance(ref["text"], str)
+                or not ref["text"].strip() or ref["text"] not in raw.decode("utf-8")):
+            raise SourceRuleError("static_reference_changed")

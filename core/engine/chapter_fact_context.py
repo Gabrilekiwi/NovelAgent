@@ -17,6 +17,7 @@ from core.memory_v2.event_store import memory_projection_hash
 from core.memory_v2.validator import validate_canonical_memory
 from core.state.authoritative import validate_authoritative_state
 from core.story_project.authority import AUTHORITY_MODE_EVENT, AUTHORITY_MODE_LEGACY
+from core.story_project.reviewed_state_context import validated_reviewed_state_context
 from core.story_project.runtime import RUNTIME_CACHE_POLICY_BYPASS
 from core.story_project.semantic_contracts import validate_story_project_semantic_state
 
@@ -42,6 +43,7 @@ _ENTITY_KIND_ORDER = {
     "glossary": 9,
     "foreshadowing": 10,
     "entity": 11,
+    "event": 12,
 }
 
 
@@ -190,6 +192,9 @@ def build_chapter_fact_context(
 
     index = _EntityIndex()
     if authority_mode == AUTHORITY_MODE_EVENT:
+        if "reviewed_state" in context:
+            raise ChapterFactContextError("a reviewed legacy view cannot be adopted by event authority",
+                                          code="chapter_fact_context_authority_unsupported")
         source_metadata = _index_event_authority(
             index,
             context=context,
@@ -351,6 +356,29 @@ def _index_legacy_authority(
             "legacy semantic audit does not bind the semantic source digest",
             code="chapter_fact_context_binding_mismatch",
         )
+
+    try:
+        reviewed = validated_reviewed_state_context(context)
+    except (TypeError, ValueError) as exc:
+        raise ChapterFactContextError(
+            f"reviewed state authority is invalid: {exc}",
+            code="chapter_fact_context_binding_mismatch",
+        ) from exc
+    if reviewed is not None:
+        authoritative = reviewed["authoritative_state"]
+        source_prefix = "reviewed_state.authoritative_state"
+        _index_authoritative_state(index, authoritative, source_prefix=source_prefix)
+        _index_reviewed_events(index, authoritative, source_prefix=source_prefix)
+        return {
+            "authority_source": "legacy_reviewed_state",
+            "semantic_source_digest": str(semantic["source_digest"]),
+            "semantic_schema_version": str(semantic["schema_version"]),
+            "semantic_parser_version": str(semantic["parser_version"]),
+            "projection_sha256": None,
+            "reviewed_source_sha256": reviewed["source_sha256"],
+            "reviewed_payload_sha256": reviewed["payload_sha256"],
+            "reviewed_manual_sources_sha256": reviewed["manual_sources_sha256"],
+        }
 
     positions = _mapping((semantic.get("spatial_state") or {}).get("character_positions"))
     for character_id, raw in _sorted_mapping(semantic.get("characters")):
@@ -616,7 +644,12 @@ def _index_typed_projection(index: _EntityIndex, projection: Mapping[str, Any]) 
             index.register("location", location_id, name=location_id, priority=20)
 
 
-def _index_authoritative_state(index: _EntityIndex, state: Mapping[str, Any]) -> None:
+def _index_authoritative_state(
+    index: _EntityIndex,
+    state: Mapping[str, Any],
+    *,
+    source_prefix: str = "memory_v2.projection.authoritative_state",
+) -> None:
     for character_id, raw in _sorted_mapping(state.get("characters")):
         record = _object_or_empty(raw)
         index.register(
@@ -625,12 +658,12 @@ def _index_authoritative_state(index: _EntityIndex, state: Mapping[str, Any]) ->
             name=record.get("canonical_name") or record.get("name") or character_id,
             aliases=record.get("aliases"),
             priority=100,
-            source=f"memory_v2.projection.authoritative_state.characters.{character_id}",
+            source=f"{source_prefix}.characters.{character_id}",
             state=record,
         )
     for relationship_id, raw in _sorted_mapping(state.get("relationships")):
         record = _object_or_empty(raw)
-        source = f"memory_v2.projection.authoritative_state.relationships.{relationship_id}"
+        source = f"{source_prefix}.relationships.{relationship_id}"
         index.register(
             "relationship",
             relationship_id,
@@ -648,7 +681,7 @@ def _index_authoritative_state(index: _EntityIndex, state: Mapping[str, Any]) ->
         )
     for roster_id, raw in _sorted_mapping(state.get("roster")):
         record = _object_or_empty(raw)
-        source = f"memory_v2.projection.authoritative_state.roster.{roster_id}"
+        source = f"{source_prefix}.roster.{roster_id}"
         index.register(
             "roster",
             roster_id,
@@ -662,7 +695,7 @@ def _index_authoritative_state(index: _EntityIndex, state: Mapping[str, Any]) ->
             index.attach_by_id(member_id, source, record)
     for counter_id, raw in _sorted_mapping(state.get("numeric_counters")):
         record = _object_or_empty(raw)
-        source = f"memory_v2.projection.authoritative_state.numeric_counters.{counter_id}"
+        source = f"{source_prefix}.numeric_counters.{counter_id}"
         index.register(
             "counter",
             counter_id,
@@ -676,7 +709,7 @@ def _index_authoritative_state(index: _EntityIndex, state: Mapping[str, Any]) ->
     for inventory_id, raw in _sorted_mapping(state.get("inventory")):
         record = _object_or_empty(raw)
         item_id = record.get("item_id") or inventory_id
-        source = f"memory_v2.projection.authoritative_state.inventory.{inventory_id}"
+        source = f"{source_prefix}.inventory.{inventory_id}"
         index.register(
             "item",
             item_id,
@@ -689,11 +722,48 @@ def _index_authoritative_state(index: _EntityIndex, state: Mapping[str, Any]) ->
         index.attach_by_id(record.get("owner_id"), source, record)
     for entity_id, raw in _sorted_mapping(state.get("locations")):
         record = _object_or_empty(raw)
-        source = f"memory_v2.projection.authoritative_state.locations.{entity_id}"
+        source = f"{source_prefix}.locations.{entity_id}"
         index.attach_by_id(entity_id, source, record)
         location_id = record.get("location_id")
         if location_id not in (None, ""):
             index.register("location", location_id, name=location_id, priority=80)
+
+
+def _index_reviewed_events(
+    index: _EntityIndex,
+    state: Mapping[str, Any],
+    *,
+    source_prefix: str,
+) -> None:
+    """Expose reviewed event roles without inferring presence or movement from them."""
+    for event_id, raw in _sorted_mapping(state.get("events")):
+        record = _object_or_empty(raw)
+        source = f"{source_prefix}.events.{event_id}"
+        index.register("event", event_id, name=event_id, source=source, state=record)
+        location_id = record.get("occurrence_location")
+        if location_id not in (None, ""):
+            index.register("location", location_id, name=location_id, priority=80)
+            index.attach_by_id(location_id, source, record)
+        for field_name in ("onsite_participants", "remote_participants", "related_entities"):
+            participants = record.get(field_name)
+            if not isinstance(participants, list):
+                continue
+            for participant in participants:
+                if isinstance(participant, dict):
+                    index.attach_by_id(participant.get("entity_id"), source, record)
+        transported_items = record.get("transported_items")
+        if not isinstance(transported_items, list):
+            continue
+        for item in transported_items:
+            if not isinstance(item, dict):
+                continue
+            for field_name in ("item_id", "carrier_id"):
+                index.attach_by_id(item.get(field_name), source, record)
+            for field_name in ("from_location", "to_location"):
+                location_id = item.get(field_name)
+                if location_id not in (None, ""):
+                    index.register("location", location_id, name=location_id, priority=80)
+                    index.attach_by_id(location_id, source, record)
 
 
 def _authority_binding(
@@ -704,7 +774,7 @@ def _authority_binding(
     source_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     authority = identity.get("authority") if isinstance(identity.get("authority"), dict) else {}
-    return {
+    binding = {
         "book_id": str(identity["book_id"]),
         "mode": authority_mode,
         "authority_epoch": int(authority.get("authority_epoch") or 0),
@@ -714,6 +784,14 @@ def _authority_binding(
         "semantic_source_digest": source_metadata.get("semantic_source_digest"),
         "projection_revision": source_metadata.get("projection_revision"),
     }
+    for field_name in (
+        "reviewed_source_sha256",
+        "reviewed_payload_sha256",
+        "reviewed_manual_sources_sha256",
+    ):
+        if field_name in source_metadata:
+            binding[field_name] = source_metadata[field_name]
+    return binding
 
 
 def _directory_entry(entity: _Entity) -> dict[str, Any]:

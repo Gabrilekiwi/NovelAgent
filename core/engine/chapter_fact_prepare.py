@@ -14,6 +14,7 @@ from core.state.authoritative import (
     validate_authoritative_state_delta,
 )
 from core.state.roster import reduce_roster_mutation
+from core.state.location_mirrors import CHARACTER_LOCATION_FIELDS, validate_character_location_mirrors
 
 
 # Identity, source precedence and reducer metadata are not editable state
@@ -109,6 +110,7 @@ def prepare_confirmed_fact_changes(*, facts: list[dict], chapter_text: str, base
         _reject("chapter_fact_baseline_invalid", "A complete authoritative state snapshot is required")
     try:
         base = validate_authoritative_state(copy.deepcopy(base_state))
+        validate_character_location_mirrors(base)
         _canonical(base)
     except (ValueError, TypeError) as exc:
         _reject("chapter_fact_baseline_invalid", "The bound baseline is invalid", str(exc))
@@ -144,11 +146,14 @@ def prepare_confirmed_fact_changes(*, facts: list[dict], chapter_text: str, base
     computed = []
     for fact in changes:
         p, kind = fact["proposal"], fact["kind"]
+        mirrored_fields = []
         source = events[p["source_event_key"]]["event_id"]
         dependency = {"source_event_id": source}
         if kind in {"character_state", "relationship"} and p["field"] in _RESERVED_FIELDS:
             _reject("chapter_fact_identity_field_forbidden", "Identity/authority metadata cannot be changed through a state field", p["field"])
         if kind == "character_state":
+            if p["field"] in CHARACTER_LOCATION_FIELDS:
+                _reject("chapter_fact_location_kind_required", "Position changes require a location fact", p["field"])
             record = _record(working, "characters", p["entity_id"], p["field"], "canonical_name")
             if record["canonical_name"] != p["canonical_name"]:
                 _reject("chapter_fact_identity_conflict", "Canonical character identity changed", fact["fact_id"])
@@ -179,6 +184,15 @@ def prepare_confirmed_fact_changes(*, facts: list[dict], chapter_text: str, base
                 _reject("chapter_fact_location_conflict", "Proposed departure disagrees with bound location", fact["fact_id"])
             delta["location_changes"].append({"entity_id": p["entity_id"], "before": before, "after": after, **dependency})
             record["location_id"] = after
+            character = working["characters"].get(p["entity_id"], {})
+            for field in CHARACTER_LOCATION_FIELDS:
+                if field not in character:
+                    continue
+                delta["character_changes"].append({"character_id": p["entity_id"],
+                    "canonical_name": character["canonical_name"], "field": field,
+                    "before": before, "after": after, **dependency})
+                character[field] = after
+                mirrored_fields.append(field)
         elif kind == "inventory":
             matches = [(key, value) for key, value in working["inventory"].items() if isinstance(value, dict)
                        and (value.get("owner_id"), value.get("item_id")) == (p["owner_id"], p["item_id"])]
@@ -219,10 +233,12 @@ def prepare_confirmed_fact_changes(*, facts: list[dict], chapter_text: str, base
         computed.append({"fact_id": fact["fact_id"], "kind": kind, "target": list(_target(fact)),
                          "before": copy.deepcopy(before), "after": copy.deepcopy(after),
                          "source_event_id": source, "source_event_key": p["source_event_key"],
-                         "evidence_spans": copy.deepcopy(fact["evidence_spans"])})
+                         "evidence_spans": copy.deepcopy(fact["evidence_spans"]),
+                         **({"mirrored_character_fields": mirrored_fields} if mirrored_fields else {})})
     report = validate_authoritative_state_delta(base_state=base, state_delta=delta, chapter_text=chapter_text)
     if not report["accepted"]:
         _reject("chapter_fact_domain_conflict", "The prepared changes fail existing domain rules", report["findings"])
+    validate_character_location_mirrors(report["state_after"])
     return {"schema_version": "1.0", "chapter_sha256": chapter_hash, "base_state_sha256": _digest(base),
             "state_delta": delta, "computed_changes": computed, "state_after": report["state_after"],
             "event_dependencies": {key: event["event_id"] for key, event in events.items()}}

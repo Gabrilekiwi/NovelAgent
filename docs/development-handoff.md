@@ -4,7 +4,7 @@
 
 ## 当前任务
 
-阶段A已完成并提交33a0944。阶段B的T2.1已提交fd85291，T8.0已提交52699d0。当前T3.0/D1第一次来源设计尝试部分通过：17项定向检查通过、三个新进程完成读回试验；实际生成/事实入口仍未接入七类当前状态，D1未完成。下一步是实际上下文桥接，详见`docs/development/d1-state-source-experiment.md`。完整开发目标仍未完成。
+阶段A已完成并提交33a0944。阶段B的T2.1已提交fd85291，T8.0已提交52699d0。T3.0/D1有限来源试验已通过：七类状态经真实生成/事实入口一致读取、清缓存冷读、正文/来源后改失效均有证据。第一次候选提交c3093b0；最新HEAD以Git为准。下一步T3.1/D2格式兼容，详见`docs/development/d1-state-source-experiment.md`。完整开发目标仍未完成。
 
 - 唯一主计划：[最终执行版1.0](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-final-2026-09-08.md)
 - 复审证据：[开发计划复审](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-review-2026-09-08.md)
@@ -46,6 +46,7 @@
 | T1.1 | 已完成 | 应用初始化前取得数据目录所有权，继承锁覆盖执行子进程；并发、端口占用、父死子活、监控异常验证证据在阶段A目录 |
 | T1.2 | 已完成 | 不存在父目录400中文提示，表单保留；改正目录201，刷新仍可读取作品 |
 | T2.1 | 已完成 | 七类共享schema、模型完整例子、纯准备计算与拒绝场景；见阶段B证据 |
+| T3.0 | 有限试验完成 | D1来源/冷读决议通过；普通入口未启用新格式，正式事务仍待T3.2 |
 | T2其余、T3–T7 | 范围与子任务已确定、待实现 | 按最终版阶段A–F推进；D1旧书来源、D2格式兼容、D3可写恢复先做有限试验 |
 | T8.0 | 已完成材料准备与离线运行 | 12项版本化样例、3份真实材料只读快照；4项语义缺口保留给T2.2/T2.4；没有人工质量评分或新模型效果评估 |
 | T8.1、T8.2 | 独立阶段、未授权真实调用 | 早期逐章配对与最终两模式连续验收分别限定预算；缺授权可继续独立工程 |
@@ -54,9 +55,13 @@
 
 ## 下一条工作
 
-下一步T3.0/D1：基于已写的有限候选，验证实际生成与事实入口共用来源绑定的七类当前状态。定位已明确：`core/engine/story_project_context.py:StoryProjectContextService.apply_authority` 的 legacy 分支会重新采用旧 semantic 值，`core/engine/chapter_fact_context.py:_index_legacy_authority` 仅索引人物和地点，姓名位置还先于稳定ID。必须防止旧人工位置/目标从 snapshot、semantic、prompt 原文回流。保持旧原文和人工基线可查看，D2通过前不启用真实作品的新格式。不要再从头调查 parser/Memory 丢失七类的问题。
+下一步T3.1/D2：将实际B0 `090d0aa191f7aae96ea1c979b6725d7f87d811ae`提取到隔离目录，用未修改的B0程序验证不支持新格式时写入前拒绝；核对`core/story_project/authority.py`的`CURRENT_WRITER_CONTRACT`和`minimum_writer_contract`及ProjectIdentity对legacy模式的检查。再覆盖新版本CLI/工作台/恢复入口与在途任务版本边界。不升级真实书，不修改B0制造拒写结果。D1已通过，无需重做来源调查或同一套测试。
 
-D1候选代码：`scripts/experiments/d1_reviewed_state.py`（纯返回受管字节，仅来源采集读盘）与`run_d1_source_experiment.py`（唯一隔离目录写入、新进程真实入口观察）。没有生产入口导入它们，没有 Provider。17项测试已退出，通过证据`.tmp/stage-b/d1-source-final.xml`。完整试验目录`.tmp/stage-b/d1-attempt-1/edbacc71913149d4b6265f944da22c78`，报告明确`production_bridge=pending`；三个新进程均已退出，没有新增后台服务。来源冲突保留当前值的决定可持久化；正文/事实决定/来源/状态版本变化会拒绝旧确认。当前仅部分通过，T3.0仍未完成。
+D1最终读取路径：内部显式注入`load_runtime_view`到`ChapterCandidateContextBuilder`；`core/story_project/reviewed_state_context.py`提供绑定视图、当前snapshot及隔离Memory；`build_chapter_fact_context`使用同一视图。默认构造器不会发现试验文件，EA拒绝携带legacy视图。`core/state/location_mirrors.py`约束冗余人物位置，fact prepare会随位置事实同步已有镜像；保留来源等级。静态人物字段只做唯一显式姓名/别名匹配，诊断未映射；结构化静态空间/伏笔和绑定原文的静态片段进入prompt。原人工内容保留在项目/context供审计。
+
+D1最终证据目录`.tmp/stage-b/d1-attempt-1/7304d18d4aea4ae1af7de44d19caf6a0`，三个新进程检查实际Memory伪造缓存/删除缓存/持久冲突决定。测试108通过+4子测试，最后EA拒绝检查后41通过；XML分别为`.tmp/stage-b/d1-context-regression.xml`、`d1-context-final.xml`，哈希在stage-b-progress.json。全部进程已退出，没有新增后台服务或Provider调用。不是正式事务、真实校准或真实旧书接入验收。
+
+历史D1第一份候选代码提交c3093b0：17项来源检查及`.tmp/stage-b/d1-attempt-1/edbacc71913149d4b6265f944da22c78`当时报告`production_bridge=pending`。该记录不再代表当前结果，旧证据保留。候选存储随后加入明确确认的静态引用，标识为`d1-reviewed-state-experiment-2`；上一份试验数据不是兼容承诺，正式格式留D2确定。
 
 旧路径基线原始观察已核对：`.tmp/stage-b/d1-baseline/0e19a5bfefcc4cbd80c3dd5474b40418/observations.json`。独立审查子代理`d1_source_review`已完成且只读；其指出的首次受管写入换行误报已在候选修正。下一步可由根代理继续，不需重复代理调查。
 

@@ -20,6 +20,8 @@ from core.engine.chapter_candidate_context import ChapterCandidateContextBuilder
 from core.engine.chapter_fact_candidate import normalize_fact_proposal
 from core.engine.chapter_fact_context import build_chapter_fact_context
 from core.engine.story_project_context import StoryProjectContextService
+from core.state.builder import build_snapshot_state_with_audit
+from core.state.input_pack import build_input_pack
 from core.runtime_paths import RuntimePaths
 from core.story_project.activation import activate_story_state, build_story_state_calibration_report
 from core.story_project.identity import ensure_project_identity, load_project_identity
@@ -28,7 +30,7 @@ from core.story_project.semantic_parser import SEMANTIC_PARSER_VERSION
 from scripts.experiments.d1_reviewed_state import (
     RELATIVE_PATH, SourceRuleError, apply_prepared, baseline_request, capture_sources,
     create_baseline, describe_source_conflict, digest, prepare_chapter, read_current,
-    resolve_source_conflict, review_request,
+    resolve_source_conflict, review_request, load_runtime_view,
 )
 
 
@@ -46,10 +48,22 @@ def probe(root: Path) -> dict:
     identity = load_project_identity(root)
     value = read_current(root=root, document=(root / RELATIVE_PATH).read_bytes(),
                          book_id=identity.book_id, next_chapter=3)
-    trusted = ChapterCandidateContextBuilder(root).build(3)
-    snapshot = StoryProjectContextService.apply_authority(trusted.story_project_context, trusted.snapshot)
+    trusted = ChapterCandidateContextBuilder(root, reviewed_state_loader=load_runtime_view).build(3)
+    poisoned_snapshot = {**trusted.snapshot, "book_id": identity.book_id,
+        "authoritative_state": {"inventory": {"cache_poison": {"quantity": 999}}},
+        "characters": {"cache_poison": {"current_goal": "CACHE_STALE_GOAL"}}}
+    snapshot, memory = StoryProjectContextService.apply_context(
+        trusted.story_project_context, poisoned_snapshot,
+        {"source": "forged_cache", "status": "ready", "items": [
+            {"type": "story_state", "name": "stale", "data": {"current_location": "CACHE_STALE_LOCATION"}}]},
+        snapshot_path=RuntimePaths.for_story_project(root).snapshot_path, allow_legacy_snapshot_adoption=False)
+    built = build_snapshot_state_with_audit(snapshot, memory)
+    snapshot = StoryProjectContextService.apply_authority(trusted.story_project_context, built["snapshot"])
+    input_pack = build_input_pack(snapshot, memory_context=memory, story_project_context=trusted.story_project_context)
+    assert "CACHE_STALE" not in input_pack
     view = build_chapter_fact_context(trusted, "林澈与周岚检查旧城站守卫队、信标和警戒等级。").to_dict()
     return {"project_current_state": value["current_state"], "source_decisions": value["source_decisions"],
+            "input_pack": input_pack, "memory_context": memory,
             "production_snapshot": snapshot, "production_fact_view": view,
             "production_generation_reads_seven": snapshot.get("authoritative_state") == value["current_state"],
             "production_fact_entity_kinds": sorted({entry["kind"] for entry in view["entity_directory"]}),
@@ -62,7 +76,7 @@ def cold_probe(root: Path) -> dict:
     return json.loads(result.stdout)
 
 
-def run() -> dict:
+def prepare_isolated_book() -> dict:
     directory = REPO / ".tmp/stage-b/d1-attempt-1" / uuid.uuid4().hex
     root = directory / "book"
     assert_isolated(root)
@@ -82,14 +96,24 @@ def run() -> dict:
                   "blocking_conflict_count": 0, "missing_provenance_fields": []})
     activate_story_state(root, report)  # Synthetic fixture qualification, never a real calibration claim.
     state = json.loads((REPO / "tests/fixtures/chapter_fact_offline_v1/baseline.json").read_text(encoding="utf-8"))
+    # Exercise a real legacy redundancy, not only clean synthetic ledgers.
+    state["characters"]["char_lin_che"]["location"] = "location_warehouse"
+    state["characters"]["char_lin_che"]["source_tier"] = "story_project_standard"
+    static_path = root / "设定/D1静态约束.md"
+    static_text = "D1_STATIC_RULE：信标只有在金属表面才能固定，不能漂浮在空中。"
+    static_path.write_text(static_text + "\n", encoding="utf-8")
+    static_references = [{"relative_path": "设定/D1静态约束.md", "sha256": digest(static_path.read_bytes()),
+                          "text": static_text}]
     example = json.loads((REPO / "examples/chapter_fact_review/seven_kinds.json").read_text(encoding="utf-8"))
     facts = normalize_fact_proposal(example["proposal"], chapter_text=example["chapter_text"])
     for fact in facts:
         fact["review"]["decision"] = "accepted"
     manual = root / "追踪/上下文.md"
     manual_before = manual.read_bytes()
-    confirmation = baseline_request(book_id=identity.book_id, chapter=1, state=state, sources=capture_sources(root))
-    document = create_baseline(root=root, book_id=identity.book_id, chapter=1, state=state, confirmed_baseline=confirmation)
+    confirmation = baseline_request(book_id=identity.book_id, chapter=1, state=state, sources=capture_sources(root),
+                                     static_references=static_references)
+    document = create_baseline(root=root, book_id=identity.book_id, chapter=1, state=state,
+                                confirmed_baseline=confirmation, static_references=static_references)
     inputs = dict(root=root, document=document, book_id=identity.book_id, chapter=2,
                   chapter_text=example["chapter_text"], draft_revision="fixture-draft-1", facts=facts)
     inputs.update(review_binding=review_request(**inputs), review_revision="fixture-review-1")
@@ -98,6 +122,14 @@ def run() -> dict:
     (root / RELATIVE_PATH).write_bytes(document)
     (root / "正文/第002章_D1隔离试验.md").write_text(example["chapter_text"], encoding="utf-8")
     assert manual.read_bytes() == manual_before
+    return {"directory": directory, "root": root, "identity": identity, "manual": manual,
+            "manual_before": manual_before, "document": document, "inputs": inputs, "plan": plan}
+
+
+def run() -> dict:
+    prepared = prepare_isolated_book()
+    directory, root, identity, manual, manual_before, document, plan = (
+        prepared[key] for key in ("directory", "root", "identity", "manual", "manual_before", "document", "plan"))
     memory = RuntimePaths.for_story_project(root).memory_dir / "v2"
     memory.mkdir(parents=True, exist_ok=True)
     cache = memory / "canonical_memory.json"
@@ -109,6 +141,8 @@ def run() -> dict:
     save(directory / "without-cache.json", cold)
     assert cold["project_current_state"] == poisoned["project_current_state"] == plan["prepared"]["state_after"]
     assert cold["production_snapshot"] == poisoned["production_snapshot"]
+    assert "D1_STATIC_RULE" in cold["input_pack"]
+    assert cold["project_current_state"]["characters"]["char_lin_che"]["location"] == "location_old_station"
     manual.write_bytes(manual_before.replace("旧城站封闭闸门外".encode(), "人工指定的码头".encode()))
     try:
         read_current(root=root, document=document, book_id=identity.book_id, next_chapter=3)
@@ -132,13 +166,25 @@ def run() -> dict:
         assert exc.code == "manual_source_changed"
     else:
         raise AssertionError("saved conflict decision survived a different source revision")
-    result = {"directory": directory.relative_to(REPO).as_posix(), "code_base": "52699d0",
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
+                            text=True, check=True).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=REPO, capture_output=True,
+                           text=True, check=True).stdout.strip()
+    code_paths = ["core/engine/chapter_candidate_context.py", "core/engine/chapter_fact_context.py",
+                  "core/engine/chapter_fact_prepare.py", "core/engine/story_project_context.py",
+                  "core/state/input_pack.py", "core/state/location_mirrors.py",
+                  "core/story_project/reviewed_state_context.py", "core/story_project/reviewed_static_context.py"]
+    result = {"directory": directory.relative_to(REPO).as_posix(), "base_commit": commit,
+              "working_tree_dirty": bool(dirty),
+              "code_files": [{"path": path, "sha256": digest((REPO / path).read_bytes())} for path in code_paths],
               "candidate_source_rules": "passed",
               "current_collections": [name for name in ("characters", "relationships", "roster", "locations",
                   "inventory", "numeric_counters", "events") if name in cold["project_current_state"]],
               "manual_original_preserved_at_chapter_write": True, "cold_processes": 3,
               "persisted_conflict_decision_cold_read": True, "source_reedit_invalidated": True,
-              "production_bridge": "pending" if not cold["production_generation_reads_seven"] else "inspect",
+              "production_bridge": "pending" if not cold["production_generation_reads_seven"] else "passed_with_injected_source_loader",
+              "normal_entrypoints_enabled": False,
+              "full_input_path_exercised": True,
               "production_generation_reads_seven": cold["production_generation_reads_seven"],
               "production_fact_entity_kinds": cold["production_fact_entity_kinds"],
               "formal_transaction_exercised": False, "real_strict_qualification_claimed": False,

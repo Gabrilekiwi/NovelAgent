@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
 from core.state.story_state_context import project_story_state_for_model
 from core.story_project.coverage import build_blueprint_plan
+from core.story_project.reviewed_state_context import validated_reviewed_state_context
 from core.structured_context import select_text_blocks
 
 
@@ -154,6 +156,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
     if not isinstance(story_project_context, dict):
         return ""
     event_authority = _uses_event_authority(story_project_context)
+    reviewed = validated_reviewed_state_context(story_project_context)
     blueprint = story_project_context.get("chapter_blueprint")
     chapter_context_read_set = (
         blueprint.get("chapter_context_read_set")
@@ -183,7 +186,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         "tracking_excerpts": _compact_story_sources(
             (
                 {}
-                if event_authority or explicit_chapter_context
+                if event_authority or reviewed is not None or explicit_chapter_context
                 else story_project_context.get("tracking_files")
             ),
             excerpt_chars=2000,
@@ -191,7 +194,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         "setting_excerpts": _compact_story_sources(
             (
                 {}
-                if event_authority or explicit_chapter_context
+                if event_authority or reviewed is not None or explicit_chapter_context
                 else story_project_context.get("setting_files")
             ),
             excerpt_chars=1200,
@@ -211,6 +214,22 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
             story_project_context, event_authority
         ),
     }
+    if reviewed is not None:
+        payload["approved_static_references"] = copy.deepcopy(reviewed["static_references"])
+        payload["structured_foreshadowing"] = copy.deepcopy(
+            (story_project_context.get("semantic_state") or {}).get("foreshadowing") or [])
+        payload["current_state_authority"] = {
+            "source": "legacy_reviewed_state", "source_sha256": reviewed["source_sha256"],
+            "payload_sha256": reviewed["payload_sha256"],
+            "manual_sources_sha256": reviewed["manual_sources_sha256"],
+            "manual_reference_mode": "structured_static_fields_only",
+        }
+        payload["source_resolution"] = {
+            "precedence": ["current_outline_or_user_input", "legacy_reviewed_state", "previous_prose",
+                           "static_manual_fields", "model_inference"],
+            "entries": [{"field": "authoritative_state", "chosen_source": "legacy_reviewed_state",
+                         "reason": "confirmed_chapter_state_bound_to_project_sources"}],
+        }
     return "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
 
 
