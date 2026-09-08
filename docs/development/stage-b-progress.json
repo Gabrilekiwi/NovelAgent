@@ -185,5 +185,62 @@
     "human_quality_scored": false,
     "model_effectiveness_evaluated": false,
     "strict_policy_gate_exit": 1
-  }
+  },
+  "d1_source_experiment": {
+    "status": "in_progress",
+    "attempt": 1,
+    "attempt_status": "source_rules_passed_actual_context_bridge_pending",
+    "decision_document": "docs/development/d1-state-source-experiment.md",
+    "baseline_observation": {
+      "path": ".tmp/stage-b/d1-baseline/0e19a5bfefcc4cbd80c3dd5474b40418/observations.json",
+      "sha256": "4dabb1b9b124cba5434f5a1d798e572c3fc8a3ea7deeeb998a3f7ea7789d5275"
+    },
+    "report": {
+      "path": ".tmp/stage-b/d1-attempt-1/edbacc71913149d4b6265f944da22c78/report.json",
+      "sha256": "d3c5eb8ca723c83b5227f34ac83d630f8109915919c3e4505e56c0f189cd8175"
+    },
+    "production_generation_reads_seven": false,
+    "production_fact_entity_kinds": [
+      "character",
+      "location"
+    ],
+    "next_action": "Bridge both actual legacy Strict generation and fact contexts to the same source-bound current state; prevent stale semantic/name-keyed positions and raw prompt material from reintroducing old values.",
+    "files": [
+      {
+        "path": "scripts/experiments/d1_reviewed_state.py",
+        "sha256": "3aa537b6771d3d80aa32b77f0390bbd5460690991ebb2a8ad6c57b758b716604"
+      },
+      {
+        "path": "scripts/experiments/run_d1_source_experiment.py",
+        "sha256": "a379da48f9e24eaa95199540f4b1cdae20899bdaf0633eb5f54285eb059219b4"
+      },
+      {
+        "path": "tests/test_d1_reviewed_state_experiment.py",
+        "sha256": "95d643a98e5b3e7ac814ea1acba9f045682446c24658ce20b7b041837a56e9ec"
+      }
+    ],
+    "tests": {
+      "path": ".tmp/stage-b/d1-source-final.xml",
+      "sha256": "5397a2adcfe26f6c0a9890c7f0196e5e13eed823204579bb3749c262e12493fd"
+    },
+    "test_results": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "17",
+        "time": "1.199",
+        "timestamp": "2026-09-08T16:27:57.406047+08:00",
+        "hostname": "PCMICRO-7LA9Q0O"
+      }
+    ],
+    "cold_processes_completed": 3,
+    "formal_transaction_exercised": false,
+    "real_strict_qualification_claimed": false,
+    "paid_provider_calls": 0,
+    "real_book_writes": 0,
+    "active_processes": []
+  },
+  "t8_0_commit": "52699d0"
 }

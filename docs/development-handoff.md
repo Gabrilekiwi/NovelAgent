@@ -4,7 +4,7 @@
 
 ## 当前任务
 
-阶段A已完成并提交33a0944。阶段B的T2.1已提交fd85291，T8.0离线样例集已完成，下一项为T3.0/D1旧书状态来源试验。离线12项中8项确定性检查符合预期、4项语义策略缺口、0项回归；三份真实材料及隔离副本哈希一致。完整开发目标仍未完成。
+阶段A已完成并提交33a0944。阶段B的T2.1已提交fd85291，T8.0已提交52699d0。当前T3.0/D1第一次来源设计尝试部分通过：17项定向检查通过、三个新进程完成读回试验；实际生成/事实入口仍未接入七类当前状态，D1未完成。下一步是实际上下文桥接，详见`docs/development/d1-state-source-experiment.md`。完整开发目标仍未完成。
 
 - 唯一主计划：[最终执行版1.0](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-final-2026-09-08.md)
 - 复审证据：[开发计划复审](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-review-2026-09-08.md)
@@ -54,7 +54,11 @@
 
 ## 下一条工作
 
-下一步T3.0/D1：先固定一套legacy Strict隔离样本，验证七类变化、人工基线冲突、冲突决定绑定来源修订、改稿失效、清缓存重启/下章读回与再次编辑原来源。重点核对`core/story_project/semantic_parser.py`对人工authority和managed supporting的处理，以及`core/memory_v2/runtime.py:_chapter_operations(include_authoritative_state=False)`；不能直接把支持字段当当前权威，也不能只透传delta宣称下章可读。先写一页试验方案与D1待决问题，再做有限实现；不升级真实书。
+下一步T3.0/D1：基于已写的有限候选，验证实际生成与事实入口共用来源绑定的七类当前状态。定位已明确：`core/engine/story_project_context.py:StoryProjectContextService.apply_authority` 的 legacy 分支会重新采用旧 semantic 值，`core/engine/chapter_fact_context.py:_index_legacy_authority` 仅索引人物和地点，姓名位置还先于稳定ID。必须防止旧人工位置/目标从 snapshot、semantic、prompt 原文回流。保持旧原文和人工基线可查看，D2通过前不启用真实作品的新格式。不要再从头调查 parser/Memory 丢失七类的问题。
+
+D1候选代码：`scripts/experiments/d1_reviewed_state.py`（纯返回受管字节，仅来源采集读盘）与`run_d1_source_experiment.py`（唯一隔离目录写入、新进程真实入口观察）。没有生产入口导入它们，没有 Provider。17项测试已退出，通过证据`.tmp/stage-b/d1-source-final.xml`。完整试验目录`.tmp/stage-b/d1-attempt-1/edbacc71913149d4b6265f944da22c78`，报告明确`production_bridge=pending`；三个新进程均已退出，没有新增后台服务。来源冲突保留当前值的决定可持久化；正文/事实决定/来源/状态版本变化会拒绝旧确认。当前仅部分通过，T3.0仍未完成。
+
+旧路径基线原始观察已核对：`.tmp/stage-b/d1-baseline/0e19a5bfefcc4cbd80c3dd5474b40418/observations.json`。独立审查子代理`d1_source_review`已完成且只读；其指出的首次受管写入换行误报已在候选修正。下一步可由根代理继续，不需重复代理调查。
 
 T8.0完成：`tests/fixtures/chapter_fact_offline_v1/manifest.json`及12个用例，`scripts/check_fact_offline_suite.py`可运行。默认不读取正式作品；加`--verify-local-sources`核对三份正式材料及隔离副本。结果`.tmp/stage-b/offline-report-initial.json`：8项确定性符合预期、4项policy_gap、0项回归；`--require-policy-complete`应返回1，防止把样例准备当策略完成。测试3通过，XML和哈希在stage-b-progress.json。真实快照位于`.tmp/stage-b/offline-source-snapshots`，未加入Git。注释均为agent整理，人工复核pending；三份真实材料没有伪造为输入输出配对。
 
@@ -66,7 +70,7 @@ T2.1设计见`docs/development/chapter-fact-contract.md`。纯入口`core/engine
 
 T2.1本次提交范围：chapter_fact_candidate/contract/prepare、七类payload schema与合成例子、两份新测试及文档。原v1合法载荷形状保持，含重复事件/变化的旧无效记录可能被新校验拒绝，不能静默重写原始模型建议。本轮没有新的网页功能入口；浏览器记录仍只证明T1.2。
 
-T0.2新增入口：`scripts/setup_environment.py`、`scripts/check_environment.py --dev`、`requirements*.lock`；正常开发用`.venv/Scripts/python.exe`。Windows启动器已固定为项目虚拟环境并做本地依赖预检；更新bat后保持CRLF（.gitattributes已有约定）。旧书来源、兼容和恢复试验尚未执行。
+T0.2新增入口：`scripts/setup_environment.py`、`scripts/check_environment.py --dev`、`requirements*.lock`；正常开发用`.venv/Scripts/python.exe`。Windows启动器已固定为项目虚拟环境并做本地依赖预检；更新bat后保持CRLF（.gitattributes已有约定）。旧书来源试验已开始，兼容和可写恢复试验仍待执行。
 
 最终版保留两模式同轮交付；恢复范围收敛为Windows同机单目标作品，但必须能恢复后继续写作。真实验收的30%节时为观察目标，失败/放弃不得从统计中删去。
 
