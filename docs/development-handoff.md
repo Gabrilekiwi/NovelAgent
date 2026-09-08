@@ -4,7 +4,7 @@
 
 ## 当前任务
 
-阶段A已完成，下一项为阶段B的T2.1。T0.1/T0.2已提交；T1.1/T1.2工作台回归132通过、1跳过、14子测试通过，真实浏览器目录错误/重试/刷新通过。独立审查发现并修复监控异常遗忘子进程的问题；修复后instance/jobs相关35通过、1跳过，3项新故障用例通过。完整开发目标仍未完成。
+阶段A已完成并提交33a0944。阶段B的T2.1七类事实同源契约与只读准备已完成，下一项为T8.0离线样例集。事实相关综合回归72通过；随后新增的准备反例用例集23通过。完整开发目标仍未完成。
 
 - 唯一主计划：[最终执行版1.0](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-final-2026-09-08.md)
 - 复审证据：[开发计划复审](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-review-2026-09-08.md)
@@ -45,7 +45,8 @@
 | T0.2 | 已完成 | 35项依赖锁、项目环境、全新安装、启动器、文档与CI安装入口已完成本地验证；远端CI未运行 |
 | T1.1 | 已完成 | 应用初始化前取得数据目录所有权，继承锁覆盖执行子进程；并发、端口占用、父死子活、监控异常验证证据在阶段A目录 |
 | T1.2 | 已完成 | 不存在父目录400中文提示，表单保留；改正目录201，刷新仍可读取作品 |
-| T2–T7 | 范围与子任务已确定、待实现 | 按最终版阶段A–F推进；D1旧书来源、D2格式兼容、D3可写恢复先做有限试验 |
+| T2.1 | 已完成 | 七类共享schema、模型完整例子、纯准备计算与拒绝场景；见阶段B证据 |
+| T2其余、T3–T7 | 范围与子任务已确定、待实现 | 按最终版阶段A–F推进；D1旧书来源、D2格式兼容、D3可写恢复先做有限试验 |
 | T8.0 | 离线准备待开始 | 使用已有正文、响应和合成样本，无新付费调用 |
 | T8.1、T8.2 | 独立阶段、未授权真实调用 | 早期逐章配对与最终两模式连续验收分别限定预算；缺授权可继续独立工程 |
 
@@ -53,9 +54,15 @@
 
 ## 下一条工作
 
-下一步：进入阶段B的T2.1七类事实契约，先核对现有fact模型、model prompt/schema、review prepare与测试，拆为同源定义、程序推导校验、混合与反例三步。T2.1不提前声明旧书状态能持久化或下章可读，那是T3.0/T3.2的独立验收。不要重新跑无变化的整个工作台回归；最终测试XML及哈希已写入`stage-a-progress.json`。
+下一步T8.0：建立小型版本化离线检查集，覆盖七类混合、漏事实、身份歧义、数量变化、重复/连贯性问题和正常章节。复用`examples/chapter_fact_review/seven_kinds.json`及T2.1反例，补已有正文/保存响应的只读取证与来源哈希、判定依据。真实作品保持只读；材料快照放隔离目录，不调用Provider。该集合是检查策略的输入，不冒充模型质量评估或人工评分。
+
+T2.1设计见`docs/development/chapter-fact-contract.md`。纯入口`core/engine/chapter_fact_prepare.py:prepare_confirmed_fact_changes`从上游绑定的authoritative_state计算before/after、名单人数和事件依赖，不读取或写入作品。未知实体/数量/位置/字段基线拒绝，T2.2再补显式声明；source_tier、身份等字段不允许经普通状态更新改变。现有领域校验器与名单reducer继续使用，未解决D1旧书来源优先级。T3.2必须把结果绑定到实际书籍版本、read-set、正文和事实决定后才能提交。
+
+最新事实综合回归session15752已退出（72通过，16.10秒）；最后仅新增测试，准备测试23通过（0.56秒）。XML及哈希在`stage-b-progress.json`。辅助代理在准备层实现开始前因额度不足失败，未留下该层文件，根代理完成实现与验证；不反复重启代理。
 
 本次T1提交覆盖启动器Python入口、instance/app/jobs/projects、保存目录标签、三份相关测试及阶段A文档；实际commit以当前Git log为准。所有新测试使用隔离样本，无Provider调用、正式书籍写入。设计见`docs/development/workbench-instance.md`，浏览器报告见`stage-a-browser-verification.md`。
+
+T2.1本次提交范围：chapter_fact_candidate/contract/prepare、七类payload schema与合成例子、两份新测试及文档。原v1合法载荷形状保持，含重复事件/变化的旧无效记录可能被新校验拒绝，不能静默重写原始模型建议。本轮没有新的网页功能入口；浏览器记录仍只证明T1.2。
 
 T0.2新增入口：`scripts/setup_environment.py`、`scripts/check_environment.py --dev`、`requirements*.lock`；正常开发用`.venv/Scripts/python.exe`。Windows启动器已固定为项目虚拟环境并做本地依赖预检；更新bat后保持CRLF（.gitattributes已有约定）。旧书来源、兼容和恢复试验尚未执行。
 

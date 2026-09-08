@@ -1,0 +1,137 @@
+{
+  "date": "2026-09-08",
+  "stage": "B",
+  "stage_status": "in_progress",
+  "completed_tasks": [
+    "T2.1"
+  ],
+  "next_task": "T8.0",
+  "goal_complete": false,
+  "stage_a_commit": "33a0944",
+  "substeps": {
+    "shared_payload_contract_and_seven_kind_example": "passed",
+    "pure_before_after_and_dependency_preparation": "passed",
+    "mixed_samples_and_rejection_cases": "passed"
+  },
+  "files": [
+    {
+      "path": "core/engine/chapter_fact_candidate.py",
+      "sha256": "c9d3bc163a585f9f4ce101c2566da4d7e96b35c06114ce800a6bbf817c0b2e8c"
+    },
+    {
+      "path": "core/engine/chapter_fact_contract.py",
+      "sha256": "55c61cfccec856b9e1c85d80c11da7c6e729e74befa891d30d12a5a24eab9164"
+    },
+    {
+      "path": "core/engine/chapter_fact_prepare.py",
+      "sha256": "93e17e735e0aee326c9d76ce3e70c786481d221c0479f65507b6abf5c26be932"
+    },
+    {
+      "path": "schemas/chapter_fact_payloads.schema.json",
+      "sha256": "125bb88cd6b650bcd6a63b06c01779443ea8f717618e7cf5edb1d56eeb9cbced"
+    },
+    {
+      "path": "examples/chapter_fact_review/seven_kinds.json",
+      "sha256": "1e8df44e4e66d247251325eca99e3a7db9f7763d886b018a4c530f85a564ac26"
+    },
+    {
+      "path": "tests/test_chapter_fact_contract.py",
+      "sha256": "27719ebf53044f63e8ae1868d8c59d6e2d9c2528b99df2953f61a23e78492760"
+    },
+    {
+      "path": "tests/test_chapter_fact_prepare.py",
+      "sha256": "9aa35ba2bcd2978dae53312e4fb24b9143a067f159f001c6bbec54795f8ee08b"
+    }
+  ],
+  "tests": [
+    {
+      "path": ".tmp/stage-b/fact-contract-initial.xml",
+      "sha256": "1af105d5e63c8e73b6515396148a58f580d37e7e768034eb4a2da34db49ac896",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "22",
+          "time": "2.103",
+          "timestamp": "2026-09-08T15:43:06.766692+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-b/fact-contract-tests.xml",
+      "sha256": "3715374f9a5594325a62f220996a0a3bc12e51caa1aeab43c3d6dbb11a97aa71",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "54",
+          "time": "15.716",
+          "timestamp": "2026-09-08T15:44:16.017524+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-b/fact-prepare-initial.xml",
+      "sha256": "804493850862bcd1cbb1e0b8950db8793cc88f8d0250dc33d2f12ab3d344ddf1",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "13",
+          "time": "0.359",
+          "timestamp": "2026-09-08T15:49:24.042405+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-b/fact-contract-and-prepare.xml",
+      "sha256": "b3efbe362a697e9b473cd0c3ec2d8b8e61645dfce23920c555320c415b78d0f1",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "72",
+          "time": "16.066",
+          "timestamp": "2026-09-08T15:50:52.871028+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-b/fact-prepare-final.xml",
+      "sha256": "dd5af1ac5c928931c28d80303b3e8d51eb6b2182174ba0002bbd498533c89e69",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "23",
+          "time": "0.524",
+          "timestamp": "2026-09-08T15:53:22.092846+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    }
+  ],
+  "paid_provider_calls": 0,
+  "real_book_writes": 0,
+  "ongoing_task_processes": [],
+  "limitations": [
+    "Preparation is read-only and not integrated into formal commit or next-chapter readback.",
+    "D1 source decisions, D2 format compatibility, D3 writable recovery remain pending.",
+    "Auxiliary implementation agent failed before writing files due to quota; root implemented and tested the preparation layer.",
+    "Evidence matching/order checks do not prove semantic support or chronological order in flashbacks."
+  ]
+}

@@ -8,6 +8,12 @@ import re
 from typing import Any, Mapping, Sequence
 
 from core.schema import SchemaValidationError, validate_schema
+from core.engine.chapter_fact_contract import (
+    fact_contract_example,
+    fact_payload_contract,
+    fact_payload_contracts,
+    validate_fact_payload,
+)
 
 
 CHAPTER_FACT_PROPOSAL_SCHEMA_VERSION = "1.0"
@@ -28,11 +34,6 @@ _MAX_FACTS = 100
 _MAX_VALUE_CHARS = 10_000
 _MAX_CHAPTER_CHARS = 200_000
 _MAX_AUTHORITY_VIEW_CHARS = 100_000
-
-_ONSITE_ROLES = frozenset({"actor", "recipient", "witness", "present_other"})
-_REMOTE_ROLES = frozenset({"actor", "coordinator", "observer", "recipient", "remote_other"})
-_RELATED_ROLES = frozenset({"target", "topic", "beneficiary", "cause", "reference", "related_other"})
-
 
 class ChapterFactCandidateError(ValueError):
     code = "chapter_fact_candidate_invalid"
@@ -66,34 +67,7 @@ def build_fact_extraction_messages(
             code="chapter_fact_authority_view_too_large",
         )
 
-    example = {
-        "schema_version": CHAPTER_FACT_PROPOSAL_SCHEMA_VERSION,
-        "facts": [
-            {
-                "local_key": "event_1",
-                "kind": "event",
-                "summary": "现场角色通过远程频道收到协作信息。",
-                "evidence_quotes": ["一段在正文中只出现一次的原文"],
-                "proposal": {
-                    "event_type": "remote_coordination",
-                    "status": "completed",
-                    "occurrence_location": "现场地点ID",
-                    "onsite_participants": [
-                        {"entity_id": "现场角色ID", "role": "recipient"}
-                    ],
-                    "remote_participants": [
-                        {
-                            "entity_id": "远程角色ID",
-                            "role": "coordinator",
-                            "channel": "radio",
-                        }
-                    ],
-                    "transported_items": [],
-                    "related_entities": [],
-                },
-            }
-        ],
-    }
+    example = fact_contract_example()
     return [
         {
             "role": "system",
@@ -114,7 +88,14 @@ def build_fact_extraction_messages(
                 "输出事实种类仅限 event、character_state、relationship、roster、location、"
                 "inventory、counter。除 event 外的变化用 source_event_key 关联本次 facts 中的"
                 " event local_key；若无可核实变化，返回空 facts。所有结果都只是作者待审候选。\n\n"
-                f"输出契约示例：\n{_canonical_json(example)}\n\n"
+                "每种 proposal 的字段与操作如下，所有 required 字段必填，不得添加 before、"
+                "previous_quantity、previous_value、最终库存或名单人数。from_location 只是正文"
+                "声明的出发地；当前权威位置由程序读取。相同事件对相同目标的同一变化只能提出"
+                "一次；两次独立变化必须各有事件和证据。候选数组顺序不是状态更新顺序。\n"
+                f"七类 proposal 契约：\n{_canonical_json(fact_payload_contracts())}\n\n"
+                "以下是独立教学样本，不是当前章节；不要把样本人物、事件或证据混入结果。\n"
+                f"示例正文：\n{example['chapter_text']}\n"
+                f"输出契约示例：\n{_canonical_json(example['proposal'])}\n\n"
                 f"精简权威视图（只用于消歧，不可改写）：\n{authority_json}\n\n"
                 f"作者当前工作台正文：\n{prose}"
             ),
@@ -186,9 +167,7 @@ def normalize_fact_proposal(
             "evidence_spans": evidence_spans,
             "proposal": proposal,
         }
-        signature = _canonical_json(
-            {key: core[key] for key in ("kind", "evidence_spans", "proposal")}
-        )
+        signature = _fact_signature(kind, proposal, evidence_spans)
         if signature in signatures:
             raise ChapterFactCandidateError("fact proposal contains a duplicate fact")
         signatures.add(signature)
@@ -207,6 +186,7 @@ def normalize_fact_proposal(
         }
         validate_schema(item, "chapter_fact_review_item.schema.json")
         normalized.append(item)
+    _reject_overlapping_duplicate_events(normalized)
     return normalized
 
 
@@ -251,9 +231,7 @@ def normalize_fact_review_items(
         _validate_source_event_reference(kind, proposal, event_keys)
         evidence = _validated_evidence_spans(raw_fact["evidence_spans"], prose)
         review = _normalize_review(raw_fact["review"])
-        signature = _canonical_json(
-            {"kind": kind, "evidence_spans": evidence, "proposal": proposal}
-        )
+        signature = _fact_signature(kind, proposal, evidence)
         if signature in signatures:
             raise ChapterFactCandidateError("fact review contains a duplicate fact")
         signatures.add(signature)
@@ -268,6 +246,7 @@ def normalize_fact_review_items(
                 "review": review,
             }
         )
+    _reject_overlapping_duplicate_events(normalized)
     return normalized
 
 
@@ -303,19 +282,51 @@ def require_confirmed_fact_review(
 
 
 def _normalize_proposal(kind: str, value: Any) -> dict[str, Any]:
+    payload = _normalize_proposal_values(kind, value)
+    try:
+        return validate_fact_payload(kind, payload)
+    except SchemaValidationError as exc:
+        raise ChapterFactCandidateError(str(exc)) from exc
+
+
+def _fact_signature(kind: str, proposal: Mapping[str, Any], evidence: list[dict[str, Any]]) -> str:
+    # Different excerpts must not count the same event's state change twice.
+    # Distinct source events remain distinct even when their deltas coincide.
+    payload = copy.deepcopy(dict(proposal))
+    if kind == "roster":
+        payload["member_ids"] = sorted(payload["member_ids"])
+    if kind == "event":
+        for field in ("onsite_participants", "remote_participants", "transported_items", "related_entities"):
+            payload[field] = sorted(payload[field], key=_canonical_json)
+    signature = {"kind": kind, "proposal": payload}
+    if kind == "event":
+        signature["evidence_spans"] = sorted(evidence, key=lambda item: (item["start"], item["end"]))
+    return _canonical_json(signature)
+
+
+def _reject_overlapping_duplicate_events(facts: list[dict[str, Any]]) -> None:
+    events: dict[str, list[dict[str, Any]]] = {}
+    for fact in facts:
+        if fact["kind"] != "event":
+            continue
+        signature = _fact_signature("event", fact["proposal"], [])
+        for previous in events.get(signature, []):
+            if any(max(a["start"], b["start"]) < min(a["end"], b["end"])
+                   for a in previous["evidence_spans"] for b in fact["evidence_spans"]):
+                raise ChapterFactCandidateError("fact proposal contains a duplicate event with overlapping evidence")
+        events.setdefault(signature, []).append(fact)
+
+
+def _normalize_proposal_values(kind: str, value: Any) -> dict[str, Any]:
     if kind not in FACT_KINDS:
         raise ChapterFactCandidateError(f"unsupported fact kind: {kind!r}")
     if not isinstance(value, Mapping):
         raise ChapterFactCandidateError(f"{kind} proposal must be an object")
     raw = dict(value)
+    _exact_keys(raw, set(fact_payload_contract(kind)["required"]), kind)
     if kind == "event":
         return _normalize_event(raw)
     if kind == "character_state":
-        _exact_keys(
-            raw,
-            {"entity_id", "canonical_name", "field", "after", "source_event_key"},
-            kind,
-        )
         return {
             "entity_id": _entity_id(raw["entity_id"], "entity_id"),
             "canonical_name": _bounded_text(raw["canonical_name"], "canonical_name", 200),
@@ -324,19 +335,6 @@ def _normalize_proposal(kind: str, value: Any) -> dict[str, Any]:
             "source_event_key": _required_local_key(raw["source_event_key"], "source_event_key"),
         }
     if kind == "relationship":
-        _exact_keys(
-            raw,
-            {
-                "relationship_id",
-                "source_entity_id",
-                "target_entity_id",
-                "relation_type",
-                "field",
-                "after",
-                "source_event_key",
-            },
-            kind,
-        )
         source = _entity_id(raw["source_entity_id"], "source_entity_id")
         target = _entity_id(raw["target_entity_id"], "target_entity_id")
         if source == target:
@@ -351,9 +349,8 @@ def _normalize_proposal(kind: str, value: Any) -> dict[str, Any]:
             "source_event_key": _required_local_key(raw["source_event_key"], "source_event_key"),
         }
     if kind == "roster":
-        _exact_keys(raw, {"roster_id", "operation", "member_ids", "source_event_key"}, kind)
         operation = str(raw["operation"])
-        if operation not in {"add", "remove"}:
+        if operation not in fact_payload_contract(kind)["properties"]["operation"]["enum"]:
             raise ChapterFactCandidateError("roster operation must be add or remove")
         members = _unique_entity_ids(raw["member_ids"], "member_ids", require_nonempty=True)
         return {
@@ -363,7 +360,6 @@ def _normalize_proposal(kind: str, value: Any) -> dict[str, Any]:
             "source_event_key": _required_local_key(raw["source_event_key"], "source_event_key"),
         }
     if kind == "location":
-        _exact_keys(raw, {"entity_id", "from_location", "to_location", "source_event_key"}, kind)
         before = _optional_entity_id(raw["from_location"], "from_location")
         after = _entity_id(raw["to_location"], "to_location")
         if before == after:
@@ -375,7 +371,6 @@ def _normalize_proposal(kind: str, value: Any) -> dict[str, Any]:
             "source_event_key": _required_local_key(raw["source_event_key"], "source_event_key"),
         }
     if kind == "inventory":
-        _exact_keys(raw, {"owner_id", "item_id", "delta", "source_event_key"}, kind)
         delta = _integer(raw["delta"], "delta")
         if delta == 0:
             raise ChapterFactCandidateError("inventory delta must not be zero")
@@ -385,9 +380,8 @@ def _normalize_proposal(kind: str, value: Any) -> dict[str, Any]:
             "delta": delta,
             "source_event_key": _required_local_key(raw["source_event_key"], "source_event_key"),
         }
-    _exact_keys(raw, {"counter_id", "operation", "value", "source_event_key"}, kind)
     operation = str(raw["operation"])
-    if operation not in {"increment", "set"}:
+    if operation not in fact_payload_contract(kind)["properties"]["operation"]["enum"]:
         raise ChapterFactCandidateError("counter operation must be increment or set")
     number = _finite_number(raw["value"], "value")
     if operation == "increment" and number == 0:
@@ -401,21 +395,9 @@ def _normalize_proposal(kind: str, value: Any) -> dict[str, Any]:
 
 
 def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
-    _exact_keys(
-        raw,
-        {
-            "event_type",
-            "status",
-            "occurrence_location",
-            "onsite_participants",
-            "remote_participants",
-            "transported_items",
-            "related_entities",
-        },
-        "event",
-    )
+    properties = fact_payload_contract("event")["properties"]
     status = str(raw["status"])
-    if status not in {"started", "ongoing", "completed"}:
+    if status not in properties["status"]["enum"]:
         raise ChapterFactCandidateError("event status is invalid")
     occurrence_location = _optional_entity_id(
         raw["occurrence_location"], "occurrence_location"
@@ -423,22 +405,22 @@ def _normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
     onsite = _normalize_role_items(
         raw["onsite_participants"],
         label="onsite_participants",
-        roles=_ONSITE_ROLES,
-        keys={"entity_id", "role"},
+        roles=frozenset(properties["onsite_participants"]["items"]["properties"]["role"]["enum"]),
+        keys=set(properties["onsite_participants"]["items"]["required"]),
     )
     remote = _normalize_role_items(
         raw["remote_participants"],
         label="remote_participants",
-        roles=_REMOTE_ROLES,
-        keys={"entity_id", "role", "channel"},
+        roles=frozenset(properties["remote_participants"]["items"]["properties"]["role"]["enum"]),
+        keys=set(properties["remote_participants"]["items"]["required"]),
         channel=True,
     )
     transported = _normalize_transported_items(raw["transported_items"])
     related = _normalize_role_items(
         raw["related_entities"],
         label="related_entities",
-        roles=_RELATED_ROLES,
-        keys={"entity_id", "relation"},
+        roles=frozenset(properties["related_entities"]["items"]["properties"]["relation"]["enum"]),
+        keys=set(properties["related_entities"]["items"]["required"]),
         role_field="relation",
     )
     onsite_ids = {item["entity_id"] for item in onsite}
@@ -497,7 +479,7 @@ def _normalize_transported_items(value: Any) -> list[dict[str, Any]]:
         raise ChapterFactCandidateError("transported_items must be an array")
     result: list[dict[str, Any]] = []
     seen: set[str] = set()
-    keys = {"item_id", "from_location", "to_location", "carrier_id"}
+    keys = set(fact_payload_contract("event")["properties"]["transported_items"]["items"]["required"])
     for index, item in enumerate(value):
         if not isinstance(item, Mapping):
             raise ChapterFactCandidateError(f"transported_items[{index}] must be an object")

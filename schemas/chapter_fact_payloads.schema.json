@@ -1,0 +1,412 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterFactPayloadContracts",
+  "description": "按 kind 选择同名属性校验 proposal；模型提示和本地规范化共同读取此定义。",
+  "type": "object",
+  "properties": {
+    "event": {
+      "type": "object",
+      "description": "事件锚点，不计算状态；至少有一个明确地点、参与者、运输物或关联实体。",
+      "required": [
+        "event_type",
+        "status",
+        "occurrence_location",
+        "onsite_participants",
+        "remote_participants",
+        "transported_items",
+        "related_entities"
+      ],
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "started",
+            "ongoing",
+            "completed"
+          ]
+        },
+        "occurrence_location": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "onsite_participants": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "description": "物理在场角色。",
+            "required": [
+              "entity_id",
+              "role"
+            ],
+            "properties": {
+              "entity_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "actor",
+                  "recipient",
+                  "witness",
+                  "present_other"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "remote_participants": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "description": "远程参与角色，不表示在场。",
+            "required": [
+              "entity_id",
+              "role",
+              "channel"
+            ],
+            "properties": {
+              "entity_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "actor",
+                  "coordinator",
+                  "observer",
+                  "recipient",
+                  "remote_other"
+                ]
+              },
+              "channel": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 100
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "transported_items": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "description": "运输对象及正文声明的路径，不作为角色在场证明。",
+            "required": [
+              "item_id",
+              "from_location",
+              "to_location",
+              "carrier_id"
+            ],
+            "properties": {
+              "item_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "from_location": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "to_location": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "carrier_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "related_entities": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "description": "仅逻辑关联。",
+            "required": [
+              "entity_id",
+              "relation"
+            ],
+            "properties": {
+              "entity_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "relation": {
+                "type": "string",
+                "enum": [
+                  "target",
+                  "topic",
+                  "beneficiary",
+                  "cause",
+                  "reference",
+                  "related_other"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "character_state": {
+      "type": "object",
+      "description": "提出单字段新值；权威 before 由程序从已绑定基线读取。",
+      "required": [
+        "entity_id",
+        "canonical_name",
+        "field",
+        "after",
+        "source_event_key"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "canonical_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "after": {},
+        "source_event_key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "description": "本次提案中 event 的 local_key；必须关联同一组事实中的事件。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "relationship": {
+      "type": "object",
+      "description": "两个不同实体间的关系字段新值；不提交模型计算的 before。",
+      "required": [
+        "relationship_id",
+        "source_entity_id",
+        "target_entity_id",
+        "relation_type",
+        "field",
+        "after",
+        "source_event_key"
+      ],
+      "properties": {
+        "relationship_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "source_entity_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "target_entity_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "relation_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "after": {},
+        "source_event_key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "description": "本次提案中 event 的 local_key；必须关联同一组事实中的事件。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "roster": {
+      "type": "object",
+      "description": "只提出成员增删；现有人数、新人数和差值由程序计算，成员不得重复。",
+      "required": [
+        "roster_id",
+        "operation",
+        "member_ids",
+        "source_event_key"
+      ],
+      "properties": {
+        "roster_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "add",
+            "remove"
+          ]
+        },
+        "member_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "source_event_key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "description": "本次提案中 event 的 local_key；必须关联同一组事实中的事件。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "location": {
+      "type": "object",
+      "description": "from_location 是正文声明的出发地，可为 null；不是权威 before。程序读取当前位置并核对声明。",
+      "required": [
+        "entity_id",
+        "from_location",
+        "to_location",
+        "source_event_key"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "from_location": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "to_location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "source_event_key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "description": "本次提案中 event 的 local_key；必须关联同一组事实中的事件。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inventory": {
+      "type": "object",
+      "description": "只提出正文支持的非零整数增减；原数量、结果数量和依赖由程序计算。",
+      "required": [
+        "owner_id",
+        "item_id",
+        "delta",
+        "source_event_key"
+      ],
+      "properties": {
+        "owner_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "item_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "delta": {
+          "type": "integer"
+        },
+        "source_event_key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "description": "本次提案中 event 的 local_key；必须关联同一组事实中的事件。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "counter": {
+      "type": "object",
+      "description": "increment 的非零值是增量，set 的值是正文明确声明的结果；有限数值、基线和边界由程序校验。",
+      "required": [
+        "counter_id",
+        "operation",
+        "value",
+        "source_event_key"
+      ],
+      "properties": {
+        "counter_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "increment",
+            "set"
+          ]
+        },
+        "value": {
+          "type": "number"
+        },
+        "source_event_key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "description": "本次提案中 event 的 local_key；必须关联同一组事实中的事件。"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
