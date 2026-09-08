@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import weakref
 
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
@@ -71,6 +72,7 @@ from workbench.chapter_fact_extractions import (
 )
 from workbench.cohorts import CohortError, CohortService, SCORE_DIMENSIONS
 from workbench.database import WorkbenchDatabase, WorkbenchDatabaseError
+from workbench.instance import InstanceLease
 from workbench.jobs import (
     JobError,
     JobStore,
@@ -90,8 +92,30 @@ SAFE_HOSTS = frozenset({"127.0.0.1", "localhost", "testserver", "::1"})
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
-def create_app(
+def create_app(*, database_path: str | Path | None = None,
+               instance_lease: InstanceLease | None = None, **kwargs: Any) -> FastAPI:
+    db_path = Path(database_path or _local_app_root() / "workbench.db").expanduser().resolve()
+    lease = instance_lease or InstanceLease(db_path.parent).acquire()
+    lease.require_held()
+    if lease.directory != db_path.parent:
+        raise ValueError("Instance lease does not cover the workbench data directory")
+    try:
+        app = _create_app_owned(database_path=db_path, instance_lease=lease, **kwargs)
+    except BaseException:
+        lease.close()
+        raise
+    weakref.finalize(app, _close_owned_app, app.state.supervisor, lease)
+    return app
+
+
+def _close_owned_app(supervisor: JobSupervisor, lease: InstanceLease) -> None:
+    supervisor.shutdown()
+    lease.close()
+
+
+def _create_app_owned(
     *,
+    instance_lease: InstanceLease,
     database_path: str | Path | None = None,
     allowed_workspaces: Sequence[str | Path] | None = None,
     repo_root: str | Path | None = None,
@@ -149,6 +173,7 @@ def create_app(
         repo_root=repository,
         runtime_root=task_root,
         python_executable=python_executable,
+        instance_lease=instance_lease,
     )
     bootstrap_warnings: list[str] = []
     recovered_plans = planner.recover_after_restart()
@@ -169,13 +194,15 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        if start_worker:
-            supervisor.start()
         try:
+            instance_lease.require_held()
+            if start_worker:
+                supervisor.start()
             yield
         finally:
             if start_worker:
                 supervisor.shutdown()
+            instance_lease.close()
 
     app = FastAPI(
         title="NovelAgent 本地创作工作台",
@@ -186,6 +213,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.session_token = secrets.token_urlsafe(32)
+    app.state.instance_lease = instance_lease
     app.state.database = database
     app.state.projects = projects
     app.state.outlines = outlines
@@ -204,6 +232,8 @@ def create_app(
 
     @app.middleware("http")
     async def local_security_boundary(request: Request, call_next: Any):
+        if not instance_lease.held:
+            return JSONResponse({"error": {"code": "workbench_stopped", "message": "工作台已停止，请重新启动。"}}, status_code=503)
         host_header = request.headers.get("host", "")
         host = _host_name(host_header)
         if host not in SAFE_HOSTS:
@@ -242,6 +272,10 @@ def create_app(
             "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
         )
         return response
+
+    @app.get("/api/instance")
+    async def instance_identity():
+        return {"instance_id": instance_lease.instance_id}
 
     @app.exception_handler(ProjectRegistryError)
     @app.exception_handler(OutlineBatchError)

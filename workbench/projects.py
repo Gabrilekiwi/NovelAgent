@@ -138,25 +138,33 @@ class ProjectRegistry:
         metadata: Mapping[str, Any] | None = None,
     ) -> ProjectRecord:
         project_name = _required_text("name", name)
-        target_path = Path(target).expanduser()
-        if not target_path.is_absolute():
-            raise ProjectRegistryError("new project target must be an absolute path")
-        canonical_target = target_path.resolve(strict=False)
+        canonical_target = _canonical_new_project_target(target)
         self._assert_allowed(canonical_target)
-        parent = canonical_target.parent.resolve(strict=True)
+        try:
+            parent = canonical_target.parent.resolve(strict=True)
+            parent_info = parent.stat()
+        except FileNotFoundError as exc:
+            raise ProjectRegistryError("保存父目录不存在，请选择已有文件夹后重试。") from exc
+        except NotADirectoryError as exc:
+            raise ProjectRegistryError("保存父路径包含普通文件，请选择已有文件夹。") from exc
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise ProjectRegistryError("无法访问保存父目录，请检查路径和访问权限。") from exc
         self._assert_allowed(parent)
-        if not parent.is_dir():
-            raise ProjectRegistryError(f"new project parent is not a directory: {parent}")
+        if not stat.S_ISDIR(parent_info.st_mode):
+            raise ProjectRegistryError("保存父路径不是文件夹，请选择已有文件夹。")
         if canonical_target == parent:
             raise ProjectRegistryError("new project target cannot be its parent directory")
 
         target_was_empty = False
-        if canonical_target.exists():
-            if not canonical_target.is_dir():
-                raise ProjectRegistryError(f"new project target is not a directory: {canonical_target}")
-            if any(canonical_target.iterdir()):
-                raise ProjectRegistryError(f"new project target is not empty: {canonical_target}")
-            target_was_empty = True
+        try:
+            if canonical_target.exists():
+                if not canonical_target.is_dir():
+                    raise ProjectRegistryError(f"new project target is not a directory: {canonical_target}")
+                if any(canonical_target.iterdir()):
+                    raise ProjectRegistryError(f"new project target is not empty: {canonical_target}")
+                target_was_empty = True
+        except OSError as exc:
+            raise ProjectRegistryError("无法检查新作品目录，请检查路径和访问权限。") from exc
 
         combined_metadata = dict(metadata or {})
         combined_metadata.update(
@@ -377,6 +385,31 @@ def _canonical_existing_directory(path: str | Path, *, label: str) -> Path:
     if not stat.S_ISDIR(info.st_mode):
         raise ProjectRegistryError(f"{label} is not a directory: {canonical}")
     return canonical
+
+
+def _canonical_new_project_target(target: str | Path) -> Path:
+    try:
+        path = Path(target).expanduser()
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise ProjectRegistryError("保存路径无效，请选择已有父目录并填写有效的作品目录名。") from exc
+    if not path.is_absolute():
+        raise ProjectRegistryError("保存路径必须是绝对路径，请选择已有的保存父目录。")
+    if os.name == "nt":
+        for part in path.parts[1:]:
+            if part in {".", ".."}:
+                continue
+            if (
+                Path(part).is_reserved()
+                or part.endswith((" ", "."))
+                or any(ord(char) < 32 or char in '<>:"|?*' for char in part)
+            ):
+                raise ProjectRegistryError(
+                    "保存路径包含 Windows 不支持的目录名，请去掉保留名称、特殊字符或末尾空格/句点。"
+                )
+    try:
+        return path.resolve(strict=False)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise ProjectRegistryError("保存路径无效或无法访问，请检查路径和保存父目录。") from exc
 
 
 def _require_story_project_directories(root: Path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 import uuid
 from pathlib import Path
@@ -59,6 +60,59 @@ class WorkbenchProjectRegistryTest(unittest.TestCase):
             registry.create_project(occupied, name="不能覆盖")
         self.assertEqual("keep", marker.read_text(encoding="utf-8"))
 
+    def test_missing_parent_is_actionable_and_retry_preserves_project_information(self) -> None:
+        workspace, registry = self._case("missing_parent")
+        parent = workspace / "尚未创建的 保存目录"
+        target = parent / "中文 新书"
+        details = {"name": "中文 新书", "genre": "科幻", "synopsis": "保留这份简介。"}
+
+        with self.assertRaisesRegex(ProjectRegistryError, "保存父目录不存在.*已有文件夹"):
+            registry.create_project(target, **details)
+
+        self.assertFalse(parent.exists())
+        self.assertEqual((), registry.list_projects())
+        self.assertEqual([], list(workspace.glob(".novelagent-create-*")))
+        parent.mkdir()
+        created = registry.create_project(target, **details)
+        self.assertEqual(target.resolve(), created.root)
+        self.assertEqual(details["name"], created.name)
+        self.assertEqual(details["genre"], created.metadata["genre"])
+        self.assertEqual(details["synopsis"], created.metadata["synopsis"])
+        self.assertEqual(created, registry.get(created.id))
+
+    def test_file_parent_is_rejected_without_modifying_the_file(self) -> None:
+        workspace, registry = self._case("file_parent")
+        parent = workspace / "保存位置.txt"
+        parent.write_text("保留原文件", encoding="utf-8")
+
+        with self.assertRaisesRegex(ProjectRegistryError, "保存父.*文件夹"):
+            registry.create_project(parent / "新书", name="新书")
+
+        self.assertEqual("保留原文件", parent.read_text(encoding="utf-8"))
+        self.assertEqual((), registry.list_projects())
+
+    def test_invalid_save_paths_raise_registry_errors_before_creating_files(self) -> None:
+        workspace, registry = self._case("invalid_paths")
+        for target in ("relative/new-book", str(workspace / "bad\0name")):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(ProjectRegistryError, "保存路径"):
+                    registry.create_project(target, name="新书")
+
+        self.assertEqual([], list(workspace.iterdir()))
+        self.assertEqual((), registry.list_projects())
+
+    @unittest.skipUnless(os.name == "nt", "Windows directory naming rules")
+    def test_windows_invalid_directory_names_fail_before_staging(self) -> None:
+        workspace, registry = self._case("windows_invalid_names")
+        for name in ("bad?name", "bad<name", "NUL", "CON.txt", "trailing.", "trailing "):
+            for target in (workspace / name, workspace / name / "新书"):
+                with self.subTest(target=target):
+                    with self.assertRaisesRegex(ProjectRegistryError, "Windows 不支持的目录名"):
+                        registry.create_project(target, name="新书")
+
+        self.assertEqual([], list(workspace.iterdir()))
+        self.assertEqual((), registry.list_projects())
+
     def test_create_rolls_back_staging_and_preserves_original_empty_target(self) -> None:
         workspace, registry = self._case("rollback")
         target = workspace / "empty"
@@ -97,6 +151,9 @@ class WorkbenchProjectRegistryTest(unittest.TestCase):
             (outside / directory).mkdir()
         with self.assertRaisesRegex(ProjectRegistryError, "outside"):
             registry.import_project(outside)
+        with self.assertRaisesRegex(ProjectRegistryError, "outside"):
+            registry.create_project(workspace / ".." / "outside" / "new-book", name="不能越界")
+        self.assertFalse((outside / "new-book").exists())
 
         with self.assertRaisesRegex(ProjectRegistryError, "secrets"):
             registry.create_project(

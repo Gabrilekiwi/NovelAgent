@@ -22,6 +22,7 @@ from core.engine.root_registry import RootRegistryService
 from core.model_calls import load_model_call_intent, load_model_call_receipt
 from core.runtime_paths import RuntimePaths
 from workbench.database import WorkbenchDatabase
+from workbench.instance import InstanceLease
 
 
 TERMINAL_JOB_STATES = frozenset({"completed", "cancelled", "failed"})
@@ -58,6 +59,10 @@ _REPAIR_NOT_CONVERGING_PATTERN = re.compile(
 
 class JobError(RuntimeError):
     """Raised when a workbench task transition would be unsafe."""
+
+
+class ProcessMonitorError(JobError):
+    """Execution outcome is unknown after local monitoring failed."""
 
 
 class DraftSourceConflict(JobError):
@@ -1352,6 +1357,7 @@ class JobSupervisor:
         python_executable: str | Path | None = None,
         process_factory: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
         poll_interval: float = 0.2,
+        instance_lease: InstanceLease | None = None,
     ) -> None:
         self.store = store
         self.project_lookup = project_lookup
@@ -1366,10 +1372,27 @@ class JobSupervisor:
         self._thread: threading.Thread | None = None
         self._process_lock = threading.Lock()
         self._active_process: subprocess.Popen[str] | None = None
+        self._instance_lease = instance_lease
+        self._owns_instance_lease = False
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
+        self._require_no_active_process()
+        if self._instance_lease is None:
+            self._instance_lease = InstanceLease(self.store.database.path.parent).acquire()
+            self._owns_instance_lease = True
+        self._instance_lease.require_held()
+        try:
+            self._start_worker()
+        except BaseException:
+            if self._owns_instance_lease:
+                self._instance_lease.close()
+                self._instance_lease = None
+                self._owns_instance_lease = False
+            raise
+
+    def _start_worker(self) -> None:
         self.store.recover_after_restart()
         self._reconcile_receipted_restart_commits()
         self._reconcile_known_review_pauses()
@@ -1394,6 +1417,20 @@ class JobSupervisor:
         thread = self._thread
         if thread is not None:
             thread.join(timeout=max(0.0, timeout))
+            if thread.is_alive():
+                raise JobError("执行线程尚未结束，保留工作台所有权，禁止接管。")
+        self._require_no_active_process()
+        if self._owns_instance_lease and self._instance_lease is not None:
+            self._instance_lease.close()
+            self._instance_lease = None
+            self._owns_instance_lease = False
+
+    def _require_no_active_process(self) -> None:
+        with self._process_lock:
+            if self._active_process is not None:
+                if self._active_process.poll() is None:
+                    raise JobError("执行子进程尚未确认退出，保留工作台所有权，禁止继续调度。")
+                self._active_process = None
 
     def _worker_loop(self) -> None:
         while not self._stop.is_set():
@@ -1409,6 +1446,11 @@ class JobSupervisor:
                     self._run_recovery(job)
                 else:
                     self.store.fail_job(job.id, {"code": "unsupported_job_kind", "kind": job.kind})
+            except ProcessMonitorError:
+                # Monitoring already attempted to persist an uncertain pause.
+                # If the database is unavailable, leave the running record for
+                # restart recovery; never downgrade it to an ordinary failure.
+                self._stop.set()
             except Exception as exc:  # noqa: BLE001 - worker must persist diagnostics and survive.
                 try:
                     current = self.store.get(job.id)
@@ -1829,11 +1871,22 @@ class JobSupervisor:
         )
 
     def _execute_subprocess(
+        self, job_id: str, chapter: int, command: Sequence[str], paths: Mapping[str, Path],
+    ) -> dict[str, Any]:
+        lease = self._instance_lease or InstanceLease(self.store.database.path.parent).acquire()
+        try:
+            return self._execute_owned_subprocess(job_id, chapter, command, paths, lease)
+        finally:
+            if self._instance_lease is None:
+                lease.close()
+
+    def _execute_owned_subprocess(
         self,
         job_id: str,
         chapter: int,
         command: Sequence[str],
         paths: Mapping[str, Path],
+        lease: InstanceLease,
     ) -> dict[str, Any]:
         paths["directory"].mkdir(parents=True, exist_ok=True)
         env = _provider_environment()
@@ -1841,18 +1894,20 @@ class JobSupervisor:
             progress_offset = paths["progress"].stat().st_size
         except OSError:
             progress_offset = 0
-        process = self.process_factory(
-            list(command),
-            cwd=str(self.repo_root),
-            env=env,
-            shell=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
         with self._process_lock:
+            if self._stop.is_set() or self._active_process is not None:
+                raise JobError("执行器已停止或仍有子进程，不能启动新的执行任务。")
+            process = lease.spawn(self.process_factory,
+                list(command),
+                cwd=str(self.repo_root),
+                env=env,
+                shell=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
             self._active_process = process
         cancelled = False
         stdout = ""
@@ -1880,9 +1935,36 @@ class JobSupervisor:
                         process.terminate()
                     continue
             progress_offset = self._ingest_progress(job_id, paths["progress"], progress_offset)
+        except BaseException as exc:
+            self._stop.set()
+            # A lost progress/database monitor must not orphan an engine and
+            # then allow this same owner to schedule another one. Termination
+            # does not prove that an already sent Provider request was free.
+            for stop in (process.terminate, process.kill):
+                try:
+                    if process.poll() is None:
+                        stop()
+                    stdout, stderr = process.communicate(timeout=2.0)
+                    break
+                except Exception:
+                    continue
+            try:
+                self.store.chapter_failed(
+                    job_id, chapter=chapter, uncertain=True,
+                    error={"code": "execution_monitor_failed", "type": type(exc).__name__,
+                           "message": _sanitize_diagnostic(str(exc)),
+                           "local_process_exited": process.returncode is not None,
+                           "provider_state": "unknown"},
+                )
+            except Exception:
+                # The original running row remains recoverable even if the
+                # failing database cannot persist this richer explanation.
+                pass
+            raise ProcessMonitorError("执行监控中断，已停止调度；请检查任务与调用凭证。") from exc
         finally:
             with self._process_lock:
-                self._active_process = None
+                if process.returncode is not None:
+                    self._active_process = None
         safe_stderr = _sanitize_diagnostic(stderr)
         paths["stdout"].write_text(stdout, encoding="utf-8")
         paths["stderr"].write_text(safe_stderr, encoding="utf-8")
