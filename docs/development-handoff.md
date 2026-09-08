@@ -4,7 +4,7 @@
 
 ## 当前任务
 
-阶段A已完成并提交33a0944。阶段B的T2.1七类事实同源契约与只读准备已完成，下一项为T8.0离线样例集。事实相关综合回归72通过；随后新增的准备反例用例集23通过。完整开发目标仍未完成。
+阶段A已完成并提交33a0944。阶段B的T2.1已提交fd85291，T8.0离线样例集已完成，下一项为T3.0/D1旧书状态来源试验。离线12项中8项确定性检查符合预期、4项语义策略缺口、0项回归；三份真实材料及隔离副本哈希一致。完整开发目标仍未完成。
 
 - 唯一主计划：[最终执行版1.0](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-final-2026-09-08.md)
 - 复审证据：[开发计划复审](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-review-2026-09-08.md)
@@ -47,14 +47,16 @@
 | T1.2 | 已完成 | 不存在父目录400中文提示，表单保留；改正目录201，刷新仍可读取作品 |
 | T2.1 | 已完成 | 七类共享schema、模型完整例子、纯准备计算与拒绝场景；见阶段B证据 |
 | T2其余、T3–T7 | 范围与子任务已确定、待实现 | 按最终版阶段A–F推进；D1旧书来源、D2格式兼容、D3可写恢复先做有限试验 |
-| T8.0 | 离线准备待开始 | 使用已有正文、响应和合成样本，无新付费调用 |
+| T8.0 | 已完成材料准备与离线运行 | 12项版本化样例、3份真实材料只读快照；4项语义缺口保留给T2.2/T2.4；没有人工质量评分或新模型效果评估 |
 | T8.1、T8.2 | 独立阶段、未授权真实调用 | 早期逐章配对与最终两模式连续验收分别限定预算；缺授权可继续独立工程 |
 
 隔离浏览器服务PID34396与session66437已停止，隔离标签页已关闭。工作台回归session87351已退出，测试证据文件在`.tmp/stage-a`。系统中原有pythonw进程15004未操作，不应把它视为本任务创建的服务。续接时仍需核对实际进程与Git状态。
 
 ## 下一条工作
 
-下一步T8.0：建立小型版本化离线检查集，覆盖七类混合、漏事实、身份歧义、数量变化、重复/连贯性问题和正常章节。复用`examples/chapter_fact_review/seven_kinds.json`及T2.1反例，补已有正文/保存响应的只读取证与来源哈希、判定依据。真实作品保持只读；材料快照放隔离目录，不调用Provider。该集合是检查策略的输入，不冒充模型质量评估或人工评分。
+下一步T3.0/D1：先固定一套legacy Strict隔离样本，验证七类变化、人工基线冲突、冲突决定绑定来源修订、改稿失效、清缓存重启/下章读回与再次编辑原来源。重点核对`core/story_project/semantic_parser.py`对人工authority和managed supporting的处理，以及`core/memory_v2/runtime.py:_chapter_operations(include_authoritative_state=False)`；不能直接把支持字段当当前权威，也不能只透传delta宣称下章可读。先写一页试验方案与D1待决问题，再做有限实现；不升级真实书。
+
+T8.0完成：`tests/fixtures/chapter_fact_offline_v1/manifest.json`及12个用例，`scripts/check_fact_offline_suite.py`可运行。默认不读取正式作品；加`--verify-local-sources`核对三份正式材料及隔离副本。结果`.tmp/stage-b/offline-report-initial.json`：8项确定性符合预期、4项policy_gap、0项回归；`--require-policy-complete`应返回1，防止把样例准备当策略完成。测试3通过，XML和哈希在stage-b-progress.json。真实快照位于`.tmp/stage-b/offline-source-snapshots`，未加入Git。注释均为agent整理，人工复核pending；三份真实材料没有伪造为输入输出配对。
 
 T2.1设计见`docs/development/chapter-fact-contract.md`。纯入口`core/engine/chapter_fact_prepare.py:prepare_confirmed_fact_changes`从上游绑定的authoritative_state计算before/after、名单人数和事件依赖，不读取或写入作品。未知实体/数量/位置/字段基线拒绝，T2.2再补显式声明；source_tier、身份等字段不允许经普通状态更新改变。现有领域校验器与名单reducer继续使用，未解决D1旧书来源优先级。T3.2必须把结果绑定到实际书籍版本、read-set、正文和事实决定后才能提交。
 

@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "chapter_fact_offline_v1",
+  "date": "2026-09-08",
+  "baseline_path": "baseline.json",
+  "baseline_sha256": "f89f4c67b5dfc25bf1c7362ff0bb94a7b5e8de8ee70ee5ab089830ff9c66262a",
+  "cases": [
+    {
+      "id": "seven_kinds",
+      "path": "cases/seven_kinds.json",
+      "sha256": "bf001e6f2e249d35a4f2fa77c2069164384c71ce0c814fd3e9c4e2fdb67f577d",
+      "category": "mixed_facts"
+    },
+    {
+      "id": "missing_quantity_baseline",
+      "path": "cases/missing_quantity_baseline.json",
+      "sha256": "f0e677f2315b0766190c2bba11b30481cf212166c216c2ad480409c7efdc1124",
+      "category": "quantity"
+    },
+    {
+      "id": "omitted_inventory",
+      "path": "cases/omitted_inventory.json",
+      "sha256": "a97b77d60b3136e8123a6d96dcd01dec00aeaacf302d2514b5fc03ac47497496",
+      "category": "omitted_fact"
+    },
+    {
+      "id": "empty_extraction_with_changes",
+      "path": "cases/empty_extraction_with_changes.json",
+      "sha256": "672403704668dfbd884ac6aed49897db7007de858089d613a2a07f3de5fdf411",
+      "category": "omitted_fact"
+    },
+    {
+      "id": "duplicate_inventory",
+      "path": "cases/duplicate_inventory.json",
+      "sha256": "4b941a457ca6a48e2ad540d513a2726d7f8eea4a305793281454fd88d28fa3ee",
+      "category": "duplicate_fact"
+    },
+    {
+      "id": "rejected_source_event",
+      "path": "cases/rejected_source_event.json",
+      "sha256": "12a0537245e45f75819637871e6335b1f0a0db24a05d03628f0de1dd13d73f38",
+      "category": "dependency"
+    },
+    {
+      "id": "ambiguous_change_order",
+      "path": "cases/ambiguous_change_order.json",
+      "sha256": "32439a70f0af1b5f84d8b29efccd621e1ddb59ec6b3aa417c933bd6e85bf043e",
+      "category": "quantity"
+    },
+    {
+      "id": "ambiguous_nickname",
+      "path": "cases/ambiguous_nickname.json",
+      "sha256": "e4dcfcbeb0102357025a22298fc5dfaf91f0352d147a934b5cd9b941e496005a",
+      "category": "identity_ambiguity"
+    },
+    {
+      "id": "unexplained_location_contradiction",
+      "path": "cases/unexplained_location_contradiction.json",
+      "sha256": "2325e193c3660464cd71c382005c5131e3e2d2ba0b8fa1f8729b6d238fbaab13",
+      "category": "continuity"
+    },
+    {
+      "id": "duplicate_rescue_scene",
+      "path": "cases/duplicate_rescue_scene.json",
+      "sha256": "4ad499be725549c4533c413035be8371ccfde9169970223700e9d2644431a26a",
+      "category": "repetition"
+    },
+    {
+      "id": "legitimate_repetition_not_blocked",
+      "path": "cases/legitimate_repetition_not_blocked.json",
+      "sha256": "edad14b6c9c73a94ba1a5aab3febd84274bfada1c23a0c72a1772b9c60f515d3",
+      "category": "normal"
+    },
+    {
+      "id": "normal_chapter",
+      "path": "cases/normal_chapter.json",
+      "sha256": "956a4e8d7bf6cc97c8a54151c693ece624d003f03014af7ac1a2df6dd344af7f",
+      "category": "normal"
+    }
+  ],
+  "external_readonly_sources": [
+    {
+      "id": "committed_chapter_26",
+      "kind": "committed_prose",
+      "path": "books/尸潮之下_我能提取进化词条_重写V2/正文/第026章_第26章 主控塔熄灯.md",
+      "sha256": "aa6df225026d8e92f8c715c5a1d5c70b9a6e7ca48514b56c495725990d65b9c0",
+      "snapshot": ".tmp/stage-b/offline-source-snapshots/committed_chapter_26.md",
+      "snapshot_sha256": "aa6df225026d8e92f8c715c5a1d5c70b9a6e7ca48514b56c495725990d65b9c0",
+      "bytes": 9614,
+      "annotation_source": "agent_reading",
+      "human_review_status": "pending",
+      "rationale": "赵铁在楼下远程读数，顾岚与陆沉在楼顶；运输的两组滤芯不应被误当成在场角色。",
+      "scored": false
+    },
+    {
+      "id": "saved_scene_response",
+      "kind": "saved_provider_response",
+      "path": "books/尸潮之下_我能提取进化词条_重写V2/.novelagent/runtime/runs/executions/execution_086be1e0604646e1b53e85f1696c7d76/model_calls/responses/openai-chapter_generation-scene-0001-primary-a1.txt",
+      "sha256": "15bdad02ad543213ba1461fb682f7ff7ceba1f905895f30db50a682de2568485",
+      "snapshot": ".tmp/stage-b/offline-source-snapshots/saved_scene_response.txt",
+      "snapshot_sha256": "15bdad02ad543213ba1461fb682f7ff7ceba1f905895f30db50a682de2568485",
+      "bytes": 3880,
+      "annotation_source": "agent_reading",
+      "human_review_status": "pending",
+      "rationale": "旧响应使用subjects/objects/location，车辆留在维修道而人徒步进入；后续策略需区分运输与物理在场。",
+      "scored": false
+    },
+    {
+      "id": "saved_empty_validation",
+      "kind": "saved_provider_response",
+      "path": "books/尸潮之下_我能提取进化词条_重写V2/.novelagent/runtime/runs/executions/execution_027237cc8cd8444f810ad2b5fa6df540/model_calls/responses/openai-llm_validation-9f29e849df6c4946942107c5363ce11e-a1.txt",
+      "sha256": "aa390952e01e1064e20cc0c8f9c054cc264258d109f0166fcd62c8b11e4b7fc5",
+      "snapshot": ".tmp/stage-b/offline-source-snapshots/saved_empty_validation.txt",
+      "snapshot_sha256": "aa390952e01e1064e20cc0c8f9c054cc264258d109f0166fcd62c8b11e4b7fc5",
+      "bytes": 15,
+      "annotation_source": "agent_reading",
+      "human_review_status": "pending",
+      "rationale": "保存的problems空列表只证明该次响应无问题项；没有给它与第26章建立未验证关联，也不将其视为人工质量真值。",
+      "scored": false
+    }
+  ],
+  "annotation_policy": "合成材料预期按明确场景定义；既有fixture预期沿用来源。所有注释由agent整理，未伪装成人工阅读评分。",
+  "purpose": "T8.0离线检查集；记录当前确定性门和未实现策略差距，不作模型效果或节时评估。",
+  "paid_provider_calls": 0
+}

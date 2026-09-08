@@ -1,0 +1,143 @@
+{
+  "id": "seven_kinds",
+  "category": "mixed_facts",
+  "checker": "fact_prepare",
+  "material": {
+    "chapter_text": "林澈从仓库抵达旧城站，周岚在站内迎接。周岚将一枚信标交给林澈，林澈的信标库存增加1枚。林澈加入旧城站守卫队，今后的目标是守住闸门。两人确认互为队友，信任状态变为互信。旧城站警戒值增加2点。",
+    "proposal": {
+      "schema_version": "1.0",
+      "facts": [
+        {
+          "local_key": "event_1",
+          "kind": "event",
+          "summary": "林澈从仓库抵达旧城站，周岚在站内迎接。",
+          "evidence_quotes": [
+            "林澈从仓库抵达旧城站，周岚在站内迎接。"
+          ],
+          "proposal": {
+            "event_type": "arrival_and_handover",
+            "status": "completed",
+            "occurrence_location": "location_old_station",
+            "onsite_participants": [
+              {
+                "entity_id": "char_lin_che",
+                "role": "actor"
+              },
+              {
+                "entity_id": "char_zhou_lan",
+                "role": "actor"
+              }
+            ],
+            "remote_participants": [],
+            "transported_items": [],
+            "related_entities": []
+          }
+        },
+        {
+          "local_key": "character_state_1",
+          "kind": "character_state",
+          "summary": "今后的目标是守住闸门。",
+          "evidence_quotes": [
+            "今后的目标是守住闸门。"
+          ],
+          "proposal": {
+            "entity_id": "char_lin_che",
+            "canonical_name": "林澈",
+            "field": "current_goal",
+            "after": "守住闸门",
+            "source_event_key": "event_1"
+          }
+        },
+        {
+          "local_key": "relationship_1",
+          "kind": "relationship",
+          "summary": "两人确认互为队友，信任状态变为互信。",
+          "evidence_quotes": [
+            "两人确认互为队友，信任状态变为互信。"
+          ],
+          "proposal": {
+            "relationship_id": "rel_lin_zhou",
+            "source_entity_id": "char_lin_che",
+            "target_entity_id": "char_zhou_lan",
+            "relation_type": "teammate",
+            "field": "trust",
+            "after": "互信",
+            "source_event_key": "event_1"
+          }
+        },
+        {
+          "local_key": "roster_1",
+          "kind": "roster",
+          "summary": "林澈加入旧城站守卫队",
+          "evidence_quotes": [
+            "林澈加入旧城站守卫队"
+          ],
+          "proposal": {
+            "roster_id": "roster_station_guards",
+            "operation": "add",
+            "member_ids": [
+              "char_lin_che"
+            ],
+            "source_event_key": "event_1"
+          }
+        },
+        {
+          "local_key": "location_1",
+          "kind": "location",
+          "summary": "林澈从仓库抵达旧城站",
+          "evidence_quotes": [
+            "林澈从仓库抵达旧城站"
+          ],
+          "proposal": {
+            "entity_id": "char_lin_che",
+            "from_location": "location_warehouse",
+            "to_location": "location_old_station",
+            "source_event_key": "event_1"
+          }
+        },
+        {
+          "local_key": "inventory_1",
+          "kind": "inventory",
+          "summary": "林澈的信标库存增加1枚",
+          "evidence_quotes": [
+            "林澈的信标库存增加1枚"
+          ],
+          "proposal": {
+            "owner_id": "char_lin_che",
+            "item_id": "item_beacon",
+            "delta": 1,
+            "source_event_key": "event_1"
+          }
+        },
+        {
+          "local_key": "counter_1",
+          "kind": "counter",
+          "summary": "旧城站警戒值增加2点",
+          "evidence_quotes": [
+            "旧城站警戒值增加2点"
+          ],
+          "proposal": {
+            "counter_id": "alert_level",
+            "operation": "increment",
+            "value": 2,
+            "source_event_key": "event_1"
+          }
+        }
+      ]
+    },
+    "baseline": "baseline.json"
+  },
+  "expected": {
+    "disposition": "accept"
+  },
+  "annotation": {
+    "source": "agent_curated_from_explicit_fixture",
+    "human_review_status": "pending",
+    "rationale": "合成正文逐项声明七类事实；零库存和计数基线已给出，应能生成完整准备结果。"
+  },
+  "origin": {
+    "kind": "synthetic_or_existing_repo_fixture",
+    "path": "examples/chapter_fact_review/seven_kinds.json",
+    "sha256": "1e8df44e4e66d247251325eca99e3a7db9f7763d886b018a4c530f85a564ac26"
+  }
+}

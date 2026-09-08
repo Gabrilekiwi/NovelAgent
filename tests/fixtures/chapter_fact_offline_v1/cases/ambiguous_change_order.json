@@ -1,0 +1,82 @@
+{
+  "id": "ambiguous_change_order",
+  "category": "quantity",
+  "checker": "fact_prepare",
+  "material": {
+    "chapter_text": "警戒值设为10。随后警戒值增加2，最终为12。",
+    "proposal": {
+      "schema_version": "1.0",
+      "facts": [
+        {
+          "local_key": "event_1",
+          "kind": "event",
+          "summary": "林澈从仓库抵达旧城站，周岚在站内迎接。",
+          "evidence_quotes": [
+            "警戒值设为10。随后警戒值增加2，最终为12。"
+          ],
+          "proposal": {
+            "event_type": "arrival_and_handover",
+            "status": "completed",
+            "occurrence_location": "location_old_station",
+            "onsite_participants": [
+              {
+                "entity_id": "char_lin_che",
+                "role": "actor"
+              },
+              {
+                "entity_id": "char_zhou_lan",
+                "role": "actor"
+              }
+            ],
+            "remote_participants": [],
+            "transported_items": [],
+            "related_entities": []
+          }
+        },
+        {
+          "local_key": "counter_increment",
+          "kind": "counter",
+          "summary": "旧城站警戒值增加2点",
+          "evidence_quotes": [
+            "警戒值设为10。随后警戒值增加2，最终为12。"
+          ],
+          "proposal": {
+            "counter_id": "alert_level",
+            "operation": "increment",
+            "value": 2,
+            "source_event_key": "event_1"
+          }
+        },
+        {
+          "local_key": "counter_set",
+          "kind": "counter",
+          "summary": "旧城站警戒值增加2点",
+          "evidence_quotes": [
+            "警戒值设为10。随后警戒值增加2，最终为12。"
+          ],
+          "proposal": {
+            "counter_id": "alert_level",
+            "operation": "set",
+            "value": 10,
+            "source_event_key": "event_1"
+          }
+        }
+      ]
+    },
+    "baseline": "baseline.json"
+  },
+  "expected": {
+    "disposition": "block",
+    "code": "chapter_fact_order_ambiguous"
+  },
+  "annotation": {
+    "source": "agent_curated_from_explicit_fixture",
+    "human_review_status": "pending",
+    "rationale": "同计数器set与increment共用证据，数组顺序不足以确定before/after。"
+  },
+  "origin": {
+    "kind": "synthetic_or_existing_repo_fixture",
+    "path": "examples/chapter_fact_review/seven_kinds.json",
+    "sha256": "1e8df44e4e66d247251325eca99e3a7db9f7763d886b018a4c530f85a564ac26"
+  }
+}

@@ -3,9 +3,10 @@
   "stage": "B",
   "stage_status": "in_progress",
   "completed_tasks": [
-    "T2.1"
+    "T2.1",
+    "T8.0"
   ],
-  "next_task": "T8.0",
+  "next_task": "T3.0",
   "goal_complete": false,
   "stage_a_commit": "33a0944",
   "substeps": {
@@ -123,6 +124,22 @@
           "hostname": "PCMICRO-7LA9Q0O"
         }
       ]
+    },
+    {
+      "path": ".tmp/stage-b/offline-suite-tests.xml",
+      "sha256": "52920263ae8b99fe172ace8c469500f723760578eb4c20492426521af1c475e9",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "3",
+          "time": "0.745",
+          "timestamp": "2026-09-08T16:03:20.676502+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
     }
   ],
   "paid_provider_calls": 0,
@@ -132,6 +149,41 @@
     "Preparation is read-only and not integrated into formal commit or next-chapter readback.",
     "D1 source decisions, D2 format compatibility, D3 writable recovery remain pending.",
     "Auxiliary implementation agent failed before writing files due to quota; root implemented and tested the preparation layer.",
-    "Evidence matching/order checks do not prove semantic support or chronological order in flashbacks."
-  ]
+    "Evidence matching/order checks do not prove semantic support or chronological order in flashbacks.",
+    "T8.0 retains four semantic policy gaps; the offline dataset is ready but these quality checks are not implemented. All new source annotations are agent-curated with human review pending."
+  ],
+  "t2_1_commit": "fd85291",
+  "offline_suite": {
+    "manifest": "tests/fixtures/chapter_fact_offline_v1/manifest.json",
+    "manifest_sha256": "7dc99d1a793dd5b9f0277054649840ea9895eba10fe29d7b8a67ee6537e09d00",
+    "report": ".tmp/stage-b/offline-report-initial.json",
+    "report_sha256": "27ae385ff4da2477c9ea939d54d9900f45a60e0b21152d97bff0ce84efba1beb",
+    "case_count": 12,
+    "deterministic_verified": 8,
+    "policy_gaps": 4,
+    "regressions": 0,
+    "local_sources": [
+      {
+        "id": "committed_chapter_26",
+        "source_matches": true,
+        "snapshot_matches": true,
+        "scored": false
+      },
+      {
+        "id": "saved_scene_response",
+        "source_matches": true,
+        "snapshot_matches": true,
+        "scored": false
+      },
+      {
+        "id": "saved_empty_validation",
+        "source_matches": true,
+        "snapshot_matches": true,
+        "scored": false
+      }
+    ],
+    "human_quality_scored": false,
+    "model_effectiveness_evaluated": false,
+    "strict_policy_gate_exit": 1
+  }
 }
