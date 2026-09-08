@@ -12,6 +12,416 @@ ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "workbench" / "static"
 
 
+def test_chapter_card_ui_is_source_bound_and_never_claims_to_generate() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+
+    assert "/chapters/${chapterNumber}/card`" in spa
+    assert "chapter.chapter_card = payload.chapter_card || payload" in spa
+    assert "expected_card_sha256" in html
+    assert "data-chapter-card-confirm-form" in html
+    assert "data-defer-success-toast" in html
+    assert 'data-card-confirm-button disabled' in html
+    assert 'if (!form.hasAttribute("data-defer-success-toast")) showToast(message);' in (STATIC / "workbench.js").read_text(encoding="utf-8")
+    assert "不会调用模型，也不会创建候选或提交正文" in html
+    assert "确认凭据只保存在本次工作台会话；尚未生成正文候选" in html
+    assert "window.sessionStorage.setItem(chapterConfirmationKey" in spa
+    assert "writeChapterConfirmation" in spa
+    assert "form.dataset.inputRevision === submission.input_revision" in spa
+    assert 'projectId === state.projectId' in spa
+    assert 'state.route?.area === "chapter"' in spa
+    assert 'state.route?.projectId === projectId' in spa
+    assert "if (!stillCurrent) return;" in spa
+    assert "const routeRevision = ++state.routeRevision;" in spa
+    assert "expectedRouteRevision != null && state.routeRevision !== expectedRouteRevision" in spa
+    assert "if (!responseTargetsCurrentCard) return;" in spa
+    assert "旧确认未被采用" in spa
+    assert 'UI.showToast(payload.message || "章节意图已确认。");' in spa
+    assert 'event.detail?.status !== 409' in spa
+    assert "event.detail?.submission_context" in spa
+    assert "clearChapterConfirmation(projectId, chapter);" in spa
+    assert "你的意图编辑已保留" in spa
+    assert "let refreshed = false;" in spa
+    assert "if (!refreshed)" in spa
+    assert 'all(".is-busy", form).forEach' in spa
+    assert "chapterSubmissionTargetsCurrentCard" in spa
+    assert "readChapterConfirmation(projectId, card.chapter_index, card)" in spa
+    assert 'value?.record_type === "chapter_intent_confirmation"' in spa
+    assert "value?.context_sha256 === card?.binding?.context_sha256" in spa
+    assert 'setText("code[data-card-sha]"' in spa
+    assert 'setText("[data-card-sha]"' not in spa
+    ui = (STATIC / "workbench.js").read_text(encoding="utf-8")
+    assert "const boundJsonBody = isChapterCardConfirmation ? formAsJson(form) : null;" in ui
+    assert "submission_context: submissionContext" in ui
+    assert "const submissionIsCurrent = () => !submissionContext ||" in ui
+    assert "if (!submissionIsCurrent()) return;" in ui
+    assert "if (responseTargetsCurrentForm)" in ui
+    assert "if (submissionIsCurrent())" in ui
+    assert "form?.dataset?.submissionNonce === submission?.submission_nonce" in spa
+    assert "const invalidateChapterCardSubmission = () =>" in spa
+    assert "invalidateChapterCardSubmission();" in spa
+    assert "data-amendment-panel" in html
+    assert 'amendmentPanel.hidden = !hasProse' in spa
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_chapter_card_submission_matcher_rejects_stale_routes_and_cards() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const chapterConfirmationKey =";
+if (!source.includes(marker)) throw new Error("chapter matcher export marker is missing");
+source = source.replace(marker, "  globalThis.__chapterMatcher = chapterSubmissionTargetsCurrentCard;\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+vm.createContext(sandbox);
+vm.runInContext(source, sandbox);
+const match = sandbox.__chapterMatcher;
+const submission = { project_id: "book-a", chapter: 2, card_sha256: "a".repeat(64), submission_nonce: "7" };
+const confirmation = { chapter_index: 2, card_sha256: "a".repeat(64) };
+const form = { dataset: { projectId: "book-a", chapter: "2", cardSha: "a".repeat(64), submissionNonce: "7" } };
+const currentState = {
+  projectId: "book-a",
+  route: { area: "chapter", projectId: "book-a", chapter: 2 },
+  chapterCard: { confirmation: { card_sha256: "a".repeat(64) } }
+};
+if (!match({ submission, confirmation, form, currentState })) throw new Error("current submission was rejected");
+if (match({ submission, confirmation, form, currentState: { ...currentState, projectId: "book-b" } })) throw new Error("stale project was accepted");
+if (match({ submission, confirmation, form, currentState: { ...currentState, route: { area: "chapter", projectId: "book-a", chapter: 3 } } })) throw new Error("stale chapter was accepted");
+if (match({ submission, confirmation, form: { dataset: { ...form.dataset, cardSha: "b".repeat(64) } }, currentState })) throw new Error("stale card was accepted");
+if (match({ submission, confirmation, form: { dataset: { ...form.dataset, submissionNonce: "8" } }, currentState })) throw new Error("stale nonce was accepted");
+if (match({ submission, confirmation: { ...confirmation, card_sha256: "b".repeat(64) }, form, currentState })) throw new Error("mismatched response was accepted");
+'''
+    completed = subprocess.run(
+        ["node", "-e", script, str(spa_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_candidate_ui_uses_compact_discovery_then_detail_and_exact_author_actions() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+
+    assert "data-chapter-candidate-panel" in html
+    assert "data-candidate-resume" in html
+    assert "data-candidate-create-draft" in html
+    assert "data-candidate-abandon-provider" in html
+    assert "本页不提供硬取消" in html
+
+    presentation = spa.split("const candidateStatusPresentation =", 1)[1].split(
+        "const renderChapterCandidate =", 1
+    )[0]
+    assert 'needs_recovery: { status: "needs_recovery"' in presentation
+    assert 'provider_uncertain: { status: "blocked"' in presentation
+    assert "系统不会自动调用 Provider" in presentation
+    assert "系统没有自动重试" in presentation
+
+    loader = spa.split("const loadChapterCandidate =", 1)[1].split(
+        "const loadChapter =", 1
+    )[0]
+    assert "const { payload } = await api(collection);" in loader
+    assert 'arrayFrom(payload, "items", "candidates")[0]' in loader
+    assert "const detail = await api(candidateDetailPath(projectId, chapterNumber, candidateId));" in loader
+    assert "return detail.payload?.candidate || detail.payload;" in loader
+    assert "input_pack" not in loader
+
+    resume = spa.split('one("[data-candidate-resume]")', 1)[1].split(
+        'one("[data-candidate-create-draft]")', 1
+    )[0]
+    resume_compact = " ".join(resume.split())
+    assert 'candidate.status !== "needs_recovery"' in resume
+    assert (
+        "json: { expected_intent_hash: candidate.intent_hash, author_confirmed: true }"
+        in resume_compact
+    )
+
+    create_draft = spa.split('one("[data-candidate-create-draft]")', 1)[1].split(
+        'one("[data-candidate-abandon-provider]")', 1
+    )[0]
+    create_draft_compact = " ".join(create_draft.split())
+    assert 'candidate.status !== "completed"' in create_draft
+    assert (
+        "json: { expected_prose_sha256: candidate.prose?.sha256, author_confirmed: true }"
+        in create_draft_compact
+    )
+
+
+def test_candidate_conflicts_and_draft_cas_preserve_author_work() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    generate = spa.split('one("[data-candidate-generate]")', 1)[1].split(
+        'one("[data-candidate-resume]")', 1
+    )[0]
+    assert 'if (error?.status === 409 && errorCode === "chapter_card_changed")' in generate
+    changed_branch, ordinary_conflict_branch = generate.split("} else {", 1)
+    assert "clearChapterConfirmation(action.project_id, action.chapter);" in changed_branch
+    assert "clearChapterConfirmation(" not in ordinary_conflict_branch
+    assert "showCandidateActionError(message);" in ordinary_conflict_branch
+
+    chapter_card_error_handler = spa.split(
+        'doc.addEventListener("workbench:error"', 1
+    )[1]
+    before_confirmation_clear = chapter_card_error_handler.split(
+        "clearChapterConfirmation(projectId, chapter);", 1
+    )[0]
+    assert 'event.detail?.error_code !== "chapter_card_changed"' in before_confirmation_clear
+    assert "error_code: error?.payload?.error?.code" in stream
+
+    draft_save = spa.split('one("[data-candidate-draft-form]")?.addEventListener("submit"', 1)[1].split(
+        'one("[data-chapter-card-confirm-form]")?.addEventListener("input"', 1
+    )[0]
+    draft_save_compact = " ".join(draft_save.split())
+    assert 'method: "PUT"' in draft_save
+    assert "json: { text: localText, expected_revision: draft.revision }" in draft_save_compact
+    assert "if (error?.status === 409)" in draft_save
+    assert "renderChapterCandidate(fresh, \"\", { preserveDraftText: localText });" in draft_save
+    assert "你的文字已原样保留" in draft_save
+
+
+def test_fact_review_ui_uses_extraction_evidence_and_explicit_author_decisions() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+
+    assert "data-chapter-fact-panel" in html
+    assert "data-fact-extract" in html
+    assert "data-fact-resume" in html
+    assert "data-fact-cancel" in html
+    assert "data-fact-abandon-provider" in html
+    assert "data-fact-review-form" in html
+    assert "删除”会留下明确拒绝记录，不会物理删除证据" in html
+    assert "正式正文和权威状态仍不会自动写入" in html
+
+    loader = spa.split("const loadChapterFactState =", 1)[1].split(
+        "const refreshChapterFactsForCurrentDraft =", 1
+    )[0]
+    assert "factExtractionCollectionPath(draft.id)" in loader
+    assert "extractionItems[extractionItems.length - 1]" in loader
+    assert "encodeURIComponent(latest.extraction_id)" in loader
+    assert "/fact-reviews`" in loader
+    assert "factReviewDetailPath(latestReview.id)" in loader
+
+    assert 'appendFactRole(roles, "发生地点"' in spa
+    assert 'appendFactRole(roles, "现场参与者"' in spa
+    assert 'appendFactRole(roles, "远程参与者"' in spa
+    assert 'appendFactRole(roles, "运输中物品"' in spa
+    assert 'appendFactRole(roles, "逻辑关联对象"' in spa
+    assert 'card.dataset.decision = deleteButton ? "rejected"' in spa
+    assert 'reason.value = "author_deleted"' in spa
+    assert 'reason.name = `reason_${fact.fact_id}`' in spa
+    assert 'const reviewBlocksStart = activeReview && activeReview.state !== "stale";' in spa
+    assert "const canStart = !reviewBlocksStart" in spa
+
+    extraction_action = spa.split('one("[data-fact-extract]")', 1)[1].split(
+        'one("[data-fact-resume]")', 1
+    )[0]
+    assert 'headers: { "Idempotency-Key": operationKey }' in extraction_action
+    assert "expected_draft_revision: action.draft_revision" in extraction_action
+    assert "expected_draft_sha256: action.draft_sha256" in extraction_action
+    assert "author_confirmed: true" in extraction_action
+    assert "请先保存正文草稿" in extraction_action
+
+    save = spa.split("const saveCurrentFactReview =", 1)[1].split(
+        'one("[data-fact-review-form]")', 1
+    )[0]
+    assert 'method: "PUT"' in save
+    assert "facts: localFacts, expected_revision: review.revision" in save
+    confirm = spa.split('one("[data-fact-confirm]")', 1)[1].split(
+        'one("[data-chapter-card-confirm-form]")', 1
+    )[0]
+    assert "expected_facts_sha256: current.facts_sha256" in confirm
+    assert "expected_draft_revision: action.draft_revision" in confirm
+    assert "expected_draft_sha256: action.draft_sha256" in confirm
+    assert "后续提交还需单独确认" in confirm
+    assert "你的事实编辑已原样保留" in spa
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_fact_action_matcher_rejects_late_or_changed_draft_responses() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const beginFactAction =";
+if (!source.includes(marker)) throw new Error("fact matcher export marker is missing");
+source = source.replace(marker, "  globalThis.__factMatcher = factActionTargetsCurrentDraft;\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {}, sessionStorage: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const match = sandbox.__factMatcher;
+const sha = "a".repeat(64);
+const action = {
+  nonce: "3", route_revision: 9, project_id: "book-a", chapter: 2,
+  draft_id: "candidate_draft_" + "1".repeat(32), draft_revision: 4, draft_sha256: sha
+};
+const draft = { id: action.draft_id, revision: 4, sha256: sha };
+const currentState = {
+  factActionNonce: 3, routeRevision: 9, projectId: "book-a",
+  route: { area: "chapter", projectId: "book-a", chapter: 2 },
+  chapterCandidate: { draft }
+};
+const extraction = { source: { draft_id: draft.id, draft_revision: 4, draft_sha256: sha } };
+if (!match({ action, extraction, currentState })) throw new Error("current fact response was rejected");
+if (match({ action, extraction, currentState: { ...currentState, factActionNonce: 4 } })) throw new Error("old action nonce was accepted");
+if (match({ action, extraction, currentState: { ...currentState, route: { area: "chapter", projectId: "book-a", chapter: 3 } } })) throw new Error("old chapter route was accepted");
+if (match({ action, extraction, currentState: { ...currentState, chapterCandidate: { draft: { ...draft, revision: 5 } } } })) throw new Error("changed draft revision was accepted");
+if (match({ action, extraction: { source: { ...extraction.source, draft_sha256: "b".repeat(64) } }, currentState })) throw new Error("mismatched extraction source was accepted");
+'''
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_candidate_status_matrix_exposes_recovery_and_provider_uncertainty() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const renderChapterCandidate =";
+if (!source.includes(marker)) throw new Error("candidate presentation export marker is missing");
+source = source.replace(marker, "  globalThis.__candidatePresentation = candidateStatusPresentation;\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const present = sandbox.__candidatePresentation;
+const recovery = present({ status: "needs_recovery" });
+const uncertain = present({ status: "provider_uncertain" });
+if (recovery.status !== "needs_recovery" || recovery.label !== "等待作者恢复") {
+  throw new Error(`bad needs_recovery presentation: ${JSON.stringify(recovery)}`);
+}
+if (!recovery.message.includes("不会自动调用 Provider")) {
+  throw new Error("needs_recovery does not disclose its author-confirmed Provider boundary");
+}
+if (uncertain.status !== "blocked" || uncertain.label !== "结果不确定") {
+  throw new Error(`bad provider_uncertain presentation: ${JSON.stringify(uncertain)}`);
+}
+if (!uncertain.message.includes("没有自动重试")) {
+  throw new Error("provider_uncertain does not disclose that automatic retry is stopped");
+}
+'''
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_candidate_generation_matcher_rejects_late_or_reconfirmed_responses() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r'''
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const invalidateChapterCardSubmission =";
+if (!source.includes(marker)) throw new Error("candidate matcher export marker is missing");
+source = source.replace(marker, "  globalThis.__candidateMatcher = candidateActionTargetsCurrentChapter;\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const match = sandbox.__candidateMatcher;
+const confirmationSha = "c".repeat(64);
+const replacementSha = "d".repeat(64);
+const cardSha = "a".repeat(64);
+const action = {
+  nonce: "7",
+  route_revision: 11,
+  project_id: "book-a",
+  chapter: 2,
+  candidate_id: null,
+  draft_id: null,
+  card_sha256: cardSha,
+  confirmation_sha256: confirmationSha,
+  require_card_binding: true,
+  require_confirmation: true
+};
+const candidate = {
+  candidate_id: `candidate_${"1".repeat(40)}`,
+  project_id: "book-a",
+  chapter_index: 2,
+  confirmation: { confirmation_sha256: confirmationSha }
+};
+const currentState = {
+  candidateActionNonce: 7,
+  routeRevision: 11,
+  projectId: "book-a",
+  route: { area: "chapter", projectId: "book-a", chapter: 2 },
+  chapterCard: { confirmation: { card_sha256: cardSha } },
+  chapterConfirmation: { confirmation_sha256: confirmationSha },
+  chapterCandidate: null
+};
+if (!match({ action, candidate, currentState })) throw new Error("current generation response was rejected");
+if (match({ action, candidate: { ...candidate, confirmation: { confirmation_sha256: replacementSha } }, currentState })) {
+  throw new Error("late response with another confirmation_sha256 was accepted");
+}
+if (match({ action, candidate, currentState: { ...currentState, chapterConfirmation: { confirmation_sha256: replacementSha } } })) {
+  throw new Error("response from the previous confirmation was accepted after reconfirmation");
+}
+if (match({ action, candidate, currentState: { ...currentState, candidateActionNonce: 8 } })) {
+  throw new Error("response from an older Candidate action was accepted");
+}
+if (match({ action, candidate: { ...candidate, confirmation: {} }, currentState })) {
+  throw new Error("generation response without confirmation_sha256 was accepted");
+}
+'''
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
 def test_uncertain_chapter_event_latches_the_browser_in_recovery() -> None:
     ui = (STATIC / "workbench.js").read_text(encoding="utf-8")
 

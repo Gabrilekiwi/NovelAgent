@@ -7,7 +7,7 @@ import inspect
 import os
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
@@ -102,9 +102,10 @@ from core.engine.persistence import (
     persistence_run_lock,
 )
 from core.engine.persistence_coordinator import PersistenceCoordinator
-from core.engine.locked_chapter_state import (
-    active_locked_chapter_checkpoint,
-    resolved_execution_ids,
+from core.engine.locked_chapter_state import active_locked_chapter_checkpoint
+from core.engine.provider_safety import (
+    list_unresolved_provider_calls,
+    provider_execution_lock,
 )
 from core.engine.locked_chapter import (
     LockedChapterRecoveryError,
@@ -334,45 +335,54 @@ class AgentExecutor:
         previous_tracker = self._run_budget_tracker
         previous_runtime = self._model_call_runtime
         try:
-            self._execution_evidence = self._begin_execution_evidence(persist=persist)
-            self._run_budget_tracker = RunBudgetTracker(self.run_budget_limits)
-            model_calls_ref = (
-                self._execution_evidence.get("model_calls_ref")
-                if isinstance(self._execution_evidence, dict)
-                else None
+            lock_scope = (
+                provider_execution_lock(self.run_dir)
+                if self._requires_execution_evidence(persist=persist)
+                else nullcontext()
             )
-            self._model_call_runtime = (
-                ModelCallRuntimeContext(
-                    ModelCallStore(self.run_dir / Path(model_calls_ref)),
-                    tracker=self._run_budget_tracker,
+            with lock_scope:
+                self._execution_evidence = self._begin_execution_evidence(persist=persist)
+                self._run_budget_tracker = RunBudgetTracker(self.run_budget_limits)
+                model_calls_ref = (
+                    self._execution_evidence.get("model_calls_ref")
+                    if isinstance(self._execution_evidence, dict)
+                    else None
                 )
-                if isinstance(model_calls_ref, str) and model_calls_ref
-                else None
-            )
-            if self.autonomy_run_context is not None:
-                self.autonomy_run_context.hydrate_budget_tracker(
-                    self._run_budget_tracker
+                self._model_call_runtime = (
+                    ModelCallRuntimeContext(
+                        ModelCallStore(self.run_dir / Path(model_calls_ref)),
+                        tracker=self._run_budget_tracker,
+                    )
+                    if isinstance(model_calls_ref, str) and model_calls_ref
+                    else None
                 )
-            if self._model_call_runtime is None:
-                yield
-            else:
-                with use_model_call_runtime(self._model_call_runtime):
+                if self.autonomy_run_context is not None:
+                    self.autonomy_run_context.hydrate_budget_tracker(
+                        self._run_budget_tracker
+                    )
+                if self._model_call_runtime is None:
                     yield
+                else:
+                    with use_model_call_runtime(self._model_call_runtime):
+                        yield
         finally:
             self._execution_evidence = previous_evidence
             self._run_budget_tracker = previous_tracker
             self._model_call_runtime = previous_runtime
             self._execution_scope_depth = 0
 
-    def _begin_execution_evidence(self, *, persist: bool) -> dict[str, Any] | None:
-        if not self.enable_execution_provenance:
-            return None
-        persist_evidence = (
+    def _requires_execution_evidence(self, *, persist: bool) -> bool:
+        return (
             persist
             or not self.dry_run
             or self.enable_llm_validator
             or _director_mode(self.director) == "model"
         )
+
+    def _begin_execution_evidence(self, *, persist: bool) -> dict[str, Any] | None:
+        if not self.enable_execution_provenance:
+            return None
+        persist_evidence = self._requires_execution_evidence(persist=persist)
         if persist_evidence:
             unresolved = _unresolved_provider_calls(self.run_dir)
             if unresolved:
@@ -4224,22 +4234,8 @@ def _capture_execution_provenance_cached(
 
 
 def _unresolved_provider_calls(run_dir: Path) -> list[dict[str, Any]]:
-    executions_root = run_dir / "executions"
-    if not executions_root.is_dir():
-        return []
-    unresolved: list[dict[str, Any]] = []
-    handled = resolved_execution_ids(run_dir)
-    for execution_dir in sorted(executions_root.glob("execution_*")):
-        if execution_dir.name in handled:
-            continue
-        model_root = execution_dir / "model_calls"
-        if not model_root.is_dir():
-            continue
-        unresolved.extend(ModelCallStore(model_root).list_uncertain_calls())
-    return sorted(
-        unresolved,
-        key=lambda item: (str(item.get("created_at") or ""), str(item.get("attempt_id") or "")),
-    )
+    # Compatibility wrapper retained for recovery callers and older tests.
+    return list_unresolved_provider_calls(run_dir)
 
 
 def _chapter_evidence_spans(

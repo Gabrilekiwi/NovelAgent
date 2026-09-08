@@ -17,6 +17,7 @@ from core.engine.locked_chapter_state import (
     verify_locked_chapter_scene_sources,
 )
 from core.engine.persistence import atomic_create_json, persistence_run_lock
+from core.engine.provider_safety import CANDIDATE_EXECUTION_PREFIX
 from core.engine.run_record import validate_run_result
 from core.engine.scene_source_provenance import (
     SceneSourceProvenanceError,
@@ -376,6 +377,10 @@ def _unresolved_executions(run_dir: Path) -> list[dict[str, Any]]:
         return unresolved
     for execution_dir in sorted(executions_root.glob("execution_*")):
         execution_id = execution_dir.name
+        # Candidate calls have an independent recovery lifecycle. A legacy
+        # chapter reset must never classify or resolve their side effects.
+        if execution_id.startswith(CANDIDATE_EXECUTION_PREFIX):
+            continue
         if execution_id in handled:
             continue
         model_root = execution_dir / "model_calls"

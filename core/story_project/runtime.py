@@ -17,11 +17,19 @@ from core.memory_v2 import load_canonical_memory, memory_projection_hash
 from core.memory_v2.recovery import (
     MemoryAuthorityMismatchError,
     ensure_event_authority_caches,
+    read_event_authority_projection,
 )
 from core.runtime_paths import RuntimePaths
 from core.story_project.authority import AUTHORITY_MODE_EVENT
 from core.memory_v2.canonical import canonical_json_hash
 from core.story_project.semantic_parser import SEMANTIC_PARSER_VERSION
+
+
+RUNTIME_CACHE_POLICY_ENSURE = "ensure"
+RUNTIME_CACHE_POLICY_BYPASS = "bypass"
+_RUNTIME_CACHE_POLICIES = frozenset(
+    {RUNTIME_CACHE_POLICY_ENSURE, RUNTIME_CACHE_POLICY_BYPASS}
+)
 
 
 class StoryProjectSequenceDriftError(ValueError):
@@ -46,6 +54,7 @@ class GenerationStoryProjectContextLoader:
     overwrite: bool = False
     allow_story_state_shadow_downgrade: bool = False
     outline_override: dict[str, Any] | None = None
+    runtime_cache_policy: str = RUNTIME_CACHE_POLICY_ENSURE
 
     def __call__(
         self,
@@ -64,6 +73,7 @@ class GenerationStoryProjectContextLoader:
             project_identity=self.project_identity,
             allow_story_state_shadow_downgrade=self.allow_story_state_shadow_downgrade,
             outline_override=self.outline_override,
+            runtime_cache_policy=self.runtime_cache_policy,
         )
         if hint is not None and context.chapter_index != hint:
             raise StoryProjectSequenceDriftError(
@@ -83,7 +93,9 @@ def build_generation_story_project_context(
     project_identity: ProjectIdentity | None = None,
     allow_story_state_shadow_downgrade: bool = False,
     outline_override: dict[str, Any] | None = None,
+    runtime_cache_policy: str = RUNTIME_CACHE_POLICY_ENSURE,
 ) -> StoryProjectRuntimeContext:
+    runtime_cache_policy = _validated_runtime_cache_policy(runtime_cache_policy)
     validation = validate_story_project(
         story_project=story_project,
         chapter=chapter,
@@ -108,7 +120,11 @@ def build_generation_story_project_context(
         previous_chapter_fail_closed=identity.story_state_mode == "strict" or event_authority,
         outline_override=outline_override,
     )
-    memory_v2 = _load_memory_v2_context(root, identity)
+    memory_v2 = _load_memory_v2_context(
+        root,
+        identity,
+        cache_policy=runtime_cache_policy,
+    )
     if event_authority and outline_override is not None:
         activation = _event_authority_activation(identity)
         read_set = capture_story_project_read_set(
@@ -258,6 +274,7 @@ def build_generation_story_project_context_loader(
     project_identity: ProjectIdentity | None = None,
     allow_story_state_shadow_downgrade: bool = False,
     outline_override: dict[str, Any] | None = None,
+    runtime_cache_policy: str = RUNTIME_CACHE_POLICY_ENSURE,
 ) -> GenerationStoryProjectContextLoader:
     resolution = resolve_story_project_root(story_project, workspace_root=workspace_root)
     if not resolution.ok or resolution.root is None:
@@ -271,10 +288,17 @@ def build_generation_story_project_context_loader(
         overwrite=bool(overwrite),
         allow_story_state_shadow_downgrade=bool(allow_story_state_shadow_downgrade),
         outline_override=outline_override,
+        runtime_cache_policy=_validated_runtime_cache_policy(runtime_cache_policy),
     )
 
 
-def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, Any]:
+def _load_memory_v2_context(
+    root: Path,
+    identity: ProjectIdentity,
+    *,
+    cache_policy: str = RUNTIME_CACHE_POLICY_ENSURE,
+) -> dict[str, Any]:
+    cache_policy = _validated_runtime_cache_policy(cache_policy)
     runtime_paths = RuntimePaths.for_story_project(root)
     memory_root = runtime_paths.memory_dir / "v2"
     canonical_path = memory_root / "canonical_memory.json"
@@ -285,14 +309,22 @@ def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, 
     if event_authority:
         authority = identity.authority or {}
         try:
-            ensured = ensure_event_authority_caches(
-                memory_root,
-                runtime_root=runtime_paths.runtime_dir,
-                runtime_snapshot_target=runtime_paths.snapshot_path,
-                expected_book_id=identity.book_id,
-                expected_authority_epoch=int(authority["authority_epoch"]),
-                expected_head_event_hash=str(authority["head_event_hash"]),
-            )
+            if cache_policy == RUNTIME_CACHE_POLICY_BYPASS:
+                ensured = read_event_authority_projection(
+                    memory_root,
+                    expected_book_id=identity.book_id,
+                    expected_authority_epoch=int(authority["authority_epoch"]),
+                    expected_head_event_hash=str(authority["head_event_hash"]),
+                )
+            else:
+                ensured = ensure_event_authority_caches(
+                    memory_root,
+                    runtime_root=runtime_paths.runtime_dir,
+                    runtime_snapshot_target=runtime_paths.snapshot_path,
+                    expected_book_id=identity.book_id,
+                    expected_authority_epoch=int(authority["authority_epoch"]),
+                    expected_head_event_hash=str(authority["head_event_hash"]),
+                )
         except MemoryAuthorityMismatchError as exc:
             mismatch_codes = {
                 "book_id": "story_project_memory_v2_identity_mismatch",
@@ -304,8 +336,22 @@ def _load_memory_v2_context(root: Path, identity: ProjectIdentity) -> dict[str, 
             raise ValueError("story_project_event_authority_replay_failed") from exc
         projection = ensured["projection"]
         replay_report = ensured["replay_report"]
-        cache_status = str(ensured["cache_status"])
+        cache_status = (
+            RUNTIME_CACHE_POLICY_BYPASS
+            if cache_policy == RUNTIME_CACHE_POLICY_BYPASS
+            else str(ensured["cache_status"])
+        )
         recovery_report = ensured.get("recovery_report")
+    elif cache_policy == RUNTIME_CACHE_POLICY_BYPASS:
+        return {
+            "status": "absent",
+            "canonical_path": str(canonical_path),
+            "event_store": str(memory_root / "events"),
+            "revision": None,
+            "projection_hash": None,
+            "projection": None,
+            "cache_status": RUNTIME_CACHE_POLICY_BYPASS,
+        }
     elif not canonical_path.exists():
         return {
             "status": "absent",
@@ -366,6 +412,16 @@ def _event_authority_activation(identity: ProjectIdentity) -> dict[str, Any]:
     }
 
 
+def _validated_runtime_cache_policy(value: str) -> str:
+    policy = str(value)
+    if policy not in _RUNTIME_CACHE_POLICIES:
+        raise ValueError(
+            "runtime_cache_policy must be one of: "
+            + ", ".join(sorted(_RUNTIME_CACHE_POLICIES))
+        )
+    return policy
+
+
 def _normalized_requested_chapter(chapter: str | int | None) -> str:
     requested = "auto" if chapter is None else str(chapter)
     if requested == "auto":
@@ -389,6 +445,8 @@ def _validated_chapter_hint(chapter_hint: int | None) -> int | None:
 
 __all__ = [
     "GenerationStoryProjectContextLoader",
+    "RUNTIME_CACHE_POLICY_BYPASS",
+    "RUNTIME_CACHE_POLICY_ENSURE",
     "StoryProjectSequenceDriftError",
     "build_generation_story_project_context",
     "build_generation_story_project_context_loader",

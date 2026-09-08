@@ -43,6 +43,32 @@ from core.story_project.semantic_parser import (
 )
 from core.story_project.validator import validate_story_project
 from workbench.amendments import AmendmentError, AmendmentService
+from workbench.chapter_cards import (
+    ChapterCardConflict,
+    ChapterCardError,
+    ChapterCardService,
+)
+from workbench.chapter_candidates import (
+    ChapterCandidateService,
+    ChapterCandidateWorkbenchConflict,
+    ChapterCandidateWorkbenchError,
+    ChapterCandidateWorkbenchIntegrity,
+    ChapterCandidateWorkbenchNotFound,
+)
+from workbench.chapter_facts import (
+    ChapterFactReviewConflict,
+    ChapterFactReviewError,
+    ChapterFactReviewIntegrity,
+    ChapterFactReviewNotFound,
+    ChapterFactReviewService,
+)
+from workbench.chapter_fact_extractions import (
+    ChapterFactExtractionService,
+    ChapterFactExtractionWorkbenchConflict,
+    ChapterFactExtractionWorkbenchError,
+    ChapterFactExtractionWorkbenchIntegrity,
+    ChapterFactExtractionWorkbenchNotFound,
+)
 from workbench.cohorts import CohortError, CohortService, SCORE_DIMENSIONS
 from workbench.database import WorkbenchDatabase, WorkbenchDatabaseError
 from workbench.jobs import (
@@ -74,6 +100,8 @@ def create_app(
     auto_import_active: bool = True,
     outline_provider: Any | None = None,
     amendment_provider: Any | None = None,
+    chapter_candidate_executor_factory: Any | None = None,
+    chapter_fact_extraction_executor_factory: Any | None = None,
     python_executable: str | Path | None = None,
 ) -> FastAPI:
     repository = Path(repo_root or Path(__file__).resolve().parents[1]).resolve(strict=True)
@@ -84,7 +112,25 @@ def create_app(
     database = WorkbenchDatabase(db_path)
     projects = ProjectRegistry(database, allowed_workspaces=workspaces)
     outlines = OutlineBatchService(database, projects)
+    chapter_cards = ChapterCardService(projects)
     jobs = JobStore(database)
+    chapter_candidates = ChapterCandidateService(
+        projects=projects,
+        chapter_cards=chapter_cards,
+        database=database,
+        executor_factory=chapter_candidate_executor_factory,
+    )
+    chapter_facts = ChapterFactReviewService(
+        database=database,
+        projects=projects,
+        candidate_drafts=chapter_candidates.drafts,
+    )
+    chapter_fact_extractions = ChapterFactExtractionService(
+        projects=projects,
+        candidate_drafts=chapter_candidates.drafts,
+        chapter_facts=chapter_facts,
+        executor_factory=chapter_fact_extraction_executor_factory,
+    )
     planner = OutlinePlanner(database=database, outlines=outlines, provider=outline_provider)
     amendments = AmendmentService(
         database=database,
@@ -143,6 +189,10 @@ def create_app(
     app.state.database = database
     app.state.projects = projects
     app.state.outlines = outlines
+    app.state.chapter_cards = chapter_cards
+    app.state.chapter_candidates = chapter_candidates
+    app.state.chapter_facts = chapter_facts
+    app.state.chapter_fact_extractions = chapter_fact_extractions
     app.state.jobs = jobs
     app.state.planner = planner
     app.state.amendments = amendments
@@ -198,10 +248,42 @@ def create_app(
     @app.exception_handler(OutlinePlanningError)
     @app.exception_handler(JobError)
     @app.exception_handler(AmendmentError)
+    @app.exception_handler(ChapterCardError)
+    @app.exception_handler(ChapterCandidateWorkbenchError)
+    @app.exception_handler(ChapterFactReviewError)
+    @app.exception_handler(ChapterFactExtractionWorkbenchError)
     @app.exception_handler(CohortError)
     @app.exception_handler(ValueError)
     async def product_error(_: Request, exc: Exception):
-        status = 409 if isinstance(exc, (OutlineBatchConflict, JobError)) else 400
+        if isinstance(exc, ChapterCandidateWorkbenchNotFound):
+            status = 404
+        elif isinstance(exc, ChapterFactReviewNotFound):
+            status = 404
+        elif isinstance(exc, ChapterFactExtractionWorkbenchNotFound):
+            status = 404
+        elif isinstance(
+            exc,
+            (
+                ChapterCandidateWorkbenchIntegrity,
+                ChapterFactReviewIntegrity,
+                ChapterFactExtractionWorkbenchIntegrity,
+            ),
+        ):
+            status = 500
+        elif isinstance(
+            exc,
+            (
+                OutlineBatchConflict,
+                ChapterCardConflict,
+                ChapterCandidateWorkbenchConflict,
+                ChapterFactReviewConflict,
+                ChapterFactExtractionWorkbenchConflict,
+                JobError,
+            ),
+        ):
+            status = 409
+        else:
+            status = 400
         return JSONResponse(
             {"error": {"code": _error_code(exc), "message": str(exc)}},
             status_code=status,
@@ -270,6 +352,353 @@ def create_app(
     async def project_chapter(project_id: str, chapter: int) -> dict[str, Any]:
         record = projects.get(project_id)
         return _chapter_detail(record, chapter, amendments)
+
+    @app.get("/api/projects/{project_id}/chapters/{chapter}/card")
+    async def project_chapter_card(project_id: str, chapter: int) -> dict[str, Any]:
+        card = await asyncio.to_thread(chapter_cards.get, project_id, chapter)
+        return {"chapter_card": card.to_dict()}
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/card/confirm")
+    async def confirm_project_chapter_card(
+        project_id: str,
+        chapter: int,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        confirmation = await asyncio.to_thread(
+            chapter_cards.confirm,
+            project_id,
+            chapter,
+            payload,
+        )
+        return {
+            "confirmation": confirmation,
+            "message": "章节意图已在当前工作台会话中确认；尚未创建正文候选。",
+        }
+
+    @app.get("/api/projects/{project_id}/chapters/{chapter}/candidates")
+    async def project_chapter_candidates(
+        project_id: str,
+        chapter: int,
+    ) -> dict[str, Any]:
+        items = await asyncio.to_thread(
+            chapter_candidates.list_for_chapter,
+            project_id,
+            chapter,
+        )
+        return {"items": list(items)}
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/candidates")
+    async def generate_project_chapter_candidate(
+        project_id: str,
+        chapter: int,
+        payload: dict[str, Any] = Body(...),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.generate,
+            project_id,
+            chapter,
+            confirmation=payload.get("confirmation"),
+            idempotency_key=(idempotency_key or payload.get("idempotency_key") or ""),
+        )
+        return {
+            "candidate": candidate,
+            "message": _candidate_result_message(candidate),
+        }
+
+    @app.post(
+        "/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/resume"
+    )
+    async def resume_project_chapter_candidate(
+        project_id: str,
+        chapter: int,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.resume,
+            project_id,
+            chapter,
+            candidate_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "candidate": candidate,
+            "message": _candidate_result_message(candidate),
+        }
+
+    @app.post(
+        "/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/draft"
+    )
+    async def create_project_chapter_candidate_draft(
+        project_id: str,
+        chapter: int,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.create_editable_draft,
+            project_id,
+            chapter,
+            candidate_id,
+            expected_prose_sha256=str(payload.get("expected_prose_sha256") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "candidate": candidate,
+            "message": "正文候选已复制为工作台可编辑草稿；正式正文和权威状态仍未修改。",
+        }
+
+    @app.get(
+        "/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}"
+    )
+    async def project_chapter_candidate(
+        project_id: str,
+        chapter: int,
+        candidate_id: str,
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.get,
+            project_id,
+            chapter,
+            candidate_id,
+        )
+        return {"candidate": candidate}
+
+    @app.put("/api/candidate-drafts/{draft_id}")
+    async def update_candidate_draft(
+        draft_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        draft = await asyncio.to_thread(
+            chapter_candidates.update_editable_draft,
+            draft_id,
+            text=payload.get("text"),
+            expected_revision=payload.get("expected_revision"),
+        )
+        return {
+            "draft": draft,
+            "message": "工作台草稿已保存；正式正文和权威状态仍未修改。",
+        }
+
+    @app.get("/api/candidate-drafts/{draft_id}/fact-extractions")
+    async def candidate_draft_fact_extractions(draft_id: str) -> dict[str, Any]:
+        items = await asyncio.to_thread(
+            chapter_fact_extractions.list_for_draft,
+            draft_id,
+        )
+        return {"items": list(items)}
+
+    @app.post("/api/candidate-drafts/{draft_id}/fact-extractions")
+    async def start_candidate_draft_fact_extraction(
+        draft_id: str,
+        payload: dict[str, Any] = Body(...),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.start,
+            draft_id,
+            expected_draft_revision=payload.get("expected_draft_revision"),
+            expected_draft_sha256=str(payload.get("expected_draft_sha256") or ""),
+            idempotency_key=(
+                idempotency_key or payload.get("idempotency_key") or ""
+            ),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.get(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}"
+    )
+    async def candidate_draft_fact_extraction(
+        draft_id: str,
+        extraction_id: str,
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.get,
+            draft_id,
+            extraction_id,
+        )
+        return {"fact_extraction": extraction}
+
+    @app.post(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/resume"
+    )
+    async def resume_candidate_draft_fact_extraction(
+        draft_id: str,
+        extraction_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.resume,
+            draft_id,
+            extraction_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.post(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/cancel"
+    )
+    async def cancel_candidate_draft_fact_extraction(
+        draft_id: str,
+        extraction_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.cancel,
+            draft_id,
+            extraction_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.post(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/abandon-provider"
+    )
+    async def abandon_candidate_draft_fact_extraction_provider(
+        draft_id: str,
+        extraction_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.abandon_provider_uncertainty,
+            draft_id,
+            extraction_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            expected_record_hash=(
+                str(payload["expected_record_hash"])
+                if payload.get("expected_record_hash") is not None
+                else None
+            ),
+            expected_uncertainty_sha256=str(
+                payload.get("expected_uncertainty_sha256") or ""
+            ),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.get("/api/candidate-drafts/{draft_id}/fact-reviews")
+    async def candidate_draft_fact_reviews(draft_id: str) -> dict[str, Any]:
+        items = await asyncio.to_thread(chapter_facts.list_for_draft, draft_id)
+        return {"items": items}
+
+    @app.post("/api/candidate-drafts/{draft_id}/fact-reviews", status_code=201)
+    async def create_candidate_draft_fact_review(
+        draft_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        review = await asyncio.to_thread(
+            chapter_facts.create,
+            draft_id,
+            expected_draft_revision=payload.get("expected_draft_revision"),
+            expected_draft_sha256=str(payload.get("expected_draft_sha256") or ""),
+            proposals=payload.get("proposals"),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_review": review,
+            "message": (
+                "事实候选卡基于旧快照建立并已保留，但当前已失效；请从最新正文重新开始审核。"
+                if review.get("state") == "stale"
+                else "事实候选卡已建立；所有项目仍是待审建议，正式正文和权威状态均未修改。"
+            ),
+        }
+
+    @app.get("/api/fact-reviews/{review_id}")
+    async def fact_review_detail(review_id: str) -> dict[str, Any]:
+        review = await asyncio.to_thread(chapter_facts.get, review_id)
+        return {"fact_review": review}
+
+    @app.put("/api/fact-reviews/{review_id}")
+    async def update_fact_review(
+        review_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        review = await asyncio.to_thread(
+            chapter_facts.update,
+            review_id,
+            facts=payload.get("facts"),
+            expected_revision=payload.get("expected_revision"),
+        )
+        return {
+            "fact_review": review,
+            "message": (
+                "事实候选编辑已保存为旧快照证据，但当前已失效，不能用于提交。"
+                if review.get("state") == "stale"
+                else "事实候选卡已保存；正式正文和权威状态均未修改。"
+            ),
+        }
+
+    @app.post("/api/fact-reviews/{review_id}/confirm")
+    async def confirm_fact_review(
+        review_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        review = await asyncio.to_thread(
+            chapter_facts.confirm,
+            review_id,
+            expected_revision=payload.get("expected_revision"),
+            expected_facts_sha256=str(payload.get("expected_facts_sha256") or ""),
+            expected_draft_revision=payload.get("expected_draft_revision"),
+            expected_draft_sha256=str(payload.get("expected_draft_sha256") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_review": review,
+            "message": (
+                "旧快照的事实审核已确认并保留，但当前已失效，不能提交；请从最新正文重建审核。"
+                if review.get("state") == "stale"
+                else "事实候选已由作者确认并锁定，但尚未写入权威状态或正式正文。"
+            ),
+        }
+
+    @app.post(
+        "/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/abandon-provider"
+    )
+    async def abandon_project_chapter_candidate_provider(
+        project_id: str,
+        chapter: int,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.abandon_provider_uncertainty,
+            project_id,
+            chapter,
+            candidate_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            expected_record_hash=(
+                str(payload["expected_record_hash"])
+                if payload.get("expected_record_hash") is not None
+                else None
+            ),
+            expected_uncertainty_sha256=str(
+                payload.get("expected_uncertainty_sha256") or ""
+            ),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "candidate": candidate,
+            "message": (
+                "未知 Provider 结果已放弃采用，原始证据仍保留；现在可以创建新的正文候选。"
+            ),
+        }
 
     @app.get("/api/projects/{project_id}/export")
     async def export_project(project_id: str) -> PlainTextResponse:
@@ -1026,10 +1455,17 @@ def _chapter_detail(
         current_text, _, current_sha, source_kind = read_current_chapter_text(record.root, chapter)
     versions = amendments.list_for_chapter(record.id, chapter)
     run = _latest_run_for_chapter(record.root, chapter)
+    has_outline = outline.path is not None and not outline.conflict
+    has_prose = prose.path is not None and not prose.conflict
+    conflict = outline.conflict or prose.conflict
     return {
         "project": {"id": record.id, "title": record.name},
         "chapter": chapter,
         "title": _chapter_title(prose.path or outline.path),
+        "has_outline": has_outline,
+        "has_prose": has_prose,
+        "conflict": conflict,
+        "status": "warning" if conflict else "committed" if has_prose else "draft",
         "outline": outline_text,
         "formal_prose": formal_text,
         "current_prose": current_text,
@@ -1773,6 +2209,48 @@ def _attention_label(state: str) -> str:
         "awaiting_input": "需要作者检查并确认",
         "needs_recovery": "Provider 状态待安全恢复",
     }.get(state, "有待处理事项")
+
+
+def _candidate_result_message(candidate: Mapping[str, Any]) -> str:
+    status = str(candidate.get("status") or "")
+    if status == "completed":
+        if isinstance(candidate.get("draft"), Mapping):
+            return "正文候选已生成并复制为可编辑工作台草稿；正式正文和权威状态仍未修改。"
+        return "正文候选已生成；确认后可复制为可编辑工作台草稿，正式正文和权威状态仍未修改。"
+    if status == "provider_uncertain":
+        return "Provider 结果不确定；系统已停止自动调用，正式正文和权威状态均未修改。"
+    if status == "stale":
+        return "生成期间可信输入发生变化；候选已隔离保留，正式正文和权威状态均未修改。"
+    if status == "failed":
+        return "正文候选生成失败；证据已保留，正式正文和权威状态均未修改。"
+    if status == "cancelled":
+        return "正文候选已取消；正式正文和权威状态均未修改。"
+    if status == "abandoned":
+        return "该不确定 Provider 结果已明确放弃采用；证据仍保留。"
+    if status == "needs_recovery":
+        return "候选已有持久 Intent，但没有终态记录；需作者确认后才能恢复，系统不会自动调用 Provider。"
+    return "正文候选状态已更新；正式正文和权威状态均未修改。"
+
+
+def _fact_extraction_result_message(extraction: Mapping[str, Any]) -> str:
+    status = str(extraction.get("status") or "")
+    if status == "completed":
+        if isinstance(extraction.get("fact_review"), Mapping):
+            return "事实候选已提取为作者审核卡；尚未写入权威状态，也未修改正式正文。"
+        if extraction.get("source_state") == "stale":
+            return "事实候选已保留，但正文或权威状态已经变化；请从最新草稿重新提取。"
+        return "事实候选已提取并保留；尚未写入权威状态，也未修改正式正文。"
+    if status == "provider_uncertain":
+        return "Provider 结果不确定；系统已停止新的模型调用，草稿、正式正文和权威状态均未修改。"
+    if status == "needs_recovery":
+        return "事实提取已有持久 Intent，但没有终态记录；需作者确认后才能安全恢复。"
+    if status == "failed":
+        return "事实候选提取失败且未自动重试；草稿、正式正文和权威状态均未修改。"
+    if status == "cancelled":
+        return "事实候选提取已取消；草稿、正式正文和权威状态均未修改。"
+    if status == "abandoned":
+        return "该不确定 Provider 结果已明确放弃采用；原始证据仍保留。"
+    return "事实候选提取状态已更新；草稿、正式正文和权威状态均未修改。"
 
 
 def _error_code(exc: Exception) -> str:

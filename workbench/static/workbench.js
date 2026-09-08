@@ -162,11 +162,33 @@
   };
 
   const asyncSubmit = async (form, submitter) => {
+    const isChapterCardConfirmation = form.matches("[data-chapter-card-confirm-form]");
+    const submissionNonce = isChapterCardConfirmation
+      ? String(Number(form.dataset.submissionNonce || 0) + 1)
+      : null;
+    if (submissionNonce) form.dataset.submissionNonce = submissionNonce;
+    const submissionContext = isChapterCardConfirmation ? Object.freeze({
+      action: form.action,
+      method: (form.dataset.method || form.method || "POST").toUpperCase(),
+      project_id: form.dataset.projectId || "",
+      chapter: Number(form.dataset.chapter),
+      card_sha256: form.dataset.cardSha || "",
+      input_revision: form.dataset.inputRevision || "0",
+      submission_nonce: submissionNonce
+    }) : null;
+    const submissionIsCurrent = () => !submissionContext || (
+      form.dataset.submissionNonce === submissionContext.submission_nonce
+      && form.dataset.projectId === submissionContext.project_id
+      && Number(form.dataset.chapter) === submissionContext.chapter
+      && form.dataset.cardSha === submissionContext.card_sha256
+    );
+    const boundJsonBody = isChapterCardConfirmation ? formAsJson(form) : null;
     const confirmMessage = submitter?.dataset.confirm || form.dataset.confirm;
     if (confirmMessage && form.dataset.confirmedOnce !== "true") {
       const confirmed = await confirmAction(confirmMessage, submitter?.dataset.confirmTone || form.dataset.confirmTone);
       if (!confirmed) return;
     }
+    if (!submissionIsCurrent()) return;
     delete form.dataset.confirmedOnce;
 
     const button = submitter || one('[type="submit"]', form);
@@ -176,12 +198,12 @@
     form.setAttribute("aria-busy", "true");
 
     try {
-      const method = (form.dataset.method || form.method || "POST").toUpperCase();
+      const method = submissionContext?.method || (form.dataset.method || form.method || "POST").toUpperCase();
       const headers = requestHeaders();
       let requestBody;
       if (form.hasAttribute("data-json-form")) {
         headers.set("Content-Type", "application/json");
-        const jsonBody = formAsJson(form);
+        const jsonBody = boundJsonBody || formAsJson(form);
         const jsonFileField = form.dataset.jsonFileField;
         if (jsonFileField) {
           const fileInput = one('input[type="file"][data-json-file]', form);
@@ -204,29 +226,49 @@
         headers.set("X-Expected-SHA256", form.dataset.casSha);
         headers.set("If-Match", `"${form.dataset.casSha.replace(/"/g, "")}"`);
       }
-      const response = await fetch(form.action, { method, headers, body: method === "GET" ? undefined : requestBody, credentials: "same-origin" });
+      const response = await fetch(submissionContext?.action || form.action, { method, headers, body: method === "GET" ? undefined : requestBody, credentials: "same-origin" });
       const payload = await parseResponse(response);
       if (!response.ok) throw { payload, status: response.status };
 
-      updateCas(form, payload, response);
-      form.classList.remove("is-dirty");
-      const saveState = one("[data-save-state]", form) || one("[data-save-state]");
-      if (saveState) saveState.textContent = "所有修改已保存";
-      const message = payload.message || form.dataset.successMessage || "操作已完成。";
-      showToast(message);
-      form.dispatchEvent(new CustomEvent("workbench:success", { bubbles: true, detail: payload }));
+      const responseTargetsCurrentForm = submissionIsCurrent();
+      if (responseTargetsCurrentForm) {
+        updateCas(form, payload, response);
+        form.classList.remove("is-dirty");
+        const saveState = one("[data-save-state]", form) || one("[data-save-state]");
+        if (saveState) saveState.textContent = "所有修改已保存";
+        const message = payload.message || form.dataset.successMessage || "操作已完成。";
+        if (!form.hasAttribute("data-defer-success-toast")) showToast(message);
+      }
+      const successDetail = submissionContext
+        ? { ...payload, submission_context: submissionContext }
+        : payload;
+      form.dispatchEvent(new CustomEvent("workbench:success", { bubbles: true, detail: successDetail }));
 
-      const redirectUrl = payload.redirect_url || payload.location || (response.redirected ? response.url : null);
-      if (redirectUrl && sameOriginNavigate(redirectUrl)) return;
-      if (form.hasAttribute("data-reload-on-success")) window.location.reload();
+      if (responseTargetsCurrentForm) {
+        const redirectUrl = payload.redirect_url || payload.location || (response.redirected ? response.url : null);
+        if (redirectUrl && sameOriginNavigate(redirectUrl)) return;
+        if (form.hasAttribute("data-reload-on-success")) window.location.reload();
+      }
     } catch (error) {
       const message = errorMessage(error?.payload, error?.status);
-      if (errorBox) { errorBox.textContent = message; errorBox.hidden = false; errorBox.focus?.(); }
-      showToast(message, "error");
-      form.dispatchEvent(new CustomEvent("workbench:error", { bubbles: true, detail: { message, status: error?.status } }));
+      if (submissionIsCurrent()) {
+        if (errorBox) { errorBox.textContent = message; errorBox.hidden = false; errorBox.focus?.(); }
+        showToast(message, "error");
+      }
+      form.dispatchEvent(new CustomEvent("workbench:error", {
+        bubbles: true,
+        detail: {
+          message,
+          status: error?.status,
+          error_code: error?.payload?.error?.code,
+          ...(submissionContext ? { submission_context: submissionContext } : {})
+        }
+      }));
     } finally {
-      form.removeAttribute("aria-busy");
-      if (button) { button.disabled = false; button.classList.remove("is-busy"); }
+      if (submissionIsCurrent()) {
+        form.removeAttribute("aria-busy");
+        if (button) { button.disabled = false; button.classList.remove("is-busy"); }
+      }
     }
   };
 

@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterIntentCard",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "record_type",
+    "project",
+    "book_id",
+    "chapter_index",
+    "readiness",
+    "blueprint",
+    "intent_defaults",
+    "language",
+    "context_summary",
+    "binding",
+    "confirmation"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "record_type": {"type": "string", "enum": ["chapter_intent_card"]},
+    "project": {
+      "type": "object",
+      "required": ["id", "title"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "book_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "readiness": {
+      "type": "object",
+      "required": ["status", "can_generate", "issues"],
+      "properties": {
+        "status": {"type": "string", "enum": ["ready", "needs_input", "blocked"]},
+        "can_generate": {"type": "boolean"},
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "field", "severity", "blocking", "message"],
+            "properties": {
+              "code": {"type": "string", "minLength": 1},
+              "field": {"type": "string", "minLength": 1},
+              "severity": {"type": "string", "enum": ["warning", "error"]},
+              "blocking": {"type": "boolean"},
+              "message": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "blueprint": {
+      "type": "object",
+      "required": ["title", "core_event", "required_beats", "ending_pressure"],
+      "properties": {
+        "title": {"type": "string"},
+        "core_event": {"type": ["string", "null"]},
+        "required_beats": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "text"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 1},
+              "text": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "ending_pressure": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "intent_defaults": {
+      "type": "object",
+      "required": ["goal", "validation_focus", "notes"],
+      "properties": {
+        "goal": {"type": "string"},
+        "validation_focus": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["continuity", "spatial", "logic"]}
+        },
+        "notes": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "language": {
+      "type": "object",
+      "required": ["effective", "source", "workbench_preference", "preference_matches_effective"],
+      "properties": {
+        "effective": {"type": "string"},
+        "source": {"type": "string", "enum": ["event_authority", "legacy_story_project_default"]},
+        "workbench_preference": {"type": ["string", "null"]},
+        "preference_matches_effective": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "context_summary": {
+      "type": "object",
+      "required": [
+        "scope",
+        "previous_chapter",
+        "continuity",
+        "narrative_constraints",
+        "expected_new_entities",
+        "required_state_item_count",
+        "required_event_item_count",
+        "tracking_file_count",
+        "setting_file_count",
+        "source_warning_count"
+      ],
+      "properties": {
+        "scope": {"type": "string", "enum": ["explicit", "full"]},
+        "previous_chapter": {
+          "type": "object",
+          "required": ["index", "present"],
+          "properties": {
+            "index": {"type": ["integer", "null"], "minimum": 1},
+            "present": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        },
+        "continuity": {
+          "type": ["object", "null"],
+          "required": ["last_scene_location", "last_scene_character_ids", "required_opening_bridge"],
+          "properties": {
+            "last_scene_location": {"type": "string"},
+            "last_scene_character_ids": {"type": "array", "items": {"type": "string"}},
+            "required_opening_bridge": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "narrative_constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["constraint_id", "lifecycle_action", "instruction"],
+            "properties": {
+              "constraint_id": {"type": "string"},
+              "lifecycle_action": {"type": "string"},
+              "instruction": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "expected_new_entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "entity_id", "display_name"],
+            "properties": {
+              "kind": {"type": "string"},
+              "entity_id": {"type": "string"},
+              "display_name": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "required_state_item_count": {"type": "integer", "minimum": 0},
+        "required_event_item_count": {"type": "integer", "minimum": 0},
+        "tracking_file_count": {"type": "integer", "minimum": 0},
+        "setting_file_count": {"type": "integer", "minimum": 0},
+        "source_warning_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "required": [
+        "context_builder_version",
+        "runtime_cache_policy",
+        "context_sha256",
+        "context_digest",
+        "membership_fingerprint",
+        "identity_revision",
+        "authority_mode",
+        "authority_projection_sha256",
+        "chapter_context_contract_sha256"
+      ],
+      "properties": {
+        "context_builder_version": {"type": "string", "enum": ["1.0"]},
+        "runtime_cache_policy": {"type": "string", "enum": ["bypass"]},
+        "context_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "context_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "membership_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "identity_revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "authority_mode": {"type": "string", "enum": ["legacy_markdown_v1", "event_v1"]},
+        "authority_projection_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "chapter_context_contract_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "confirmation": {
+      "type": "object",
+      "required": ["required", "card_sha256"],
+      "properties": {
+        "required": {"type": "boolean", "enum": [true]},
+        "card_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -95,11 +95,91 @@
         <!-- Chapter detail -->
         <section data-spa-view="chapter" hidden>
           <div class="page-heading chapter-heading"><div><div class="heading-status-row"><p class="eyebrow" data-chapter-kicker>章节</p><span class="status-badge status-committed" data-chapter-status><span class="status-dot"></span><span data-status-label>已提交</span></span></div><h1 data-chapter-title></h1><p class="chapter-meta" data-chapter-meta></p></div><a class="button button-secondary" href="#/chapters">返回章节</a></div>
-          <div class="tab-shell" data-tabs data-default-tab="prose"><div class="tab-list" role="tablist"><button type="button" role="tab" data-tab="prose">正文</button><button type="button" role="tab" data-tab="outline">章纲</button><button type="button" role="tab" data-tab="review">审核</button><button type="button" role="tab" data-tab="versions">版本与润色</button></div>
-            <section class="tab-panel" role="tabpanel" data-tab-panel="prose"><div class="reading-layout"><article class="prose-paper"><header><span data-chapter-english-number></span><h2 data-chapter-title></h2></header><div class="prose-content" data-chapter-content></div></article><aside class="reading-aside"><section class="panel compact-panel"><p class="eyebrow">当前版本</p><dl class="version-facts"><div><dt>修订</dt><dd data-chapter-revision>r1</dd></div><div><dt>SHA</dt><dd><code data-chapter-sha>—</code></dd></div></dl></section><button class="button button-secondary button-wide" type="button" data-tab-target="versions">发起安全润色</button></aside></div></section>
-            <section class="tab-panel" role="tabpanel" data-tab-panel="outline"><div class="panel outline-readonly"><p class="eyebrow">已冻结章纲</p><h2 data-outline-title></h2><dl><div><dt>核心事件</dt><dd data-outline-core>—</dd></div><div><dt>必写节拍</dt><dd><ul data-outline-beats></ul></dd></div><div><dt>结尾压力</dt><dd data-outline-pressure>—</dd></div></dl></div></section>
+          <div class="tab-shell" data-tabs data-default-tab="prose"><div class="tab-list" role="tablist"><button type="button" role="tab" data-tab="prose">正文</button><button type="button" role="tab" data-tab="outline">章节卡</button><button type="button" role="tab" data-tab="review">审核</button><button type="button" role="tab" data-tab="versions">版本与润色</button></div>
+            <section class="tab-panel" role="tabpanel" data-tab-panel="prose"><div class="reading-layout"><article class="prose-paper"><header><span data-chapter-english-number></span><h2 data-chapter-title></h2></header><div class="prose-content" data-chapter-content></div></article><aside class="reading-aside" data-prose-actions><section class="panel compact-panel"><p class="eyebrow">当前版本</p><dl class="version-facts"><div><dt>修订</dt><dd data-chapter-revision>r1</dd></div><div><dt>SHA</dt><dd><code data-chapter-sha>—</code></dd></div></dl></section><button class="button button-secondary button-wide" type="button" data-tab-target="versions">发起安全润色</button></aside></div></section>
+            <section class="tab-panel" role="tabpanel" data-tab-panel="outline">
+              <div class="notice notice-danger" data-card-unavailable hidden><strong>章节卡暂不可用</strong><p data-card-unavailable-message>无法读取可信章节输入。</p></div>
+              <div class="chapter-card-layout" data-chapter-card>
+                <section class="panel chapter-card-source">
+                  <div class="section-heading compact"><div><p class="eyebrow">可信章节输入</p><h2 data-outline-title></h2></div><span class="status-badge status-idle" data-card-readiness><span class="status-dot"></span><span data-status-label>读取中</span></span></div>
+                  <p class="chapter-card-help">以下章纲和上下文直接从当前 StoryProject 权威来源读取。本页不会改写章纲、正文或权威状态。</p>
+                  <dl class="chapter-card-blueprint"><div><dt>核心事件</dt><dd data-outline-core>—</dd></div><div><dt>必写节拍</dt><dd><ol data-outline-beats></ol></dd></div><div><dt>结尾压力</dt><dd data-outline-pressure>—</dd></div><div><dt>实际生成语言</dt><dd><span data-card-language>—</span><small data-card-language-source></small></dd></div></dl>
+                  <div class="chapter-card-issues" data-card-issues></div>
+                  <details class="chapter-card-context"><summary>查看本章可信上下文摘要</summary><dl><div><dt>读取范围</dt><dd data-card-context-scope>—</dd></div><div><dt>上一章</dt><dd data-card-previous>—</dd></div><div><dt>状态 / 事件引用</dt><dd data-card-reference-counts>—</dd></div><div><dt>追踪 / 设定文件</dt><dd data-card-file-counts>—</dd></div><div><dt>连续性要求</dt><dd data-card-continuity>—</dd></div><div><dt>叙事约束</dt><dd><ul data-card-constraints></ul></dd></div><div><dt>预计新增实体</dt><dd><ul data-card-entities></ul></dd></div><div><dt>输入绑定</dt><dd><code data-card-sha>—</code></dd></div></dl></details>
+                </section>
+                <aside class="panel chapter-card-confirm-panel">
+                  <p class="eyebrow">作者确认</p><h2>确认后再生成正文</h2><p>你可以调整本章目标、校验重点和写作备注。确认只建立当前会话中的输入凭据，不会调用模型，也不会创建候选或提交正文。</p>
+                  <form action="/api/projects/0/chapters/0/card/confirm" method="post" data-chapter-card-confirm-form data-async-form data-json-form data-defer-success-toast data-confirm="确认当前章节卡和写作意图？此操作不会调用模型、创建候选或修改正式文件。" data-success-message="章节意图已确认。">
+                    <input type="hidden" name="confirmed" value="true" disabled>
+                    <input type="hidden" name="expected_card_sha256" disabled>
+                    <label class="field"><span>本章目标</span><textarea name="goal" rows="5" required disabled></textarea></label>
+                    <fieldset class="chapter-card-focus"><legend>校验重点</legend><label class="check-field"><input type="checkbox" name="validation_focus" value="continuity" checked disabled><span><strong>连续性</strong><small>检查与前文事实和场景衔接。</small></span></label><label class="check-field"><input type="checkbox" name="validation_focus" value="spatial" checked disabled><span><strong>空间关系</strong><small>检查人物、地点与移动关系。</small></span></label><label class="check-field"><input type="checkbox" name="validation_focus" value="logic" checked disabled><span><strong>情节逻辑</strong><small>检查事件因果与章纲覆盖。</small></span></label></fieldset>
+                    <label class="field"><span>写作备注 <em>可选，每行一项</em></span><textarea name="notes_text" rows="5" placeholder="例：保持第三人称限知视角" disabled></textarea></label>
+                    <div class="form-error" data-form-error role="alert" hidden></div>
+                    <button class="button button-primary button-wide" type="submit" data-card-confirm-button disabled>确认本章意图</button>
+                  </form>
+                  <div class="notice notice-success chapter-card-confirmed" data-card-confirmed hidden><strong>当前输入已确认</strong><p>确认凭据只保存在本次工作台会话；尚未生成正文候选。</p><code data-card-confirmation-sha></code></div>
+                </aside>
+              </div>
+              <section class="panel chapter-candidate-panel" data-chapter-candidate-panel aria-live="polite">
+                <div class="section-heading compact">
+                  <div><p class="eyebrow">正文候选</p><h2 data-candidate-title>确认本章意图后生成</h2></div>
+                  <span class="status-badge status-idle" data-candidate-status><span class="status-dot"></span><span data-status-label>等待确认</span></span>
+                </div>
+                <p class="chapter-candidate-message" data-candidate-message>模型只生成可隔离、可恢复的正文候选；不会自动提交正式正文，也不会写入权威状态。</p>
+                <div class="chapter-candidate-binding" data-candidate-binding hidden><span>候选记录</span><code data-candidate-id></code><span>正文 SHA</span><code data-candidate-prose-sha></code></div>
+                <div class="notice notice-warning" data-candidate-old-binding hidden><strong>候选与当前确认不一致</strong><p>草稿和运行证据会继续保留；如要新生成，请以当前章节卡重新确认意图。</p></div>
+                <div class="button-row chapter-candidate-actions">
+                  <button class="button button-primary" type="button" data-candidate-generate disabled>生成正文候选</button>
+                  <button class="button button-secondary" type="button" data-candidate-resume hidden>确认继续生成</button>
+                  <button class="button button-secondary" type="button" data-candidate-create-draft hidden>建立可编辑草稿</button>
+                  <button class="button button-danger-ghost" type="button" data-candidate-abandon-provider hidden>放弃这次不确定结果</button>
+                </div>
+                <div class="form-error" data-candidate-action-error role="alert" hidden tabindex="-1"></div>
+                <p class="chapter-candidate-safety">生成请求发出后可以离开本页；工作台会从本地记录恢复状态。为避免制造 Provider 不确定状态，本页不提供硬取消。</p>
+              </section>
+              <section class="panel chapter-candidate-editor" data-candidate-editor hidden>
+                <div class="section-heading compact">
+                  <div><p class="eyebrow">工作台草稿</p><h2>编辑正文候选</h2></div>
+                  <span class="status-badge status-draft" data-candidate-draft-status><span class="status-dot"></span><span data-status-label>草稿</span></span>
+                </div>
+                <p class="muted-copy">这里编辑的是 Candidate 的独立工作台副本。保存只更新带 revision/SHA 的草稿，不会修改不可变候选、正式正文或权威状态。</p>
+                <form action="/api/candidate-drafts/0" method="post" data-candidate-draft-form>
+                  <input type="hidden" name="expected_revision">
+                  <label class="field"><span>正文草稿</span><textarea class="prose-editor" name="text" rows="24" required></textarea></label>
+                  <div class="editor-footer"><span data-candidate-draft-revision>r1 · —</span><span data-candidate-draft-save-state>所有修改已保存</span><button class="button button-secondary" type="submit" data-candidate-draft-save>保存工作台草稿</button></div>
+                  <div class="form-error" data-candidate-draft-error role="alert" hidden tabindex="-1"></div>
+                </form>
+              </section>
+              <section class="panel chapter-fact-panel" data-chapter-fact-panel hidden aria-live="polite">
+                <div class="section-heading compact">
+                  <div><p class="eyebrow">关键事实</p><h2 data-fact-title>保存正文草稿后提取</h2></div>
+                  <span class="status-badge status-idle" data-fact-status><span class="status-dot"></span><span data-status-label>等待草稿</span></span>
+                </div>
+                <p class="chapter-fact-message" data-fact-message>模型只从当前工作台正文提出待审事实，不计算或写入权威状态。</p>
+                <div class="chapter-candidate-binding" data-fact-binding hidden><span>提取记录</span><code data-fact-extraction-id></code><span>来源草稿</span><code data-fact-source-draft></code></div>
+                <div class="notice notice-warning" data-fact-stale hidden><strong>这组事实已失效</strong><p>正文草稿或权威状态已变化。本组卡片只保留作证据，不能继续编辑或确认。</p></div>
+                <div class="button-row chapter-fact-actions">
+                  <button class="button button-primary" type="button" data-fact-extract>提取事实候选</button>
+                  <button class="button button-secondary" type="button" data-fact-resume hidden>确认恢复事实提取</button>
+                  <button class="button button-danger-ghost" type="button" data-fact-cancel hidden>取消未开始的提取</button>
+                  <button class="button button-danger-ghost" type="button" data-fact-abandon-provider hidden>放弃这次不确定结果</button>
+                </div>
+                <div class="form-error" data-fact-action-error role="alert" hidden tabindex="-1"></div>
+                <form data-fact-review-form hidden>
+                  <div class="fact-review-summary"><p data-fact-counts>—</p><p data-fact-save-state>所有修改已保存</p></div>
+                  <div class="fact-card-list" data-fact-card-list></div>
+                  <div class="editor-footer fact-review-footer">
+                    <button class="button button-secondary" type="submit" data-fact-save>保存事实审核</button>
+                    <button class="button button-primary" type="button" data-fact-confirm>确认全部决定</button>
+                  </div>
+                  <div class="form-error" data-fact-review-error role="alert" hidden tabindex="-1"></div>
+                </form>
+                <p class="chapter-candidate-safety">“删除”会留下明确拒绝记录，不会物理删除证据。作者确认本组卡片后也只会锁定审核结果；正式正文和权威状态仍不会自动写入。</p>
+              </section>
+            </section>
             <section class="tab-panel" role="tabpanel" data-tab-panel="review"><div class="review-grid"><section class="panel review-score-card"><p class="eyebrow">审核结果</p><div class="review-score"><strong data-review-score>—</strong><span>/ 5.0</span></div><span class="status-badge status-idle" data-review-status><span class="status-dot"></span><span data-status-label>未评分</span></span><p data-review-summary></p></section><section class="panel review-dimensions"><div class="section-heading compact"><h2>九项可用性指标</h2></div><div class="dimension-list" data-review-dimensions><p class="muted-copy">尚未进行人工评分。</p></div></section></div></section>
-            <section class="tab-panel" role="tabpanel" data-tab-panel="versions"><div class="versions-layout"><section class="panel"><div class="section-heading compact"><h2>不可变版本历史</h2></div><ol class="version-timeline" data-version-timeline></ol></section><section class="panel amendment-editor"><p class="eyebrow">安全润色</p><h2>创建 amendment</h2><p>只允许表达润色；事实、关系、时间线或关键情节变化会被拒绝。</p><form action="/api/chapters/0/amendments" method="post" data-amendment-form data-async-form data-json-form data-success-message="Amendment 草稿已创建。"><input type="hidden" name="project_id"><input type="hidden" name="expected_base_sha256"><label class="field"><span>润色说明</span><textarea name="intent" rows="3" required placeholder="收紧节奏，减少重复表达，不改变事实。"></textarea></label><label class="field"><span>润色后正文</span><textarea class="prose-editor" name="text" rows="24" required></textarea></label><div class="form-error" data-form-error role="alert" hidden></div><button class="button button-primary button-wide" type="submit" data-confirm="将创建不可变 amendment 并进入等价校验。继续吗？">保存并校验</button></form></section></div></section>
+            <section class="tab-panel" role="tabpanel" data-tab-panel="versions"><div class="versions-layout"><section class="panel"><div class="section-heading compact"><h2>不可变版本历史</h2></div><ol class="version-timeline" data-version-timeline></ol></section><section class="panel amendment-editor" data-amendment-panel><p class="eyebrow">安全润色</p><h2>创建 amendment</h2><p>只允许表达润色；事实、关系、时间线或关键情节变化会被拒绝。</p><form action="/api/chapters/0/amendments" method="post" data-amendment-form data-async-form data-json-form data-success-message="Amendment 草稿已创建。"><input type="hidden" name="project_id"><input type="hidden" name="expected_base_sha256"><label class="field"><span>润色说明</span><textarea name="intent" rows="3" required placeholder="收紧节奏，减少重复表达，不改变事实。"></textarea></label><label class="field"><span>润色后正文</span><textarea class="prose-editor" name="text" rows="24" required></textarea></label><div class="form-error" data-form-error role="alert" hidden></div><button class="button button-primary button-wide" type="submit" data-confirm="将创建不可变 amendment 并进入等价校验。继续吗？">保存并校验</button></form></section></div></section>
           </div>
         </section>
 

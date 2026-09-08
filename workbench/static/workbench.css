@@ -152,6 +152,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .notice p { margin: 0; line-height: 1.6; }
 .notice-danger { border-color: #e1b6b6; color: #7f2b2b; background: var(--danger-soft); }
 .notice-success { border-color: #b9d2c7; color: #285b49; background: var(--jade-soft); }
+.notice-warning { border-color: #e5cca0; color: #775522; background: var(--amber-soft); }
 
 /* Status */
 .status-badge { --status-color: var(--muted); --status-bg: #ecebe7; display: inline-flex; align-items: center; gap: 6px; width: max-content; padding: 5px 8px; border-radius: 999px; color: var(--status-color); background: var(--status-bg); font-size: 10px; font-weight: 750; white-space: nowrap; }
@@ -518,6 +519,76 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .outline-readonly dt { color: var(--muted); font-size: 10px; font-weight: 700; }
 .outline-readonly dd { font-size: 13px; line-height: 1.75; }
 .outline-readonly ul { margin: 0; padding-left: 18px; }
+.chapter-card-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(300px,390px); gap: 20px; align-items: start; }
+.chapter-card-source, .chapter-card-confirm-panel { min-width: 0; }
+.chapter-card-help, .chapter-card-confirm-panel > p:not(.eyebrow) { margin: 0 0 20px; color: var(--ink-soft); font-size: 11px; line-height: 1.7; }
+.chapter-card-blueprint { display: grid; gap: 18px; margin: 0; }
+.chapter-card-blueprint > div { display: grid; grid-template-columns: 105px minmax(0,1fr); gap: 16px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+.chapter-card-blueprint dt, .chapter-card-blueprint dd { margin: 0; }
+.chapter-card-blueprint dt { color: var(--muted); font-size: 10px; font-weight: 700; }
+.chapter-card-blueprint dd { font-size: 13px; line-height: 1.7; }
+.chapter-card-blueprint ol { margin: 0; padding-left: 20px; }
+.chapter-card-blueprint small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+.chapter-card-issues { display: grid; gap: 8px; margin-top: 18px; }
+.chapter-card-issues:empty { display: none; }
+.chapter-card-context { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 15px; }
+.chapter-card-context summary { color: var(--accent); cursor: pointer; font-size: 10px; font-weight: 700; }
+.chapter-card-context dl { display: grid; gap: 12px; margin: 15px 0 0; }
+.chapter-card-context dl > div { display: grid; grid-template-columns: 120px minmax(0,1fr); gap: 12px; }
+.chapter-card-context dt, .chapter-card-context dd { margin: 0; font-size: 10px; line-height: 1.6; }
+.chapter-card-context dt { color: var(--muted); font-weight: 700; }
+.chapter-card-context ul { margin: 0; padding-left: 17px; }
+.chapter-card-context code, .chapter-card-confirmed code { overflow-wrap: anywhere; color: var(--muted); font: 9px/1.5 Consolas, monospace; }
+.chapter-card-confirm-panel { position: sticky; top: 82px; }
+.chapter-card-confirm-panel h2 { margin: 4px 0 8px; font: 700 21px/1.35 "STZhongsong", serif; }
+.chapter-card-confirm-panel form { display: grid; gap: 16px; }
+.chapter-card-focus { display: grid; gap: 9px; margin: 0; padding: 13px; border: 1px solid var(--line); border-radius: 9px; }
+.chapter-card-focus legend { padding: 0 5px; color: var(--ink-soft); font-size: 11px; font-weight: 700; }
+.chapter-card-confirmed { margin-top: 15px; }
+.chapter-card-confirmed code { display: block; margin-top: 7px; }
+.chapter-candidate-panel, .chapter-candidate-editor, .chapter-fact-panel { margin-top: 20px; }
+.chapter-candidate-message { margin: 0 0 16px; color: var(--ink-soft); font-size: 12px; line-height: 1.75; }
+.chapter-candidate-binding { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 6px 12px; margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); }
+.chapter-candidate-binding span { color: var(--muted); font-size: 9px; font-weight: 700; }
+.chapter-candidate-binding code { min-width: 0; overflow-wrap: anywhere; color: var(--ink-soft); font: 9px/1.5 Consolas, monospace; }
+.chapter-candidate-actions { margin-top: 4px; }
+.chapter-candidate-safety { margin: 14px 0 0; color: var(--muted); font-size: 9px; line-height: 1.65; }
+.chapter-candidate-editor form { display: grid; gap: 12px; }
+.chapter-candidate-editor .editor-footer { flex-wrap: wrap; }
+.chapter-candidate-editor [data-candidate-draft-save-state] { margin-left: auto; }
+.chapter-fact-message { margin: 0 0 16px; color: var(--ink-soft); font-size: 12px; line-height: 1.75; }
+.chapter-fact-actions { margin: 4px 0 16px; }
+.fact-review-summary { display: flex; justify-content: space-between; gap: 16px; margin: 18px 0 12px; color: var(--muted); font-size: 10px; }
+.fact-review-summary p { margin: 0; }
+.fact-card-list { display: grid; gap: 14px; }
+.fact-card { padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+.fact-card[data-decision="accepted"] { border-color: color-mix(in srgb, var(--jade) 48%, var(--line)); }
+.fact-card[data-decision="rejected"] { border-color: color-mix(in srgb, var(--danger) 42%, var(--line)); opacity: .82; }
+.fact-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.fact-card-header > div { min-width: 0; }
+.fact-kind { display: block; margin-bottom: 4px; color: var(--accent); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.fact-card-header h3 { margin: 0; font: 700 16px/1.45 "STZhongsong", serif; overflow-wrap: anywhere; }
+.fact-decision { flex: 0 0 auto; padding: 4px 8px; border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 9px; font-weight: 700; }
+.fact-card[data-decision="accepted"] .fact-decision { color: var(--jade); }
+.fact-card[data-decision="rejected"] .fact-decision { color: var(--danger); }
+.fact-evidence { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid var(--line-strong); background: var(--surface); color: var(--ink-soft); font-size: 11px; line-height: 1.65; }
+.fact-role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 0 0 12px; }
+.fact-role-grid > div { min-width: 0; }
+.fact-role-grid span { display: block; color: var(--muted); font-size: 9px; font-weight: 700; }
+.fact-role-grid p { margin: 3px 0 0; color: var(--ink-soft); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.fact-card-fields { display: grid; gap: 10px; }
+.fact-card-fields .field > span { font-size: 10px; }
+.fact-proposal-editor { min-height: 118px; font: 10px/1.55 Consolas, monospace; }
+.fact-decision-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.fact-decision-actions .is-selected { box-shadow: inset 0 0 0 2px currentColor; }
+.fact-reason { margin-top: 10px; }
+.fact-review-footer { justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+.fact-empty { margin: 0; padding: 18px; border: 1px dashed var(--line); border-radius: 9px; color: var(--ink-soft); font-size: 11px; text-align: center; }
+.chapter-fact-panel.is-readonly .fact-card-fields,
+.chapter-fact-panel.is-readonly .fact-decision-actions,
+.chapter-fact-panel.is-readonly .fact-reason,
+.chapter-fact-panel.is-readonly .fact-review-footer { display: none; }
+.version-empty { padding: 14px 0; color: var(--muted); font-size: 10px; list-style: none; }
 .review-grid { display: grid; grid-template-columns: 270px minmax(0,1fr); gap: 20px; align-items: start; }
 .review-score { display: flex; align-items: baseline; margin: 12px 0 8px; }
 .review-score strong { font: 700 48px/1 "STZhongsong", serif; }
@@ -608,6 +679,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .pending-layout { grid-template-columns: 260px minmax(0,1fr); }
   .chapter-index-row { grid-template-columns: 40px minmax(150px,1fr) auto auto; }
   .chapter-outline-note { display: none; }
+  .chapter-card-layout { grid-template-columns: 1fr; }
+  .chapter-card-confirm-panel { position: static; }
 }
 
 @media (max-width: 920px) {
@@ -634,6 +707,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .pending-item { flex: 0 0 250px; }
   .reading-layout { grid-template-columns: 1fr; }
   .reading-aside { position: static; grid-template-columns: 1fr 1fr; }
+  .chapter-card-layout { grid-template-columns: 1fr; }
+  .chapter-card-confirm-panel { position: static; }
   .review-grid { grid-template-columns: 1fr; }
   .versions-layout { grid-template-columns: 1fr; }
   .health-layout { grid-template-columns: 1fr; }
@@ -702,6 +777,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .prose-content { font-size: 14px; line-height: 2; }
   .reading-aside { grid-template-columns: 1fr; }
   .outline-readonly dl > div { grid-template-columns: 1fr; gap: 7px; }
+  .chapter-card-blueprint > div, .chapter-card-context dl > div { grid-template-columns: 1fr; gap: 6px; }
   .history-metrics { grid-template-columns: 1fr 1fr; }
   .history-toolbar { display: grid; }
   .filter-fields { display: grid; grid-template-columns: 1fr 1fr; }

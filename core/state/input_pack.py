@@ -62,6 +62,7 @@ def build_input_pack(
     narrative_rules: str | None = None,
     story_project_context: dict[str, Any] | None = None,
     generation_state_view: dict[str, Any] | None = None,
+    prose_only: bool = False,
 ) -> str:
     return f"""You are NovelAgent's chapter generation module. Generate the next chapter from the runtime Snapshot and Director decision.
 
@@ -115,12 +116,24 @@ def build_input_pack(
 - If Project Profile sets a language, write the chapter only in that language.
 - Continue directly from Story State and explain Spatial State transitions before changing locations.
 - Treat Authoritative State stable IDs, aliases, relationships, rosters, counters, inventory, locations, and events as binding.
-- Express every state change as a structured Scene delta; never infer a replacement identity or reset a counter.
+{_state_change_output_requirement(prose_only)}
 - Introduce or intensify at least one concrete conflict.
 - Treat Snapshot and Memory Index as read-only runtime context.
 - If Recovery Context is available, address its problem codes and validation coverage gaps without contradicting the Snapshot.
 - If StoryProject Chapter Blueprint is present, treat its required_beats and ending_pressure as mandatory chapter contract.
 - Return only chapter prose, not analysis or JSON."""
+
+
+def _state_change_output_requirement(prose_only: bool) -> str:
+    if prose_only:
+        return (
+            "- Render state changes only in novel prose. Do not output event ledgers, "
+            "Scene deltas, state patches, continuity reports, or JSON."
+        )
+    return (
+        "- Express every state change as a structured Scene delta; never infer a "
+        "replacement identity or reset a counter."
+    )
 
 
 def _narrative_rules_section(narrative_rules: str | None) -> str:
