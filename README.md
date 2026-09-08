@@ -34,17 +34,20 @@ Notion / Memory + StoryProject shadow/strict semantic state
 
 ## Quick Start
 
-Requires Python 3.12 or newer.
+The reproducible development baseline uses CPython 3.12 and a project virtual environment.
 
 Install dependencies:
 
-```bash
-pip install -r requirements.txt
+```powershell
+py -3.12 scripts/setup_environment.py
+.venv\Scripts\python.exe -B scripts/check_environment.py --dev
 ```
+
+On Linux, use `python3.12 scripts/setup_environment.py` and `.venv/bin/python` for subsequent commands. The setup installs exact runtime and transitive versions from `requirements.lock` plus test dependencies from `requirements-dev.lock`. Use `--runtime-only` to omit test tools. See [development environment and continuation](docs/development/environment.md) for validation, lock updates, and recovery of interrupted work. `requirements*.txt` declare dependency ranges for deliberate upgrades; the lock files define the tested installation.
 
 ## Windows 本地创作工作台
 
-完成依赖安装后，双击仓库根目录的 `启动创作工作台.bat`。工作台会自动打开浏览器；关闭启动窗口即可停止服务。作者日常使用不需要进入运行目录、查看 JSON 或输入恢复命令。
+完成上述项目环境安装后，双击仓库根目录的 `启动创作工作台.bat`。启动器使用并检查本项目`.venv`，缺失或版本不符时提示修复命令。工作台会自动打开浏览器；关闭启动窗口即可停止服务。作者日常使用不需要进入运行目录、查看 JSON 或输入恢复命令。
 
 工作台固定为五个主区域：
 

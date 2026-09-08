@@ -3,32 +3,31 @@ setlocal
 cd /d "%~dp0"
 
 title NovelAgent Workbench
+set "PYTHONUTF8=1"
 
-set "NOVELAGENT_PYTHON="
-where py >nul 2>nul
-if not errorlevel 1 set "NOVELAGENT_PYTHON=py -3"
-
-if not defined NOVELAGENT_PYTHON (
-  where python >nul 2>nul
-  if not errorlevel 1 set "NOVELAGENT_PYTHON=python"
-)
-
-if not defined NOVELAGENT_PYTHON (
-  echo Python 3 was not found.
-  echo Install Python 3.12 or newer, then run this launcher again.
+set "NOVELAGENT_PYTHON=%~dp0.venv\Scripts\python.exe"
+if not exist "%NOVELAGENT_PYTHON%" (
+  echo The project environment is missing.
+  echo Install Python 3.12, then run: py -3.12 scripts\setup_environment.py
   pause
   exit /b 1
 )
 
-%NOVELAGENT_PYTHON% run_workbench.py %*
+"%NOVELAGENT_PYTHON%" -B scripts\check_environment.py
+if errorlevel 1 (
+  echo Run: py -3.12 scripts\setup_environment.py
+  pause
+  exit /b 1
+)
+
+"%NOVELAGENT_PYTHON%" run_workbench.py %*
 set "NOVELAGENT_EXIT=%errorlevel%"
 
 if not "%NOVELAGENT_EXIT%"=="0" (
   echo.
   echo NovelAgent Workbench failed to start.
-  echo Run: python -m pip install -r requirements.txt
+  echo Environment setup: py -3.12 scripts\setup_environment.py
   pause
 )
 
-endlocal
-exit /b %NOVELAGENT_EXIT%
+endlocal & exit /b %NOVELAGENT_EXIT%

@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,8 +26,24 @@ def test_windows_launcher_keeps_cmd_safe_crlf_and_forwards_arguments() -> None:
     assert b"\r\n" in raw
     assert b"\n" not in raw.replace(b"\r\n", b"")
     script = raw.decode("ascii")
-    assert "%NOVELAGENT_PYTHON% run_workbench.py %*" in script
+    assert '"%NOVELAGENT_PYTHON%" run_workbench.py %*' in script
     assert 'cd /d "%~dp0"' in script
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows cmd launcher")
+def test_windows_launcher_uses_project_environment_from_another_directory(tmp_path: Path) -> None:
+    if not (REPOSITORY / ".venv/Scripts/python.exe").is_file():
+        pytest.skip("Project virtual environment is not installed")
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c",
+         str(REPOSITORY / "启动创作工作台.bat"), "--help"],
+        cwd=tmp_path, capture_output=True, text=True, encoding="utf-8",
+        timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '"ok": true' in result.stdout
+    assert '"lock": "requirements.lock"' in result.stdout
+    assert "usage: run_workbench.py" in result.stdout
 
 
 def _client(tmp_path: Path) -> tuple[TestClient, Path]:
