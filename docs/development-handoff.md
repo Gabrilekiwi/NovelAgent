@@ -4,7 +4,7 @@
 
 ## 当前任务
 
-阶段A已完成并提交33a0944。阶段B的T2.1已提交fd85291，T8.0已提交52699d0，D1完整上下文桥接已提交d33deff。T3.1/D2有限兼容试验通过：实际B0验证v3拒写，当前版本统一执行门与旧任务隔离、浏览器提示均已验证。下一步T7.0/D3可写恢复。最新HEAD以Git为准；完整开发目标仍未完成。
+阶段A已完成并提交33a0944。阶段B已完成：T2.1提交fd85291、T8.0提交52699d0、D1完整上下文桥接提交d33deff、D2兼容与任务隔离提交8868e6b；D3可写恢复有限试验10场景通过。下一步阶段C的T3.2正式提交服务。最新HEAD以Git为准；完整开发目标仍未完成。
 
 - 唯一主计划：[最终执行版1.0](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-final-2026-09-08.md)
 - 复审证据：[开发计划复审](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-review-2026-09-08.md)
@@ -48,6 +48,7 @@
 | T2.1 | 已完成 | 七类共享schema、模型完整例子、纯准备计算与拒绝场景；见阶段B证据 |
 | T3.0 | 有限试验完成 | D1来源/冷读决议通过；普通入口未启用新格式，正式事务仍待T3.2 |
 | T3.1 | 有限试验完成 | D2实际B0六入口拒绝v3、旧任务隔离、升级预检与回退边界；正式v3读写仍待T3.2 |
+| T7.0 | 有限试验完成 | D3实际Strict第2章→恢复后新进程第3章；10场景通过，旧历史与草稿保留；固定机器账本与普通产品入口接入仍待T7.1/T7.2 |
 | T2其余、T3–T7 | 范围与子任务已确定、待实现 | 按最终版阶段A–F推进；D1旧书来源、D2格式兼容、D3可写恢复先做有限试验 |
 | T8.0 | 已完成材料准备与离线运行 | 12项版本化样例、3份真实材料只读快照；4项语义缺口保留给T2.2/T2.4；没有人工质量评分或新模型效果评估 |
 | T8.1、T8.2 | 独立阶段、未授权真实调用 | 早期逐章配对与最终两模式连续验收分别限定预算；缺授权可继续独立工程 |
@@ -56,9 +57,11 @@
 
 ## 下一条工作
 
-D3 基线已运行，尚未通过 T7.0。证据 `.tmp/stage-b/d3-baseline/39e167b6308742d4a61f22153b87d215/report.json`，设计 `docs/development/d3-writable-restore-experiment.md`，可重现脚本 `scripts/experiments/run_d3_restore_baseline.py`。实际 v2.1 提交与 v1 已完成历史、SQLite 草稿均在隔离书内；复制后原文/草稿保留，receipt 验证、rename remap、旧准备物理 guard 分别拒绝，v1 仍指向源绝对路径。没有调用复制的 v1 reconcile，没有 AgentExecutor 续写、所有权交接或真实 Provider 调用。下一步第一候选：历史保留 + 新执行控制面 + 同机作品写入资格交接；普通产品入口接入仍未完成。辅助代理 D3 跟进因额度失败，不重复重启。
+D3最终证据 `.tmp/stage-b/d3-candidate-1/7cd0f947a8b34db585ff405a88fc4806/report.json`，10场景通过；代码 `scripts/experiments/d3_restore_candidate.py`、`d3_executor_probe.py`、`run_d3_restore_candidate.py`。实际新进程提交第2章，SQLite backup及新目录复制，再新进程提交第3章；正文/游标/旧历史/草稿均核验。实验机器账本持OS锁，源存活写者阻止交接；原登记、旧代际、其他登记、跨DB实例和已替换执行目录由实际执行入口拒绝。故障含源DB后改、未完成事务、伪造proof、复制正文/DB损坏、激活前正文/DB变化、目录替换、中断双方停写。v2独立基线 `.tmp/stage-b/d3-baseline/a244743ef0454d529f5ecc3e6e3b8d96` 只改可变root_registry后receipt有效，旧prepare guard仍拒绝；未迁移legacy到EA。设计决议 `docs/development/d3-writable-restore-experiment.md`。
 
-下一步T7.0/D3：在隔离目录准备一个经正式事务提交的章和一个SQLite作者草稿，复制到同机新空目录，核验旧不可变历史字节不变；调查旧path guard的device/inode约束，建立有来源证明的新物理绑定。用假Provider在新进程提交下一章，并验证原实例/恢复实例同book_id写入资格交接。不能用只读解压或改旧manifest/hash代替。先保存有限试验设计，再实施；实际备份产品入口属于T7.1/T7.2。保持真实书只读和Provider零调用。
+下一步T3.2：把D1七类来源、D2正式格式、T2.1纯准备接入共享prepare/commit/verify服务，再接工作台预览/提交。正文、当前状态、游标、receipt在既有正式事务；DB为可重建索引。先核对当前candidate/draft/fact confirmation服务和v2.1事务，不重复D1–D3调查。全套pytest与smoke只在T3.2完成验收点运行，阶段内做相关回归。真实升级仍需T7.1备份、真实Strict资格及T2.2接入预检；本轮只操作隔离样本。
+
+D3边界：共享机器账本显式注入且仅实验入口检查，普通CLI/工作台尚未接入；最终产品双写保护不因此自动完成。只认证源存在停写、一个completed legacy事务、无未解决job的样本；多章历史、源丢失、恢复中断显式重入待T7。`runtime/r2`是短的新执行目录，旧runs只读保留；早期深目录触发Windows MoveFileExW长度失败，需T7预检/T7.3覆盖。原始基线提交08e841e、报告39e167...保留；早期9场景成功e14cc...被最终7cd0...替代。辅助d3_candidate_review第一次审查提出5项已修正，复查因额度失败不重启。全部任务子进程已退出；最后只见旧无关pythonw PID15004，未操作。Provider/真实书写入均0。
 
 D2决议详见`docs/development/d2-format-compatibility.md`。采用ProjectIdentity 3.0 + reviewed_legacy_state_v1边界；minimum-only方案已由实际B0写runtime证明失败。当前schema仍只支持1/2，CURRENT_WRITER_CONTRACT仍为1；T3.2完整reader/writer/事务通过后才可启用3/2。不可现在改真实identity或直接发现D1试验文件。
 

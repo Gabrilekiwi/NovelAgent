@@ -1,14 +1,15 @@
 {
   "date": "2026-09-09",
   "stage": "B",
-  "stage_status": "in_progress",
+  "stage_status": "completed",
   "completed_tasks": [
     "T2.1",
     "T8.0",
     "T3.0",
-    "T3.1"
+    "T3.1",
+    "T7.0"
   ],
-  "next_task": "T7.0",
+  "next_task": "T3.2",
   "goal_complete": false,
   "stage_a_commit": "33a0944",
   "substeps": {
@@ -149,7 +150,7 @@
   "ongoing_task_processes": [],
   "limitations": [
     "Preparation is read-only and not integrated into formal commit or next-chapter readback.",
-    "D1 isolated source decision passed; D2 finite compatibility experiment passed; D3 writable recovery remains pending.",
+    "D1 isolated source decision passed; D2 finite compatibility experiment passed; D3 finite writable recovery passed; normal product restore remains T7.1/T7.2.",
     "Auxiliary implementation agent failed before writing files due to quota; root implemented and tested the preparation layer.",
     "Evidence matching/order checks do not prove semantic support or chronological order in flashbacks.",
     "T8.0 retains four semantic policy gaps; the offline dataset is ready but these quality checks are not implemented. All new source annotations are agent-curated with human review pending."
@@ -427,7 +428,7 @@
     "commit": "8868e6b"
   },
   "d3": {
-    "status": "baseline_observed_candidate_pending",
+    "status": "finite_experiment_passed",
     "decision": "docs/development/d3-writable-restore-experiment.md",
     "baseline_report": {
       "path": ".tmp/stage-b/d3-baseline/39e167b6308742d4a61f22153b87d215/report.json",
@@ -438,10 +439,44 @@
     "old_prepare_guard_rejected": true,
     "legacy_v1_absolute_targets_retained": true,
     "sqlite_draft_preserved": true,
-    "agent_executor_exercised": false,
-    "ownership_handoff_verified": false,
+    "agent_executor_exercised": true,
+    "ownership_handoff_verified": "explicit_experiment_entrypoint_only",
     "normal_restore_entrypoints_enabled": false,
     "provider_calls": 0,
-    "real_book_writes": 0
+    "real_book_writes": 0,
+    "candidate": 1,
+    "final_report": {
+      "path": ".tmp/stage-b/d3-candidate-1/7cd0f947a8b34db585ff405a88fc4806/report.json",
+      "sha256": "12d427a0569e1cc2f7af9e470046a0cbf983dbdf1d6ae756f1cc5ab5493dfc15"
+    },
+    "case_count": 10,
+    "baseline_commit": "08e841e",
+    "v2_baseline": "D:\\Pycharm\\PythonProject\\NovelAgent\\.tmp\\stage-b\\d3-baseline\\a244743ef0454d529f5ecc3e6e3b8d96",
+    "limitations": [
+      "Explicit experimental shared machine store and guarded execution entrypoint; ordinary product integration remains T7.",
+      "Exactly one completed legacy chapter; multiple overlapping history targets and unresolved task recovery remain later work.",
+      "Source is present and idle; interruption suspends both writers and requires explicit recovery, not automatic reactivation.",
+      "Local deterministic generation, minimal policy and synthetic Strict identity; no real model quality or real book qualification claim."
+    ],
+    "files": [
+      {
+        "path": "scripts/experiments/d3_restore_candidate.py",
+        "sha256": "dd04479978c86493315cf931547ac849bf39e41e4ce9bfc51ae3149caeb24499"
+      },
+      {
+        "path": "scripts/experiments/d3_executor_probe.py",
+        "sha256": "b6d05ec07fc8e6735a588d54da57fb3261589a244546ab7309e50ef2fbe34542"
+      },
+      {
+        "path": "scripts/experiments/run_d3_restore_candidate.py",
+        "sha256": "599a35e22448a3da0cbd2fc85845d38ddcfb6c70438a36da6777e3e6ba4f66c4"
+      },
+      {
+        "path": "scripts/experiments/run_d3_restore_baseline.py",
+        "sha256": "7a86cb90a025a763799c619a2cd0b1275b876efad1d3071b6959e0427b12230d"
+      }
+    ],
+    "active_processes": [],
+    "full_pytest_run": false
   }
 }
