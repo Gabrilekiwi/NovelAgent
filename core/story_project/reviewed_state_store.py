@@ -50,6 +50,13 @@ def _path(binding: dict, root_id: str, relative: str):
 
 def verify_reviewed_history(*, root: Path, book_id: str, root_map: dict,
                             baseline_document_sha256: str) -> dict:
+    result, _ = _read_reviewed_history(root=root, book_id=book_id, root_map=root_map,
+                                      baseline_document_sha256=baseline_document_sha256)
+    return result
+
+
+def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
+                           baseline_document_sha256: str) -> tuple[dict, dict]:
     """Verify all retained receipts and require the current file to be the tip.
 
     Each transaction publishes an immutable state snapshot as well as applying
@@ -122,7 +129,8 @@ def verify_reviewed_history(*, root: Path, book_id: str, root_map: dict,
             if _content(target, root_map) != prose:
                 fail("reviewed_chapter_archive_mismatch")
         revisions.add(value["revision"])
-        records[relative] = {"document": document, "value": value, "prose": prose, "receipt": receipt}
+        records[relative] = {"document": document, "value": value, "prose": prose,
+                             "receipt": receipt, "final": final}
     if not records:
         fail("reviewed_publication_missing")
     archives = assert_safe_local_tree(runtime / STATE_DIRECTORY)
@@ -155,8 +163,59 @@ def verify_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         fail("reviewed_history_fork")
     if read_project_bytes(root, RELATIVE_PATH) != current_document:
         fail("reviewed_source_changed_during_read")
-    return {"value": copy.deepcopy(current), "document_sha256": digest(current_document),
-            "receipt_count": len(records), "receipt_hash": tip["receipt"]["receipt_hash"]}
+    return ({"value": copy.deepcopy(current), "document_sha256": digest(current_document),
+             "receipt_count": len(records), "receipt_hash": tip["receipt"]["receipt_hash"]}, records)
+
+
+def read_verified_commit_requests(*, root: Path, book_id: str, root_map: dict,
+                                  baseline_document_sha256: str) -> list[dict]:
+    """Read publication facts for rebuilding an index; never regenerate.
+
+    The caller owns the book lock and pending-transaction boundary. This is
+    stricter than the format-only reader: every chapter needs its complete
+    immutable request artifact. A valid generic receipt alone is insufficient.
+    It verifies historical publication, not permission for another publication.
+    """
+    from core.engine.chapter_commit_request import (
+        REQUEST_DIRECTORY, REQUEST_TARGET, verify_commit_request_evidence,
+    )
+    from core.engine.persistence_v2 import validate_persistence_manifest_v2
+
+    history, records = _read_reviewed_history(root=root, book_id=book_id, root_map=root_map,
+                                             baseline_document_sha256=baseline_document_sha256)
+    publications = []
+    scopes = set()
+    for item in sorted(records.values(), key=lambda item: item["value"]["revision"]):
+        value, receipt = item["value"], item["receipt"]
+        if value["head"]["kind"] != "chapter":
+            continue
+        binding = _one(receipt["artifacts"], REQUEST_TARGET)
+        _path(binding, "runtime", f"{REQUEST_DIRECTORY}/{receipt['run_id']}.json")
+        evidence = json.loads(_content(binding, root_map).decode("utf-8"))
+        ref = receipt["manifest"]["path_ref"]
+        manifest = validate_persistence_manifest_v2(json.loads(read_project_bytes(
+            Path(root_map[ref["root_id"]]), ref["relative_path"]).decode("utf-8")))
+        if manifest["manifest_digest"] != receipt["manifest"]["sha256"]:
+            fail("reviewed_request_manifest_changed")
+        parent = records[value["head"]["previous"]["receipt_relative_path"]]
+        request = verify_commit_request_evidence(evidence=evidence, previous_document=parent["document"],
+            document=item["document"], receipt=receipt, manifest=manifest, final_record=item["final"])
+        scope = request["idempotency_scope_sha256"]
+        if scope in scopes:
+            fail("reviewed_duplicate_idempotency_publication")
+        scopes.add(scope)
+        publications.append({"record_type": "reviewed_chapter_publication", "schema_version": "1.0",
+            "book_id": book_id, "chapter": value["committed_through"], "revision": value["revision"],
+            "run_id": receipt["run_id"], "request": request,
+            "request_sha256": value["head"]["request_sha256"],
+            "preparation_sha256": evidence["preparation"]["preparation_sha256"],
+            "request_evidence_sha256": evidence["evidence_sha256"],
+            "receipt_id": receipt["receipt_id"], "receipt_relative_path": value["head"]["receipt_relative_path"],
+            "receipt_hash": receipt["receipt_hash"], "document_sha256": digest(item["document"]),
+            "prose_sha256": digest(item["prose"]), "publication_verified": True})
+    if digest(read_project_bytes(root, RELATIVE_PATH)) != history["document_sha256"]:
+        fail("reviewed_source_changed_during_read")
+    return publications
 
 
 def _upgrade_checkpoint(receipt: dict, *, document: bytes, roots: dict) -> dict:

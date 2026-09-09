@@ -10,9 +10,11 @@
     "read_only_reviewed_chapter_preparation_binding",
     "server_verified_candidate_draft_review_preparation_adapter",
     "formal_reviewed_codec_receipt_history_and_internal_context_bridge",
-    "internal_identity_v3_upgrade_transaction_and_cold_evidence_verification"
+    "internal_identity_v3_upgrade_transaction_and_cold_evidence_verification",
+    "local_final_prose_quality_evidence_with_explicit_pending_gates",
+    "durable_commit_request_evidence_and_receipt_verified_publication_index"
   ],
-  "next_action": "Implement the formal chapter commit service: quality approval, writer/DB locks, persistent idempotency and receipt-derived DB index/recovery; integrate v3 context/reader/writer/job gates together before enabling ordinary entrypoints. Real upgrade remains gated by maintenance, T7.1 backup and T2.2 onboarding.",
+  "next_action": "Connect server-verified Candidate scene/blueprint evidence and full final quality gates, then writer/DB locks, pending or rolled-back intent idempotency, locked revalidation and the formal chapter transaction. Integrate v3 context/read-set/Candidate/writer/recovery/job contracts together before ordinary entrypoints; complete API/UI and T3.2 acceptance. Real upgrade remains gated by maintenance, T7.1 backup and T2.2 onboarding.",
   "publication_authorized": false,
   "normal_v3_reader_writer_enabled": false,
   "files": [
@@ -50,7 +52,7 @@
     },
     {
       "path": "core/story_project/reviewed_state_store.py",
-      "sha256": "aff7e0c332b0d3a1ce53c61693a6b4ce81140c73e44fc62ef0b4a5bae0a50339"
+      "sha256": "daf3db87f8137870cd9335fe645a633c3b2f31eff1bbeb4aa5eef53fcf935bff"
     },
     {
       "path": "tests/test_reviewed_state_document.py",
@@ -79,6 +81,26 @@
     {
       "path": "tests/test_reviewed_upgrade.py",
       "sha256": "f8a8af52ee8af379e0818933b2e61642c1ac3c5070032b213366ea07176225c1"
+    },
+    {
+      "path": "core/engine/reviewed_chapter_quality.py",
+      "sha256": "f836dc6c1ff2719b832331c6aef2dc50e8a195a66889c6f3be12706bec4eb89f"
+    },
+    {
+      "path": "core/engine/chapter_commit_request.py",
+      "sha256": "20f5ded95aff07fe125b2eb9e012c2a03b5db703915609a453c3291a0b9a2130"
+    },
+    {
+      "path": "workbench/chapter_commit_index.py",
+      "sha256": "75b86152436f4e56b47a89dad9657e0bd1467d4a9202d28d5352616135194589"
+    },
+    {
+      "path": "tests/test_reviewed_chapter_quality.py",
+      "sha256": "abd6176225db25e41fa8713f518a48b2e4178ec5c3b28e57f8598e9099be24c3"
+    },
+    {
+      "path": "tests/test_chapter_commit_index.py",
+      "sha256": "afd2b76424a7c9d44f932ed7ca9c2874907cdcad3aa2b27cde34600bec01a72d"
     }
   ],
   "tests": [
@@ -181,14 +203,68 @@
       ],
       "pytest_passed": 72,
       "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-commit-index-regression.xml",
+      "sha256": "dda40e985a866fa6397b2d323b4e4585724d2bfbc664c48a4df9414cdb26a2a7",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "74",
+          "time": "83.042",
+          "timestamp": "2026-09-09T13:17:06.431082+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 74,
+      "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-reviewed-quality-gate-regression.xml",
+      "sha256": "05305e527dd0a78570757379c1b020735cbe7da88ae328ea5c956d743da775b9",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "67",
+          "time": "9.843",
+          "timestamp": "2026-09-09T13:16:55.011829+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 67,
+      "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-quality-request-bridge.xml",
+      "sha256": "f4c30024f67fa2e4a7d073f5eef839fd7c647c8f177c27934dc9c6395e3b406d",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "1",
+          "time": "3.012",
+          "timestamp": "2026-09-09T13:19:40.703863+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 1,
+      "subtests_passed": 0
     }
   ],
-  "new_test_count": 94,
+  "new_test_count": 136,
   "provider_calls": 0,
   "real_book_writes": 0,
   "active_processes": [],
   "limitations": [
-    "No public upgrade/commit API, final-prose quality approval, shared writer/DB service locks, persistent idempotency or receipt-derived DB index recovery yet.",
+    "No public upgrade/commit API or shared writer/DB commit service yet. Local quality explicitly lacks Candidate scene/blueprint evidence; strict policy lacks model validation. Published request receipt/index recovery is verified, but pending/rolled-back intent idempotency and double-click single logical commit are not integrated.",
     "Identity 3.0 has an internal codec and verified upgrade transaction. Ordinary project schema still supports 1/2 and CURRENT_WRITER_CONTRACT remains 1; ordinary v3 candidate/runtime entrypoints reject.",
     "Real upgrade still requires maintenance ownership, active-process stop, unresolved Provider/transaction checks, T7.1 verified backup and T2.2 onboarding. Synthetic Strict reports are not real-book calibration.",
     "Typed upgrade preserves legacy epoch/head with a complete validated identity/state/preparation bundle. It does not enable ordinary legacy writes on reviewed-format books.",
@@ -202,5 +278,11 @@
     "initial_finding": "Preparation target existence did not prove complete input binding.",
     "resolution": "Shared exact preparation/final verification now binds actual transaction context/read-set/identity/state/receipt at prepare and cold read. Negative cases pass.",
     "followup": "No new actionable findings; static review only."
+  },
+  "quality_index_base_commit": "3d30773",
+  "quality_index_review": {
+    "agent": "commit_quality",
+    "scope": "bounded_read_only_request_evidence_and_index",
+    "result": "No reproducible new bypass found. Index row recovery does not cover the entire database or drafts."
   }
 }
