@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from core.story_project.mapper import build_story_project_runtime_context
+from core.story_project.format_compatibility import assert_project_execution_compatible
 from core.story_project.identity import ProjectIdentity, create_ephemeral_project_identity
 from core.story_project.activation import evaluate_story_state_activation
 from core.story_project.semantic_parser import parse_story_project_semantic_state
@@ -110,6 +111,7 @@ def build_generation_story_project_context(
     chapter_index = chapter_resolution.resolved_chapter if chapter_resolution else None
     if root is None or chapter_index is None:
         raise ValueError("StoryProject generation requires a resolved root and chapter.")
+    assert_project_execution_compatible(root, expected_book_id=project_identity.book_id if project_identity else None)
     identity = project_identity or create_ephemeral_project_identity(root)
     event_authority = _uses_event_authority(identity)
     context = build_story_project_runtime_context(

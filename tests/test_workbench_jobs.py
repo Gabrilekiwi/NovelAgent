@@ -1171,6 +1171,15 @@ def test_manual_confirmation_latches_across_recovery_until_explicit_resume(tmp_p
     still_paused = store.get(parent.id)
     assert still_paused.state == "awaiting_input"
     assert still_paused.manual_confirmation_required is True
+    assert store.resume_ready(parent.id) is True
+    with store.database.transaction() as connection:
+        connection.execute("UPDATE jobs SET execution_contract=NULL WHERE id=?", (recovery.id,))
+    assert store.resume_ready(parent.id) is False
+    with pytest.raises(JobError, match="receipt-backed recovery"):
+        store.resume(parent.id, confirmed=True)
+    with store.database.transaction() as connection:
+        connection.execute("UPDATE jobs SET execution_contract=? WHERE id=?",
+                           (parent.execution_contract, recovery.id))
     with pytest.raises(JobError, match="explicit author confirmation"):
         store.resume(parent.id, confirmed=False)
 
@@ -1322,7 +1331,6 @@ def test_manual_draft_validation_preserves_the_edited_revision(
             "draft_id": draft.id,
             "draft_revision": draft.revision,
             "manual_draft_path": str(draft_path),
-            "parent_job_id": "parent-job",
         },
     )
     claimed = store.claim_next()
@@ -1589,7 +1597,6 @@ def test_recovery_job_reports_source_conflict_without_overwriting_author_text(
         kind="locked_chapter_recovery",
         start_chapter=22,
         end_chapter=22,
-        config={"parent_job_id": "parent-22"},
     )
     claimed = store.claim_next()
     assert claimed is not None and claimed.id == recovery.id

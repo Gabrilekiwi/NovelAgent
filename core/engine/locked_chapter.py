@@ -17,6 +17,7 @@ from core.engine.locked_chapter_state import (
     verify_locked_chapter_scene_sources,
 )
 from core.engine.persistence import atomic_create_json, persistence_run_lock
+from core.story_project.format_compatibility import assert_project_execution_compatible
 from core.engine.provider_safety import CANDIDATE_EXECUTION_PREFIX
 from core.engine.run_record import validate_run_result
 from core.engine.scene_source_provenance import (
@@ -63,6 +64,7 @@ def recover_locked_chapter(
     """
 
     story_root = Path(story_project_root).resolve(strict=True)
+    assert_project_execution_compatible(story_root, expected_book_id=expected_book_id)
     runtime_root = Path(run_dir).resolve()
     snapshot_target = Path(snapshot_path).resolve(strict=True)
     now = clock or (lambda: datetime.now(timezone.utc))

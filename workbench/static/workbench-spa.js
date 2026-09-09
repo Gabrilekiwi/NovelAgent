@@ -8,6 +8,7 @@
 
   const one = (selector, root = doc) => root.querySelector(selector);
   const all = (selector, root = doc) => Array.from(root.querySelectorAll(selector));
+  const incompatibleJobMessage = "旧任务无法在当前版本继续执行。原始记录已保留；请先核对运行与恢复证据，再决定后续处理。";
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
     if (className) node.className = className;
@@ -394,7 +395,7 @@
       fragment.querySelector(".progress").setAttribute("aria-valuenow", String(progress));
       fragment.querySelector(".progress span").style.setProperty("--progress", `${progress}%`);
       fragment.querySelector("footer > span").textContent = project.updated_at_label || "本地作品";
-      UI.updateStatusBadge(fragment.querySelector(".status-badge"), project.status || "idle", project.status_label);
+      UI.updateStatusBadge(fragment.querySelector(".status-badge"), project.status || "idle", project.active_job?.execution_compatible === false ? "旧任务版本不兼容" : project.status_label);
       if (project.pending_count > 0) card.classList.add("needs-attention");
       grid.append(fragment);
     });
@@ -1527,6 +1528,16 @@
     } else {
       UI.initJobStream(root);
     }
+    if (session?.execution_compatible === false) {
+      UI.updateStatusBadge(one("[data-production-status]"), "blocked", "旧任务版本不兼容");
+      setText("[data-production-title]", `第 ${currentChapter || "—"} 章旧任务已隔离`);
+      setText("[data-production-attention-eyebrow]", "版本兼容检查");
+      setText("[data-production-attention-title]", "旧任务不能直接恢复执行");
+      setText("[data-production-attention-detail]", incompatibleJobMessage);
+      setText("[data-progress-label]", "旧任务已隔离，未启动新的执行");
+      setText("[data-live-title]", "原始运行记录已保留");
+      setText("[data-live-detail]", incompatibleJobMessage);
+    }
     updateProvider(payload.provider || {});
   };
 
@@ -1570,12 +1581,13 @@
     }
     const validateForm = one("[data-draft-validate-form]");
     validateForm.action = `/api/drafts/${encodeURIComponent(draft.id)}/validate`;
+    one("button", validateForm).disabled = parentJob?.execution_compatible === false;
     one('input[name="job_id"]', validateForm).value = parentJob?.job_id || parentJob?.id || "";
     const confirmForm = one("[data-draft-confirm-form]");
     confirmForm.action = `/api/drafts/${encodeURIComponent(draft.id)}/confirm`;
     one('input[name="job_id"]', confirmForm).value = parentJob?.job_id || parentJob?.id || "";
     const confirmButton = one("[data-draft-confirm-button]", confirmForm);
-    confirmButton.disabled = draft.state !== "validated" || !parentJob;
+    confirmButton.disabled = draft.state !== "validated" || !parentJob || parentJob.execution_compatible === false;
     confirmButton.title = !parentJob ? "这份草稿不属于当前暂停批次；请使用上方的单章恢复确认" : draft.state !== "validated" ? "必须先通过恢复验证" : "";
   };
 
@@ -1853,6 +1865,19 @@
       setText("[data-recover-button]", "先做无模型恢复分类");
     }
     renderRecoveryDraft(issue);
+    if (issue.execution_compatible === false || pausedParent?.execution_compatible === false) {
+      UI.updateStatusBadge(one(".recovery-hero .status-badge"), "blocked", "旧任务版本不兼容");
+      setText("[data-pending-detail-eyebrow]", "版本兼容检查");
+      setText("[data-pending-title]", `第 ${chapter} 章旧任务已隔离`);
+      setText("[data-pending-summary]", incompatibleJobMessage);
+      setText("[data-pending-section-title]", "原始记录保留供核对");
+      setText("[data-pending-safe-chip]", "旧任务未获得当前版本的执行许可");
+      setText("[data-recovery-action-label]", "当前版本不能恢复此任务");
+      setText("[data-recovery-action-detail]", incompatibleJobMessage);
+      form.dataset.confirm = "";
+      all("input, button", form).forEach((control) => { control.disabled = true; });
+      setText("[data-recover-button]", "旧任务版本不兼容");
+    }
     all(".pending-item", one("[data-pending-list]")).forEach((node) => node.classList.toggle("is-active", node.dataset.pendingId === String(issue.id)));
   };
 
@@ -1862,8 +1887,8 @@
         ...job,
         job_id: job.job_id || job.id,
         chapter: job.chapter || job.next_chapter,
-        title: job.title || `第 ${job.next_chapter || "—"} 章需要作者决定`,
-        reason: job.reason || job.error?.message || (job.state === "needs_recovery" ? "Provider 状态不确定，不会自动重试" : "生产已暂停")
+        title: job.execution_compatible === false ? `第 ${job.next_chapter || "—"} 章旧任务版本不兼容` : job.title || `第 ${job.next_chapter || "—"} 章需要作者决定`,
+        reason: job.execution_compatible === false ? incompatibleJobMessage : job.reason || job.error?.message || (job.state === "needs_recovery" ? "Provider 状态不确定，不会自动重试" : "生产已暂停")
       };
       const repairNotConverging = repairNotConvergingDetailsOf(normalized);
       return {

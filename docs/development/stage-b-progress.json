@@ -1,13 +1,14 @@
 {
-  "date": "2026-09-08",
+  "date": "2026-09-09",
   "stage": "B",
   "stage_status": "in_progress",
   "completed_tasks": [
     "T2.1",
     "T8.0",
-    "T3.0"
+    "T3.0",
+    "T3.1"
   ],
-  "next_task": "T3.1",
+  "next_task": "T7.0",
   "goal_complete": false,
   "stage_a_commit": "33a0944",
   "substeps": {
@@ -341,5 +342,87 @@
       "No paid Provider calls, real book writes or real Strict calibration claims."
     ]
   },
-  "t8_0_commit": "52699d0"
+  "t8_0_commit": "52699d0",
+  "d2": {
+    "status": "finite_experiment_passed",
+    "decision": "docs/development/d2-format-compatibility.md",
+    "b0_commit": "090d0aa191f7aae96ea1c979b6725d7f87d811ae",
+    "d1_commit": "d33deff",
+    "minimum_only_candidate": "failed_actual_b0_wrote_runtime",
+    "identity_v3_candidate": "rejected_before_book_writes_in_six_actual_b0_entrypoints",
+    "current_entrypoints": "shared_gate_and_task_quarantine",
+    "normal_v3_reader_writer_enabled": false,
+    "actual_b0_database_task_quarantined": true,
+    "browser_verification": "passed_isolated_worker_disabled",
+    "provider_calls": 0,
+    "real_book_writes": 0,
+    "evidence": [
+      {
+        "path": ".tmp/stage-b/d2-b0-probes/9d3573b0bae3480582210db209fb1e01/report.json",
+        "sha256": "3aacd2ed613be42dd78e0da28cf7ce11aa06efcf30c7e17aeaf931b045d6352b"
+      },
+      {
+        "path": ".tmp/stage-b/d2-task-upgrade/5c03e8858e5b4a099cbb5a6bdae130f5/report.json",
+        "sha256": "4a9066fb8881238f70127b2d3adff0da592888ac0ac28fadd4bc3c482da25d38"
+      },
+      {
+        "path": ".tmp/stage-b/d2-browser/5fa7ab32e0fc41b4a916477d31dc3fee/browser-evidence.json",
+        "sha256": "f050fbb3e2169630971f7122826053bae0951b48c1b7704d49556bb255dabb41"
+      },
+      {
+        "path": ".tmp/stage-b/d2-regression.xml",
+        "sha256": "25be723fc15c2d2aa5d2a51f5bff270e3d7afc8e3e498903fa2a4a819f43723f",
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "1",
+            "tests": "157",
+            "time": "24.553",
+            "timestamp": "2026-09-09T08:17:07.307151+08:00",
+            "hostname": "PCMICRO-7LA9Q0O"
+          }
+        ]
+      },
+      {
+        "path": ".tmp/stage-b/d2-entrypoint-regression.xml",
+        "sha256": "5ff0908bafbc2f8570e00f01a33721cddc1583c8f49203ca9b39398a95708d08",
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "1",
+            "skipped": "0",
+            "tests": "216",
+            "time": "17.567",
+            "timestamp": "2026-09-09T08:18:35.741111+08:00",
+            "hostname": "PCMICRO-7LA9Q0O"
+          }
+        ]
+      },
+      {
+        "path": ".tmp/stage-b/d2-final-tests.xml",
+        "sha256": "dcc87044b00c8af1c8d60aa7fda1262d87612cf5b8fe69be3ca3073947836d72",
+        "suites": [
+          {
+            "name": "pytest",
+            "errors": "0",
+            "failures": "0",
+            "skipped": "1",
+            "tests": "112",
+            "time": "8.795",
+            "timestamp": "2026-09-09T08:30:17.372868+08:00",
+            "hostname": "PCMICRO-7LA9Q0O"
+          }
+        ]
+      }
+    ],
+    "limitations": [
+      "Final v3 schema, upgrade transaction and normal reader/writer remain T3.2.",
+      "Real backup, process/maintenance coordination and restore handoff remain T7.",
+      "B0 generation control is persistent dry-run and fails later at Strict apply requirement; init writes successfully.",
+      "Entry-point regression had one mocked path attribute failure, fixed and verified in final subset; no full suite run."
+    ]
+  }
 }

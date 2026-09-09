@@ -24,6 +24,7 @@ from core.story_project.managed_block import (
     three_way_merge_managed,
     write_managed_block,
 )
+from core.story_project.format_compatibility import assert_project_execution_compatible
 
 
 TRACKING_DIR_NAME = CORE_DIRECTORY_NAMES[3]
@@ -403,6 +404,7 @@ def build_story_project_writeback_plan(
         return plan
 
     _apply_gate(plan, run=run, validation=validation, chapter_text=chapter_text, context=context)
+    assert_project_execution_compatible(root)
     _plan_prose_target(plan, root=root, chapter_index=chapter_index, title=title, overwrite=config.overwrite)
     _plan_tracking_targets(plan, root=root, tracking_dir=tracking_dir)
     return plan
@@ -429,6 +431,8 @@ def apply_story_project_writeback_plan(
         return _result(plan, targets, applied=False, partial=False)
 
     errors: list[dict[str, Any]] = []
+    if plan.story_project_root is not None:
+        assert_project_execution_compatible(plan.story_project_root)
     failed_targets: list[str] = []
     for target in targets:
         try:

@@ -16,6 +16,7 @@ import time
 import uuid
 
 from core.story_project.paths import resolve_prose
+from core.story_project.format_compatibility import assert_project_execution_compatible
 from core.engine.locked_chapter import verified_final_recovery_draft
 from core.engine.persistence_v2 import verify_publication_receipt
 from core.engine.root_registry import RootRegistryService
@@ -38,6 +39,9 @@ JOB_STATES = frozenset(
     }
 )
 JOB_KINDS = frozenset({"generation_session", "locked_chapter_recovery"})
+# A semantic execution contract, deliberately independent of Git commit strings.
+# B0 rows have NULL; never stamp an old row with the current contract on upgrade.
+CURRENT_JOB_EXECUTION_CONTRACT = "workbench_execution_v1"
 PRE_PROVIDER_CONTEXT_BUDGET_ERROR = "pre_provider_context_budget_exceeded"
 PRE_PROVIDER_PROVENANCE_ERROR = "pre_provider_provenance_unavailable"
 REPAIR_NOT_CONVERGING_ERROR = "chapter_repair_not_converging"
@@ -103,6 +107,7 @@ class JobRecord:
     updated_at: str
     started_at: str | None
     finished_at: str | None
+    execution_contract: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,6 +129,8 @@ class JobRecord:
             "updated_at": self.updated_at,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "execution_contract": self.execution_contract,
+            "execution_compatible": self.execution_contract == CURRENT_JOB_EXECUTION_CONTRACT,
         }
 
 
@@ -236,6 +243,37 @@ class JobStore:
                 );
                 """
             )
+
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)")}
+            if "execution_contract" not in columns:
+                connection.execute("ALTER TABLE jobs ADD COLUMN execution_contract TEXT")
+
+    def quarantine_incompatible_jobs(self) -> int:
+        """Retain original config/result/error; remove unsupported rows from scheduling."""
+        timestamp = _utc_now()
+        with self.database.transaction() as connection:
+            rows = connection.execute(
+                """SELECT * FROM jobs WHERE (execution_contract IS NULL OR execution_contract != ?)
+                   AND state NOT IN ('completed', 'cancelled', 'failed')
+                   AND (state != 'needs_recovery' OR manual_confirmation_required = 0)""",
+                (CURRENT_JOB_EXECUTION_CONTRACT,),
+            ).fetchall()
+            for row in rows:
+                if row["state"] in ACTIVE_JOB_STATES:
+                    # The caller must establish process ownership and settle restart
+                    # uncertainty first. A database edit cannot stop a live writer.
+                    raise JobError("在途执行尚未停止，不能隔离或升级任务。")
+                connection.execute(
+                    """UPDATE jobs SET state = 'needs_recovery', manual_confirmation_required = 1,
+                       updated_at = ?, revision = revision + 1 WHERE id = ?""",
+                    (timestamp, row["id"]),
+                )
+                self._append_event_in_transaction(
+                    connection, str(row["id"]), "job.execution_contract_incompatible",
+                    {"previous_state": row["state"], "stored_contract": row["execution_contract"],
+                     "required_contract": CURRENT_JOB_EXECUTION_CONTRACT, "automatic_retry": False},
+                    timestamp=timestamp)
+        return len(rows)
 
     def recover_after_restart(self) -> int:
         """Fail closed: a dead web process must never replay a provider call."""
@@ -374,6 +412,12 @@ class JobStore:
                 ):
                     raise JobError("idempotency key was already used for another job")
                 return record
+            parent_id = safe_config.get("parent_job_id")
+            if parent_id is not None:
+                parent = _require_job_row(connection, str(parent_id))
+                _require_job_execution_contract(parent)
+                if parent["project_id"] != str(project_id):
+                    raise JobError("recovery parent belongs to another project")
             if kind == "generation_session":
                 existing = connection.execute(
                     """
@@ -407,8 +451,8 @@ class JobStore:
                 """
                 INSERT INTO jobs(
                     id, project_id, kind, state, start_chapter, end_chapter,
-                    next_chapter, config_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    next_chapter, config_json, created_at, updated_at, execution_contract
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -421,6 +465,7 @@ class JobStore:
                     _canonical_json(safe_config),
                     timestamp,
                     timestamp,
+                    CURRENT_JOB_EXECUTION_CONTRACT,
                 ),
             )
             self._append_event_in_transaction(
@@ -443,6 +488,7 @@ class JobStore:
         timestamp = _utc_now()
         with self.database.transaction() as connection:
             row = _require_job_row(connection, job_id)
+            _require_job_execution_contract(row)
             if row["state"] != "held":
                 return _job_from_row(row)
             if bool(row["cancel_requested"]):
@@ -589,6 +635,7 @@ class JobStore:
         timestamp = _utc_now()
         with self.database.transaction() as connection:
             row = _require_job_row(connection, job_id)
+            _require_job_execution_contract(row)
             if row["kind"] != "generation_session":
                 raise JobError("only generation sessions can be resumed")
             if row["state"] not in PAUSED_JOB_STATES:
@@ -642,6 +689,8 @@ class JobStore:
 
         with self.database.connection() as connection:
             row = _require_job_row(connection, job_id)
+            if row["execution_contract"] != CURRENT_JOB_EXECUTION_CONTRACT:
+                return False
             if row["kind"] != "generation_session" or row["state"] not in PAUSED_JOB_STATES:
                 return False
             error = _stored_job_error(row)
@@ -870,6 +919,7 @@ class JobStore:
         return self.get(job_id)
 
     def claim_next(self) -> JobRecord | None:
+        self.quarantine_incompatible_jobs()
         timestamp = _utc_now()
         with self.database.transaction() as connection:
             active = connection.execute(
@@ -1394,6 +1444,7 @@ class JobSupervisor:
 
     def _start_worker(self) -> None:
         self.store.recover_after_restart()
+        self.store.quarantine_incompatible_jobs()
         self._reconcile_receipted_restart_commits()
         self._reconcile_known_review_pauses()
         self._reconcile_pre_provider_context_failures()
@@ -1468,6 +1519,8 @@ class JobSupervisor:
 
     def _reconcile_receipted_restart_commits(self) -> None:
         for job in self.store.list_jobs(states=("needs_recovery",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
             if job.kind != "generation_session":
                 continue
             try:
@@ -1493,6 +1546,8 @@ class JobSupervisor:
         """Move proven review rejections out of the provider-uncertain lane."""
 
         for job in self.store.list_jobs(states=("needs_recovery",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
             if job.kind != "generation_session" or not isinstance(job.error, Mapping):
                 continue
             if job.error.get("code") != "chapter_not_safe_to_continue":
@@ -1526,6 +1581,8 @@ class JobSupervisor:
         """Upgrade proven legacy local-budget pauses without replaying the engine."""
 
         for job in self.store.list_jobs(states=("awaiting_input",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
             if job.kind != "generation_session" or not isinstance(job.error, Mapping):
                 continue
             if job.error.get("code") != "engine_result_unreadable":
@@ -1555,6 +1612,8 @@ class JobSupervisor:
         """Upgrade exact legacy Git failures without ever requeueing them."""
 
         for job in self.store.list_jobs(states=("awaiting_input",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
             if job.kind != "generation_session" or not isinstance(job.error, Mapping):
                 continue
             if job.error.get("code") != "engine_result_unreadable" or job.result is not None:
@@ -1587,6 +1646,8 @@ class JobSupervisor:
         """Explain proven legacy convergence failures without requeueing them."""
 
         for job in self.store.list_jobs(states=("awaiting_input",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
             if job.kind != "generation_session" or not isinstance(job.error, Mapping):
                 continue
             if job.error.get("code") != "engine_result_unreadable" or job.result is not None:
@@ -1616,10 +1677,12 @@ class JobSupervisor:
                 continue
 
     def _run_generation_session(self, initial_job: JobRecord) -> None:
+        _require_job_execution_contract(initial_job.to_dict())
         job = initial_job
         project = self.project_lookup(job.project_id)
         project_root = Path(project.root).resolve(strict=True)
         while job.next_chapter <= job.end_chapter and not self._stop.is_set():
+            assert_project_execution_compatible(project_root, expected_book_id=getattr(project, "book_id", None))
             chapter = job.next_chapter
             expected_state_head = job.config.get("project_state_head")
             try:
@@ -1824,8 +1887,10 @@ class JobSupervisor:
             return
 
     def _run_recovery(self, job: JobRecord) -> None:
+        _require_job_execution_contract(job.to_dict())
         project = self.project_lookup(job.project_id)
         project_root = Path(project.root).resolve(strict=True)
+        assert_project_execution_compatible(project_root, expected_book_id=getattr(project, "book_id", None))
         chapter = job.next_chapter
         paths = self._job_paths(job.id, chapter)
         command = self._recovery_command(project_root, job.config)
@@ -1873,6 +1938,7 @@ class JobSupervisor:
     def _execute_subprocess(
         self, job_id: str, chapter: int, command: Sequence[str], paths: Mapping[str, Path],
     ) -> dict[str, Any]:
+        _require_job_execution_contract(self.store.get(job_id).to_dict())
         lease = self._instance_lease or InstanceLease(self.store.database.path.parent).acquire()
         try:
             return self._execute_owned_subprocess(job_id, chapter, command, paths, lease)
@@ -3942,9 +4008,11 @@ def _manual_recovery_draft_matches(
 
 
 def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
+    if parent["execution_contract"] != CURRENT_JOB_EXECUTION_CONTRACT:
+        return False
     candidates = connection.execute(
         """
-        SELECT config_json, result_json, finished_at FROM jobs
+        SELECT config_json, result_json, finished_at, execution_contract FROM jobs
         WHERE project_id = ? AND kind = 'locked_chapter_recovery'
           AND start_chapter = ? AND end_chapter = ? AND state = 'completed'
         ORDER BY finished_at DESC, created_at DESC
@@ -3977,6 +4045,8 @@ def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
     if not run_manifest_ok:
         return False
     for candidate in candidates:
+        if candidate["execution_contract"] != parent["execution_contract"]:
+            continue
         try:
             config = json.loads(str(candidate["config_json"]))
             result = json.loads(str(candidate["result_json"]))
@@ -4192,7 +4262,13 @@ def _job_from_row(row: Any) -> JobRecord:
         updated_at=str(row["updated_at"]),
         started_at=str(row["started_at"]) if row["started_at"] else None,
         finished_at=str(row["finished_at"]) if row["finished_at"] else None,
+        execution_contract=str(row["execution_contract"]) if row["execution_contract"] else None,
     )
+
+
+def _require_job_execution_contract(row: Any) -> None:
+    if row["execution_contract"] != CURRENT_JOB_EXECUTION_CONTRACT:
+        raise JobError("任务执行契约不兼容；保留记录用于诊断，禁止在当前代码下直接继续。")
 
 
 def _draft_from_row(row: Any) -> DraftRecord:

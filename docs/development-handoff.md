@@ -1,10 +1,10 @@
 # NovelAgent 开发交接
 
-更新时间：2026-09-08。
+更新时间：2026-09-09。
 
 ## 当前任务
 
-阶段A已完成并提交33a0944。阶段B的T2.1已提交fd85291，T8.0已提交52699d0。T3.0/D1有限来源试验已通过：七类状态经真实生成/事实入口一致读取、清缓存冷读、正文/来源后改失效均有证据。第一次候选提交c3093b0；最新HEAD以Git为准。下一步T3.1/D2格式兼容，详见`docs/development/d1-state-source-experiment.md`。完整开发目标仍未完成。
+阶段A已完成并提交33a0944。阶段B的T2.1已提交fd85291，T8.0已提交52699d0，D1完整上下文桥接已提交d33deff。T3.1/D2有限兼容试验通过：实际B0验证v3拒写，当前版本统一执行门与旧任务隔离、浏览器提示均已验证。下一步T7.0/D3可写恢复。最新HEAD以Git为准；完整开发目标仍未完成。
 
 - 唯一主计划：[最终执行版1.0](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-final-2026-09-08.md)
 - 复审证据：[开发计划复审](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-review-2026-09-08.md)
@@ -47,6 +47,7 @@
 | T1.2 | 已完成 | 不存在父目录400中文提示，表单保留；改正目录201，刷新仍可读取作品 |
 | T2.1 | 已完成 | 七类共享schema、模型完整例子、纯准备计算与拒绝场景；见阶段B证据 |
 | T3.0 | 有限试验完成 | D1来源/冷读决议通过；普通入口未启用新格式，正式事务仍待T3.2 |
+| T3.1 | 有限试验完成 | D2实际B0六入口拒绝v3、旧任务隔离、升级预检与回退边界；正式v3读写仍待T3.2 |
 | T2其余、T3–T7 | 范围与子任务已确定、待实现 | 按最终版阶段A–F推进；D1旧书来源、D2格式兼容、D3可写恢复先做有限试验 |
 | T8.0 | 已完成材料准备与离线运行 | 12项版本化样例、3份真实材料只读快照；4项语义缺口保留给T2.2/T2.4；没有人工质量评分或新模型效果评估 |
 | T8.1、T8.2 | 独立阶段、未授权真实调用 | 早期逐章配对与最终两模式连续验收分别限定预算；缺授权可继续独立工程 |
@@ -55,7 +56,15 @@
 
 ## 下一条工作
 
-下一步T3.1/D2：将实际B0 `090d0aa191f7aae96ea1c979b6725d7f87d811ae`提取到隔离目录，用未修改的B0程序验证不支持新格式时写入前拒绝；核对`core/story_project/authority.py`的`CURRENT_WRITER_CONTRACT`和`minimum_writer_contract`及ProjectIdentity对legacy模式的检查。再覆盖新版本CLI/工作台/恢复入口与在途任务版本边界。不升级真实书，不修改B0制造拒写结果。D1已通过，无需重做来源调查或同一套测试。
+下一步T7.0/D3：在隔离目录准备一个经正式事务提交的章和一个SQLite作者草稿，复制到同机新空目录，核验旧不可变历史字节不变；调查旧path guard的device/inode约束，建立有来源证明的新物理绑定。用假Provider在新进程提交下一章，并验证原实例/恢复实例同book_id写入资格交接。不能用只读解压或改旧manifest/hash代替。先保存有限试验设计，再实施；实际备份产品入口属于T7.1/T7.2。保持真实书只读和Provider零调用。
+
+D2决议详见`docs/development/d2-format-compatibility.md`。采用ProjectIdentity 3.0 + reviewed_legacy_state_v1边界；minimum-only方案已由实际B0写runtime证明失败。当前schema仍只支持1/2，CURRENT_WRITER_CONTRACT仍为1；T3.2完整reader/writer/事务通过后才可启用3/2。不可现在改真实identity或直接发现D1试验文件。
+
+B0未修改归档`.tmp/stage-b/d2-b0/0dac6b9cf1184e7b82e4dce979439155`，758文件哈希运行前后一致。最终18例报告`.tmp/stage-b/d2-b0-probes/9d3573b0bae3480582210db209fb1e01/report.json`；实际B0数据库升级隔离报告`.tmp/stage-b/d2-task-upgrade/5c03e8858e5b4a099cbb5a6bdae130f5/report.json`。不重复解压/重复D1调查。
+
+D2统一门覆盖main所有提前分支、candidate builder、runtime/writer、locked recovery和worker。JobStore新增nullable execution_contract列，不回填旧任务；旧契约任务仍可查询，禁止claim/resume/release/恢复父任务及子进程执行，旧恢复凭证不能解锁当前任务。启动持有实例所有权后才分类旧活动任务；代码回退须匹配作品与DB快照。网页已修正旧任务被误标为可恢复的问题。
+
+D2测试：28新增通过；综合144通过/1跳过/12子测试，入口扩展152通过/63子测试加1个mock失败，修复后最后69通过/1跳过/42子测试；文件名及哈希在stage-b-progress。浏览器正常页无控制台异常、负向resume409且不改revision；只运行隔离书，worker禁用。服务session68891/PID1524和Chrome页面3均已停止。测试session49713已退出。旧无关pythonw进程15004不要操作。
 
 D1最终读取路径：内部显式注入`load_runtime_view`到`ChapterCandidateContextBuilder`；`core/story_project/reviewed_state_context.py`提供绑定视图、当前snapshot及隔离Memory；`build_chapter_fact_context`使用同一视图。默认构造器不会发现试验文件，EA拒绝携带legacy视图。`core/state/location_mirrors.py`约束冗余人物位置，fact prepare会随位置事实同步已有镜像；保留来源等级。静态人物字段只做唯一显式姓名/别名匹配，诊断未映射；结构化静态空间/伏笔和绑定原文的静态片段进入prompt。原人工内容保留在项目/context供审计。
 

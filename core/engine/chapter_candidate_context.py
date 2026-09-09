@@ -16,7 +16,8 @@ from core.runtime_paths import RuntimePaths
 from core.state.memory import normalize_memory_context
 from core.state.snapshot import normalize_snapshot
 from core.story_project.authority import AUTHORITY_MODE_EVENT
-from core.story_project.identity import ProjectIdentity, load_project_identity
+from core.story_project.identity import ProjectIdentity
+from core.story_project.format_compatibility import assert_project_execution_compatible
 from core.story_project.read_set import (
     capture_story_project_read_set,
     verify_story_project_read_set,
@@ -291,7 +292,7 @@ class ChapterCandidateContextBuilder:
         )
 
     def _load_persisted_identity(self) -> ProjectIdentity:
-        identity = load_project_identity(self.story_project_root)
+        identity = assert_project_execution_compatible(self.story_project_root)
         if identity is None or identity.ephemeral:
             raise ChapterCandidateContextError(
                 "chapter candidates require an existing persisted ProjectIdentity",
