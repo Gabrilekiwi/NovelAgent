@@ -181,7 +181,7 @@ def build_chapter_fact_context(
 
     limit = _validated_budget(max_chars)
     prose = _validated_prose(chapter_prose)
-    context = _validated_trusted_context(trusted_context)
+    context = validate_trusted_chapter_context(trusted_context)
     identity = context["project_identity"]
     authority = identity.get("authority")
     authority_mode = (
@@ -264,9 +264,10 @@ def build_chapter_fact_context(
     )
 
 
-def _validated_trusted_context(
+def validate_trusted_chapter_context(
     value: TrustedChapterCandidateContext,
 ) -> dict[str, Any]:
+    """Verify the input envelope independently of prompt indexing/budget."""
     if not isinstance(value, TrustedChapterCandidateContext):
         raise ChapterFactContextError(
             "trusted_context must be a TrustedChapterCandidateContext; raw or unknown contexts are rejected"
@@ -999,4 +1000,5 @@ __all__ = [
     "ChapterFactContextError",
     "ChapterFactContextView",
     "build_chapter_fact_context",
+    "validate_trusted_chapter_context",
 ]

@@ -8,13 +8,21 @@
 
 最终正文沿用现有 writer 的 `rstrip() + "\n"`；先形成最终字节，再检查事实引用，既不挪动偏移，也不静默修改引用。绑定原始草稿内容哈希与修订、规范化正文哈希、完整事实决定及修订、候选 intent、read-set、identity/authority、已审核状态源及人工修订。即便改稿后恢复同文，修订不同仍需重新准备。只允许下一个未提交章；准备前后重验完整 read-set。
 
-已实现的是 `facts_prepared` 阶段，`publication_authorized=false`。作者审核沿用现有 `chapter_fact_review` 记录类型；自动策略接受必须使用后续独立适配器，不能伪造作者布尔确认。哈希只能绑定完整性，服务端适配器仍须核验真实 Candidate、数据库审核确认算法和当前修订。该层没有锁、正式写入、幂等记录占位、质量批准或升级操作。
+已实现的是 `facts_prepared` 阶段，`publication_authorized=false`。作者审核沿用现有 `chapter_fact_review` 记录类型；自动策略接受必须使用后续独立适配器，不能伪造作者布尔确认。哈希只能绑定完整性，该层没有锁、正式写入、幂等记录占位、质量批准或升级操作。
 
 定向回归：`.tmp/stage-c-commit-prepare-final.xml`，75 项通过，含 22 项新准备检查及现有事实/D1上下文检查。覆盖真实磁盘 builder、状态推进预览、无文件写入、来源后改、章号占用、同键换内容、正文/审核修订、准备结果伪改、重算hash仍跨authority、自动接受不能冒充作者确认，以及原文引用有效但规范化后失效的具体案例。早期测试夹具误把 proposal 的 evidence_quotes 当成已解析 spans、误读 v1 的内存 authority 投影，已修正；早期失败 XML 保留，不作为通过证据。未运行全套 pytest 或浏览器。
 
+## 服务端准备适配
+
+`workbench/chapter_commits.py` 已实现 `ChapterCommitPreparationService`。请求只接受登记、章节、审核 ID、预期修订/哈希及幂等键；服务端从同一 SQLite 读取快照取得草稿与审核，复用存储层确认哈希校验和完整 Candidate 证据核验。来自模型提取的建议须保留实际提取 intent、record、source 及其绑定。计算后重新取得数据库快照、候选证据与 read-set，拒绝期间发生的编辑或文件损坏；不重调模型。
+
+提交准备复用独立的 `validate_trusted_chapter_context`，不经过仅供模型提取使用的提示词字符预算。默认 builder 仍不发现 D1 文件；测试使用内部显式注入。预览不占用长期写锁，正式提交仍必须在锁内重验。
+
+定向回归 `.tmp/stage-c-adapter-regression-final.xml`：88 项通过，含 20 项新适配测试。覆盖真实候选/草稿/审核流程、WAL 并发编辑、同一读取快照、确认和候选文件损坏、保留模型建议来源、跨登记/修订 CAS、默认入口拒绝以及无正式文件/数据库变化。早期 `.tmp/stage-c-adapter-regression.xml` 因指定不存在的测试文件未收集测试，不作为通过证据。session 51842 已结束，最终 XML 已核验。没有 UI 接入或全套测试。
+
 ## 后续实现顺序
 
-1. 服务端读取适配：通过现有 `ChapterFactReviewStore.get` 的确认哈希校验、Candidate 原始 intent/record 核验及 revision CAS 取得输入；准备后复查数据库修订。禁止直接信任客户端传入完整计划。
+1. 已完成服务端读取适配；后续 commit 在作品锁和 DB 锁内复用并重验，禁止直接信任客户端传入完整计划。
 2. 将 D1 来源规则转成 `reviewed_legacy_state_v1` 正式 codec 与来源/历史验证，补 identity 3.0 的只读格式定义和升级事务。完整 reader/writer 尚未通过前，不提升当前 writer 契约、不启用普通入口。
 3. 在作品锁和固定顺序下使用现有 v2.1 持久化事务绑定正文、七类当前状态、游标与提交凭证。升级保持 book_id 与旧正文/不可变历史；真实作品升级仍待 T7.1 备份和 T2.2 接入预检。
 4. 幂等记录从文件事务/凭证识别；同键不同请求冲突。DB 提交索引可由凭证重建，DB 原生草稿不因此免除持久化/备份。

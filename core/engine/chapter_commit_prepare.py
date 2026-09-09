@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from core.engine.chapter_candidate_context import TrustedChapterCandidateContext
-from core.engine.chapter_fact_context import build_chapter_fact_context
+from core.engine.chapter_fact_context import validate_trusted_chapter_context
 from core.engine.chapter_fact_prepare import prepare_confirmed_fact_changes
 from core.memory_v2.canonical import canonical_json_hash
 from core.story_project.read_set import verify_story_project_read_set
@@ -97,10 +97,9 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
     facts = review.get("facts")
     if not isinstance(facts, list) or review.get("facts_sha256") != _hash(facts):
         _reject("chapter_commit_review_invalid", "fact cards no longer match the stored review")
-    # The existing fact context validates the trusted envelope and all authority
-    # bindings before indexing facts. It does not read/adopt runtime caches.
-    build_chapter_fact_context(trusted_context, final_prose)
-    context = trusted_context.story_project_context
+    # Preparation does not build a model prompt: a fact extraction character
+    # budget must not limit deterministic validation of an already reviewed book.
+    context = validate_trusted_chapter_context(trusted_context)
     view = validated_reviewed_state_context(context)
     if view is None:
         _reject("chapter_commit_reviewed_source_required", "reviewed legacy state has not been installed")

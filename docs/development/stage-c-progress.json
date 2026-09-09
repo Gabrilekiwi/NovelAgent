@@ -7,19 +7,40 @@
   "goal_complete": false,
   "stage_b_commit": "edea18d",
   "completed_substeps": [
-    "read_only_reviewed_chapter_preparation_binding"
+    "read_only_reviewed_chapter_preparation_binding",
+    "server_verified_candidate_draft_review_preparation_adapter"
   ],
-  "next_action": "Implement the server-side verified Candidate/draft/review adapter before formal codec and transactional commit.",
+  "next_action": "Implement formal reviewed_legacy_state_v1 codec with source/history verification, then gated identity 3.0 upgrade and v2.1 transaction.",
   "publication_authorized": false,
   "normal_v3_reader_writer_enabled": false,
   "files": [
     {
       "path": "core/engine/chapter_commit_prepare.py",
-      "sha256": "26823eb835e48b61a6cc04ca5e1abd74529165a1b42117c3201df6cf52c73989"
+      "sha256": "bc8a3eaaede61a6b4c9e385d2dcfd372aad21f50e7f1adae2cd10c27894edc83"
     },
     {
       "path": "tests/test_chapter_commit_prepare.py",
       "sha256": "89826799034b54d9e8b0793ac8fa950096df7b673cf07c1868258e83bf0668fa"
+    },
+    {
+      "path": "core/engine/chapter_fact_context.py",
+      "sha256": "05ab075335dcd2c9e7e853d790a5742b2961bafd15d4a922f68adcba84dac486"
+    },
+    {
+      "path": "workbench/chapter_candidates.py",
+      "sha256": "f9f2ea830e8e83a31fec4110af2a9e4bca1721a183139531da4bc44609cb975d"
+    },
+    {
+      "path": "workbench/chapter_facts.py",
+      "sha256": "2ce2ea68ea4782466a319a8bb1414ff14086092ecbbdc23bec2cfb3eef77df7e"
+    },
+    {
+      "path": "workbench/chapter_commits.py",
+      "sha256": "ebf0012c0a229d26043fcf21c4577275e3512ec2acd6473cc8bf57aeec222b08"
+    },
+    {
+      "path": "tests/test_workbench_chapter_commits.py",
+      "sha256": "38bbdde9d5e8db0a2d9432209078071060353e4d2833aa780674e37acfaa86a6"
     }
   ],
   "tests": [
@@ -38,15 +59,31 @@
           "hostname": "PCMICRO-7LA9Q0O"
         }
       ]
+    },
+    {
+      "path": ".tmp/stage-c-adapter-regression-final.xml",
+      "sha256": "75dcd5b731af5749b8625806d82cd570c6c807efa0b1d326ef8d471804617a5c",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "88",
+          "time": "41.246",
+          "timestamp": "2026-09-09T09:30:27.851073+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
     }
   ],
-  "new_test_count": 22,
+  "new_test_count": 42,
   "provider_calls": 0,
   "real_book_writes": 0,
   "active_processes": [],
   "limitations": [
     "No formal commit, upgrade, shared writer lease, persistent idempotency or receipt/index recovery yet.",
-    "Preparation requires server-verified author review records and internally built trusted context. Hashes do not establish author intent.",
+    "Verified preparation does not reserve inputs; final commit must repeat validation under writer and database locks.",
     "No full pytest or browser run; no UI changes in this checkpoint."
   ]
 }

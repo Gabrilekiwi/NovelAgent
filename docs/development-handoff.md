@@ -57,7 +57,7 @@
 
 ## 下一条工作
 
-T3.2 已开始，当前只有准备边界通过：`core/engine/chapter_commit_prepare.py` 先规范化最终正文、再核验事实引用，绑定草稿/审核修订、来源/权威/read-set及幂等键；改后改回、来源后改、占章、同键换内容均拒绝。`publication_authorized=false`，不写文件、不启用v3、不宣称正式事务完成。新测试22项，连同事实准备/D1上下文共75项通过；`.tmp/stage-c-commit-prepare-final.xml`。详见 `docs/development/chapter-commit-service.md`，机器进度 `docs/development/stage-c-progress.json`。下一条具体实现是服务端DB/Candidate核验适配，再实现正式codec/升级/事务；不重新写准备纯函数。当前服务端适配尚未落地，准备输入不能接受客户端原始对象或把完整性hash当作者确认。测试session15614已结束。
+T3.2 已完成准备边界（提交93f7124）及服务端核验适配：`workbench/chapter_commits.py` 从同一 SQLite 读取快照取得草稿和审核，核验确认哈希、完整 Candidate 及模型提取来源，准备后复查修订、登记、文件及 read-set。请求仅接受 ID、CAS 和幂等键，不能提供 trusted context 或完整计划。提示词预算不再影响确定性提交准备。`publication_authorized=false`，不写正式文件、不启用v3、不宣称事务完成；预览不保留写锁。20项新适配测试，综合88项通过；`.tmp/stage-c-adapter-regression-final.xml` 已核验，session51842已结束。早期指定不存在测试路径导致未收集的XML保留，不计入通过。详见 `docs/development/chapter-commit-service.md` 和 `stage-c-progress.json`。下一条具体实现是正式codec/来源历史验证、identity3定义及升级/事务；不重复准备层。正式提交须在作品锁/DB锁下重验，完整T3.2尚未完成。
 
 D3最终证据 `.tmp/stage-b/d3-candidate-1/7cd0f947a8b34db585ff405a88fc4806/report.json`，10场景通过；代码 `scripts/experiments/d3_restore_candidate.py`、`d3_executor_probe.py`、`run_d3_restore_candidate.py`。实际新进程提交第2章，SQLite backup及新目录复制，再新进程提交第3章；正文/游标/旧历史/草稿均核验。实验机器账本持OS锁，源存活写者阻止交接；原登记、旧代际、其他登记、跨DB实例和已替换执行目录由实际执行入口拒绝。故障含源DB后改、未完成事务、伪造proof、复制正文/DB损坏、激活前正文/DB变化、目录替换、中断双方停写。v2独立基线 `.tmp/stage-b/d3-baseline/a244743ef0454d529f5ecc3e6e3b8d96` 只改可变root_registry后receipt有效，旧prepare guard仍拒绝；未迁移legacy到EA。设计决议 `docs/development/d3-writable-restore-experiment.md`。
 

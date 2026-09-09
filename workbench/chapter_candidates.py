@@ -178,9 +178,12 @@ class CandidateDraftStore:
             )
         return self.get(draft_id)
 
-    def get(self, draft_id: str) -> CandidateDraftRecord:
+    def get(self, draft_id: str, *, connection: Any | None = None) -> CandidateDraftRecord:
         draft_id = _validated_candidate_draft_id(draft_id)
-        with self.database.connection() as connection:
+        if connection is None:
+            with self.database.connection() as current:
+                return self.get(draft_id, connection=current)
+        else:
             row = connection.execute(
                 "SELECT * FROM chapter_candidate_drafts WHERE id = ?",
                 (draft_id,),

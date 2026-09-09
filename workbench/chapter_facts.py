@@ -302,9 +302,12 @@ class ChapterFactReviewStore:
             )
         return self.get(review_id)
 
-    def get(self, review_id: str) -> ChapterFactReviewRecord:
+    def get(self, review_id: str, *, connection: Any | None = None) -> ChapterFactReviewRecord:
         review_id = _validated_review_id(review_id)
-        with self.database.connection() as connection:
+        if connection is None:
+            with self.database.connection() as current:
+                return self.get(review_id, connection=current)
+        else:
             row = connection.execute(
                 "SELECT * FROM chapter_fact_reviews WHERE id = ?",
                 (review_id,),
