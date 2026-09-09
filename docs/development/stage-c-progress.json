@@ -1,0 +1,52 @@
+{
+  "date": "2026-09-09",
+  "stage": "C",
+  "stage_status": "in_progress",
+  "current_task": "T3.2",
+  "task_complete": false,
+  "goal_complete": false,
+  "stage_b_commit": "edea18d",
+  "completed_substeps": [
+    "read_only_reviewed_chapter_preparation_binding"
+  ],
+  "next_action": "Implement the server-side verified Candidate/draft/review adapter before formal codec and transactional commit.",
+  "publication_authorized": false,
+  "normal_v3_reader_writer_enabled": false,
+  "files": [
+    {
+      "path": "core/engine/chapter_commit_prepare.py",
+      "sha256": "26823eb835e48b61a6cc04ca5e1abd74529165a1b42117c3201df6cf52c73989"
+    },
+    {
+      "path": "tests/test_chapter_commit_prepare.py",
+      "sha256": "89826799034b54d9e8b0793ac8fa950096df7b673cf07c1868258e83bf0668fa"
+    }
+  ],
+  "tests": [
+    {
+      "path": ".tmp/stage-c-commit-prepare-final.xml",
+      "sha256": "9c9492b9eca9979b92986f418b0790c333138c01c78036e25ad2e2f8d4a1b752",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "75",
+          "time": "10.756",
+          "timestamp": "2026-09-09T09:14:34.611770+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    }
+  ],
+  "new_test_count": 22,
+  "provider_calls": 0,
+  "real_book_writes": 0,
+  "active_processes": [],
+  "limitations": [
+    "No formal commit, upgrade, shared writer lease, persistent idempotency or receipt/index recovery yet.",
+    "Preparation requires server-verified author review records and internally built trusted context. Hashes do not establish author intent.",
+    "No full pytest or browser run; no UI changes in this checkpoint."
+  ]
+}
