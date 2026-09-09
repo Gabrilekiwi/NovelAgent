@@ -87,10 +87,15 @@ def verify_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         document = _content(state_binding, root_map)
         value = decode_document(document, book_id=book_id)
         head = value["head"]
+        checkpoint = source_revision_after(document, book_id=book_id)
+        if any(t["target_id"] == "reviewed_identity" for t in receipt["apply_targets"]):
+            if head["kind"] != "baseline":
+                fail("reviewed_upgrade_receipt_kind_invalid")
+            checkpoint = _upgrade_checkpoint(receipt, document=document, roots=root_map)
         if (head["run_id"] != run_id or head["receipt_id"] != receipt["receipt_id"]
                 or head["receipt_relative_path"] != relative
                 or value["revision"] in revisions
-                or receipt["story_project_source_revision_after"] != source_revision_after(document, book_id=book_id)):
+                or receipt["story_project_source_revision_after"] != checkpoint):
             fail("reviewed_receipt_state_binding_invalid")
         _path({"path_ref": receipt["receipt_path_ref"]}, "runtime", relative)
         applied = _one(receipt["apply_targets"], "reviewed_state")
@@ -152,6 +157,49 @@ def verify_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         fail("reviewed_source_changed_during_read")
     return {"value": copy.deepcopy(current), "document_sha256": digest(current_document),
             "receipt_count": len(records), "receipt_hash": tip["receipt"]["receipt_hash"]}
+
+
+def _upgrade_checkpoint(receipt: dict, *, document: bytes, roots: dict) -> dict:
+    from core.story_project.activation import validate_story_state_calibration_report
+    from core.engine.persistence_v2 import validate_persistence_manifest_v2
+    from core.story_project.reviewed_identity import verify_reviewed_identity_transition, verify_upgrade_preparation_evidence
+
+    run_id = receipt["run_id"]
+    before = _one(receipt["artifacts"], "reviewed_identity_before")
+    after = _one(receipt["artifacts"], "reviewed_identity_after")
+    calibration = _one(receipt["artifacts"], "reviewed_calibration")
+    for binding, suffix in ((before, "before"), (after, "after"), (calibration, "calibration")):
+        _path(binding, "runtime", f"reviewed/upgrades/{run_id}-{suffix}.json")
+    after_bytes = _content(after, roots)
+    identity = verify_reviewed_identity_transition(old_identity_bytes=_content(before, roots),
+        new_identity_bytes=after_bytes, baseline_document=document)
+    applied = _one(receipt["apply_targets"], "reviewed_identity")
+    _path(applied, "story_project", ".novelagent/project.json")
+    if _content(applied, roots) != after_bytes:
+        fail("reviewed_upgrade_identity_mismatch")
+    report = validate_story_state_calibration_report(json.loads(_content(calibration, roots).decode("utf-8")))
+    if (not report["strict_eligible"] or report["book_id"] != identity.book_id
+            or report["report_sha256"] != identity.payload["activation"]["calibration_report_sha256"]):
+        fail("reviewed_upgrade_calibration_mismatch")
+    preparation = _one(receipt["artifacts"], "reviewed_upgrade_preparation")
+    _path(preparation, "runtime", f"reviewed/upgrades/{run_id}-preparation.json")
+    manifest_ref = receipt["manifest"]["path_ref"]
+    manifest = validate_persistence_manifest_v2(json.loads(read_project_bytes(
+        Path(roots[manifest_ref["root_id"]]), manifest_ref["relative_path"]).decode("utf-8")))
+    if manifest["manifest_digest"] != receipt["manifest"]["sha256"]:
+        fail("reviewed_upgrade_manifest_changed")
+    verify_upgrade_preparation_evidence(
+        preparation=json.loads(_content(preparation, roots).decode("utf-8")),
+        final_record=json.loads(_content(receipt["final_run"], roots).decode("utf-8")),
+        old_identity_bytes=_content(before, roots), new_identity_bytes=after_bytes, baseline_document=document,
+        calibration_report=report, read_set=manifest["immutable"]["story_project_read_set"],
+        transaction_binding={"run_id": receipt["run_id"], "context_digest": receipt["context_digest"],
+            "generation_input_context_digest": receipt["generation_input_context_digest"],
+            "receipt_id": receipt["receipt_id"], "receipt_path_ref": receipt["receipt_path_ref"]})
+    return {"schema_version": "1.0", "book_id": identity.book_id,
+        "root_uuid": applied["path_ref"]["root_uuid"], "identity_sha256": digest(after_bytes),
+        "authority_epoch": 0, "head_event_hash": None,
+        "reviewed_state": source_revision_after(document, book_id=identity.book_id)}
 
 
 def load_verified_current(*, root: Path, book_id: str, next_chapter: int, root_map: dict,

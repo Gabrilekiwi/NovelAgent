@@ -9,9 +9,10 @@
   "completed_substeps": [
     "read_only_reviewed_chapter_preparation_binding",
     "server_verified_candidate_draft_review_preparation_adapter",
-    "formal_reviewed_codec_receipt_history_and_internal_context_bridge"
+    "formal_reviewed_codec_receipt_history_and_internal_context_bridge",
+    "internal_identity_v3_upgrade_transaction_and_cold_evidence_verification"
   ],
-  "next_action": "Implement identity 3.0 source/baseline anchor and upgrade transaction, then product locks, quality approval, idempotent receipt/index recovery and API/UI. Do not enable ordinary v3 entrypoints before the complete reader/writer gates pass.",
+  "next_action": "Implement the formal chapter commit service: quality approval, writer/DB locks, persistent idempotency and receipt-derived DB index/recovery; integrate v3 context/reader/writer/job gates together before enabling ordinary entrypoints. Real upgrade remains gated by maintenance, T7.1 backup and T2.2 onboarding.",
   "publication_authorized": false,
   "normal_v3_reader_writer_enabled": false,
   "files": [
@@ -49,11 +50,35 @@
     },
     {
       "path": "core/story_project/reviewed_state_store.py",
-      "sha256": "64e9a5b98a99a21c9d8d3158042a942e69e9aa3d1cc1bf902edd5a5a749aad76"
+      "sha256": "aff7e0c332b0d3a1ce53c61693a6b4ce81140c73e44fc62ef0b4a5bae0a50339"
     },
     {
       "path": "tests/test_reviewed_state_document.py",
       "sha256": "bcdc5cf26370b462611976e55baecb0595506e94e38aafa3e582cdf6360aa53f"
+    },
+    {
+      "path": "core/engine/reviewed_upgrade.py",
+      "sha256": "954d7394b634c7ace4e60bd64886d77a5fbf2416431125e1d257fb10d65bf002"
+    },
+    {
+      "path": "core/story_project/reviewed_identity.py",
+      "sha256": "35924887e5088b14b9f6946ea58070eadb2879d7fb2312ca7e104256dbbd058d"
+    },
+    {
+      "path": "core/engine/persistence_v2.py",
+      "sha256": "67e78cfd2b8f8371d8ce9a2bc0faa845efea1eb5c3014ed345a9b08ccf7f54c6"
+    },
+    {
+      "path": "core/story_project/read_set.py",
+      "sha256": "ef62a12426b332381a24e9bad1880627ef6223b02d6d7f4601818e9ed7f64545"
+    },
+    {
+      "path": "schemas/reviewed_project_identity.schema.json",
+      "sha256": "f300ad8df9809dd69ef5515cfa13f4c2a748265c4795abe115a24f13fb3f11e9"
+    },
+    {
+      "path": "tests/test_reviewed_upgrade.py",
+      "sha256": "f8a8af52ee8af379e0818933b2e61642c1ac3c5070032b213366ea07176225c1"
     }
   ],
   "tests": [
@@ -120,18 +145,62 @@
           "hostname": "PCMICRO-7LA9Q0O"
         }
       ]
+    },
+    {
+      "path": ".tmp/stage-c-upgrade-reviewed-regression.xml",
+      "sha256": "9e50f1b9210d8387fd37b84bfa3de31f43e1969629c05e70e3ef8aee91b5d996",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "130",
+          "time": "18.513",
+          "timestamp": "2026-09-09T10:21:57.100702+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 123,
+      "subtests_passed": 7
+    },
+    {
+      "path": ".tmp/stage-c-upgrade-formal-bridge-final.xml",
+      "sha256": "acb0086e0d43626da1150b580882b77fcb87730a929db4e2f78dd232a949566b",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "72",
+          "time": "46.613",
+          "timestamp": "2026-09-09T10:24:18.600873+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 72,
+      "subtests_passed": 0
     }
   ],
-  "new_test_count": 72,
+  "new_test_count": 94,
   "provider_calls": 0,
   "real_book_writes": 0,
   "active_processes": [],
   "limitations": [
-    "No production commit API, identity 3.0 upgrade, quality approval, shared writer lease, persistent idempotency or DB receipt-index recovery yet.",
-    "Formal source reading uses internal injection and a caller-supplied trusted baseline anchor. Normal schema/writer contracts remain unchanged. Synthetic v1 Strict bridge is not v3 activation.",
-    "Real v2.1 publication/recovery is exercised by a synthetic test helper with actual read sets; it is not the product commit service. Caller must hold the required writer/pending-transaction gates.",
-    "Reader verifies retained history in full. Performance optimization, final B0 rejection and writable restore for this format remain required.",
-    "No full pytest or browser run; no UI changes in this checkpoint."
+    "No public upgrade/commit API, final-prose quality approval, shared writer/DB service locks, persistent idempotency or receipt-derived DB index recovery yet.",
+    "Identity 3.0 has an internal codec and verified upgrade transaction. Ordinary project schema still supports 1/2 and CURRENT_WRITER_CONTRACT remains 1; ordinary v3 candidate/runtime entrypoints reject.",
+    "Real upgrade still requires maintenance ownership, active-process stop, unresolved Provider/transaction checks, T7.1 verified backup and T2.2 onboarding. Synthetic Strict reports are not real-book calibration.",
+    "Typed upgrade preserves legacy epoch/head with a complete validated identity/state/preparation bundle. It does not enable ordinary legacy writes on reviewed-format books.",
+    "Reader checks retained history in full. Full T3.2 pytest/smoke/browser, final B0 rejection and T7.2 writable restore remain required."
   ],
-  "adapter_commit": "26dff05"
+  "adapter_commit": "26dff05",
+  "codec_commit": "2703232",
+  "review": {
+    "agent": "d2_gate_review",
+    "scope": "read_only_typed_upgrade_and_cold_reader",
+    "initial_finding": "Preparation target existence did not prove complete input binding.",
+    "resolution": "Shared exact preparation/final verification now binds actual transaction context/read-set/identity/state/receipt at prepare and cold read. Negative cases pass.",
+    "followup": "No new actionable findings; static review only."
+  }
 }

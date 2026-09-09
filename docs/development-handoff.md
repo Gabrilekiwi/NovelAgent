@@ -57,9 +57,15 @@
 
 ## 下一条工作
 
-最新 T3.2 检查点：准备适配已提交 `26dff05`，88项通过。随后新增 `core/story_project/reviewed_state_document.py` 和 `reviewed_state_store.py`：正式 `reviewed_legacy_state_v1` codec、v2.1凭证/归档/当前状态唯一末端核验、父文档链与七类事实重算、持久来源冲突决定、内部上下文桥接。已用实际 Candidate/草稿/审核/准备，隔离事务提交第三章后，第四章上下文读到警戒值4；没有再次生成。格式文档 `docs/development/reviewed-state-format.md`，证据与哈希仍在stage-c-progress。综合116项通过，最终边界修订后codec/adapter回归50项通过；XML分别为`.tmp/stage-c-formal-state-final.xml`和`.tmp/stage-c-formal-state-boundary-final.xml`。session83075、25669均已结束，无本任务后台服务。初次发布夹具因缺完整read-set被guard拒绝，已补实际read-set和声明写入；未放宽guard。
+最新 T3.2：identity 3.0 内部 codec/升级事务/冷读已完成隔离验证（HEAD以Git为准）。代码 `core/story_project/reviewed_identity.py`、`core/engine/reviewed_upgrade.py`，独立 `reviewed_project_identity.schema.json`；原 project_identity schema 仍为1/2，CURRENT_WRITER_CONTRACT仍为1。升级保存 book_id/created_at/Strict activation，legacy epoch/head不变；状态、identity、校准、完整准备证据与receipt原子绑定。实际写状态后/写identity后无marker均回滚，marker后恢复原升级；新进程冷读通过。旧identity1/legacy2均已测。
 
-下一条从 identity 3.0 格式/可信基线锚点及升级事务开始，不重复实现 codec。当前新格式 reader 只能内部注入；正常身份schema和writer契约未改变，普通入口仍未启用。测试publisher只是测试helper，不是产品commit服务：作品锁/待恢复事务门、正式质量批准、文件幂等/DB索引恢复、API/UI和完整T3.2验收尚未完成。基线升级不能把测试的synthetic Strict资格当真实校准；真实作品仍需T7.1备份/T2.2预检。读取扫描完整保留历史，后续优化必须保持末端/断链/重算证据。当前事务新namespace为runtime下reviewed目录，T7仍需按最终格式恢复复验。
+22项升级测试，综合123通过/7子测试，最终升级+formal+adapter回归72通过；`.tmp/stage-c-upgrade-reviewed-regression.xml`、`.tmp/stage-c-upgrade-formal-bridge-final.xml`，SHA见stage-c-progress。测试session16257/66302均结束，无本任务后台服务。独立d2_gate_review发现preparation artifact仅判存在的缺口，已用共同verify函数在真实typed prepare与冷读绑定实际run/context/read-set/request/receipt，空对象/错路径/错请求等负测通过；限定复查未发现新增缺陷。该代理本次已正常完成，不再沿用此前额度失败状态。
+
+下一条：正式章节commit服务的质量批准、作品/DB锁内重验、持久幂等请求及receipt→DB索引/恢复，再联动v3上下文/reader/writer/job契约和API/UI。不要重复升级codec。普通入口仍不接受v3；不能只提高全局writer契约，让旧legacy writer绕过新提交服务写新版作品。实际升级前的维护/进程退出/未知Provider与事务检查、T7.1备份、T2.2接入仍未产品化，本轮仅合成样本，真实作品与Provider调用均0。详见 `docs/development/reviewed-identity-upgrade.md`。
+
+上一份 codec 检查点：准备适配已提交 `26dff05`，88项通过。随后新增 `core/story_project/reviewed_state_document.py` 和 `reviewed_state_store.py`：正式 `reviewed_legacy_state_v1` codec、v2.1凭证/归档/当前状态唯一末端核验、父文档链与七类事实重算、持久来源冲突决定、内部上下文桥接。已用实际 Candidate/草稿/审核/准备，隔离事务提交第三章后，第四章上下文读到警戒值4；没有再次生成。格式文档 `docs/development/reviewed-state-format.md`，证据与哈希仍在stage-c-progress。综合116项通过，最终边界修订后codec/adapter回归50项通过；XML分别为`.tmp/stage-c-formal-state-final.xml`和`.tmp/stage-c-formal-state-boundary-final.xml`。session83075、25669均已结束，无本任务后台服务。初次发布夹具因缺完整read-set被guard拒绝，已补实际read-set和声明写入；未放宽guard。
+
+此段保留 codec 检查点的当时边界；身份升级已由上文后续完成，下一条工作以上文最新记录为准。当前新格式 reader 只能内部注入；正常身份schema和writer契约未改变，普通入口仍未启用。测试publisher只是测试helper，不是产品commit服务：作品锁/待恢复事务门、正式质量批准、文件幂等/DB索引恢复、API/UI和完整T3.2验收尚未完成。基线升级不能把测试的synthetic Strict资格当真实校准；真实作品仍需T7.1备份/T2.2预检。读取扫描完整保留历史，后续优化必须保持末端/断链/重算证据。当前事务新namespace为runtime下reviewed目录，T7仍需按最终格式恢复复验。
 
 T3.2 已完成准备边界（提交93f7124）及服务端核验适配：`workbench/chapter_commits.py` 从同一 SQLite 读取快照取得草稿和审核，核验确认哈希、完整 Candidate 及模型提取来源，准备后复查修订、登记、文件及 read-set。请求仅接受 ID、CAS 和幂等键，不能提供 trusted context 或完整计划。提示词预算不再影响确定性提交准备。`publication_authorized=false`，不写正式文件、不启用v3、不宣称事务完成；预览不保留写锁。20项新适配测试，综合88项通过；`.tmp/stage-c-adapter-regression-final.xml` 已核验，session51842已结束。早期指定不存在测试路径导致未收集的XML保留，不计入通过。详见 `docs/development/chapter-commit-service.md` 和 `stage-c-progress.json`。该段是适配层历史检查点，后续codec进度与下一条工作以上文最新记录为准；不重复准备层。正式提交须在作品锁/DB锁下重验，完整T3.2尚未完成。
 

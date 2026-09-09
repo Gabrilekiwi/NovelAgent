@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewedProjectIdentityInternal",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "book_id",
+    "created_at",
+    "root_hint",
+    "story_state_mode",
+    "activation",
+    "ephemeral",
+    "authority",
+    "reviewed_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "3.0"
+      ]
+    },
+    "book_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "root_hint": {
+      "type": "string",
+      "enum": [
+        "."
+      ]
+    },
+    "story_state_mode": {
+      "type": "string",
+      "enum": [
+        "strict"
+      ]
+    },
+    "activation": {
+      "type": "object",
+      "required": [
+        "parser_version",
+        "semantic_schema_version",
+        "layout_profile_version",
+        "calibration_report_sha256",
+        "activated_at"
+      ],
+      "properties": {
+        "parser_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semantic_schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "layout_profile_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "calibration_report_sha256": {
+          "type": "string",
+          "minLength": 64
+        },
+        "activated_at": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "ephemeral": {
+      "type": "boolean",
+      "enum": [
+        false
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "mode",
+        "authority_epoch",
+        "head_event_hash",
+        "activation_receipt",
+        "minimum_writer_contract"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "legacy_markdown_v1",
+            "event_v1"
+          ]
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head_event_hash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 64
+        },
+        "activation_receipt": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "schema_version",
+            "receipt_type",
+            "book_id",
+            "from_mode",
+            "to_mode",
+            "authority_epoch",
+            "expected_identity_sha256",
+            "head_event_hash",
+            "genesis_receipt_sha256",
+            "minimum_writer_contract",
+            "activated_at",
+            "receipt_sha256"
+          ],
+          "properties": {
+            "schema_version": {
+              "type": "string",
+              "enum": [
+                "1.0"
+              ]
+            },
+            "receipt_type": {
+              "type": "string",
+              "enum": [
+                "authority_activation"
+              ]
+            },
+            "book_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "from_mode": {
+              "type": "string",
+              "enum": [
+                "legacy_markdown_v1"
+              ]
+            },
+            "to_mode": {
+              "type": "string",
+              "enum": [
+                "event_v1"
+              ]
+            },
+            "authority_epoch": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "expected_identity_sha256": {
+              "type": "string",
+              "minLength": 64
+            },
+            "head_event_hash": {
+              "type": "string",
+              "minLength": 64
+            },
+            "genesis_receipt_sha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 64
+            },
+            "minimum_writer_contract": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "activated_at": {
+              "type": "string",
+              "minLength": 1
+            },
+            "receipt_sha256": {
+              "type": "string",
+              "minLength": 64
+            }
+          },
+          "additionalProperties": false
+        },
+        "minimum_writer_contract": {
+          "type": "integer",
+          "minimum": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "reviewed_state": {
+      "type": "object",
+      "required": [
+        "format",
+        "relative_path",
+        "baseline_document_sha256",
+        "upgrade"
+      ],
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "reviewed_legacy_state_v1"
+          ]
+        },
+        "relative_path": {
+          "type": "string",
+          "enum": [
+            "追踪/已审核事实.md"
+          ]
+        },
+        "baseline_document_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "upgrade": {
+          "type": "object",
+          "required": [
+            "run_id",
+            "receipt_id",
+            "receipt_relative_path",
+            "old_identity_sha256",
+            "baseline_confirmation_sha256",
+            "calibration_report_sha256"
+          ],
+          "properties": {
+            "run_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+            },
+            "receipt_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "receipt_relative_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "old_identity_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "baseline_confirmation_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "calibration_report_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "description": "Internal identity 3.0 codec. The ordinary project identity schema remains unchanged until reader/writer integration is complete."
+}

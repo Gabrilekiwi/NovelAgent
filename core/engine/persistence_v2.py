@@ -247,6 +247,9 @@ class PersistenceV2Transaction:
                 targets=prepared_targets,
                 read_set=self.story_project_read_set,
                 declared_writes=self.read_set_declared_writes,
+                transaction_binding={"run_id": self.run_id, "context_digest": context_digest,
+                    "generation_input_context_digest": generation_input_context_digest,
+                    "receipt_id": receipt_id, "receipt_path_ref": receipt_ref.to_dict()},
             )
             source_revision_after = _validate_story_project_source_revision_after(
                 story_project_source_revision_after,
@@ -798,6 +801,11 @@ class PersistenceV2Transaction:
                 targets=list(immutable.get("targets") or []),
                 read_set=read_set,
                 declared_writes=list(declared),
+                phase=phase,
+                transaction_binding={"run_id": immutable["run_id"], "context_digest": immutable["context_digest"],
+                    "generation_input_context_digest": immutable["generation_input_context_digest"],
+                    "receipt_id": immutable["publication_receipt"]["id"],
+                    "receipt_path_ref": immutable["publication_receipt"]["path_ref"]},
             )
 
     def _verify_read_set_target_binding(
@@ -807,6 +815,8 @@ class PersistenceV2Transaction:
         targets: list[Mapping[str, Any]],
         read_set: Mapping[str, Any] | None,
         declared_writes: Iterable[Mapping[str, Any]],
+        phase: str = "prepare",
+        transaction_binding: Mapping[str, Any] | None = None,
     ) -> None:
         _validate_read_set_transaction_binding(
             book_id=self.book_id,
@@ -814,6 +824,8 @@ class PersistenceV2Transaction:
             targets=targets,
             read_set=read_set,
             declared_writes=declared_writes,
+            phase=phase,
+            transaction_binding=transaction_binding,
         )
 
 
@@ -2035,6 +2047,8 @@ def _validate_read_set_transaction_binding(
     targets: list[Mapping[str, Any]],
     read_set: Mapping[str, Any] | None,
     declared_writes: Iterable[Mapping[str, Any]],
+    phase: str = "prepare",
+    transaction_binding: Mapping[str, Any] | None = None,
 ) -> None:
     from core.story_project.read_set import SOURCE_DIRECTORIES
 
@@ -2124,8 +2138,12 @@ def _validate_read_set_transaction_binding(
     try:
         from core.story_project.authority import AUTHORITY_MODE_EVENT
         from core.story_project.identity import load_project_identity
+        from core.story_project.reviewed_identity import declared_upgrade_identity
 
-        current_identity = load_project_identity(story_root)
+        current_identity = declared_upgrade_identity(story_root, read_set=validated,
+            declaration=declarations.get(".novelagent/project.json", {}), phase=phase)
+        if current_identity is None:
+            current_identity = load_project_identity(story_root)
     except Exception as exc:
         raise PersistenceV2IntegrityError(
             f"cannot validate the StoryProject authority mode: {exc}"
@@ -2145,6 +2163,15 @@ def _validate_read_set_transaction_binding(
         raise PersistenceV2IntegrityError(
             "declared read-set writes do not exactly match StoryProject apply targets"
         )
+    from core.story_project.reviewed_identity import UPGRADE_TRANSITION, validate_upgrade_transaction_targets
+
+    upgrade_declaration = declarations.get(".novelagent/project.json", {})
+    if upgrade_declaration.get("transition") == UPGRADE_TRANSITION:
+        try:
+            validate_upgrade_transaction_targets(targets=list(targets), declaration=upgrade_declaration,
+                read_set=validated, transaction_binding=transaction_binding)
+        except Exception as exc:
+            raise PersistenceV2IntegrityError(f"reviewed format upgrade binding invalid: {exc}") from exc
     for relative, target in relevant_targets.items():
         declaration = declarations[relative]
         expected_action = "replace" if target.get("before_exists") else "create"
@@ -2197,6 +2224,12 @@ def _validate_identity_transition_binding(
         raise PersistenceV2IntegrityError(
             "ProjectIdentity declaration belongs to another book"
         )
+    from core.story_project.reviewed_identity import UPGRADE_TRANSITION
+
+    if declaration.get("transition") == UPGRADE_TRANSITION:
+        # The caller validated the complete typed identity/state/evidence
+        # bundle. This storage upgrade preserves the legacy epoch and head.
+        return
     content = target.get("_content")
     before = target.get("_before")
     if content is None or before is None:
@@ -2291,6 +2324,10 @@ def _validate_story_project_source_revision_after(
         "authority_epoch": declaration.get("after_authority_epoch"),
         "head_event_hash": declaration.get("after_head_event_hash"),
     }
+    from core.story_project.reviewed_identity import UPGRADE_TRANSITION
+
+    if declaration.get("transition") == UPGRADE_TRANSITION:
+        expected["reviewed_state"] = copy.deepcopy(declaration.get("reviewed_state"))
     if dict(value) != expected:
         raise PersistenceV2IntegrityError(
             "story_project_source_revision_after does not match the committed "

@@ -130,7 +130,13 @@ def verify_story_project_read_set(
     if _root_identity(root) != validated["root_identity"]:
         differences.append({"field": "root_identity", "code": "root_identity_changed"})
     try:
-        identity = load_project_identity(root)
+        identity = None
+        if identity_write is not None:
+            from core.story_project.reviewed_identity import declared_upgrade_identity
+
+            identity = declared_upgrade_identity(root, read_set=validated, declaration=identity_write, phase=phase)
+        if identity is None:
+            identity = load_project_identity(root)
     except ProjectIdentityError:
         identity = None
         differences.append({"field": "identity_revision", "code": "project_identity_invalid"})
