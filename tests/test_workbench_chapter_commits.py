@@ -34,6 +34,36 @@ def case(monkeypatch,request):
     original = prepare_isolated_book()
     root = directory / "b"
     shutil.copytree(original["root"],root)
+    source_loader = load_runtime_view
+    formal_case = None
+    if getattr(request,"param",None) == "formal":
+        from core.story_project.identity import load_project_identity
+        from core.story_project.managed_block import parse_managed_block
+        from core.story_project.paths import canonical_outline_path
+        from core.story_project.reviewed_state_document import (
+            RELATIVE_PATH, baseline_request, capture_sources, create_baseline, digest,
+        )
+        from core.story_project.reviewed_state_store import load_runtime_view as verified_runtime_view
+        from tests.test_reviewed_state_document import publish
+
+        # Convert only this synthetic fixture through the real transaction.
+        # Production identity 3.0 upgrade/qualification is a separate gate.
+        old = parse_managed_block((root / RELATIVE_PATH).read_bytes()).projection["values"]["reviewed_state"]
+        book_id = load_project_identity(root).book_id
+        old_identity_sha = digest((root / ".novelagent/project.json").read_bytes())
+        confirmation = baseline_request(book_id=book_id,chapter=2,state=old["current_state"],sources=capture_sources(root),
+            old_identity_sha256=old_identity_sha,static_references=old["static_references"])
+        document = create_baseline(root=root,book_id=book_id,chapter=2,state=old["current_state"],
+            confirmed_baseline=confirmation,old_identity_sha256=old_identity_sha,run_id="baseline",
+            static_references=old["static_references"])
+        runtime = root / ".novelagent/runtime"
+        runtime.mkdir(parents=True,exist_ok=True)
+        formal_case = {"root":root,"runtime":runtime,"roots":{"story_project":root,"runtime":runtime},
+                       "book_id":book_id,"document":document}
+        publish(formal_case,document)
+        canonical_outline_path(root,4).write_text(canonical_outline_path(root,3).read_text(encoding="utf-8").replace("第003章","第004章"),encoding="utf-8")
+        def source_loader(context):
+            return verified_runtime_view(context,root_map=formal_case["roots"],baseline_document_sha256=digest(document))
     database = WorkbenchDatabase(directory / "workbench.db")
     projects = ProjectRegistry(database,allowed_workspaces=[directory])
     project = projects.import_project(root)
@@ -41,7 +71,7 @@ def case(monkeypatch,request):
     reviews = ChapterFactReviewService(database=database,projects=projects,candidate_drafts=drafts)
 
     def builder(path):
-        return ChapterCandidateContextBuilder(path,reviewed_state_loader=load_runtime_view)
+        return ChapterCandidateContextBuilder(path,reviewed_state_loader=source_loader)
 
     # Explicit D1 loader injection only; no guard, authority or persistence
     # verification is patched. Normal entrypoints still do not discover D1.
@@ -207,3 +237,22 @@ def test_missing_extraction_record_prevents_preview_without_regeneration(case):
     with pytest.raises(ChapterFactExtractionIntegrityError):
         case["service"].prepare(**case["request"])
     assert case["extraction_factory"].calls == 1
+
+
+@pytest.mark.parametrize("case",["formal"],indirect=True)
+def test_verified_formal_state_flows_through_actual_server_preparation_and_next_chapter(case):
+    from core.story_project.reviewed_state_document import prepare_chapter_document
+    from tests.test_reviewed_state_document import publish
+
+    prepared = case["service"].prepare(**case["request"])
+    formal = case["formal_case"]
+    formal["prose"] = prepared["final_prose"]
+    after = prepare_chapter_document(document=formal["document"],book_id=formal["book_id"],
+                                     preparation=prepared,run_id="chapter-3")
+    assert publish(formal,after)["committed"]
+    next_context = case["builder"](case["root"]).build(4)
+    view = next_context.story_project_context["reviewed_state"]
+    assert view["committed_through"] == 3
+    assert view["authoritative_state"] == prepared["fact_preparation"]["state_after"]
+    assert view["authoritative_state"]["numeric_counters"]["alert_level"]["current_value"] == 4
+    assert len(case["calls"]) == 1

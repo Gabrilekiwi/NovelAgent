@@ -57,7 +57,11 @@
 
 ## 下一条工作
 
-T3.2 已完成准备边界（提交93f7124）及服务端核验适配：`workbench/chapter_commits.py` 从同一 SQLite 读取快照取得草稿和审核，核验确认哈希、完整 Candidate 及模型提取来源，准备后复查修订、登记、文件及 read-set。请求仅接受 ID、CAS 和幂等键，不能提供 trusted context 或完整计划。提示词预算不再影响确定性提交准备。`publication_authorized=false`，不写正式文件、不启用v3、不宣称事务完成；预览不保留写锁。20项新适配测试，综合88项通过；`.tmp/stage-c-adapter-regression-final.xml` 已核验，session51842已结束。早期指定不存在测试路径导致未收集的XML保留，不计入通过。详见 `docs/development/chapter-commit-service.md` 和 `stage-c-progress.json`。下一条具体实现是正式codec/来源历史验证、identity3定义及升级/事务；不重复准备层。正式提交须在作品锁/DB锁下重验，完整T3.2尚未完成。
+最新 T3.2 检查点：准备适配已提交 `26dff05`，88项通过。随后新增 `core/story_project/reviewed_state_document.py` 和 `reviewed_state_store.py`：正式 `reviewed_legacy_state_v1` codec、v2.1凭证/归档/当前状态唯一末端核验、父文档链与七类事实重算、持久来源冲突决定、内部上下文桥接。已用实际 Candidate/草稿/审核/准备，隔离事务提交第三章后，第四章上下文读到警戒值4；没有再次生成。格式文档 `docs/development/reviewed-state-format.md`，证据与哈希仍在stage-c-progress。综合116项通过，最终边界修订后codec/adapter回归50项通过；XML分别为`.tmp/stage-c-formal-state-final.xml`和`.tmp/stage-c-formal-state-boundary-final.xml`。session83075、25669均已结束，无本任务后台服务。初次发布夹具因缺完整read-set被guard拒绝，已补实际read-set和声明写入；未放宽guard。
+
+下一条从 identity 3.0 格式/可信基线锚点及升级事务开始，不重复实现 codec。当前新格式 reader 只能内部注入；正常身份schema和writer契约未改变，普通入口仍未启用。测试publisher只是测试helper，不是产品commit服务：作品锁/待恢复事务门、正式质量批准、文件幂等/DB索引恢复、API/UI和完整T3.2验收尚未完成。基线升级不能把测试的synthetic Strict资格当真实校准；真实作品仍需T7.1备份/T2.2预检。读取扫描完整保留历史，后续优化必须保持末端/断链/重算证据。当前事务新namespace为runtime下reviewed目录，T7仍需按最终格式恢复复验。
+
+T3.2 已完成准备边界（提交93f7124）及服务端核验适配：`workbench/chapter_commits.py` 从同一 SQLite 读取快照取得草稿和审核，核验确认哈希、完整 Candidate 及模型提取来源，准备后复查修订、登记、文件及 read-set。请求仅接受 ID、CAS 和幂等键，不能提供 trusted context 或完整计划。提示词预算不再影响确定性提交准备。`publication_authorized=false`，不写正式文件、不启用v3、不宣称事务完成；预览不保留写锁。20项新适配测试，综合88项通过；`.tmp/stage-c-adapter-regression-final.xml` 已核验，session51842已结束。早期指定不存在测试路径导致未收集的XML保留，不计入通过。详见 `docs/development/chapter-commit-service.md` 和 `stage-c-progress.json`。该段是适配层历史检查点，后续codec进度与下一条工作以上文最新记录为准；不重复准备层。正式提交须在作品锁/DB锁下重验，完整T3.2尚未完成。
 
 D3最终证据 `.tmp/stage-b/d3-candidate-1/7cd0f947a8b34db585ff405a88fc4806/report.json`，10场景通过；代码 `scripts/experiments/d3_restore_candidate.py`、`d3_executor_probe.py`、`run_d3_restore_candidate.py`。实际新进程提交第2章，SQLite backup及新目录复制，再新进程提交第3章；正文/游标/旧历史/草稿均核验。实验机器账本持OS锁，源存活写者阻止交接；原登记、旧代际、其他登记、跨DB实例和已替换执行目录由实际执行入口拒绝。故障含源DB后改、未完成事务、伪造proof、复制正文/DB损坏、激活前正文/DB变化、目录替换、中断双方停写。v2独立基线 `.tmp/stage-b/d3-baseline/a244743ef0454d529f5ecc3e6e3b8d96` 只改可变root_registry后receipt有效，旧prepare guard仍拒绝；未迁移legacy到EA。设计决议 `docs/development/d3-writable-restore-experiment.md`。
 

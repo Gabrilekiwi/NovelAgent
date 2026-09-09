@@ -8,9 +8,10 @@
   "stage_b_commit": "edea18d",
   "completed_substeps": [
     "read_only_reviewed_chapter_preparation_binding",
-    "server_verified_candidate_draft_review_preparation_adapter"
+    "server_verified_candidate_draft_review_preparation_adapter",
+    "formal_reviewed_codec_receipt_history_and_internal_context_bridge"
   ],
-  "next_action": "Implement formal reviewed_legacy_state_v1 codec with source/history verification, then gated identity 3.0 upgrade and v2.1 transaction.",
+  "next_action": "Implement identity 3.0 source/baseline anchor and upgrade transaction, then product locks, quality approval, idempotent receipt/index recovery and API/UI. Do not enable ordinary v3 entrypoints before the complete reader/writer gates pass.",
   "publication_authorized": false,
   "normal_v3_reader_writer_enabled": false,
   "files": [
@@ -40,7 +41,19 @@
     },
     {
       "path": "tests/test_workbench_chapter_commits.py",
-      "sha256": "38bbdde9d5e8db0a2d9432209078071060353e4d2833aa780674e37acfaa86a6"
+      "sha256": "c7410bbb7f3a4d77904302f3dd26e5c88481f42870f19698d9cf40eef7227101"
+    },
+    {
+      "path": "core/story_project/reviewed_state_document.py",
+      "sha256": "fe7b021a933e70961d1c5e075fbb51f34ebd7d55dffd60ec7e244ec2de5cde5a"
+    },
+    {
+      "path": "core/story_project/reviewed_state_store.py",
+      "sha256": "64e9a5b98a99a21c9d8d3158042a942e69e9aa3d1cc1bf902edd5a5a749aad76"
+    },
+    {
+      "path": "tests/test_reviewed_state_document.py",
+      "sha256": "bcdc5cf26370b462611976e55baecb0595506e94e38aafa3e582cdf6360aa53f"
     }
   ],
   "tests": [
@@ -75,15 +88,50 @@
           "hostname": "PCMICRO-7LA9Q0O"
         }
       ]
+    },
+    {
+      "path": ".tmp/stage-c-formal-state-final.xml",
+      "sha256": "afdcb2e540e2ff28895c2ae6422ffe0bf033cf55cb224b1209dfe871ed873e45",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "116",
+          "time": "49.780",
+          "timestamp": "2026-09-09T09:56:51.647926+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-formal-state-boundary-final.xml",
+      "sha256": "3c7d770d828d442fefa8934811fc3932f407b49451860fff98d89be85299d6f4",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "50",
+          "time": "36.353",
+          "timestamp": "2026-09-09T09:58:36.473475+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
     }
   ],
-  "new_test_count": 42,
+  "new_test_count": 72,
   "provider_calls": 0,
   "real_book_writes": 0,
   "active_processes": [],
   "limitations": [
-    "No formal commit, upgrade, shared writer lease, persistent idempotency or receipt/index recovery yet.",
-    "Verified preparation does not reserve inputs; final commit must repeat validation under writer and database locks.",
+    "No production commit API, identity 3.0 upgrade, quality approval, shared writer lease, persistent idempotency or DB receipt-index recovery yet.",
+    "Formal source reading uses internal injection and a caller-supplied trusted baseline anchor. Normal schema/writer contracts remain unchanged. Synthetic v1 Strict bridge is not v3 activation.",
+    "Real v2.1 publication/recovery is exercised by a synthetic test helper with actual read sets; it is not the product commit service. Caller must hold the required writer/pending-transaction gates.",
+    "Reader verifies retained history in full. Performance optimization, final B0 rejection and writable restore for this format remain required.",
     "No full pytest or browser run; no UI changes in this checkpoint."
-  ]
+  ],
+  "adapter_commit": "26dff05"
 }
