@@ -56,6 +56,8 @@
 
 ## 下一条工作
 
+D3 基线已运行，尚未通过 T7.0。证据 `.tmp/stage-b/d3-baseline/39e167b6308742d4a61f22153b87d215/report.json`，设计 `docs/development/d3-writable-restore-experiment.md`，可重现脚本 `scripts/experiments/run_d3_restore_baseline.py`。实际 v2.1 提交与 v1 已完成历史、SQLite 草稿均在隔离书内；复制后原文/草稿保留，receipt 验证、rename remap、旧准备物理 guard 分别拒绝，v1 仍指向源绝对路径。没有调用复制的 v1 reconcile，没有 AgentExecutor 续写、所有权交接或真实 Provider 调用。下一步第一候选：历史保留 + 新执行控制面 + 同机作品写入资格交接；普通产品入口接入仍未完成。辅助代理 D3 跟进因额度失败，不重复重启。
+
 下一步T7.0/D3：在隔离目录准备一个经正式事务提交的章和一个SQLite作者草稿，复制到同机新空目录，核验旧不可变历史字节不变；调查旧path guard的device/inode约束，建立有来源证明的新物理绑定。用假Provider在新进程提交下一章，并验证原实例/恢复实例同book_id写入资格交接。不能用只读解压或改旧manifest/hash代替。先保存有限试验设计，再实施；实际备份产品入口属于T7.1/T7.2。保持真实书只读和Provider零调用。
 
 D2决议详见`docs/development/d2-format-compatibility.md`。采用ProjectIdentity 3.0 + reviewed_legacy_state_v1边界；minimum-only方案已由实际B0写runtime证明失败。当前schema仍只支持1/2，CURRENT_WRITER_CONTRACT仍为1；T3.2完整reader/writer/事务通过后才可启用3/2。不可现在改真实identity或直接发现D1试验文件。
