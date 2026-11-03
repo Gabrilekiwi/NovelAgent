@@ -466,7 +466,14 @@ class AuthoritativeStateTests(unittest.TestCase):
         self.assertIn("城西物流园方向通勤道", attached["story_state"]["required_opening_bridge"])
         self.assertIn("陆沉", attached["story_state"]["required_opening_bridge"])
 
-    def test_explicit_empty_final_roster_clears_analyzer_characters(self) -> None:
+    def test_explicit_empty_final_roster_keeps_analyzer_characters(self) -> None:
+        """Empty Scene final cast must not wipe a non-empty analyzer cast.
+
+        Scene drafts often declare ``characters_present: []`` when they only
+        tracked deltas; wiping continuity cast then stalls the next chapter's
+        opening-bridge validation / repair.
+        """
+
         attached = _attach_authoritative_scene_delta(
             {
                 "story_state": {
@@ -497,8 +504,38 @@ class AuthoritativeStateTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual([], attached["story_state"]["last_scene_characters"])
-        self.assertEqual("roof", attached["story_state"]["required_opening_bridge"])
+        self.assertEqual(["Mira"], attached["story_state"]["last_scene_characters"])
+        self.assertIn("roof", attached["story_state"]["required_opening_bridge"])
+        self.assertIn("Mira", attached["story_state"]["required_opening_bridge"])
+        self.assertIn("roof", attached.get("new_locations") or [])
+        spatial = attached.get("spatial_state") or {}
+        self.assertIn("roof", (spatial.get("spaces") or {}))
+
+    def test_verified_final_location_registers_into_analysis_locations(self) -> None:
+        attached = _reconcile_story_state_with_final_scene(
+            {
+                "new_locations": ["cold store"],
+                "story_state": {
+                    "last_chapter_ending": "They left the cold store.",
+                    "last_scene_location": "cold store",
+                    "last_scene_characters": ["陆沉"],
+                    "open_threads": [],
+                    "required_opening_bridge": "cold store",
+                },
+            },
+            {
+                "scene_state_final": {
+                    "current_location": "北侧维护通道",
+                    "characters_present": ["陆沉", "赵铁"],
+                }
+            },
+            language="zh-CN",
+        )
+
+        self.assertEqual("北侧维护通道", attached["story_state"]["last_scene_location"])
+        self.assertIn("北侧维护通道", attached["new_locations"])
+        self.assertIn("北侧维护通道", (attached.get("spatial_state") or {}).get("spaces") or {})
+        self.assertIn("陆沉", attached["story_state"]["required_opening_bridge"])
 
     def test_memory_event_is_the_replayable_authority(self) -> None:
         memory = create_empty_typed_canonical_memory(book_id="book-authority")

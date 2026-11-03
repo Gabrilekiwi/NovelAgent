@@ -115,3 +115,30 @@ class AnalyzerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocationMentionIndexTest(unittest.TestCase):
+    def test_optional_de_particle_matches_canonical_location(self) -> None:
+        from modules.conflict_engine.analyzer import (
+            _extract_candidate_locations,
+            _last_known_location,
+            _location_mention_index,
+        )
+
+        prose = "两人转入人防医院支线外侧的隔离撤回口，没有直接进入病区。"
+        canonical = "人防医院支线外侧隔离撤回口"
+        self.assertGreaterEqual(_location_mention_index(prose, canonical), 0)
+        self.assertIn(canonical, _extract_candidate_locations(prose, [canonical, "北侧维护通道"]))
+        self.assertEqual(
+            canonical,
+            _last_known_location(prose, [], [canonical, "北侧维护通道"]),
+        )
+
+    def test_exact_location_still_preferred_when_present(self) -> None:
+        from modules.conflict_engine.analyzer import _location_mention_index
+
+        prose = "他们停在北侧维护通道。随后转入人防医院支线外侧隔离撤回口。"
+        self.assertGreater(
+            _location_mention_index(prose, "人防医院支线外侧隔离撤回口"),
+            _location_mention_index(prose, "北侧维护通道"),
+        )

@@ -4778,6 +4778,12 @@ def _reconcile_story_state_with_final_scene(
     a destination mentioned near the ending for the place where the scene
     actually ends.  The Scene pipeline has already validated ordered events and
     location deltas, so its final state is the stronger source for continuity.
+
+    When the Scene final location is adopted, also register it into analysis
+    ``new_locations`` / ``spatial_state.spaces`` so the next chapter's bridge
+    pre-validation (``last_scene_location in get_locations``) cannot stall on an
+    unregistered continuity anchor. Empty ``characters_present`` does not wipe a
+    non-empty analyzer cast — scene drafts sometimes declare the key with [].
     """
 
     if not isinstance(chapter_pipeline, dict):
@@ -4803,14 +4809,68 @@ def _reconcile_story_state_with_final_scene(
     story_state = result["story_state"]
     if location:
         story_state["last_scene_location"] = location
+        _ensure_analysis_registers_location(result, location)
+    if characters_present_declared:
+        if characters:
+            story_state["last_scene_characters"] = characters
+        else:
+            # Keep analyzer cast when the Scene final boundary declares an empty
+            # present list (common when drafts track deltas but drop presence).
+            existing_cast = [
+                str(item).strip()
+                for item in story_state.get("last_scene_characters") or []
+                if str(item).strip()
+            ]
+            characters = existing_cast
+            story_state["last_scene_characters"] = existing_cast
+    bridge_cast = [
+        str(item).strip()
+        for item in story_state.get("last_scene_characters") or []
+        if str(item).strip()
+    ]
+    if location:
         story_state["required_opening_bridge"] = _required_opening_bridge(
             location,
-            characters,
+            bridge_cast if bridge_cast else characters,
             language=language,
         )
-    if characters_present_declared:
-        story_state["last_scene_characters"] = characters
     return result
+
+
+def _ensure_analysis_registers_location(analysis: dict[str, Any], location: str) -> None:
+    """Keep continuity locations discoverable by ``get_locations`` after commit."""
+
+    clean = str(location or "").strip()
+    if not clean:
+        return
+    new_locations = analysis.get("new_locations")
+    if not isinstance(new_locations, list):
+        new_locations = []
+        analysis["new_locations"] = new_locations
+    if clean not in new_locations:
+        new_locations.append(clean)
+    spatial_state = analysis.get("spatial_state")
+    if not isinstance(spatial_state, dict):
+        spatial_state = {
+            "spaces": {},
+            "connections": [],
+            "character_positions": {},
+            "blocked_paths": [],
+            "last_transition": {},
+        }
+        analysis["spatial_state"] = spatial_state
+    spaces = spatial_state.get("spaces")
+    if not isinstance(spaces, dict):
+        spaces = {}
+        spatial_state["spaces"] = spaces
+    spaces.setdefault(clean, {"source": "scene_state_final"})
+    last_transition = spatial_state.get("last_transition")
+    if not isinstance(last_transition, dict):
+        last_transition = {}
+        spatial_state["last_transition"] = last_transition
+    if not str(last_transition.get("to") or "").strip():
+        last_transition["to"] = clean
+        last_transition.setdefault("source", "scene_state_final")
 
 
 def _required_opening_bridge(

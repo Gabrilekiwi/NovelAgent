@@ -161,14 +161,47 @@ def _extract_world_changes(text: str) -> list[dict[str, str]]:
     return changes
 
 
+def _location_mention_index(text: str, term: str) -> int:
+    """Return the rightmost mention index of ``term`` in ``text``, or -1.
+
+    Chinese prose often inserts 的 between a place qualifier and its head noun
+    (``人防医院支线外侧的隔离撤回口`` vs canonical ``人防医院支线外侧隔离撤回口``).
+    Treat those as the same location mention so ending continuity can resolve.
+    """
+
+    clean = str(term or "").strip()
+    if not clean:
+        return -1
+    body = str(text or "")
+    lowered = body.lower()
+    idx = body.rfind(clean)
+    if idx < 0:
+        idx = lowered.rfind(clean.lower())
+    if idx >= 0:
+        return idx
+    if len(clean) >= 4 and any("一" <= ch <= "鿿" for ch in clean):
+        best = -1
+        for split_at in range(2, len(clean) - 1):
+            variant = f"{clean[:split_at]}的{clean[split_at:]}"
+            found = body.rfind(variant)
+            if found > best:
+                best = found
+        return best
+    return -1
+
+
 def _extract_candidate_locations(text: str, known_locations: list[str] | None = None) -> list[str]:
-    lowered = text.lower()
     candidates = [
-        (text.find(term) if term in text else lowered.find(term.lower()), term)
+        (_location_mention_index(text, term), term)
         for term in (known_locations or _KNOWN_LOCATION_TERMS)
-        if term in text or term.lower() in lowered
     ]
-    return [term for _position, term in sorted(candidates, key=lambda item: item[0])]
+    return [
+        term
+        for position, term in sorted(
+            (item for item in candidates if item[0] >= 0),
+            key=lambda item: item[0],
+        )
+    ]
 
 
 def _extract_story_state(
@@ -282,9 +315,9 @@ def _last_known_location(
     new_locations: list[str],
 ) -> str:
     mentioned_locations = [
-        (text.rfind(location), location)
+        (index, location)
         for location in new_locations
-        if location and text.rfind(location) >= 0
+        if location and (index := _location_mention_index(text, location)) >= 0
     ]
     if mentioned_locations:
         return max(mentioned_locations, key=lambda item: item[0])[1]
