@@ -145,9 +145,10 @@ def _repair_with_model(
         max_tokens=max_output_tokens,
     )
     stripped = str(output).strip()
+    repaired_text: str | None = None
     if stripped.startswith("{") and stripped.endswith("}"):
         try:
-            return coerce_repair_patch(
+            patch = coerce_repair_patch(
                 chapter_text,
                 stripped,
                 problem_codes=[
@@ -156,9 +157,14 @@ def _repair_with_model(
                     if isinstance(item, dict)
                 ],
             )
+            from core.quality.repair_patch import apply_repair_patch
+
+            repaired_text, _audit = apply_repair_patch(chapter_text, patch)
         except ValueError:
-            pass
-    return validate_text_output(output, REPAIR_CONTRACT)
+            repaired_text = None
+    if repaired_text is None:
+        repaired_text = validate_text_output(output, REPAIR_CONTRACT)
+    return _finalize_last_scene_anchors(repaired_text, repair_plan, repair_context)
 
 
 def build_repair_messages(
@@ -762,14 +768,22 @@ def _rewrite_spatial_transition(text: str, step: dict[str, Any], steps: list[dic
 
 
 def _anchor_last_scene_state(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
-    location = str(_parameters(step).get("location", "")).strip()
-    character = str(_parameters(step).get("character", "")).strip()
-    parts = [part for part in (location, character) if part]
-    if not parts:
+    location, characters = _last_scene_anchor_targets(step, steps)
+    if not location and not characters:
         return text
+    opening = _opening_window(text)
+    lowered = opening.lower()
+    missing = [name for name in characters if name.lower() not in lowered]
+    location_missing = bool(location) and location.lower() not in lowered
+    if not missing and not location_missing:
+        return text
+    cast = ", ".join(characters) if characters else "the group"
     if location:
-        return _prepend_sentence(text, f"At {location}, {character or 'the group'} is still dealing with the last scene's immediate fallout.")
-    return _prepend_sentence(text, f"{character} is still dealing with the last scene's immediate fallout.")
+        return _prepend_sentence(
+            text,
+            f"At {location}, {cast} is still dealing with the last scene's immediate fallout",
+        )
+    return _prepend_sentence(text, f"{cast} is still dealing with the last scene's immediate fallout")
 
 
 def _repair_character_position(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
@@ -877,16 +891,21 @@ def _zh_rewrite_spatial_transition(text: str, step: dict[str, Any], steps: list[
 
 
 def _zh_anchor_last_scene_state(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
-    parameters = _parameters(step)
-    location = str(parameters.get("location", "")).strip()
-    character = str(parameters.get("character", "")).strip()
-    if location and character:
-        return _prepend_sentence(text, f"在{location}，{character}仍在承受上一场景的直接后果")
+    location, characters = _last_scene_anchor_targets(step, steps)
+    if not location and not characters:
+        return text
+    opening = _opening_window(text)
+    lowered = opening.lower()
+    missing = [name for name in characters if name.lower() not in lowered]
+    location_missing = bool(location) and location.lower() not in lowered
+    if not missing and not location_missing:
+        return text
+    cast = "、".join(characters)
+    if location and cast:
+        return _prepend_sentence(text, f"在{location}，{cast}仍在承受上一场景的直接后果")
     if location:
         return _prepend_sentence(text, f"在{location}，上一场景的直接后果仍在延续")
-    if character:
-        return _prepend_sentence(text, f"{character}仍在承受上一场景的直接后果")
-    return text
+    return _prepend_sentence(text, f"{cast}仍在承受上一场景的直接后果")
 
 
 def _zh_repair_character_position(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
@@ -987,6 +1006,83 @@ def _bridge_sentence(bridge: str, location: str) -> str:
                 return f"From {location or prefix.strip()}, {detail[0].lower()}{detail[1:]}"
         return cleaned
     return f"From {location}, the next moment carries the last scene's consequence forward" if location else ""
+
+
+
+def _split_character_names(raw: str) -> list[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    parts = re.split(r"[,，、;；|/]+", text)
+    names: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        name = part.strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def _last_scene_anchor_targets(
+    step: dict[str, Any],
+    steps: list[dict[str, Any]],
+) -> tuple[str, list[str]]:
+    location = str(_parameters(step).get("location", "")).strip()
+    characters = _split_character_names(str(_parameters(step).get("character", "") or ""))
+    for candidate in steps:
+        if candidate is step:
+            continue
+        if str(candidate.get("action") or "") != "anchor_last_scene_state":
+            continue
+        parameters = _parameters(candidate)
+        if not location:
+            location = str(parameters.get("location", "")).strip()
+        characters.extend(_split_character_names(str(parameters.get("character", "") or "")))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for name in characters:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(name)
+    return location, deduped
+
+
+def _opening_window(text: str, limit: int = 700) -> str:
+    compact = re.sub(r"\s+", " ", str(text or "").strip())
+    return compact[:limit]
+
+
+def _finalize_last_scene_anchors(
+    text: str,
+    repair_plan: dict[str, Any],
+    repair_context: RepairContext,
+) -> str:
+    """Re-apply idempotent last-scene anchors after model repair.
+
+    Surgical model patches that add the reported missing names can drop other
+    required last-scene cast members from the opening window. A deterministic
+    finalize pass restores the full cast without rewriting formal prose body.
+    """
+    steps = [
+        step
+        for step in repair_plan.get("steps", [])
+        if isinstance(step, dict) and str(step.get("action") or "") == "anchor_last_scene_state"
+    ]
+    if not steps:
+        return text
+    return apply_repair_plan(
+        text,
+        {"steps": steps},
+        language=repair_context.language,
+        repair_context=repair_context,
+    )
 
 
 def _parameters(step: dict[str, Any]) -> dict[str, Any]:

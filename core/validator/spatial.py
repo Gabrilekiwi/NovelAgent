@@ -197,12 +197,16 @@ def _validate_opening_bridge(
     missing_characters = [name for name in last_characters if name.lower() not in lowered_opening]
     missing_parts.extend(f"character:{name}" for name in missing_characters)
     if missing_parts:
+        # Pass the full last-scene cast (not only currently missing names) so
+        # repair re-anchors everyone. Model surgical edits that add the reported
+        # missing names can otherwise drop other cast members still required in
+        # the opening window and stall repair convergence.
         problems.append(
             {
                 "code": "missing_last_scene_continuity",
                 "message": "Chapter opening does not anchor the last scene state before continuing.",
                 "location": last_location,
-                "character": ", ".join(missing_characters),
+                "character": ", ".join(last_characters),
                 "evidence": [
                     {"kind": "missing_last_scene_state", "value": ", ".join(missing_parts)},
                     {"kind": "opening_excerpt", "value": opening[:160]},

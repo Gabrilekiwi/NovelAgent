@@ -423,6 +423,90 @@ class SceneRepairTest(unittest.TestCase):
             report["hard_input_limit"] - 2_000,
         )
 
+
+    def test_zh_anchor_last_scene_keeps_full_cast(self) -> None:
+        from modules.scene_repair.repairer import (
+            RepairContext,
+            _finalize_last_scene_anchors,
+            _zh_anchor_last_scene_state,
+        )
+        from core.validator.spatial import validate_spatial
+
+        cast = ["林夏", "梁魁", "苏晴", "赵铁", "陆沉", "韩野", "顾岚"]
+        location = "消防站一层车库区"
+        # Opening mentions location aliases and most cast, but omits 梁魁/陆沉.
+        chapter = (
+            "外灯熄灭后，车库里只剩应急灯的冷白光。"
+            "韩野把撤离通道标好。林夏记录。苏晴守门。赵铁搬箱。顾岚沉默。"
+            + ("后文" * 200)
+        )
+        snapshot = {
+            "chapter_index": 33,
+            "world_state": {"locations": {location: {}}},
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "警报未停。",
+                "last_scene_location": location,
+                "last_scene_characters": cast,
+                "open_threads": [],
+                "required_opening_bridge": f"{location}；" + "、".join(cast),
+            },
+            "spatial_state": {
+                "spaces": {},
+                "connections": [],
+                "character_positions": {},
+                "blocked_paths": [],
+                "last_transition": {},
+            },
+        }
+        before = validate_spatial(snapshot, chapter)
+        problem = next(
+            item
+            for item in before["problems"]
+            if item["code"] == "missing_last_scene_continuity"
+        )
+        self.assertEqual(", ".join(cast), problem["character"])
+        self.assertIn("character:梁魁", problem["evidence"][0]["value"])
+        self.assertIn("character:陆沉", problem["evidence"][0]["value"])
+
+        step = {
+            "action": "anchor_last_scene_state",
+            "parameters": {
+                "location": location,
+                "character": problem["character"],
+            },
+        }
+        # Simulate a model repair that restored only the reported missing names
+        # while dropping another required cast member from the opening window.
+        model_repaired = (
+            "韩野下令关闭外灯后，消防站一层车库区只剩应急灯的冷白光。"
+            "梁魁仍被押在车库内侧，陆沉也留在现场；林夏记录，苏晴守门，顾岚沉默。"
+            + ("后文" * 200)
+        )
+        self.assertIn(
+            "赵铁",
+            [
+                name
+                for name in cast
+                if name not in model_repaired[:700]
+            ],
+        )
+        finalized = _finalize_last_scene_anchors(
+            model_repaired,
+            {"steps": [step]},
+            RepairContext(language="zh-CN"),
+        )
+        after = validate_spatial(snapshot, finalized)
+        self.assertFalse(
+            any(
+                item["code"] == "missing_last_scene_continuity"
+                for item in after["problems"]
+            )
+        )
+        again = _zh_anchor_last_scene_state(finalized, step, [step])
+        self.assertEqual(finalized, again)
+
     def test_build_repair_plan_orders_actions_by_priority(self) -> None:
         plan = build_repair_plan(
             {
