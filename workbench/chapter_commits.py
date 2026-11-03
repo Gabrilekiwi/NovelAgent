@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from core.engine.chapter_candidate_context import ChapterCandidateContextBuilder
 from core.engine.chapter_commit_prepare import prepare_reviewed_chapter
-from core.story_project.read_set import verify_story_project_read_set
+from core.engine.reviewed_candidate_context import verify_preparation_sources
 from workbench.chapter_candidates import CandidateDraftRecord, CandidateDraftStore
 from workbench.chapter_facts import ChapterFactReviewRecord, ChapterFactReviewService
 from workbench.database import WorkbenchDatabase
@@ -21,6 +21,10 @@ class ChapterCommitConflict(ValueError):
 
 class ChapterCommitIntegrityError(ValueError):
     code = "chapter_commit_integrity_error"
+
+
+class ChapterCommitRecoveryRequired(ChapterCommitIntegrityError):
+    code = "chapter_commit_recovery_required"
 
 
 class ChapterCommitPreparationService:
@@ -38,10 +42,37 @@ class ChapterCommitPreparationService:
         # request can supply context, authority, source loader or prepared state.
         self.context_builder_factory = context_builder_factory or ChapterCandidateContextBuilder
 
+    def prepare_quality(self, *, project_id: str, chapter: int, review_id: str,
+                        expected_draft_revision: int, expected_review_revision: int,
+                        expected_draft_sha256: str, expected_facts_sha256: str,
+                        idempotency_key: str, quality_policy: str = "standard", connection=None) -> dict[str, Any]:
+        """Read-only full Candidate quality preview from verified database IDs.
+
+        A commit must repeat this under its ownership and DB locks. No client
+        preparation, scene declaration, blueprint or quality report is accepted.
+        """
+        from core.engine.reviewed_chapter_quality import prepare_candidate_chapter_quality
+        request = dict(project_id=project_id, chapter=chapter, review_id=review_id,
+            expected_draft_revision=expected_draft_revision, expected_review_revision=expected_review_revision,
+            expected_draft_sha256=expected_draft_sha256, expected_facts_sha256=expected_facts_sha256,
+            idempotency_key=idempotency_key)
+        connection_args = {} if connection is None else {"connection": connection}
+        prepared = self.prepare(**request, **connection_args)
+        project = self.projects.get(project_id, **connection_args)
+        trusted = self.context_builder_factory(project.root).build(chapter)
+        quality = prepare_candidate_chapter_quality(trusted_context=trusted,
+            chapter_preparation=prepared, quality_policy=quality_policy)
+        if self.prepare(**request, **connection_args) != prepared:
+            raise ChapterCommitConflict("draft, review or context changed during quality preparation")
+        return {"preparation": prepared, "quality": quality, "publication_authorized": False}
+
     def prepare(self, *, project_id: str, chapter: int, review_id: str,
                 expected_draft_revision: int, expected_review_revision: int,
                 expected_draft_sha256: str, expected_facts_sha256: str,
-                idempotency_key: str) -> dict[str, Any]:
+                idempotency_key: str, connection=None) -> dict[str, Any]:
+        if connection is not None:
+            self._require_transaction(connection)
+        connection_args = {} if connection is None else {"connection": connection}
         for name, value in (("chapter",chapter), ("draft revision",expected_draft_revision),
                             ("review revision",expected_review_revision)):
             if type(value) is not int or value < 1:
@@ -49,8 +80,8 @@ class ChapterCommitPreparationService:
         for name, value in (("draft hash",expected_draft_sha256),("facts hash",expected_facts_sha256)):
             if not isinstance(value,str) or re.fullmatch(r"[0-9a-f]{64}",value) is None:
                 raise ChapterCommitConflict(f"{name} must be lowercase SHA-256")
-        project = self.projects.get(project_id)
-        draft, review = self._read_pair(review_id)
+        project = self.projects.get(project_id, **connection_args)
+        draft, review = self._read_pair(review_id, **connection_args)
         if (draft.project_id != project.id or review.project_id != project.id
                 or draft.chapter != chapter or review.chapter != chapter):
             raise ChapterCommitConflict("review does not belong to this project and chapter")
@@ -60,7 +91,7 @@ class ChapterCommitPreparationService:
         self._verify_pair(draft, review)
         # Reuse Candidate verification: input, provenance, result/prose hashes,
         # persisted identity/authority and the exact original read set.
-        verified_draft, intent = self.fact_reviews.verify_draft_source(draft.id)
+        verified_draft, intent = self.fact_reviews.verify_draft_source(draft.id, **connection_args)
         if verified_draft != draft:
             raise ChapterCommitConflict("draft changed while reading Candidate evidence")
         self._verify_candidate_binding(project, review, intent)
@@ -70,27 +101,37 @@ class ChapterCommitPreparationService:
             raise ChapterCommitConflict("current context differs from the confirmed Candidate")
         result = prepare_reviewed_chapter(trusted_context=trusted, project_id=project.id,
             draft=draft.to_dict(), review=asdict(review), idempotency_key=idempotency_key)
-        # End the first read snapshot before this check. A WAL reader held open
-        # throughout calculation would hide concurrent author edits.
-        current_draft, current_review = self._read_pair(review_id)
+        # Preview opens a fresh snapshot; commit reuses its BEGIN IMMEDIATE
+        # transaction, which prevents concurrent writers until publication.
+        current_draft, current_review = self._read_pair(review_id, **connection_args)
         if current_draft != draft or current_review != review:
             raise ChapterCommitConflict("draft or fact review changed during preparation")
-        current_project = self.projects.get(project.id)
+        current_project = self.projects.get(project.id, **connection_args)
         if (current_project.root, current_project.book_id) != (project.root, project.book_id):
             raise ChapterCommitConflict("project registration changed during preparation")
         # Also revalidate artifacts after calculation, without generating again.
-        after_draft, after_intent = self.fact_reviews.verify_draft_source(draft.id)
+        after_draft, after_intent = self.fact_reviews.verify_draft_source(draft.id, **connection_args)
         if after_draft != draft or after_intent != intent:
             raise ChapterCommitConflict("Candidate evidence changed during preparation")
         self._verify_candidate_binding(project, current_review, after_intent)
-        verify_story_project_read_set(result["read_set"], phase="prepare")
+        verify_preparation_sources(trusted.story_project_context, phase="prepare")
         return result
 
-    def _read_pair(self, review_id: str) -> tuple[CandidateDraftRecord, ChapterFactReviewRecord]:
-        with self.database.transaction(immediate=False) as connection:
-            review = self.fact_reviews.reviews.get(review_id, connection=connection)
-            draft = self.drafts.get(review.draft_id, connection=connection)
-        return draft, review
+    def _read_pair(self, review_id: str, *, connection=None) -> tuple[CandidateDraftRecord, ChapterFactReviewRecord]:
+        def read(conn):
+            review = self.fact_reviews.reviews.get(review_id, connection=conn)
+            draft = self.drafts.get(review.draft_id, connection=conn)
+            return draft, review
+        if connection is None:
+            with self.database.transaction(immediate=False) as owned:
+                return read(owned)
+        return read(connection)
+
+    def _require_transaction(self, connection):
+        databases = {row[1]: row[2] for row in connection.execute("PRAGMA database_list")}
+        if (not connection.in_transaction or not databases.get("main")
+                or Path(databases["main"]).resolve() != self.database.path):
+            raise ChapterCommitIntegrityError("commit preparation requires a transaction on its own database")
 
     @staticmethod
     def _verify_pair(draft: CandidateDraftRecord, review: ChapterFactReviewRecord):

@@ -41,6 +41,14 @@ class ReviewedIdentityMetadata:
     def ephemeral(self):
         return False
 
+    @property
+    def story_state_mode(self):
+        return self.payload["story_state_mode"]
+
+    @property
+    def activation(self):
+        return copy.deepcopy(self.payload["activation"])
+
     def to_dict(self):
         return copy.deepcopy(self.payload)
 
@@ -224,7 +232,11 @@ def verify_upgrade_preparation_evidence(*, preparation: dict, final_record: dict
 
 def load_verified_reviewed_identity(root: Path) -> dict:
     """Explicit diagnostic/upgrade cold read, independent of execution enablement."""
-    from core.story_project.reviewed_state_store import verify_reviewed_history
+    return _load_verified_reviewed_identity(root)
+
+
+def _load_verified_reviewed_identity(root: Path, *, _parent_document: bytes | None = None) -> dict:
+    from core.story_project.reviewed_state_store import _read_reviewed_history
 
     identity_bytes = read_project_bytes(root, ".novelagent/project.json")
     identity = validate_reviewed_identity(json.loads(identity_bytes.decode("utf-8-sig")))
@@ -236,8 +248,9 @@ def load_verified_reviewed_identity(root: Path) -> dict:
             or receipt.get("run_id") != binding["upgrade"]["run_id"]
             or receipt.get("receipt_id") != binding["upgrade"]["receipt_id"]):
         raise ReviewedIdentityError("identity has no matching atomic upgrade publication")
-    result = verify_reviewed_history(root=root, book_id=identity.book_id,
-        root_map={"story_project": root, "runtime": runtime}, baseline_document_sha256=binding["baseline_document_sha256"])
+    result, _ = _read_reviewed_history(root=root, book_id=identity.book_id,
+        root_map={"story_project": root, "runtime": runtime}, baseline_document_sha256=binding["baseline_document_sha256"],
+        _parent_document=_parent_document)
     if read_project_bytes(root, ".novelagent/project.json") != identity_bytes:
         raise ReviewedIdentityError("identity changed during cold verification")
     return {"identity": identity.to_dict(), "history": result}

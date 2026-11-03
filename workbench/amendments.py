@@ -28,6 +28,7 @@ from core.story_project.amendments import (
     resolve_active_amendment,
 )
 from core.story_project.paths import resolve_prose
+from workbench.book_writes import registered_book_write, registered_record_write, recover_interrupted_operations
 from workbench.database import WorkbenchDatabase
 from workbench.projects import ProjectRegistry
 
@@ -84,10 +85,23 @@ class AmendmentService:
         self.database = database
         self.projects = projects
         self.provider = provider or _durable_semantic_provider
-        self._initialize()
+        self.database.initialize_component(self._initialize)
 
     def submit(
         self,
+        project_id: str,
+        chapter: int,
+        *,
+        text: str,
+        expected_base_sha256: str,
+        idempotency_key: str | None = None,
+        recover: bool = False,
+    ) -> AmendmentRecord:
+        with registered_book_write(self.projects, project_id, database=self.database) as write:
+            return self._submit_owned(write, project_id, chapter, text=text, expected_base_sha256=expected_base_sha256, idempotency_key=idempotency_key, recover=recover)
+
+    def _submit_owned(
+        self, write,
         project_id: str,
         chapter: int,
         *,
@@ -101,7 +115,7 @@ class AmendmentService:
         revised = _validated_text(text)
         if not _is_sha256(expected_base_sha256):
             raise AmendmentError("expected_base_sha256 must be a lowercase SHA-256")
-        project = self.projects.get(project_id)
+        project = write.project
         root = Path(project.root).resolve(strict=True)
         content_sha = _sha256_bytes(revised.encode("utf-8"))
         amendment_id = _amendment_id(
@@ -115,6 +129,8 @@ class AmendmentService:
                 "SELECT * FROM amendments WHERE id = ?", (amendment_id,)
             ).fetchone()
         if prior is not None:
+            write.record = ('amendments', amendment_id)
+            write.require()
             prior_record = _record_from_row(prior)
             if (
                 prior_record.project_id != str(project_id)
@@ -136,7 +152,7 @@ class AmendmentService:
                 and active.amendment_id == amendment_id
                 and active.sha256 == content_sha
             ):
-                return self._set_status(amendment_id, "active")
+                return self.__set_status_owned(write, amendment_id, "active")
         original, original_path, actual_base_sha, _ = read_current_chapter_text(root, chapter)
         _assert_safe_project_file(root, original_path)
         formal = resolve_prose(root, chapter)
@@ -156,7 +172,7 @@ class AmendmentService:
         deterministic = deterministic_fact_check(original, revised)
         timestamp = _utc_now()
 
-        with self.database.transaction() as connection:
+        with write.transaction() as connection:
             existing = connection.execute(
                 "SELECT * FROM amendments WHERE id = ?", (amendment_id,)
             ).fetchone()
@@ -208,6 +224,8 @@ class AmendmentService:
                     ),
                 )
 
+        write.record = ('amendments', amendment_id)
+        write.require()
         if not deterministic["ok"]:
             semantic = {
                 "equivalent": False,
@@ -217,6 +235,7 @@ class AmendmentService:
                 "summary": "确定性事实检查发现改动，未调用模型。",
                 "provider_calls": 0,
             }
+            write.require()
             self._write_manifest(
                 manifest_path,
                 amendment_id=amendment_id,
@@ -227,7 +246,7 @@ class AmendmentService:
                 semantic=semantic,
                 created_at=timestamp,
             )
-            return self._set_status(amendment_id, "rejected", semantic=semantic)
+            return self.__set_status_owned(write, amendment_id, "rejected", semantic=semantic)
 
         evidence_root = (
             root
@@ -239,6 +258,7 @@ class AmendmentService:
         )
         messages = build_semantic_equivalence_messages(original, revised)
         try:
+            write.require()
             raw = self.provider(
                 messages,
                 f"amendment-check-{amendment_id}",
@@ -247,8 +267,8 @@ class AmendmentService:
             semantic = parse_semantic_check(raw)
         except Exception as exc:
             uncertain = _provider_state_uncertain(exc)
-            self._set_status(
-                amendment_id,
+            self.__set_status_owned(
+                write, amendment_id,
                 "needs_recovery" if uncertain else "pending_validation",
                 error={
                     "type": type(exc).__name__,
@@ -268,6 +288,7 @@ class AmendmentService:
             and float(semantic["confidence"]) >= 0.9
             and not semantic["critical_changes"]
         )
+        write.require()
         self._write_manifest(
             manifest_path,
             amendment_id=amendment_id,
@@ -279,7 +300,7 @@ class AmendmentService:
             created_at=timestamp,
         )
         if not equivalent:
-            return self._set_status(amendment_id, "rejected", semantic=semantic)
+            return self.__set_status_owned(write, amendment_id, "rejected", semantic=semantic)
 
         pointer = {
             "schema_version": AMENDMENT_SCHEMA_VERSION,
@@ -296,8 +317,8 @@ class AmendmentService:
         with persistence_run_lock(lock_root, state_paths=(pointer_path,)):
             _, _, locked_base_sha, _ = read_current_chapter_text(root, chapter)
             if locked_base_sha != expected_base_sha256:
-                return self._set_status(
-                    amendment_id,
+                return self.__set_status_owned(
+                    write, amendment_id,
                     "rejected",
                     semantic=semantic,
                     error={
@@ -306,8 +327,8 @@ class AmendmentService:
                         "actual": locked_base_sha,
                     },
                 )
-            atomic_write_json(pointer_path, pointer)
-            with self.database.transaction() as connection:
+            with write.transaction() as connection:
+                atomic_write_json(pointer_path, pointer)
                 connection.execute(
                     """
                     UPDATE amendments SET status = 'superseded', updated_at = ?
@@ -345,23 +366,11 @@ class AmendmentService:
         return tuple(_record_from_row(row) for row in rows)
 
     def recover_after_restart(self) -> int:
-        with self.database.transaction() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE amendments SET status = 'needs_recovery', error_json = ?, updated_at = ?
-                WHERE status = 'validating'
-                """,
-                (
-                    _canonical_json(
-                        {
-                            "code": "workbench_restarted_during_amendment_call",
-                            "automatic_retry": False,
-                        }
-                    ),
-                    _utc_now(),
-                ),
-            )
-        return int(cursor.rowcount)
+        count, self.recovery_blocked = recover_interrupted_operations(
+            self.projects, self.database, table="amendments",
+            error_json=_canonical_json({"code":"workbench_restarted_during_amendment_call", "automatic_retry":False}),
+            timestamp=_utc_now())
+        return count
 
     def _initialize(self) -> None:
         with self.database.transaction() as connection:
@@ -425,7 +434,18 @@ class AmendmentService:
         semantic: Mapping[str, Any] | None = None,
         error: Mapping[str, Any] | None = None,
     ) -> AmendmentRecord:
-        with self.database.transaction() as connection:
+        with registered_record_write(self.projects, 'amendments', amendment_id, database=self.database) as write:
+            return self.__set_status_owned(write, amendment_id, status, semantic=semantic, error=error)
+
+    def __set_status_owned(
+        self, write,
+        amendment_id: str,
+        status: str,
+        *,
+        semantic: Mapping[str, Any] | None = None,
+        error: Mapping[str, Any] | None = None,
+    ) -> AmendmentRecord:
+        with write.transaction() as connection:
             connection.execute(
                 """
                 UPDATE amendments SET status = ?, semantic_json = COALESCE(?, semantic_json),

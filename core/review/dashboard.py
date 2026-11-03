@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from core.review.index import load_review_index
+from core.review.index import load_review_index, review_index_path
+from core.review.storage import review_output_lock
+from core.engine.persistence import atomic_write_text
 from core.schema import validate_schema
 
 
@@ -23,8 +25,8 @@ def build_review_dashboard(
     output_text = str(output_path) if output_path is not None else None
     if output_path is not None:
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(html, encoding="utf-8")
+        with review_output_lock(path):
+            atomic_write_text(path, html)
     return {
         "html": html,
         "metadata": {
@@ -44,8 +46,9 @@ def build_review_dashboard_from_index(
     title: str = DEFAULT_TITLE,
 ) -> dict[str, Any]:
     output = Path(output_path) if output_path is not None else Path(review_output_dir) / "dashboard.html"
-    index = load_review_index(review_output_dir=review_output_dir)
-    return build_review_dashboard(review_index=index, title=title, output_path=output)
+    with review_output_lock(review_index_path(review_output_dir), output):
+        index = load_review_index(review_output_dir=review_output_dir)
+        return build_review_dashboard(review_index=index, title=title, output_path=output)
 
 
 def _build_html(*, index: dict[str, Any], title: str, output_path: Path | None) -> str:

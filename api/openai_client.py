@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Mapping
+from contextlib import suppress
+import copy
+from api.execution_deadline import RequestExecutionDeadline
+from api.budget_endpoint import endpoint_fingerprint
 
 from api.contracts import (
+    reported_model_usage,
     MODEL_ENDPOINT_OFFICIAL,
     MODEL_ENDPOINT_OPENAI_COMPATIBLE,
     MODEL_ENDPOINT_UNKNOWN,
@@ -97,6 +102,8 @@ def chat_completion(
             failure_category="durable_evidence_required",
             retryable=False,
         )
+    monetary = (runtime.chapter_budget is not None
+        and runtime.chapter_budget.store.frozen_budget()['amount_limit'] is not None)
     resolved_call_id = call_id or (
         runtime.new_call_id(provider="openai", stage=stage)
     )
@@ -105,40 +112,68 @@ def chat_completion(
             "durable model calls require a positive OpenAI max output token reservation"
         )
     stream_request_kwargs = dict(request_kwargs)
-    if config.openai_stream and endpoint_type == MODEL_ENDPOINT_OFFICIAL:
+    if config.openai_stream and (endpoint_type == MODEL_ENDPOINT_OFFICIAL or monetary):
         stream_request_kwargs["stream_options"] = {"include_usage": True}
     evidence_request = dict(stream_request_kwargs)
     evidence_request["stream"] = bool(config.openai_stream)
+    evidence_request = copy.deepcopy(evidence_request)
+    if monetary:
+        evidence_request.pop('max_tokens', None)
+        evidence_request.update(max_completion_tokens=resolved_max_tokens,
+            service_tier='default',prompt_cache_retention='in_memory',n=1)
     client_holder: dict[str, Any] = {}
     physical_attempt = 0
+    deadline = (RequestExecutionDeadline(runtime,policy,configured_timeout=config.openai_timeout_seconds,
+        extra_remaining=retry_budget_remaining) if runtime.active_interval is not None else None)
 
-    def invoke_provider(client: Any) -> ModelResponse:
-        if config.openai_stream:
+    def invoke_provider(client: Any, payload: dict[str, Any]) -> ModelResponse:
+        timeout_kwargs = {'timeout':deadline.timeout} if deadline is not None else {}
+        if payload['stream']:
             response = client.chat.completions.create(
-                **stream_request_kwargs,
-                stream=True,
+                **copy.deepcopy(payload),
+                **timeout_kwargs,
             )
             return _extract_streamed_message_content(
                 response,
                 stage=stage,
                 model=resolved_model,
                 endpoint_type=endpoint_type,
+                check_execution_time=deadline.remaining if deadline is not None else None,
+                capture_billing=monetary,
             )
-        response = client.chat.completions.create(**request_kwargs)
+        final_payload=copy.deepcopy(payload)
+        if not monetary:final_payload.pop('stream',None)
+        response = client.chat.completions.create(**final_payload,**timeout_kwargs)
         return _extract_message_content(
             response,
             stage=stage,
             model=resolved_model,
             endpoint_type=endpoint_type,
+            capture_billing=monetary,
         )
 
     def invoke() -> ModelResponse:
-        nonlocal physical_attempt
+        nonlocal physical_attempt,endpoint_type
         client = client_holder.get("client")
         if client is None:
             client = OpenAI(**client_kwargs)
             client_holder["client"] = client
         physical_attempt += 1
+        payload=copy.deepcopy(evidence_request)
+        actual_base_url=str(getattr(client,'base_url',None) or config.openai_base_url or 'https://api.openai.com/v1')
+        billing_plan=None
+        if monetary:
+            from core.provider_billing_request import plan_openai_text_billing
+            billing_plan=plan_openai_text_billing(payload,base_url=actual_base_url)
+            endpoint_type=MODEL_ENDPOINT_OFFICIAL
+
+        def prepare_dispatch():
+            if deadline is not None:deadline.prepare()
+            if billing_plan is not None:
+                from core.provider_billing_request import validate_openai_billing_plan
+                validate_openai_billing_plan(billing_plan,payload,
+                    base_url=str(getattr(client,'base_url',None) or actual_base_url))
+
         return runtime.execute_attempt(
             call_id=resolved_call_id,
             attempt_number=physical_attempt,
@@ -146,14 +181,17 @@ def chat_completion(
             model=resolved_model,
             stage=stage,
             endpoint_type=endpoint_type,
-            request=evidence_request,
+            request=payload,
             max_output_tokens=max(0, int(resolved_max_tokens or 0)),
-            operation=lambda: invoke_provider(client),
+            operation=lambda: invoke_provider(client,payload),
             input_tokens=input_tokens,
+            before_dispatch=prepare_dispatch if monetary or deadline is not None else None,
+            endpoint_fingerprint=(endpoint_fingerprint('openai',actual_base_url) if runtime.chapter_budget is not None else None),
+            billing_plan=billing_plan,billing_base_url=actual_base_url if monetary else None,
         )
 
     try:
-        execution = policy.execute(invoke, budget_remaining_seconds=retry_budget_remaining)
+        execution = policy.execute(invoke, budget_remaining_seconds=deadline.retry_remaining if deadline is not None else retry_budget_remaining)
     except RetryOperationError as exc:
         report = exc.report
         cause_summary = (
@@ -184,6 +222,7 @@ def _extract_message_content(
     stage: str,
     model: str | None,
     endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
+    capture_billing: bool = False,
 ) -> ModelResponse:
     choices = getattr(response, "choices", None)
     if not isinstance(choices, list) or not choices:
@@ -217,12 +256,18 @@ def _extract_message_content(
             retryable=False,
         )
     choice = choices[0]
+    usage=reported_model_usage(_sdk_mapping(getattr(response, "usage", None)))
+    if capture_billing:
+        from core.provider_billing_response import OpenAIBillingObservations
+        observations=OpenAIBillingObservations()
+        observations.observe(model=getattr(response,'model',None),service_tier=getattr(response,'service_tier',None))
+        usage=observations.attach(usage)
     return ModelResponse(
         content,
-        usage=_sdk_mapping(getattr(response, "usage", None)),
+        usage=usage,
         finish_reason=_optional_metadata(getattr(choice, "finish_reason", None)),
         request_id=_response_request_id(response),
-        actual_model=_optional_metadata(getattr(response, "model", None)) or model,
+        actual_model=_optional_metadata(getattr(response, "model", None)) or (None if capture_billing else model),
         endpoint_type=endpoint_type,
     )
 
@@ -233,25 +278,32 @@ def _extract_streamed_message_content(
     stage: str,
     model: str | None,
     endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
+    check_execution_time: Callable[[], Any] | None = None,
+    capture_billing: bool = False,
 ) -> ModelResponse:
     parts: list[str] = []
     usage: dict[str, Any] = {}
     finish_reason: str | None = None
     request_id = _response_request_id(response)
-    actual_model: str | None = model
+    actual_model: str | None = None if capture_billing else model
+    from core.provider_billing_response import OpenAIBillingObservations
+    observations=OpenAIBillingObservations()
     try:
         for chunk in response:
+            if capture_billing:
+                observations.observe(model=getattr(chunk,'model',None),service_tier=getattr(chunk,'service_tier',None))
             chunk_request_id = _response_request_id(chunk)
             if chunk_request_id:
                 request_id = chunk_request_id
             chunk_model = _optional_metadata(getattr(chunk, "model", None))
             if chunk_model:
                 actual_model = chunk_model
-            chunk_usage = _sdk_mapping(getattr(chunk, "usage", None))
+            chunk_usage = reported_model_usage(_sdk_mapping(getattr(chunk, "usage", None)))
             if chunk_usage:
                 usage = chunk_usage
             choices = getattr(chunk, "choices", None)
             if not isinstance(choices, list) or not choices:
+                if check_execution_time is not None:check_execution_time()
                 continue
             choice = choices[0]
             reason = _optional_metadata(getattr(choice, "finish_reason", None))
@@ -261,12 +313,14 @@ def _extract_streamed_message_content(
             content = getattr(delta, "content", None)
             if isinstance(content, str):
                 parts.append(content)
+            if check_execution_time is not None:check_execution_time()
+        if check_execution_time is not None:check_execution_time()
     except Exception as exc:
         partial_text = "".join(parts)
         partial_response = (
             ModelResponse(
                 partial_text,
-                usage=usage,
+                usage=observations.attach(usage) if capture_billing else usage,
                 finish_reason="stream_interrupted",
                 request_id=request_id,
                 actual_model=actual_model,
@@ -280,6 +334,11 @@ def _extract_streamed_message_content(
             partial_content_received=bool(partial_text),
             partial_response=partial_response,
         ) from exc
+    finally:
+        if check_execution_time is not None:
+            close=getattr(response,'close',None)
+            if callable(close):
+                with suppress(Exception):close()
     text = "".join(parts)
     if not text:
         raise ModelCallError(
@@ -292,7 +351,7 @@ def _extract_streamed_message_content(
         )
     return ModelResponse(
         text,
-        usage=usage,
+        usage=observations.attach(usage) if capture_billing else usage,
         finish_reason=finish_reason,
         request_id=request_id,
         actual_model=actual_model,

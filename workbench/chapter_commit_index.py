@@ -23,7 +23,10 @@ class ChapterCommitIndex:
             raise ChapterCommitIntegrityError("commit index must use the project database")
         self.database, self.projects = database, projects
         database.initialize()
-        with database.transaction() as connection:
+        database.initialize_component(self._initialize)
+
+    def _initialize(self):
+        with self.database.transaction() as connection:
             connection.execute("""CREATE TABLE IF NOT EXISTS chapter_publication_index (
                 book_id TEXT NOT NULL,
                 idempotency_scope_sha256 TEXT NOT NULL,

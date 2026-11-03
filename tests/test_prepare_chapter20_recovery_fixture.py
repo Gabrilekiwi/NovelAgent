@@ -129,94 +129,94 @@ def test_prepared_fixture_classifies_two_scenes_without_provider_calls(
         start_worker=False,
         auto_import_active=False,
     )
-    client = TestClient(app)
-    assert client.get("/").status_code == 200
-    assert SESSION_COOKIE in client.cookies
-    imported_response = client.post(
-        "/api/projects/import",
-        headers={"origin": "http://testserver"},
-        json={"path": str(target), "name": "第20章恢复验收（合成）"},
-    )
-    assert imported_response.status_code == 201, imported_response.text
-    imported = imported_response.json()["project"]
-    assert imported["book_id"] == FIXED_BOOK_ID
-    assert imported["next_chapter"] == CHAPTER_INDEX
-    pending_before = client.get(
-        f"/api/projects/{imported['id']}/pending"
-    ).json()["chapter_recovery"]
-    assert pending_before["chapter"] == CHAPTER_INDEX
-    assert pending_before["recoverable"] is True
-    assert pending_before["formal_prose_exists"] is False
-    assert pending_before["needs_reclassification"] is True
-    queued = client.post(
-        f"/api/projects/{imported['id']}/recovery",
-        headers={"origin": "http://testserver"},
-        json={"chapter": CHAPTER_INDEX},
-    )
-    assert queued.status_code == 202, queued.text
-    assert queued.json()["job"]["state"] == "queued"
-    assert app.state.supervisor._thread is None
+    with TestClient(app) as client:
+        assert client.get("/").status_code == 200
+        assert SESSION_COOKIE in client.cookies
+        imported_response = client.post(
+            "/api/projects/import",
+            headers={"origin": "http://testserver"},
+            json={"path": str(target), "name": "第20章恢复验收（合成）"},
+        )
+        assert imported_response.status_code == 201, imported_response.text
+        imported = imported_response.json()["project"]
+        assert imported["book_id"] == FIXED_BOOK_ID
+        assert imported["next_chapter"] == CHAPTER_INDEX
+        pending_before = client.get(
+            f"/api/projects/{imported['id']}/pending"
+        ).json()["chapter_recovery"]
+        assert pending_before["chapter"] == CHAPTER_INDEX
+        assert pending_before["recoverable"] is True
+        assert pending_before["formal_prose_exists"] is False
+        assert pending_before["needs_reclassification"] is True
+        queued = client.post(
+            f"/api/projects/{imported['id']}/recovery",
+            headers={"origin": "http://testserver"},
+            json={"chapter": CHAPTER_INDEX},
+        )
+        assert queued.status_code == 202, queued.text
+        assert queued.json()["job"]["state"] == "queued"
+        assert app.state.supervisor._thread is None
 
-    result = recover_locked_chapter(
-        story_project_root=target,
-        run_dir=run_dir,
-        snapshot_path=target / ".novelagent" / "runtime" / "snapshot.json",
-        expected_book_id=FIXED_BOOK_ID,
-        language="zh-CN",
-        clock=lambda: FIXED_NOW,
-        id_factory=lambda: "testfixture",
-    )
+        result = recover_locked_chapter(
+            story_project_root=target,
+            run_dir=run_dir,
+            snapshot_path=target / ".novelagent" / "runtime" / "snapshot.json",
+            expected_book_id=FIXED_BOOK_ID,
+            language="zh-CN",
+            clock=lambda: FIXED_NOW,
+            id_factory=lambda: "testfixture",
+        )
 
-    assert result["ok"] is True
-    assert result["action"] == "resume_scenes"
-    assert result["provider_calls"] == 0
-    assert result["reusable_scene_count"] == 2
-    assert result["expected_scene_count"] == 3
-    assert result["next_scene_index"] == 3
-    checkpoint = active_locked_chapter_checkpoint(
-        run_dir,
-        chapter_index=CHAPTER_INDEX,
-        expected_book_id=FIXED_BOOK_ID,
-        language="zh-CN",
-    )
-    assert checkpoint is not None
-    assert [scene["index"] for scene in checkpoint["scenes"]] == [1, 2]
+        assert result["ok"] is True
+        assert result["action"] == "resume_scenes"
+        assert result["provider_calls"] == 0
+        assert result["reusable_scene_count"] == 2
+        assert result["expected_scene_count"] == 3
+        assert result["next_scene_index"] == 3
+        checkpoint = active_locked_chapter_checkpoint(
+            run_dir,
+            chapter_index=CHAPTER_INDEX,
+            expected_book_id=FIXED_BOOK_ID,
+            language="zh-CN",
+        )
+        assert checkpoint is not None
+        assert [scene["index"] for scene in checkpoint["scenes"]] == [1, 2]
 
-    context = build_generation_story_project_context(
-        story_project=target,
-        chapter=CHAPTER_INDEX,
-        snapshot=load_snapshot(
-            target / ".novelagent" / "runtime" / "snapshot.json"
-        ),
-        memory_context={
-            "source": "synthetic_fixture",
-            "status": "ready",
-            "items": [],
-        },
-        project_identity=identity,
-        allow_story_state_shadow_downgrade=True,
-    )
-    blueprint = context.chapter_blueprint.to_dict()
-    assert len(blueprint["required_beats"]) == 3
-    pipeline = run_chapter_pipeline(
-        "# 第 20 章恢复夹具\n\n从地下站入口直接继续。",
-        chapter_index=CHAPTER_INDEX,
-        dry_run=True,
-        language="zh-CN",
-        chapter_blueprint=blueprint,
-        recovered_scene_drafts=checkpoint["scenes"],
-    )
-    assert len(pipeline["scene_drafts"]) == 3
-    assert [
-        scene.get("source_attempt_id")
-        for scene in pipeline["scene_drafts"][:2]
-    ] == ["attempt-scene-01", "attempt-scene-02"]
-    pending_after = client.get(
-        f"/api/projects/{imported['id']}/pending"
-    ).json()["chapter_recovery"]
-    assert pending_after["needs_reclassification"] is False
-    assert pending_after["checkpoint"]["reusable_scene_count"] == 2
-    assert pending_after["checkpoint"]["expected_scene_count"] == 3
+        context = build_generation_story_project_context(
+            story_project=target,
+            chapter=CHAPTER_INDEX,
+            snapshot=load_snapshot(
+                target / ".novelagent" / "runtime" / "snapshot.json"
+            ),
+            memory_context={
+                "source": "synthetic_fixture",
+                "status": "ready",
+                "items": [],
+            },
+            project_identity=identity,
+            allow_story_state_shadow_downgrade=True,
+        )
+        blueprint = context.chapter_blueprint.to_dict()
+        assert len(blueprint["required_beats"]) == 3
+        pipeline = run_chapter_pipeline(
+            "# 第 20 章恢复夹具\n\n从地下站入口直接继续。",
+            chapter_index=CHAPTER_INDEX,
+            dry_run=True,
+            language="zh-CN",
+            chapter_blueprint=blueprint,
+            recovered_scene_drafts=checkpoint["scenes"],
+        )
+        assert len(pipeline["scene_drafts"]) == 3
+        assert [
+            scene.get("source_attempt_id")
+            for scene in pipeline["scene_drafts"][:2]
+        ] == ["attempt-scene-01", "attempt-scene-02"]
+        pending_after = client.get(
+            f"/api/projects/{imported['id']}/pending"
+        ).json()["chapter_recovery"]
+        assert pending_after["needs_reclassification"] is False
+        assert pending_after["checkpoint"]["reusable_scene_count"] == 2
+        assert pending_after["checkpoint"]["expected_scene_count"] == 3
 
 
 def test_fixture_preparation_refuses_existing_or_outside_target(

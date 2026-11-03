@@ -32,12 +32,18 @@
     scoreDimensions: [],
     evaluationChapter: null,
     chapterCard: null,
+    chapterBudgetBlocked: false,
+    chapterBudgetMessage: '',
     chapterConfirmation: null,
     chapterCandidate: null,
     chapterCandidateError: "",
     candidateActionNonce: 0,
     chapterFactExtraction: null,
     chapterFactReview: null,
+    chapterFactEditorContext: null,
+    factEditorLoadKey: null,
+    chapterHasFormalProse: false,
+    chapterRecoveryRequired: false,
     chapterFactError: "",
     factActionNonce: 0,
     route: null,
@@ -356,11 +362,33 @@
     const switcher = one("[data-spa-project-switcher]");
     if (switcher) switcher.hidden = !hasProject;
     all("[data-breadcrumb-project]").forEach((node) => { node.hidden = !hasProject; });
+    const reviewedNotice = one("[data-reviewed-project-notice]");
+    if (reviewedNotice) reviewedNotice.hidden = !hasProject || !state.project?.reviewed_format;
     if (!hasProject) return;
+    if (state.project.reviewed_format) {
+      setText("[data-reviewed-project-message]", state.project.reviewed_status?.message || "请核对当前事实与提交历史。");
+      const recovery = one("[data-reviewed-project-recover]");
+      if (recovery) recovery.hidden = state.project.reviewed_status?.state !== "needs_recovery";
+    }
     setText("[data-project-title]", projectTitleOf(state.project));
     setText("[data-project-meta]", `${projectGenreOf(state.project)} · ${projectLanguageOf(state.project)}`);
-    all("[data-nav-area]").forEach((link) => { link.href = projectHash(link.dataset.navArea); });
+    all("[data-nav-area]").forEach((link) => {
+      link.href = projectHash(link.dataset.navArea);
+      const unsupported = link.dataset.navArea === "production" ? state.project.capabilities?.automatic_generation !== true
+        : ["pending", "history"].includes(link.dataset.navArea) && state.project.capabilities?.job_history !== true;
+      link.hidden = Boolean(state.project.reviewed_format && unsupported);
+    });
     all("[data-project-route]").forEach((link) => { link.href = projectHash(link.dataset.projectRoute); });
+    all("[data-project-route]").forEach((link) => {
+      link.hidden = Boolean(state.project.reviewed_format && link.dataset.projectRoute === "outlines" && state.project.capabilities?.outline_planning !== true);
+      if (link.dataset.projectRoute === "production") {
+        const manual = state.project.reviewed_format && state.project.capabilities?.automatic_generation !== true;
+        link.href = manual ? projectHash("chapters", state.project.next_chapter ? `/${state.project.next_chapter}` : "") : projectHash("production");
+        setText("strong", manual ? "继续逐章写作" : "继续生成正文", link);
+        setText("p", manual ? "确认本章意图，编辑草稿并审核事实。" : "按已确认章纲连续创作，异常时自动停下。", link);
+      }
+    });
+    all('a[href="#/history"]').forEach((link) => { link.hidden = Boolean(state.project.reviewed_format && state.project.capabilities?.job_history !== true); });
     const projectLink = one("[data-nav-project-overview]");
     if (projectLink) projectLink.href = projectHash("overview");
     const healthLink = one("[data-health-link]");
@@ -448,7 +476,9 @@
     setText("[data-overview-chapters]", `${numberLabel(overview.chapter_count ?? project.chapter_count)} 章`);
     setText("[data-overview-words]", overview.word_count_label || `${numberLabel(overview.word_count)} 字`);
     const nextChapter = overview.next_chapter ?? project.next_chapter ?? 1;
-    setText("[data-overview-next]", `第 ${nextChapter} 章`);
+    setText("[data-overview-next]", project.reviewed_format && project.next_chapter == null ? "待核验" : `第 ${nextChapter} 章`);
+    const continueLink = one('[data-spa-view="overview"] .page-heading-actions .button-primary');
+    if (continueLink) continueLink.href = project.reviewed_format ? projectHash("chapters", project.next_chapter == null ? "" : `/${project.next_chapter}`) : projectHash("production");
     setText("[data-overview-next-title]", overview.next_outline_title || "待规划");
     const latestBatch = overview.latest_outline_batch || {};
     const approvedOutlineCount = overview.outline_ready_count ?? (latestBatch.status === "approved" ? arrayFrom(latestBatch.items || latestBatch.proposal, "items").length : 0);
@@ -467,7 +497,7 @@
     const healthValidationOk = Boolean(health.validation?.ok ?? health.validation?.valid ?? (health.validation && !health.validation.errors?.length));
     const overviewHealthScore = health.score ?? (healthValidationOk ? 55 : 20) + (health.shadow_report ? 15 : 0) + (health.production_eligible ? 30 : 0);
     setText("[data-health-label]", health.label || health.mode_label || (health.production_eligible ? "Strict 生产" : "实验运行"));
-    setText("[data-health-score]", overviewHealthScore);
+    setText("[data-health-score]", project.reviewed_format ? (healthValidationOk ? "已核验" : "待处理") : overviewHealthScore);
     setText("[data-health-summary]", health.summary || "完成校准与激活后，才可作为 Strict 生产项目。");
     one("[data-health-ring]")?.style.setProperty("--score", String(Number(overviewHealthScore || 0)));
     const recentChapters = one("[data-recent-chapters]");
@@ -676,9 +706,109 @@
     };
     return presentations[candidate.status] || { status: "warning", label: "需要检查", title: "正文候选状态需要检查", message: "工作台不会自动重试或提交任何内容。" };
   };
+  const chapterWorkflowPresentation = ({ formal, recovery, candidate, extraction, review, error, pending, confirmed, budgetBlocked, budgetMessage }) => {
+    if (recovery) return { phase: "blocked", label: "提交待恢复", message: "本章有未完成的提交，请先在项目概览恢复原事务。" };
+    if (formal) return { phase: "committed", label: "正式稿", message: "本章已正式保存，可以开始下一章。" };
+    if (pending === "candidate") return { phase: "candidate", label: "生成中", message: "正在处理本次正文生成。可以离开本页，回来后从保存的记录继续。" };
+    if (pending === "facts") return { phase: "facts", label: "检查中", message: "正在处理本次事实提取。请等待当前检查结束。" };
+    if (error) return { phase: "blocked", label: "需要处理", message: error };
+    if (candidate?.status === "running") return { phase: "candidate", label: "生成中", message: "正文生成仍在执行。页面只查询进度，刷新不会重复调用。" };
+    if (extraction?.status === "running") return { phase: "facts", label: "检查中", message: "事实提取仍在执行。请等待当前提取结束。" };
+    if ([candidate?.status, extraction?.status].some(s => ["needs_recovery", "provider_uncertain", "failed"].includes(s))) return { phase: "blocked", label: "需要处理", message: "当前操作已停止，请查看下方原因和恢复操作；已有草稿仍保留。" };
+    if (review?.state === "stale") return { phase: "facts", label: "事实需重查", message: "正文或依据发生变化，请核对草稿并重新检查事实。旧决定保留为只读记录。" };
+    if (review?.state === "confirmed") return { phase: "publication", label: "待发布", message: "事实决定已确认。下一步预览最终正文并发布。" };
+    if (review) return { phase: "facts", label: "待审阅", message: "请对事实明确接受、修改、拒绝或补充，再确认整组决定。" };
+    if (extraction?.status === "completed" && extraction.source_state === "current") return { phase: "facts", label: "事实已提取", message: "提取结果已经保存。点击“继续事实审核”采用本次结果，无需再次调用模型。" };
+    if (budgetBlocked) return { phase: "blocked", label: "预算待处理", message: budgetMessage || "请先读取并确认下方本章预算，已有草稿仍可编辑。" };
+    if (candidate?.draft) return { phase: "candidate", label: "可编辑草稿", message: "正文草稿已保存。编辑完成后提取事实，继续本章审核。" };
+    if (candidate?.status === "completed") return { phase: "candidate", label: "候选已生成", message: "正文候选已保留，请建立可编辑草稿。" };
+    if (confirmed) return { phase: "candidate", label: "可生成", message: "本章意图已确认，可以生成正文候选。" };
+    return { phase: "intent", label: "待确认意图", message: "从本章目标开始：确认意图后生成正文、审阅事实并发布。" };
+  };
+  let chapterProgressTimer = null;
+  let chapterProgressReading = false;
+  const chapterActionBusy = () => Boolean(one('[data-chapter-candidate-panel] .is-busy, [data-candidate-editor] .is-busy, [data-chapter-fact-panel] .is-busy'));
+  const scheduleChapterProgress = () => {
+    if (chapterProgressTimer != null || chapterProgressReading || state.route?.area !== "chapter" || state.chapterHasFormalProse || state.chapterRecoveryRequired) return;
+    if (state.chapterCandidateError || state.chapterFactError || ![state.chapterCandidate?.status, state.chapterFactExtraction?.status].includes("running")) return;
+    chapterProgressTimer = window.setTimeout(refreshRunningChapterProgress, 2000);
+  };
+  const chapterProgressMatches = (snapshot, current = state) => current.routeRevision === snapshot.routeRevision
+    && current.projectId === snapshot.projectId && current.route?.area === "chapter"
+    && current.route?.projectId === snapshot.projectId && Number(current.route?.chapter) === snapshot.chapter
+    && current.candidateActionNonce === snapshot.candidateNonce && current.factActionNonce === snapshot.factNonce
+    && current.chapterCandidate?.candidate_id === snapshot.candidateId
+    && current.chapterCandidate?.draft?.id === snapshot.draft?.id
+    && current.chapterCandidate?.draft?.revision === snapshot.draft?.revision
+    && current.chapterCandidate?.draft?.sha256 === snapshot.draft?.sha256
+    && current.chapterFactExtraction?.extraction_id === snapshot.extractionId;
+  const refreshRunningChapterProgress = async () => {
+    chapterProgressTimer = null;
+    if (state.route?.area !== "chapter" || chapterActionBusy()) { scheduleChapterProgress(); return; }
+    const snapshot = { routeRevision: state.routeRevision, projectId: state.projectId, chapter: Number(state.route.chapter),
+      candidateNonce: state.candidateActionNonce, factNonce: state.factActionNonce,
+      candidateId: state.chapterCandidate?.candidate_id, draft: state.chapterCandidate?.draft,
+      extractionId: state.chapterFactExtraction?.extraction_id };
+    const candidateRunning = state.chapterCandidate?.status === "running";
+    const factsRunning = state.chapterFactExtraction?.status === "running";
+    if (!candidateRunning && !factsRunning) return;
+    chapterProgressReading = true;
+    const stillCurrent = () => chapterProgressMatches(snapshot) && !chapterActionBusy();
+    try {
+      // Observe only the exact execution already displayed. Never start/resume it from a timer.
+      if (candidateRunning) {
+        const { payload } = await api(candidateDetailPath(snapshot.projectId, snapshot.chapter, snapshot.candidateId));
+        if (!stillCurrent()) return;
+        const candidate = payload?.candidate || payload;
+        if (candidate.candidate_id !== snapshot.candidateId) return;
+        renderChapterCandidate(candidate, "");
+        if (candidate.draft) await refreshChapterFactsForCurrentDraft();
+      } else {
+        const { payload } = await api(`${factExtractionCollectionPath(snapshot.draft.id)}/${encodeURIComponent(snapshot.extractionId)}`);
+        if (!stillCurrent() || one('[data-fact-review-form].is-dirty') || one('[data-fact-review-form][data-support-dirty="true"]')) return;
+        const extraction = payload?.fact_extraction || payload;
+        if (extraction.extraction_id !== snapshot.extractionId) return;
+        renderChapterFacts(extraction, extraction.fact_review || null, "");
+      }
+    } catch (error) {
+      if (!stillCurrent()) return;
+      const message = `${UI.errorMessage(error?.payload, error?.status)} 已停止查询；请刷新页面重新读取保存的进度。`;
+      if (candidateRunning) state.chapterCandidateError = message;
+      else state.chapterFactError = message;
+      renderChapterWorkflow();
+    } finally {
+      chapterProgressReading = false;
+      if (state.routeRevision === snapshot.routeRevision) void window.NovelAgentChapterBudget?.refresh();
+      scheduleChapterProgress();
+    }
+  };
+  const renderChapterWorkflow = () => {
+    if (state.route?.area !== "chapter") return;
+    const presentation = chapterWorkflowPresentation({ formal: state.chapterHasFormalProse, recovery: state.chapterRecoveryRequired,
+      candidate: state.chapterCandidate, extraction: state.chapterFactExtraction, review: state.chapterFactReview,
+      error: state.chapterCandidateError || state.chapterFactError, confirmed: currentConfirmationMatchesCard(),
+      budgetBlocked: state.chapterBudgetBlocked, budgetMessage: state.chapterBudgetMessage,
+      pending: one('[data-candidate-generate].is-busy, [data-candidate-resume].is-busy') ? "candidate"
+        : one('[data-fact-extract].is-busy, [data-fact-resume].is-busy') ? "facts" : null });
+    setText("[data-chapter-flow-message]", presentation.message);
+    UI.updateStatusBadge(one("[data-chapter-status]"), presentation.phase === "committed" ? "committed" : presentation.phase === "blocked" ? "warning" : "draft", presentation.label);
+    all("[data-chapter-step]").forEach(control => {
+      const current = control.dataset.chapterStep === presentation.phase;
+      control.classList.toggle("is-current", current);
+      if (current) control.setAttribute("aria-current", "step"); else control.removeAttribute("aria-current");
+    });
+    all('button[data-chapter-step]').forEach(control => { control.disabled = state.chapterHasFormalProse || state.chapterRecoveryRequired; });
+    const factStep = one('[data-chapter-step="facts"]'); if (factStep) factStep.disabled ||= !state.chapterCandidate?.draft;
+    const publication = one('[data-chapter-step="publication"]');
+    if (publication) { publication.hidden = state.chapterFactReview?.state !== "confirmed" || !state.chapterFactReview?.publication_url; if (!publication.hidden) publication.href = state.chapterFactReview.publication_url; }
+    const next = one('[data-chapter-step="next"]');
+    if (next) { next.hidden = !state.chapterHasFormalProse || state.chapterRecoveryRequired; next.href = `#/projects/${encodeURIComponent(state.projectId)}/chapters/${Number(state.route.chapter) + 1}`; }
+    scheduleChapterProgress();
+  };
   const renderChapterCandidate = (candidate, errorMessage = state.chapterCandidateError, options = {}) => {
     state.chapterCandidate = candidate || null;
     state.chapterCandidateError = errorMessage || "";
+    renderChapterWorkflow();
     const panel = one("[data-chapter-candidate-panel]");
     if (!panel) return;
     const presentation = candidateStatusPresentation(candidate, state.chapterCandidateError);
@@ -701,7 +831,7 @@
     const generate = one("[data-candidate-generate]", panel);
     if (generate) {
       generate.hidden = currentCompleted;
-      generate.disabled = !confirmed || blocksNewCandidate || Boolean(state.chapterCandidateError);
+      generate.disabled = !confirmed || blocksNewCandidate || Boolean(state.chapterCandidateError) || state.chapterBudgetBlocked;
       generate.textContent = candidate ? "生成新的正文候选" : "生成正文候选";
       generate.title = state.chapterCandidateError
         ? "必须先恢复 Candidate 状态，避免重复调用模型"
@@ -822,7 +952,9 @@
     if (review?.state === "confirmed") return { status: "pass", label: "审核已确认", title: "关键事实已由作者锁定", message: "审核结果已锁定，但正式正文和权威状态仍未写入。" };
     if (review) return { status: "reviewing", label: "等待作者", title: "逐项确认关键事实", message: "可编辑模型建议，并对每项明确接受、拒绝或删除；保存和确认都不会写入权威状态。" };
     if (!extraction) return { status: "ready", label: "可提取", title: "从当前草稿提取关键事实", message: "模型只读取当前工作台正文和精简权威视图，输出待审卡片；不会修改正文或权威状态。" };
+    if (extraction.status === "completed" && extraction.source_state === "current") return { status: "ready", label: "事实已提取", title: "继续审阅已保存的事实", message: "提取结果已保存。继续事实审核会核验并采用本次结果，不会再次调用模型。" };
     const presentations = {
+      running: { status: "reviewing", label: "检查中", title: "事实提取正在执行", message: "系统仍在读取当前正文并提取事实。刷新后可继续查询进度，无需重新发起。" },
       needs_recovery: { status: "needs_recovery", label: "等待作者恢复", title: "事实提取等待安全恢复", message: "已有持久 Intent，但没有终态记录；系统不会自动调用 Provider。" },
       provider_uncertain: { status: "blocked", label: "结果不确定", title: "Provider 结果需要作者处理", message: "系统已停止所有新调用。只能按这次调用的精确证据明确放弃，不能直接重试。" },
       failed: { status: "failed", label: "提取失败", title: "事实候选提取失败", message: extraction.error?.message || "失败证据已保留，系统没有自动修复或重试。" },
@@ -851,6 +983,52 @@
       button.classList.toggle("is-selected", button.dataset.factDecision === decision);
     });
   };
+  const factEditorContext = () => {
+    const context = state.chapterFactEditorContext;
+    const review = state.chapterFactReview;
+    return context?.review_id === review?.id && context?.revision === review?.revision ? context : null;
+  };
+  const factEntities = () => {
+    const context = factEditorContext();
+    const entries = [...(context?.entity_directory || [])];
+    for (const decision of state.chapterFactReview?.support?.identities || []) {
+      entries.push({ entity_id: `local:${decision.local_key}`, kind: decision.kind, name: decision.name || decision.reference, aliases: decision.aliases || [] });
+    }
+    return entries;
+  };
+  const factEvidenceSpans = (quotes, source) => quotes.map((quote) => {
+    const offset = source.indexOf(quote);
+    if (!quote || offset < 0) throw new Error("引用必须逐字来自本次审核正文。");
+    if (source.indexOf(quote, offset + 1) >= 0) throw new Error("引用出现了多次，请扩充为唯一片段。");
+    const start = Array.from(source.slice(0, offset)).length;
+    return { start, end: start + Array.from(quote).length, quote };
+  });
+  const highlightFactQuote = (quote) => {
+    const pane = one("[data-fact-source-text]");
+    const source = factEditorContext()?.source_text || "";
+    const start = source.indexOf(quote);
+    if (!pane || !quote || start < 0) return;
+    pane.replaceChildren(doc.createTextNode(source.slice(0, start)), el("mark", "", quote), doc.createTextNode(source.slice(start + quote.length)));
+    one("mark", pane)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  const factBaselineText = (fact) => {
+    const context = factEditorContext();
+    const base = context?.support_preview?.state_after_support || context?.baseline_state;
+    if (!base || fact.kind === "event") return "";
+    const p = fact.proposal || {};
+    const refs = context?.support_preview?.identity_plan?.local_references || {};
+    const resolve = value => typeof value === "string" && value.startsWith("local:") ? refs[value.slice(6)]?.entity_id || value : value;
+    let value;
+    if (fact.kind === "character_state") value = base.characters?.[resolve(p.entity_id)]?.[p.field];
+    if (fact.kind === "relationship") value = base.relationships?.[p.relationship_id]?.[p.field];
+    if (fact.kind === "location") value = base.locations?.[resolve(p.entity_id)]?.location_id;
+    if (fact.kind === "counter") value = base.numeric_counters?.[p.counter_id]?.current_value;
+    if (fact.kind === "roster") value = base.roster?.[p.roster_id]?.members?.map(m => m.member_id);
+    if (fact.kind === "inventory") value = Object.values(base.inventory || {}).find(row => row.owner_id === resolve(p.owner_id) && row.item_id === resolve(p.item_id))?.quantity;
+    const names = new Map(factEntities().map(e => [e.entity_id, e.name]));
+    const describe = v => Array.isArray(v) ? v.map(describe).join("、") || "空名单" : v && typeof v === "object" ? Object.entries(v).map(([k,x]) => `${k}：${describe(x)}`).join("；") : v === null ? "明确为空" : typeof v === "boolean" ? (v ? "是" : "否") : names.get(v) || String(v);
+    return value === undefined ? "初始情况：尚无已知值。请在下方补充或拒绝此项。" : `变化前：${describe(value)}${context?.support_preview ? "（包含已保存的作者补充）" : ""}`;
+  };
   const appendFactCard = (container, fact, readOnly) => {
     const card = el("article", "fact-card");
     card.dataset.factCard = "";
@@ -858,20 +1036,29 @@
     card.dataset.decision = fact.review?.decision || "pending";
     card.dataset.originalSummary = fact.summary || "";
     card.dataset.originalProposal = JSON.stringify(fact.proposal || {});
+    card._baseFact = structuredClone(fact);
+    card.dataset.authorEdited = String(Boolean(fact.review?.author_edited));
     const header = el("div", "fact-card-header");
     const heading = el("div");
     heading.append(
-      el("span", "fact-kind", `${factKindLabels[fact.kind] || fact.kind} · ${fact.local_key}`),
+      el("span", "fact-kind", `${factKindLabels[fact.kind] || fact.kind} · ${fact.review?.origin === "author" ? "作者补充" : fact.review?.author_edited ? "模型建议 · 作者已修改" : "模型建议"}`),
       el("h3", "", fact.summary || "未命名事实")
     );
     const decision = el("span", "fact-decision", factDecisionLabels[card.dataset.decision]);
     decision.dataset.factDecisionLabel = "";
     header.append(heading, decision);
+    const selection = el("label", "fact-select-label", "选择此项");
+    const checkbox = el("input"); checkbox.type = "checkbox"; checkbox.name = `fact_select_${fact.fact_id}`; checkbox.dataset.factSelect = ""; checkbox.disabled = readOnly;
+    selection.prepend(checkbox); header.prepend(selection);
     card.append(header);
 
     const evidence = el("blockquote", "fact-evidence");
     evidence.textContent = arrayFrom(fact.evidence_spans, "items").map((item) => `“${item.quote || ""}”`).join("；") || "没有可显示的正文证据";
     card.append(evidence);
+    const locate = el("button", "text-link", "在正文中定位引用"); locate.type = "button";
+    locate.addEventListener("click", () => highlightFactQuote(fact.evidence_spans?.[0]?.quote)); card.append(locate);
+    const baseline = factBaselineText(fact);
+    if (fact.kind !== "event") card.append(el("p", "fact-baseline", baseline));
     if (fact.kind === "event") {
       const proposal = fact.proposal || {};
       const roles = el("div", "fact-role-grid");
@@ -895,15 +1082,25 @@
     summary.value = fact.summary || "";
     summary.disabled = readOnly;
     summaryField.append(summary);
-    const proposalField = el("label", "field");
-    proposalField.append(el("span", "", "结构化事实（高级编辑）"));
-    const proposal = el("textarea", "fact-proposal-editor");
-    proposal.dataset.factProposal = "";
-    proposal.name = `proposal_${fact.fact_id}`;
-    proposal.value = JSON.stringify(fact.proposal || {}, null, 2);
-    proposal.spellcheck = false;
-    proposal.disabled = readOnly;
-    proposalField.append(proposal);
+    const proposalField = el("div", "fact-change-fields");
+    const context = factEditorContext();
+    if (context) {
+      card._proposalEditor = window.NovelAgentFactForm.render(proposalField, context.payload_contracts[fact.kind], fact.proposal,
+        { readOnly, entities: factEntities(), events: [...new Map([...state.chapterFactReview.facts, ...all("[data-fact-card]", container).map(c => ({ ...c._baseFact, summary: one("[data-fact-summary]", c)?.value || c._baseFact.summary }))].filter(f => f?.kind === "event").map(f => [f.local_key, { local_key: f.local_key, summary: f.summary }])).values()] });
+      const quotes = el("div", "fact-quote-fields"); quotes.append(el("h4", "", "支持这项事实的正文原句"));
+      const quoteFields = el("div"); quotes.append(quoteFields);
+      card._evidenceEditor = window.NovelAgentFactForm.render(quoteFields, { type: "array", minItems: 1, items: { type: "string", minLength: 1, maxLength: 1000 } },
+        fact.evidence_spans.map(span => span.quote), { readOnly });
+      proposalField.append(quotes);
+      const original = context.original_model_facts?.find(f => f.fact_id === fact.fact_id);
+      if (original) {
+        const details = el("details", "fact-original"); details.append(el("summary", "", "查看原始模型建议"), el("p", "", original.summary));
+        details.append(el("blockquote", "fact-evidence", original.evidence_spans.map(s => s.quote).join("；")));
+        const originalFields = el("div"); details.append(originalFields);
+        window.NovelAgentFactForm.render(originalFields, context.payload_contracts[original.kind], original.proposal, { readOnly: true, entities: factEntities() });
+        proposalField.append(details);
+      }
+    }
     fields.append(summaryField, proposalField);
     card.append(fields);
 
@@ -920,6 +1117,11 @@
     remove.dataset.factDelete = "";
     remove.disabled = readOnly;
     actions.append(remove);
+    if (!readOnly && !state.chapterFactReview.facts.some(f => f.fact_id === fact.fact_id)) {
+      const discard = el("button", "button button-danger-ghost", "撤回未保存的补充"); discard.type = "button";
+      discard.addEventListener("click", () => { card.remove(); one("[data-fact-review-form]").classList.add("is-dirty"); updateFactReviewLocalState(); });
+      actions.append(discard);
+    }
     card.append(actions);
 
     const reasonField = el("label", "field fact-reason");
@@ -939,19 +1141,22 @@
   const collectFactReview = (review) => {
     const byId = new Map(arrayFrom(review?.facts, "items").map((item) => [item.fact_id, item]));
     return all("[data-fact-card]", one("[data-fact-card-list]")).map((card) => {
-      const original = byId.get(card.dataset.factId);
+      const original = byId.get(card.dataset.factId) || card._baseFact;
       if (!original) throw new Error("事实卡与当前审核记录不一致，请刷新后重试。");
       const summary = one("[data-fact-summary]", card)?.value.trim() || "";
       if (!summary) throw new Error("每张事实卡都需要作者表述。");
-      let proposal;
-      try { proposal = JSON.parse(one("[data-fact-proposal]", card)?.value || ""); }
-      catch { throw new Error(`“${summary || original.local_key}”的结构化事实不是合法 JSON。`); }
-      const changed = summary !== original.summary || JSON.stringify(proposal) !== JSON.stringify(original.proposal);
+      if (!card._proposalEditor || !card._evidenceEditor) throw new Error("原始建议尚未核对完成，请稍后再保存。");
+      const proposal = card._proposalEditor.read();
+      const quotes = card._evidenceEditor.read();
+      const evidence_spans = JSON.stringify(quotes) === JSON.stringify(original.evidence_spans.map(span => span.quote))
+        ? structuredClone(original.evidence_spans) : factEvidenceSpans(quotes, factEditorContext().source_text);
+      const changed = summary !== original.summary || JSON.stringify(proposal) !== JSON.stringify(original.proposal) || JSON.stringify(evidence_spans) !== JSON.stringify(original.evidence_spans);
       const reason = one("[data-fact-reason]", card)?.value.trim() || null;
       return {
         ...JSON.parse(JSON.stringify(original)),
         summary,
         proposal,
+        evidence_spans,
         review: {
           origin: original.review?.origin || "model",
           decision: card.dataset.decision || "pending",
@@ -966,12 +1171,26 @@
     if (!form || form.hidden) return;
     const cards = all("[data-fact-card]", form);
     const counts = { pending: 0, accepted: 0, rejected: 0 };
-    cards.forEach((card) => { counts[card.dataset.decision || "pending"] += 1; renderFactDecision(card); });
+    cards.forEach((card) => {
+      counts[card.dataset.decision || "pending"] += 1; renderFactDecision(card);
+      const baseline = one(".fact-baseline", card);
+      if (baseline && card._proposalEditor) {
+        try { baseline.textContent = factBaselineText({ ...card._baseFact, proposal: card._proposalEditor.read() }); }
+        catch { baseline.textContent = "填写变化对象后显示它的初始情况。"; }
+      }
+    });
+    const filter = one("[data-fact-filter]")?.value || "all";
+    cards.forEach(card => { card.hidden = filter === "edited" ? card.dataset.authorEdited !== "true" : filter !== "all" && card.dataset.decision !== filter; });
+    const selected = cards.filter(card => !card.hidden && one("[data-fact-select]", card)?.checked).length;
+    setText("[data-fact-selected-count]", `已选 ${selected} 项`);
+    const ready = state.chapterFactReview?.state === "editing" && Boolean(factEditorContext()) && form.getAttribute("aria-busy") !== "true";
+    all("[data-fact-batch]").forEach(button => { button.disabled = !ready || !selected; });
+    all("[data-fact-add], [data-fact-save], [data-fact-support-save]").forEach(button => { button.disabled = !ready; });
     setText("[data-fact-counts]", `${cards.length} 项 · 待决定 ${counts.pending} · 接受 ${counts.accepted} · 拒绝 ${counts.rejected}`, form);
     setText("[data-fact-save-state]", form.classList.contains("is-dirty") ? "有尚未保存的修改" : "所有修改已保存", form);
     const confirm = one("[data-fact-confirm]", form);
     if (confirm) {
-      confirm.disabled = state.chapterFactReview?.state !== "editing" || counts.pending > 0;
+      confirm.disabled = !ready || counts.pending > 0 || form.dataset.supportDirty === "true";
       confirm.title = counts.pending > 0 ? "每项都必须先明确接受、拒绝或删除" : "";
     }
   };
@@ -979,13 +1198,23 @@
     state.chapterFactExtraction = extraction || null;
     state.chapterFactReview = review || extraction?.fact_review || null;
     state.chapterFactError = errorMessage || "";
+    renderChapterWorkflow();
     const panel = one("[data-chapter-fact-panel]");
     const draft = state.chapterCandidate?.draft;
     if (!panel) return;
     panel.hidden = !draft;
     if (!draft) return;
     const activeReview = state.chapterFactReview;
+    const publicationLink = one("[data-fact-publication-link]", panel);
+    if (publicationLink) {
+      publicationLink.hidden = activeReview?.state !== "confirmed" || !activeReview?.publication_url;
+      if (!publicationLink.hidden) publicationLink.href = activeReview.publication_url;
+    }
     const presentation = factStatusPresentation(state.chapterFactExtraction, activeReview, state.chapterFactError);
+    if (state.chapterBudgetBlocked && !state.chapterFactExtraction && !activeReview) {
+      presentation.status = 'warning'; presentation.label = '预算待处理';
+      presentation.message = state.chapterBudgetMessage || '请先核对本章预算。';
+    }
     UI.updateStatusBadge(one("[data-fact-status]", panel), presentation.status, presentation.label);
     setText("[data-fact-title]", presentation.title, panel);
     setText("[data-fact-message]", presentation.message, panel);
@@ -1004,11 +1233,13 @@
     const extract = one("[data-fact-extract]", panel);
     if (extract) {
       extract.hidden = !canStart;
-      extract.disabled = Boolean(state.chapterFactError);
+      extract.disabled = Boolean(state.chapterFactError) || state.chapterBudgetBlocked;
       extract.textContent = state.chapterFactExtraction ? "从当前草稿重新提取" : "提取事实候选";
     }
     const resume = one("[data-fact-resume]", panel);
     if (resume) resume.hidden = state.chapterFactExtraction?.status !== "needs_recovery" || stale;
+    const openReview = one("[data-fact-open-review]", panel);
+    if (openReview) openReview.hidden = state.chapterFactExtraction?.status !== "completed" || stale || Boolean(activeReview);
     const cancel = one("[data-fact-cancel]", panel);
     if (cancel) cancel.hidden = state.chapterFactExtraction?.status !== "needs_recovery" || stale;
     const abandon = one("[data-fact-abandon-provider]", panel);
@@ -1020,13 +1251,45 @@
     form.hidden = !activeReview;
     panel.classList.toggle("is-readonly", Boolean(activeReview && activeReview.state !== "editing"));
     if (!activeReview) return;
+    if (!options.keepActionError) {
+      const reviewError = one("[data-fact-review-error]");
+      reviewError.hidden = true; reviewError.textContent = "";
+    }
+    const context = factEditorContext();
+    const loadKey = `${state.routeRevision}:${activeReview.id}:${activeReview.revision}`;
+    const loadingEditor = one("[data-fact-editor-loading]");
+    if (loadingEditor) { loadingEditor.hidden = Boolean(context); loadingEditor.textContent = "正在核对原始建议和当前状态…"; }
+    if (!context && state.factEditorLoadKey !== loadKey) {
+      state.factEditorLoadKey = loadKey;
+      const routeRevision = state.routeRevision;
+      api(`${factReviewDetailPath(activeReview.id)}/editor-context`).then(({ payload }) => {
+        if (state.routeRevision !== routeRevision || state.chapterFactReview?.id !== activeReview.id || state.chapterFactReview?.revision !== activeReview.revision) return;
+        state.chapterFactEditorContext = payload;
+        if (payload.review_id !== activeReview.id || payload.revision !== activeReview.revision) throw new Error("审核修订已变化，请重新加载本章。");
+        renderChapterFacts(state.chapterFactExtraction, state.chapterFactReview, errorMessage, options);
+      }).catch(error => {
+        if (state.routeRevision !== routeRevision || state.chapterFactReview?.id !== activeReview.id) return;
+        if (loadingEditor) loadingEditor.textContent = "原始建议或当前状态暂时无法核对，请重新加载本章。";
+        showFactError(error?.message || "无法核对审核输入。", "[data-fact-review-error]");
+      });
+    }
     form.dataset.reviewId = activeReview.id;
     form.dataset.reviewRevision = String(activeReview.revision);
     const facts = options.preserveFacts || activeReview.facts || [];
     const list = one("[data-fact-card-list]", form);
     clear(list);
-    facts.forEach((fact) => appendFactCard(list, fact, activeReview.state !== "editing"));
-    if (!facts.length) list.append(el("p", "fact-empty", "正文没有产生可核实的关键事实。你仍可确认这份空审核结果。"));
+    facts.forEach((fact) => appendFactCard(list, fact, activeReview.state !== "editing" || !context));
+    if (!facts.length) list.append(el("p", "fact-empty", "本次未提取到关键事实。请核对正文，补充遗漏，或明确确认没有需要记录的变化。"));
+    setText("[data-fact-source-text]", context?.source_text || "正在读取本次审核正文…");
+    const supportPanel = one("[data-fact-support-panel]");
+    supportPanel.hidden = !context?.support_supported && !activeReview.support;
+    form.dataset.supportDirty = "false";
+    if (context && !supportPanel.hidden) {
+      const supportEditor = one("[data-fact-support-editor]");
+      supportEditor._editor = window.NovelAgentFactSupportForm.render(supportEditor, activeReview.support,
+        { entities: context.entity_directory, readOnly: activeReview.state !== "editing" || !context.support_supported });
+      setText("[data-fact-support-state]", activeReview.support ? "作者补充已保存" : "尚未补充");
+    }
     form.classList.toggle("is-dirty", options.dirty === true);
     const save = one("[data-fact-save]", form);
     if (save) save.disabled = activeReview.state !== "editing";
@@ -1152,20 +1415,48 @@
     const number = Number(chapter.number ?? chapter.chapter ?? chapter.chapter_index ?? 0);
     const title = chapter.chapter_card?.blueprint?.title || chapter.title || "未命名章节";
     const hasProse = chapter.has_prose ?? Boolean(chapter.content || chapter.prose || chapter.current_prose || chapter.formal_prose);
+    state.chapterHasFormalProse = Boolean(hasProse);
+    state.chapterRecoveryRequired = chapter.reviewed_status?.state === "needs_recovery";
     setText("[data-chapter-kicker]", `第 ${number} 章`);
     setText("[data-chapter-title]", title);
     setText("[data-chapter-english-number]", `CHAPTER ${String(number).padStart(2, "0")}`);
     setText("[data-chapter-meta]", `${chapter.word_count_label || (chapter.word_count ? `${numberLabel(chapter.word_count)} 字` : "—")} · ${chapter.committed_at_label || chapter.updated_at_label || "—"}`);
     const currentProse = chapter.content || chapter.prose || chapter.current_prose || chapter.formal_prose || "";
     setText("[data-chapter-content]", currentProse || "尚未生成正文。请先在“章节卡”中核对并确认本章意图。");
+    const retainedDraft = chapter.retained_author_draft;
+    const retainedPanel = one('[data-retained-author-draft-panel]');
+    if (retainedPanel) retainedPanel.hidden = !retainedDraft;
+    const retainedText = one('[data-retained-author-draft-text]');
+    if (retainedText) retainedText.value = retainedDraft?.text || '';
+    setText('[data-retained-author-draft-meta]', retainedDraft ?
+      `作者草稿第 ${number} 章 · r${retainedDraft.revision} · SHA ${retainedDraft.sha256}` : '');
     setText("[data-chapter-revision]", `r${chapter.revision || 1}`);
     setText("[data-chapter-sha]", chapter.sha || chapter.sha256 || chapter.current_sha256 || "—");
     UI.updateStatusBadge(one("[data-chapter-status]"), chapter.status || (hasProse ? "committed" : "draft"), chapter.status_label || (hasProse ? "已提交" : "待生成"));
     const proseActions = one("[data-prose-actions]"); if (proseActions) proseActions.hidden = !hasProse;
-    const amendmentPanel = one("[data-amendment-panel]"); if (amendmentPanel) amendmentPanel.hidden = !hasProse;
+    const amendmentPanel = one("[data-amendment-panel]"); if (amendmentPanel) amendmentPanel.hidden = !hasProse || chapter.reviewed_format === true;
     renderChapterCard(chapter.chapter_card, chapter.chapter_card_error);
+    window.NovelAgentChapterBudget?.setContext(chapter.reviewed_format ? {
+      projectId: state.projectId, bookId: state.project.book_id, chapter: number,
+      contextSha: chapter.chapter_card?.binding?.context_sha256,
+      canFreeze: !hasProse && !state.chapterRecoveryRequired
+    } : null, (blocked, message) => {
+      state.chapterBudgetBlocked = blocked;
+      state.chapterBudgetMessage = message || '';
+      const generate = one('[data-candidate-generate]');
+      if (generate) generate.disabled = blocked || !currentConfirmationMatchesCard() || Boolean(state.chapterCandidateError)
+        || ['running', 'needs_recovery', 'provider_uncertain'].includes(state.chapterCandidate?.status) || generate.classList.contains('is-busy');
+      const extract = one('[data-fact-extract]');
+      if (extract) extract.disabled = blocked || Boolean(state.chapterFactError) || extract.classList.contains('is-busy');
+      if (!state.chapterFactExtraction && !state.chapterFactReview) {
+        UI.updateStatusBadge(one('[data-fact-status]'), blocked ? 'warning' : 'ready', blocked ? '预算待处理' : '可提取');
+        setText('[data-fact-message]', blocked ? message || '请先核对本章预算。' : '从当前已保存草稿提取事实候选。');
+      }
+      renderChapterWorkflow();
+    });
     renderChapterCandidate(chapter.chapter_candidate, chapter.chapter_candidate_error || "");
     renderChapterFacts(chapter.chapter_fact_extraction, chapter.chapter_fact_review, chapter.chapter_fact_error || "");
+    if (!hasProse) one('[data-tab="outline"]')?.click();
     const review = chapter.review || {};
     setText("[data-review-score]", review.score);
     setText("[data-review-summary]", review.summary || "尚未进行人工评分。");
@@ -1222,6 +1513,13 @@
       const chapters = arrayFrom(payload, "items", "chapters");
       chapter = chapters.find((item) => Number(item.number ?? item.chapter ?? item.chapter_index) === chapterNumber);
       if (!chapter) throw error;
+    }
+    if (chapter.reviewed_format && (chapter.reviewed_status?.state === "needs_recovery" || chapter.has_prose)) {
+      if (state.projectId === projectId && state.route?.area === "chapter" && Number(state.route.chapter) === chapterNumber) {
+        renderChapter({ ...chapter, chapter_card: null, chapter_card_error: chapter.has_prose
+          ? "本章已发布；请在下一章确认新的写作意图。" : chapter.reviewed_status.message });
+      }
+      return;
     }
     try {
       const { payload } = await api(`/api/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/card`);
@@ -2190,7 +2488,7 @@
     setText("[data-health-page-mode]", health.mode_label || health.label || (health.production_eligible ? "Strict 生产" : "实验运行"));
     setText("[data-health-page-summary]", health.summary || (health.production_eligible ? "项目已显式激活 Strict，可进入受监督的连续生产。" : "Shadow 结果可用于观察，但不作为稳定生产证据。"));
     const activation = one("[data-health-activation]");
-    if (activation) activation.hidden = Boolean(health.production_eligible);
+    if (activation) activation.hidden = Boolean(health.production_eligible || state.project?.reviewed_format);
     const activationForm = one("[data-health-activate-form]");
     if (activationForm) activationForm.action = `/api/projects/${encodeURIComponent(state.projectId)}/health/activate`;
     const requirements = one("[data-calibration-requirements]");
@@ -2243,6 +2541,29 @@
     );
   };
 
+  one("[data-reviewed-project-recover]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const projectId = state.projectId;
+    const errorBox = one("[data-reviewed-project-error]");
+    button.disabled = true;
+    if (errorBox) errorBox.hidden = true;
+    try {
+      await api(`/api/projects/${encodeURIComponent(projectId)}/publication-recovery`, {
+        method: "POST", json: { author_confirmed: true }
+      });
+      projectCache.delete(projectId);
+      if (state.projectId === projectId) {
+        await loadProject(projectId, true);
+        await route();
+      }
+    } catch (error) {
+      if (errorBox && state.projectId === projectId) {
+        errorBox.textContent = UI.errorMessage(error?.payload, error?.status);
+        errorBox.hidden = false;
+      }
+    } finally { button.disabled = false; }
+  });
+
   const loadHealth = async () => {
     const { payload } = await api(`/api/projects/${encodeURIComponent(state.projectId)}/health`);
     state.detail = { ...(state.detail || {}), health: payload.health || payload };
@@ -2252,6 +2573,9 @@
   };
 
   const route = async () => {
+    if (!bootstrapReady || state.restoreControllerOnly) return;
+    if (chapterProgressTimer != null) window.clearTimeout(chapterProgressTimer);
+    chapterProgressTimer = null;
     clearError();
     const next = parseRoute();
     const routeRevision = ++state.routeRevision;
@@ -2260,6 +2584,9 @@
     invalidateFactAction();
     const isCurrentRoute = () => state.routeRevision === routeRevision;
     state.route = next;
+    window.NovelAgentModelUsage?.setRoute(next);
+    window.NovelAgentChapterBudget?.setContext(null);
+    state.chapterBudgetBlocked = false;
     showLoading(true);
     try {
       if (next.area === "bookshelf") {
@@ -2304,6 +2631,15 @@
   one("[data-spa-retry]")?.addEventListener("click", route);
   window.addEventListener("hashchange", route);
 
+  all('button[data-chapter-step]').forEach(button => button.addEventListener("click", () => {
+    const target = { intent: '[data-chapter-card]', candidate: state.chapterCandidate?.draft
+      ? '[data-candidate-editor]' : '[data-chapter-candidate-panel]', facts: '[data-chapter-fact-panel]' }[button.dataset.chapterStep];
+    if (!target || button.disabled) return;
+    one('[data-tab="outline"]')?.click();
+    const panel = one(target);
+    if (panel && !panel.hidden) { panel.setAttribute('tabindex', '-1'); panel.focus({ preventScroll: true }); panel.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+  }));
+
   one("[data-spa-chapter-search]")?.addEventListener("input", (event) => {
     const query = event.target.value.trim().toLocaleLowerCase("zh-CN");
     all("[data-chapter-index] .chapter-index-row").forEach((row) => { row.hidden = Boolean(query) && !(row.dataset.searchValue || "").toLocaleLowerCase("zh-CN").includes(query); });
@@ -2331,11 +2667,13 @@
     if (!button) return;
     button.disabled = busy;
     button.classList.toggle("is-busy", busy);
+    renderChapterWorkflow();
   };
   const finishCandidateAction = (button, action) => {
     if (!candidateActionTargetsCurrentChapter({ action })) return;
     if (button) { button.disabled = false; button.classList.remove("is-busy"); }
     renderChapterCandidate(state.chapterCandidate, state.chapterCandidateError, { keepActionError: true });
+    void window.NovelAgentChapterBudget?.refresh();
   };
   const showCandidateActionError = (message) => {
     const errorBox = one("[data-candidate-action-error]");
@@ -2347,6 +2685,8 @@
   const candidateFromPayload = (payload) => payload?.candidate || payload;
 
   one("[data-candidate-generate]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     if (!currentConfirmationMatchesCard() || state.chapterCandidateError) {
       UI.showToast(state.chapterCandidateError ? "Candidate 状态尚未恢复，不能重复调用模型。" : "请先确认当前章节卡。", "error");
       return;
@@ -2356,7 +2696,6 @@
     const confirmation = JSON.parse(JSON.stringify(state.chapterConfirmation));
     const action = beginCandidateAction({ requireCardBinding: true, requireConfirmation: true });
     const operationKey = candidateOperationKey(action.project_id, action.chapter, confirmation.confirmation_sha256);
-    const button = event.currentTarget;
     setCandidateButtonBusy(button, true);
     try {
       const { payload } = await api(candidateCollectionPath(action.project_id, action.chapter), {
@@ -2407,12 +2746,13 @@
   });
 
   one("[data-candidate-resume]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     const candidate = state.chapterCandidate;
     if (!candidate || candidate.status !== "needs_recovery" || !candidateBindingMatchesCard(candidate)) return;
     const accepted = await UI.confirmAction("继续会重新进入受保护的 Provider 边界，并先读取本地 Intent/Receipt；系统不会盲目重试。确认继续吗？");
     if (!accepted) return;
     const action = beginCandidateAction({ candidate, requireCardBinding: true });
-    const button = event.currentTarget;
     setCandidateButtonBusy(button, true);
     try {
       const { payload } = await api(`${candidateDetailPath(action.project_id, action.chapter, action.candidate_id)}/resume`, {
@@ -2435,12 +2775,13 @@
   });
 
   one("[data-candidate-create-draft]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     const candidate = state.chapterCandidate;
     if (!candidate || candidate.status !== "completed" || candidate.draft) return;
     const accepted = await UI.confirmAction("把这份不可变正文候选复制为可编辑工作台草稿？这一步不会修改正式正文或权威状态。");
     if (!accepted) return;
     const action = beginCandidateAction({ candidate });
-    const button = event.currentTarget;
     setCandidateButtonBusy(button, true);
     try {
       const { payload } = await api(`${candidateDetailPath(action.project_id, action.chapter, action.candidate_id)}/draft`, {
@@ -2463,12 +2804,13 @@
   });
 
   one("[data-candidate-abandon-provider]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     const candidate = state.chapterCandidate;
     if (!candidate || candidate.status !== "provider_uncertain" || !candidate.uncertainty?.sha256) return;
     const accepted = await UI.confirmAction("放弃表示这次未知 Provider 结果永不采用；原始 Intent、调用证据和不确定记录会继续保留。确认放弃并允许之后创建新候选吗？", "danger");
     if (!accepted) return;
     const action = beginCandidateAction({ candidate });
-    const button = event.currentTarget;
     setCandidateButtonBusy(button, true);
     try {
       const { payload } = await api(`${candidateDetailPath(action.project_id, action.chapter, action.candidate_id)}/abandon-provider`, {
@@ -2551,6 +2893,14 @@
     if (!button) return;
     button.disabled = busy;
     button.classList.toggle("is-busy", busy);
+    renderChapterWorkflow();
+    const form = one("[data-fact-review-form]");
+    if (busy && form) {
+      form.setAttribute("aria-busy", "true");
+      all("input, textarea, select, button", form).forEach(control => {
+        control.dataset.factPreviouslyDisabled = String(control.disabled); control.disabled = true;
+      });
+    }
   };
   const showFactError = (message, selector = "[data-fact-action-error]") => {
     const box = one(selector);
@@ -2562,12 +2912,44 @@
   const finishFactAction = (button, action) => {
     if (!factActionTargetsCurrentDraft({ action })) return;
     if (button) { button.disabled = false; button.classList.remove("is-busy"); }
+    const form = one("[data-fact-review-form]");
+    form?.removeAttribute("aria-busy");
+    all("[data-fact-previously-disabled]", form).forEach(control => {
+      control.disabled = control.dataset.factPreviouslyDisabled === "true" || state.chapterFactReview?.state !== "editing";
+      delete control.dataset.factPreviouslyDisabled;
+    });
     updateFactReviewLocalState();
+    renderChapterWorkflow();
+    void window.NovelAgentChapterBudget?.refresh();
   };
   const extractionFromPayload = (payload) => payload?.fact_extraction || payload;
   const reviewFromPayload = (payload) => payload?.fact_review || payload;
 
+  one("[data-fact-open-review]")?.addEventListener("click", async (event) => {
+    const extraction = state.chapterFactExtraction;
+    if (extraction?.status !== "completed" || extraction.source_state !== "current" || state.chapterFactReview) return;
+    if (one('[data-candidate-draft-form].is-dirty')) { UI.showToast("请先保存正文修改，再核对事实是否仍有效。", "error"); return; }
+    const action = beginFactAction();
+    if (!action) return;
+    const button = event.currentTarget;
+    setFactButtonBusy(button, true);
+    try {
+      const { payload } = await api(`${factExtractionCollectionPath(action.draft_id)}/${encodeURIComponent(extraction.extraction_id)}/review`, {
+        method: "POST", json: { expected_record_hash: extraction.record_hash, author_confirmed: true }
+      });
+      const updated = extractionFromPayload(payload), review = updated?.fact_review || null;
+      if (!factActionTargetsCurrentDraft({ action, extraction: updated, review })) return;
+      renderChapterFacts(updated, review, "");
+      UI.showToast(payload.message || "已打开保存的事实审核。");
+    } catch (error) {
+      if (!factActionTargetsCurrentDraft({ action })) return;
+      showFactError(UI.errorMessage(error?.payload, error?.status));
+    } finally { finishFactAction(button, action); }
+  });
+
   one("[data-fact-extract]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     const draft = state.chapterCandidate?.draft;
     const draftForm = one("[data-candidate-draft-form]");
     if (!draft) return;
@@ -2580,7 +2962,6 @@
     const action = beginFactAction();
     if (!action) return;
     const operationKey = factOperationKey(draft);
-    const button = event.currentTarget;
     setFactButtonBusy(button, true);
     try {
       const { payload } = await api(factExtractionCollectionPath(action.draft_id), {
@@ -2610,13 +2991,14 @@
   });
 
   one("[data-fact-resume]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     const extraction = state.chapterFactExtraction;
     if (!extraction || extraction.status !== "needs_recovery") return;
     const accepted = await UI.confirmAction("恢复会先读取本地 Intent 和 Receipt；只有确实没有结算结果时才重新进入受保护的 Provider 边界。确认继续吗？");
     if (!accepted) return;
     const action = beginFactAction();
     if (!action) return;
-    const button = event.currentTarget;
     setFactButtonBusy(button, true);
     try {
       const path = `${factExtractionCollectionPath(action.draft_id)}/${encodeURIComponent(extraction.extraction_id)}/resume`;
@@ -2640,13 +3022,14 @@
   });
 
   one("[data-fact-cancel]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     const extraction = state.chapterFactExtraction;
     if (!extraction || extraction.status !== "needs_recovery") return;
     const accepted = await UI.confirmAction("取消只会关闭尚未开始的事实提取，并保留 Intent 证据；不会伪造 Provider 回执。确认取消吗？", "danger");
     if (!accepted) return;
     const action = beginFactAction();
     if (!action) return;
-    const button = event.currentTarget;
     setFactButtonBusy(button, true);
     try {
       const path = `${factExtractionCollectionPath(action.draft_id)}/${encodeURIComponent(extraction.extraction_id)}/cancel`;
@@ -2669,13 +3052,14 @@
   });
 
   one("[data-fact-abandon-provider]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     const extraction = state.chapterFactExtraction;
     if (!extraction || extraction.status !== "provider_uncertain" || !extraction.uncertainty?.sha256) return;
     const accepted = await UI.confirmAction("放弃表示这次未知 Provider 结果永不采用；Intent、调用证据和不确定记录会永久保留。确认放弃吗？", "danger");
     if (!accepted) return;
     const action = beginFactAction();
     if (!action) return;
-    const button = event.currentTarget;
     setFactButtonBusy(button, true);
     try {
       const path = `${factExtractionCollectionPath(action.draft_id)}/${encodeURIComponent(extraction.extraction_id)}/abandon-provider`;
@@ -2705,13 +3089,79 @@
   one("[data-fact-card-list]")?.addEventListener("input", (event) => {
     const form = event.currentTarget.closest("[data-fact-review-form]");
     if (!form || state.chapterFactReview?.state !== "editing") return;
+    if (event.target.matches("[data-fact-select]")) { updateFactReviewLocalState(); return; }
     form.classList.add("is-dirty");
     const card = event.target.closest("[data-fact-card]");
+    if (card) card.dataset.authorEdited = "true";
     if (card && event.target.matches("[data-fact-summary]")) {
       const heading = one("h3", card);
       if (heading) heading.textContent = event.target.value.trim() || "未命名事实";
     }
     updateFactReviewLocalState();
+  });
+  one("[data-fact-card-list]")?.addEventListener("change", (event) => {
+    if (state.chapterFactReview?.state === "editing" && !event.target.matches("[data-fact-select]")) {
+      one("[data-fact-review-form]").classList.add("is-dirty");
+      const card = event.target.closest("[data-fact-card]"); if (card) card.dataset.authorEdited = "true";
+    }
+    updateFactReviewLocalState();
+  });
+  one("[data-fact-filter]")?.addEventListener("change", () => updateFactReviewLocalState());
+  one("[data-fact-add]")?.addEventListener("click", () => {
+    if (state.chapterFactReview?.state !== "editing" || !factEditorContext()) return;
+    const list = one("[data-fact-card-list]");
+    if (all("[data-fact-card]", list).length >= 100) { showFactError("每组审核最多 100 项事实。", "[data-fact-review-error]"); return; }
+    one(".fact-empty", list)?.remove();
+    const id = crypto.randomUUID().replaceAll("-", "");
+    appendFactCard(list, { fact_id: `fact_${id}`, local_key: `author_${id}`, kind: one("[data-fact-add-kind]").value,
+      summary: "", proposal: {}, evidence_spans: [], review: { origin: "author", decision: "pending", author_edited: true, reason: null } }, false);
+    one("[data-fact-filter]").value = "all";
+    one("[data-fact-review-form]").classList.add("is-dirty");
+    updateFactReviewLocalState();
+    one("[data-fact-summary]", list.lastElementChild)?.focus();
+  });
+  all("[data-fact-batch]").forEach(button => button.addEventListener("click", async () => {
+    const review = state.chapterFactReview;
+    const selected = all("[data-fact-card]").filter(card => !card.hidden && one("[data-fact-select]", card)?.checked);
+    if (review?.state !== "editing" || !selected.length) return;
+    const selectedIds = selected.map(card => card.dataset.factId);
+    const decision = button.dataset.factBatch;
+    const accepted = await UI.confirmAction(`将你选中的 ${selected.length} 项明确标记为“${factDecisionLabels[decision]}”。隐藏项和未选项保持原决定。继续吗？`);
+    if (!accepted || state.chapterFactReview?.id !== review.id || state.chapterFactReview?.revision !== review.revision) return;
+    all("[data-fact-card]").filter(card => selectedIds.includes(card.dataset.factId)).forEach(card => {
+      card.dataset.decision = decision; one("[data-fact-select]", card).checked = false;
+    });
+    one("[data-fact-review-form]").classList.add("is-dirty"); updateFactReviewLocalState();
+  }));
+  one("[data-fact-support-editor]")?.addEventListener("input", () => {
+    const form = one("[data-fact-review-form]");
+    form.dataset.supportDirty = "true";
+    setText("[data-fact-support-state]", "身份或初始情况有未保存的决定");
+    updateFactReviewLocalState();
+  });
+  one("[data-fact-support-save]")?.addEventListener("click", async (event) => {
+    const review = state.chapterFactReview;
+    if (review?.state !== "editing" || !factEditorContext()?.support_supported) return;
+    let support, localFacts;
+    try {
+      support = one("[data-fact-support-editor]")._editor.read();
+      localFacts = collectFactReview(review);
+    } catch (error) { showFactError(error.message, "[data-fact-review-error]"); return; }
+    const form = one("[data-fact-review-form]");
+    const dirty = form.classList.contains("is-dirty");
+    const action = beginFactAction(); if (!action) return;
+    const button = event.currentTarget; setFactButtonBusy(button, true);
+    try {
+      const { payload } = await api(`${factReviewDetailPath(review.id)}/support`, { method: "PUT",
+        json: { support, expected_revision: review.revision, author_confirmed: true } });
+      const updated = reviewFromPayload(payload);
+      if (!factActionTargetsCurrentDraft({ action, review: updated })) return;
+      renderChapterFacts(state.chapterFactExtraction, updated, "", { preserveFacts: localFacts, dirty });
+      UI.showToast(payload.message);
+    } catch (error) {
+      if (!factActionTargetsCurrentDraft({ action })) return;
+      showFactError(`${UI.errorMessage(error?.payload, error?.status) || error.message} 你的本地补充仍保留。`, "[data-fact-review-error]");
+    } finally { finishFactAction(button, action); }
   });
   one("[data-fact-card-list]")?.addEventListener("click", (event) => {
     const decisionButton = event.target.closest("[data-fact-decision]");
@@ -2743,6 +3193,8 @@
     event.preventDefault();
     const form = event.currentTarget;
     if (!form.reportValidity() || state.chapterFactReview?.state !== "editing") return;
+    if (form.getAttribute("aria-busy") === "true") return;
+    if (form.dataset.supportDirty === "true") { showFactError("请先保存身份与初始情况决定，再保存事实审核。", "[data-fact-review-error]"); return; }
     let localFacts;
     try { localFacts = collectFactReview(state.chapterFactReview); }
     catch (error) { showFactError(error.message, "[data-fact-review-error]"); return; }
@@ -2774,10 +3226,13 @@
   });
 
   one("[data-fact-confirm]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!button || button.disabled) return;
     const form = one("[data-fact-review-form]");
     const draft = state.chapterCandidate?.draft;
     const review = state.chapterFactReview;
     if (!form || !draft || !review || review.state !== "editing") return;
+    if (form.getAttribute("aria-busy") === "true" || form.dataset.supportDirty === "true") return;
     let localFacts;
     try { localFacts = collectFactReview(review); }
     catch (error) { showFactError(error.message, "[data-fact-review-error]"); return; }
@@ -2789,7 +3244,6 @@
     if (!accepted) return;
     const action = beginFactAction();
     if (!action) return;
-    const button = event.currentTarget;
     setFactButtonBusy(button, true);
     try {
       let current = review;
@@ -3003,6 +3457,38 @@
     }
   });
 
-  api("/api/bootstrap").then(({ payload }) => updateProvider(payload.provider || {})).catch(() => updateProvider({ ready: false }));
-  route();
+  let bootstrapReady = false;
+  const applyRestoreScope = value => {
+    state.restoreControllerOnly = !!value?.controller;
+    const notice = one("[data-restore-scope-notice]");
+    if (notice && value) {
+      notice.textContent = value.message;
+      notice.hidden = false;
+      const activeRestore = value.state === "active" && value.read_only === false;
+      all('[data-maintenance-controls]').forEach(control => { control.hidden = !(activeRestore || state.restoreControllerOnly); });
+      all('[data-backup-controls]').forEach(control => { control.hidden = !activeRestore; });
+      all('[data-recovery-controls]').forEach(control => { control.hidden = !(activeRestore || state.restoreControllerOnly); });
+      all('[data-dialog-open="create-project-dialog"], [data-dialog-open="import-project-dialog"]')
+        .forEach((control) => { control.hidden = true; });
+    }
+    if (state.restoreControllerOnly) {
+      if (chapterProgressTimer != null) window.clearTimeout(chapterProgressTimer);
+      chapterProgressTimer = null;
+      state.routeRevision++;
+      views.forEach(view => { view.hidden = true; });
+      all('.primary-nav, [data-spa-project-switcher], [data-health-link], [data-active-job-pill]')
+        .forEach(node => { node.hidden = true; });
+      showLoading(false);
+      clearError();
+      window.NovelAgentModelUsage?.setRoute({area:'recovery'});
+      window.NovelAgentChapterBudget?.setContext(null);
+    }
+  };
+  document.addEventListener('workbench:restore-scope',event => applyRestoreScope(event.detail));
+  api("/api/bootstrap").then(({ payload }) => {
+    updateProvider(payload.provider || {});
+    bootstrapReady = true;
+    document.dispatchEvent(new CustomEvent('workbench:restore-scope',{detail:payload.restore_scope}));
+    return route();
+  }).catch(error => { updateProvider({ ready: false }); showError(error); });
 })();

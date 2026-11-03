@@ -20,3 +20,5 @@ data/memory_outbox*.jsonl
 /.active-book
 /books/
 /pytest-cache-files-*/
+pytest-cache-files-*/
+tmp_review_regression_write_test/

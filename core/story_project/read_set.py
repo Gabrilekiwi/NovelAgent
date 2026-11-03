@@ -112,6 +112,16 @@ def verify_story_project_read_set(
     declared_writes: Iterable[dict[str, Any]] = (),
     phase: str,
 ) -> dict[str, Any]:
+    return _verify_story_project_read_set(read_set, declared_writes=declared_writes, phase=phase)
+
+
+def _verify_story_project_read_set(read_set: dict[str, Any], *, phase: str,
+                                 declared_writes: Iterable[dict[str, Any]] = (), source_identity=None) -> dict[str, Any]:
+    """Shared source comparison; explicit reviewed reader supplies verified identity.
+
+    The ordinary public verifier above never accepts a v3 identity override.
+    Reviewed write transitions must have their own transaction-level validation.
+    """
     validated = validate_schema(read_set, "story_project_read_set.schema.json")
     root = Path(validated["root_identity"]["resolved_path"]).resolve()
     differences: list[dict[str, Any]] = []
@@ -130,7 +140,14 @@ def verify_story_project_read_set(
     if _root_identity(root) != validated["root_identity"]:
         differences.append({"field": "root_identity", "code": "root_identity_changed"})
     try:
-        identity = None
+        identity = source_identity
+        if source_identity is not None:
+            from core.story_project.reviewed_identity import validate_reviewed_identity
+            from core.story_project.reviewed_state_document import read_project_bytes
+
+            current = validate_reviewed_identity(json.loads(read_project_bytes(root, ".novelagent/project.json").decode("utf-8-sig")))
+            if current.to_dict() != source_identity.to_dict() or identity_write is not None:
+                raise ProjectIdentityError("explicit source identity differs from current reviewed identity")
         if identity_write is not None:
             from core.story_project.reviewed_identity import declared_upgrade_identity
 

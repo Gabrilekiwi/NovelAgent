@@ -16,6 +16,8 @@ from core.engine.chapter_candidate import (
     ChapterCandidateExecutor,
     ChapterCandidateIntegrityError,
     ChapterCandidateStore,
+    _candidate_id,
+    _execution_id,
 )
 from core.engine.chapter_candidate_resolution import (
     ChapterCandidateProviderResolutionConflict,
@@ -24,10 +26,12 @@ from core.engine.chapter_candidate_resolution import (
     load_candidate_provider_resolution,
 )
 from core.model_call_runtime import ProviderCallUncertainError
+from core.engine.execution_activity import execution_is_active
 from core.model_calls import ModelCallEvidenceError
 from workbench.chapter_cards import ChapterCardService
 from workbench.database import WorkbenchDatabase
 from workbench.projects import ProjectRegistry
+from workbench.chapter_budget_scope import chapter_service_operation
 
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$")
@@ -94,6 +98,9 @@ class CandidateDraftStore:
     def __init__(self, database: WorkbenchDatabase) -> None:
         self.database = database
         self.database.initialize()
+        self.database.initialize_component(self._initialize)
+
+    def _initialize(self) -> None:
         with self.database.transaction() as connection:
             connection.executescript(
                 """
@@ -281,13 +288,19 @@ class ChapterCandidateService:
     ) -> dict[str, Any]:
         project = self.projects.get(project_id)
         key = _validated_idempotency_key(idempotency_key)
+        executor = self.executor_factory(project.root)
+        candidate_id = _candidate_id(book_id=project.book_id,chapter_index=chapter_index,idempotency_key=key)
+        with chapter_service_operation(executor,project,chapter_index,_execution_id(candidate_id),
+                completed=ChapterCandidateStore(project.root).has_record(candidate_id)):
+            return self._generate_in_operation(project,chapter_index,confirmation,key,executor)
+
+    def _generate_in_operation(self,project,chapter_index,confirmation,key,executor):
         verified = self.chapter_cards.verify_confirmation(
             project.id,
             chapter_index,
             confirmation,
         )
         with _candidate_error_boundary():
-            executor = self.executor_factory(project.root)
             try:
                 record = executor.execute(
                     chapter_index=chapter_index,
@@ -330,6 +343,12 @@ class ChapterCandidateService:
                     "Candidate Intent changed before generation was resumed"
                 )
             executor = self.executor_factory(project.root)
+            with chapter_service_operation(executor,project,chapter_index,_execution_id(candidate_id),
+                    completed=store.has_record(candidate_id),resume=True):
+                return self._resume_in_operation(project,candidate_id,executor)
+
+    def _resume_in_operation(self,project,candidate_id,executor):
+        with _candidate_error_boundary():
             try:
                 record = executor.resume(candidate_id)
             except ChapterCandidateExecutionError as exc:
@@ -487,8 +506,18 @@ class ChapterCandidateService:
             candidate_id,
         )
         unresolved_calls = store.model_call_store(intent).list_uncertain_calls()
+        active = False
+        if not isinstance(record, Mapping):
+            active = execution_is_active(store.paths.run_dir, intent["execution"]["execution_id"])
+            if not active:
+                # Execution may finish between the first record read and the
+                # lease probe. Re-read its terminal evidence before recovery.
+                record = store.load_record(candidate_id) if store.has_record(candidate_id) else None
+                unresolved_calls = store.model_call_store(intent).list_uncertain_calls()
         if isinstance(record, Mapping):
             raw_status = record["status"]
+        elif active:
+            raw_status = "running"
         elif unresolved_calls:
             raw_status = "provider_uncertain"
         else:

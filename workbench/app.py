@@ -71,7 +71,9 @@ from workbench.chapter_fact_extractions import (
     ChapterFactExtractionWorkbenchNotFound,
 )
 from workbench.cohorts import CohortError, CohortService, SCORE_DIMENSIONS
-from workbench.database import WorkbenchDatabase, WorkbenchDatabaseError
+from workbench.database import (
+    WorkbenchDatabase, WorkbenchDatabaseError, WorkbenchDatabaseInitializationPending,
+)
 from workbench.instance import InstanceLease
 from workbench.jobs import (
     JobError,
@@ -85,6 +87,14 @@ from workbench.jobs import (
 from workbench.outlines import OutlineBatchConflict, OutlineBatchError, OutlineBatchService
 from workbench.planning import OutlinePlanner, OutlinePlanningError
 from workbench.projects import ProjectRecord, ProjectRegistry, ProjectRegistryError
+from workbench.chapter_publication_api import install_chapter_publication_routes
+from workbench.reviewed_workflow import install_reviewed_workflow
+from workbench.reviewed_project_views import ProjectDisplayRegistry, ReviewedProjectViews
+from workbench.maintenance import maintenance_for, MaintenanceBlocked, DeferredStartup
+from workbench.maintenance_api import MaintenanceRoute, install_maintenance_status
+from workbench.backup_api import install_backup_api
+from workbench.recovery_api import install_recovery_api
+from workbench.restore_scope import RestoreScopeError, install_restore_scope_api
 
 
 SESSION_COOKIE = "novelagent_workbench"
@@ -104,12 +114,13 @@ def create_app(*, database_path: str | Path | None = None,
     except BaseException:
         lease.close()
         raise
-    weakref.finalize(app, _close_owned_app, app.state.supervisor, lease)
+    weakref.finalize(app, _close_owned_app, app.state.supervisor, lease, app.state.maintenance)
     return app
 
 
-def _close_owned_app(supervisor: JobSupervisor, lease: InstanceLease) -> None:
+def _close_owned_app(supervisor: JobSupervisor, lease: InstanceLease, maintenance=None) -> None:
     supervisor.shutdown()
+    if maintenance is not None and lease.held:maintenance.require_no_active()
     lease.close()
 
 
@@ -126,14 +137,26 @@ def _create_app_owned(
     amendment_provider: Any | None = None,
     chapter_candidate_executor_factory: Any | None = None,
     chapter_fact_extraction_executor_factory: Any | None = None,
+    chapter_publication_machine_store: str | Path | None = None,
+    reviewed_chapter_candidate_executor_factory: Any | None = None,
+    reviewed_chapter_fact_extraction_executor_factory: Any | None = None,
     python_executable: str | Path | None = None,
 ) -> FastAPI:
     repository = Path(repo_root or Path(__file__).resolve().parents[1]).resolve(strict=True)
     local_root = _local_app_root()
     db_path = Path(database_path or local_root / "workbench.db")
     task_root = Path(runtime_root or local_root / "jobs")
+    maintenance=maintenance_for(instance_lease)
     workspaces = tuple(allowed_workspaces or _configured_workspaces(repository))
-    database = WorkbenchDatabase(db_path)
+    # Schema registration is separate from construction. Even later-installed
+    # reviewed services must wait for the same maintenance admission.
+    database = WorkbenchDatabase(db_path, defer_initialization=True, machine_store=chapter_publication_machine_store,
+        allow_recovery_controller=True)
+    restore_scope = database.restore_scope
+    if restore_scope is not None:
+        start_worker = auto_import_active = False
+        workspaces = (restore_scope.book_root,)
+        task_root = restore_scope.task_runtime_root
     projects = ProjectRegistry(database, allowed_workspaces=workspaces)
     outlines = OutlineBatchService(database, projects)
     chapter_cards = ChapterCardService(projects)
@@ -167,6 +190,24 @@ def _create_app_owned(
         jobs=jobs,
         repo_root=repository,
     )
+    bootstrap_warnings: list[str] = []
+    def recover_startup():
+        database.complete_initialization()
+        if restore_scope is not None:
+            bootstrap_warnings.append('恢复副本已启用；只访问目标作品，重启不会自动执行任务。' if restore_scope.active
+                else '恢复副本尚未启用，当前只供核对资料。')
+            return
+        recovered_plans=planner.recover_after_restart()
+        recovered_amendments=amendments.recover_after_restart()
+        blocked = len(getattr(planner, 'recovery_blocked', ())) + len(getattr(amendments, 'recovery_blocked', ()))
+        if blocked:
+            bootstrap_warnings.append(f"{blocked} 个中断操作所属作品当前无法取得写入资格，原记录已保留。")
+        if recovered_plans:bootstrap_warnings.append(f"{recovered_plans} 个中断的章纲调用已锁定，需显式恢复。")
+        if recovered_amendments:bootstrap_warnings.append(f"{recovered_amendments} 个中断的润色审核已锁定，需显式恢复。")
+        if auto_import_active:
+            try:_import_active_project(repository,projects)
+            except Exception as exc:bootstrap_warnings.append(f"活动作品未自动导入：{exc}")
+    startup_recovery=DeferredStartup(recover_startup)
     supervisor = JobSupervisor(
         store=jobs,
         project_lookup=projects.get,
@@ -174,23 +215,8 @@ def _create_app_owned(
         runtime_root=task_root,
         python_executable=python_executable,
         instance_lease=instance_lease,
+        startup_recovery=startup_recovery.run,
     )
-    bootstrap_warnings: list[str] = []
-    recovered_plans = planner.recover_after_restart()
-    recovered_amendments = amendments.recover_after_restart()
-    if recovered_plans:
-        bootstrap_warnings.append(
-            f"{recovered_plans} 个中断的章纲调用已锁定，需显式恢复。"
-        )
-    if recovered_amendments:
-        bootstrap_warnings.append(
-            f"{recovered_amendments} 个中断的润色审核已锁定，需显式恢复。"
-        )
-    if auto_import_active:
-        try:
-            _import_active_project(repository, projects)
-        except Exception as exc:  # noqa: BLE001 - visible diagnostic, not a startup failure.
-            bootstrap_warnings.append(f"活动作品未自动导入：{exc}")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -200,8 +226,10 @@ def _create_app_owned(
                 supervisor.start()
             yield
         finally:
+            await maintenance.drain_async()
             if start_worker:
                 supervisor.shutdown()
+            maintenance.require_no_active()
             instance_lease.close()
 
     app = FastAPI(
@@ -212,9 +240,20 @@ def _create_app_owned(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+    app.router.route_class=MaintenanceRoute
+    app.state.maintenance=maintenance
+    app.state.startup_recovery=startup_recovery
+    install_maintenance_status(app)
+    install_backup_api(app,projects=projects,maintenance=maintenance,task_runtime_root=task_root,
+        worker_enabled=start_worker,auto_import_active=auto_import_active,
+        machine_store=chapter_publication_machine_store)
     app.state.session_token = secrets.token_urlsafe(32)
+    install_recovery_api(app,projects=projects,maintenance=maintenance,backups=app.state.backups,
+        machine_store=chapter_publication_machine_store,repository=repository,python_executable=python_executable)
     app.state.instance_lease = instance_lease
     app.state.database = database
+    app.state.restore_scope = restore_scope
+    install_restore_scope_api(app, database)
     app.state.projects = projects
     app.state.outlines = outlines
     app.state.chapter_cards = chapter_cards
@@ -277,6 +316,14 @@ def _create_app_owned(
     async def instance_identity():
         return {"instance_id": instance_lease.instance_id}
 
+    @app.exception_handler(WorkbenchDatabaseInitializationPending)
+    async def database_initialization_pending(_: Request, exc):
+        return JSONResponse({"error": {"code": exc.code, "message": str(exc)}}, status_code=503)
+
+    @app.exception_handler(RestoreScopeError)
+    async def restore_scope_error(_: Request, exc):
+        return JSONResponse({"error": {"code": exc.code, "message": str(exc)}}, status_code=409)
+
     @app.exception_handler(ProjectRegistryError)
     @app.exception_handler(OutlineBatchError)
     @app.exception_handler(OutlinePlanningError)
@@ -323,8 +370,36 @@ def _create_app_owned(
             status_code=status,
         )
 
+    chapter_publication = install_chapter_publication_routes(app, database=database, allowed_workspaces=workspaces,
+        machine_store=chapter_publication_machine_store)
+    from workbench.chapter_budgets import install_chapter_budget_routes
+    install_chapter_budget_routes(app,chapter_publication)
+    chapter_cards, chapter_candidates, chapter_facts, chapter_fact_extractions = install_reviewed_workflow(app,
+        publication=chapter_publication, cards=chapter_cards, candidates=chapter_candidates,
+        facts=chapter_facts, extractions=chapter_fact_extractions,
+        candidate_executor_factory=reviewed_chapter_candidate_executor_factory,
+        extraction_executor_factory=reviewed_chapter_fact_extraction_executor_factory)
+    display_projects = ProjectDisplayRegistry(database, allowed_workspaces=workspaces)
+    reviewed_views = ReviewedProjectViews(chapter_publication)
+
+    @app.get("/api/projects/{project_id}/model-calls")
+    async def project_model_calls(project_id: str) -> dict[str, Any]:
+        from workbench.model_usage import read_project_model_usage
+        record = display_projects.get(project_id)
+        try:
+            report = await asyncio.to_thread(read_project_model_usage, record.root, book_id=record.book_id)
+        except (OSError, ValueError, RuntimeError) as exc:
+            # Preserve evidence and avoid returning a misleading partial total.
+            return JSONResponse({"error":{"code":"model_usage_evidence_invalid",
+                "message":"模型调用证据未能完整核验，暂不能显示用量合计。请保留原记录并检查项目恢复状态。"}},status_code=409)
+        return {"project_id":record.id,**report}
+
     @app.get("/api/bootstrap")
-    async def bootstrap() -> dict[str, Any]:
+    async def bootstrap(request: Request) -> dict[str, Any]:
+        current_scope = getattr(request.state,'restore_scope',restore_scope)
+        scope_view = current_scope.view() if current_scope is not None else None
+        if scope_view is not None and getattr(request.state,'restore_restart_required',False):
+            scope_view.update(restart_required=True,message='原作品写资格已恢复；请重启此实例恢复写作。')
         return {
             "name": "NovelAgent",
             "version": app.version,
@@ -332,11 +407,13 @@ def _create_app_owned(
             "provider": _provider_status(),
             "allowed_workspaces": list(app.state.allowed_workspaces),
             "warnings": list(app.state.bootstrap_warnings),
+            "restore_scope": scope_view,
         }
 
     @app.get("/api/projects")
     async def list_projects() -> dict[str, Any]:
-        return {"items": [_project_summary(record, jobs) for record in projects.list_projects()]}
+        return {"items": [reviewed_views.summary(record) if app.state.reviewed_workflow.is_reviewed(record.id)
+            else _project_summary(record, jobs) for record in display_projects.list_projects()]}
 
     @app.post("/api/projects", status_code=201)
     async def create_project(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -371,7 +448,9 @@ def _create_app_owned(
 
     @app.get("/api/projects/{project_id}")
     async def project_detail(project_id: str) -> dict[str, Any]:
-        record = projects.get(project_id)
+        record = display_projects.get(project_id)
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            return await asyncio.to_thread(reviewed_views.detail, record)
         return {
             "project": _project_summary(record, jobs),
             "overview": _project_overview(record, outlines, jobs),
@@ -379,13 +458,26 @@ def _create_app_owned(
 
     @app.get("/api/projects/{project_id}/chapters")
     async def project_chapters(project_id: str) -> dict[str, Any]:
-        record = projects.get(project_id)
+        record = display_projects.get(project_id)
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            return {"items":await asyncio.to_thread(reviewed_views.chapters, record)}
         return {"items": _chapter_list(record, amendments)}
 
     @app.get("/api/projects/{project_id}/chapters/{chapter}")
     async def project_chapter(project_id: str, chapter: int) -> dict[str, Any]:
-        record = projects.get(project_id)
-        return _chapter_detail(record, chapter, amendments)
+        record = display_projects.get(project_id)
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            detail = await asyncio.to_thread(reviewed_views.chapter, record, chapter)
+        else:
+            detail = _chapter_detail(record, chapter, amendments)
+        draft = await asyncio.to_thread(jobs.get_project_chapter_draft, record.id, chapter)
+        if draft is not None:
+            if (draft.project_id != record.id or draft.chapter != chapter or draft.revision < 1
+                    or hashlib.sha256(draft.text.encode('utf-8')).hexdigest() != draft.sha256):
+                raise JobError('保留的作者草稿内容或修订无法核验，请保留数据并核对。')
+            detail['retained_author_draft'] = {name:getattr(draft,name)
+                for name in ('id','project_id','chapter','revision','sha256','text','state')}
+        return detail
 
     @app.get("/api/projects/{project_id}/chapters/{chapter}/card")
     async def project_chapter_card(project_id: str, chapter: int) -> dict[str, Any]:
@@ -580,6 +672,26 @@ def _create_app_owned(
         }
 
     @app.post(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/review"
+    )
+    async def open_candidate_draft_fact_extraction_review(
+        draft_id: str,
+        extraction_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.open_review,
+            draft_id,
+            extraction_id,
+            expected_record_hash=str(payload.get("expected_record_hash") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.post(
         "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/cancel"
     )
     async def cancel_candidate_draft_fact_extraction(
@@ -679,6 +791,19 @@ def _create_app_owned(
             ),
         }
 
+    @app.get("/api/fact-reviews/{review_id}/editor-context")
+    async def fact_review_editor_context(review_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(chapter_facts.editor_context, review_id)
+
+    @app.put("/api/fact-reviews/{review_id}/support")
+    async def update_fact_review_support(review_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        if set(payload) != {"support", "expected_revision", "author_confirmed"}:
+            raise ValueError("身份与基线补充只接受作者决定和当前审核修订。")
+        review = await asyncio.to_thread(chapter_facts.update_support, review_id,
+            support=payload["support"], expected_revision=payload["expected_revision"],
+            author_confirmed=payload["author_confirmed"] is True)
+        return {"fact_review":review, "message":"身份与基线决定已保存；确认整章审核后方可预览提交。"}
+
     @app.post("/api/fact-reviews/{review_id}/confirm")
     async def confirm_fact_review(
         review_id: str,
@@ -736,11 +861,14 @@ def _create_app_owned(
 
     @app.get("/api/projects/{project_id}/export")
     async def export_project(project_id: str) -> PlainTextResponse:
-        record = projects.get(project_id)
-        sections: list[str] = []
-        for chapter in sorted(scan_prose_chapters(record.root)):
-            current_text, _, _, _ = read_current_chapter_text(record.root, chapter)
-            sections.append(f"===== 第 {chapter} 章 =====\n\n{current_text.rstrip()}")
+        record = display_projects.get(project_id)
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            sections = await asyncio.to_thread(reviewed_views.export, record)
+        else:
+            sections = []
+            for chapter in sorted(scan_prose_chapters(record.root)):
+                current_text, _, _, _ = read_current_chapter_text(record.root, chapter)
+                sections.append(f"===== 第 {chapter} 章 =====\n\n{current_text.rstrip()}")
         if not sections:
             raise ProjectRegistryError("作品还没有可导出的正式正文")
         response = PlainTextResponse("\n\n\n".join(sections) + "\n", media_type="text/plain; charset=utf-8")
@@ -1265,6 +1393,8 @@ def _create_app_owned(
 
     @app.get("/api/projects/{project_id}/health")
     async def project_health(project_id: str) -> dict[str, Any]:
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            return await asyncio.to_thread(reviewed_views.health, display_projects.get(project_id))
         return _health_payload(projects.get(project_id))
 
     @app.post("/api/projects/{project_id}/health/activate")
@@ -1347,6 +1477,27 @@ def _create_app_owned(
         )
         return response
 
+    @app.get("/baseline-review", include_in_schema=False)
+    async def author_baseline_page() -> FileResponse:
+        response = FileResponse(static_root / "baseline-review.html")
+        response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
+            samesite="strict", secure=False, path="/")
+        return response
+
+    @app.get("/upgrade", include_in_schema=False)
+    async def onboarding_upgrade_page() -> FileResponse:
+        response = FileResponse(static_root / "upgrade.html")
+        response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
+            samesite="strict", secure=False, path="/")
+        return response
+
+    @app.get("/publication", include_in_schema=False)
+    async def chapter_publication_page() -> FileResponse:
+        response = FileResponse(static_root / "chapter-publication.html")
+        response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
+            samesite="strict", secure=False, path="/")
+        return response
+
     @app.get("/projects/{client_path:path}")
     async def client_route(client_path: str) -> FileResponse:
         del client_path
@@ -1361,6 +1512,11 @@ def _create_app_owned(
         )
         return response
 
+    try:
+        with maintenance.admit('local_writer'):
+            startup_recovery.run()
+    except MaintenanceBlocked:
+        bootstrap_warnings.append('上次维护尚未结束；数据库初始化、自动导入、状态恢复和任务调度已延后。')
     return app
 
 

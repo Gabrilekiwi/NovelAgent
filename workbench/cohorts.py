@@ -119,7 +119,7 @@ class CohortService:
         self.projects = projects
         self.jobs = jobs
         self.repo_root = Path(repo_root).resolve(strict=True)
-        self._initialize()
+        self.database.initialize_component(self._initialize)
 
     def create(
         self,

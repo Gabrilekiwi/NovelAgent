@@ -76,7 +76,9 @@ def _span(fact: dict) -> tuple[int, int]:
 
 
 def _known_references(state: dict) -> set[str]:
+    from core.engine.chapter_fact_support import declared_identities
     known = set(state["characters"]) | set(state["locations"])
+    known.update(entry["entity_id"] for entry in declared_identities(state))
     for record in state["locations"].values():
         if isinstance(record, dict) and isinstance(record.get("location_id"), str):
             known.add(record["location_id"])
@@ -120,6 +122,8 @@ def prepare_confirmed_fact_changes(*, facts: list[dict], chapter_text: str, base
     chapter_hash = hashlib.sha256(chapter_text.encode("utf-8")).hexdigest()
     for fact in sorted((f for f in accepted if f["kind"] == "event"), key=lambda f: (*_span(f), f["local_key"])):
         p = fact["proposal"]
+        if p["event_type"] == "reviewed_entity_declaration_v1":
+            _reject("chapter_fact_event_type_reserved", "Identity declarations require their explicit author decision contract")
         _require_known(known, p["occurrence_location"])
         for field in ("onsite_participants", "remote_participants", "related_entities"):
             _require_known(known, *(item["entity_id"] for item in p[field]))

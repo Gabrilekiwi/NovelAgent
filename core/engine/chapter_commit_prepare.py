@@ -16,10 +16,9 @@ from core.engine.chapter_candidate_context import TrustedChapterCandidateContext
 from core.engine.chapter_fact_context import validate_trusted_chapter_context
 from core.engine.chapter_fact_prepare import prepare_confirmed_fact_changes
 from core.memory_v2.canonical import canonical_json_hash
-from core.story_project.read_set import verify_story_project_read_set
-from core.story_project.identity import validate_project_identity
 from core.story_project.paths import infer_next_chapter
 from core.story_project.reviewed_state_context import validated_reviewed_state_context
+from core.engine.reviewed_candidate_context import validate_preparation_identity, verify_preparation_sources
 
 
 PREPARATION_VERSION = "reviewed_chapter_prepare_v1"
@@ -116,7 +115,7 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
             or review.get("context_sha256") != trusted_context.context_sha256
             or review.get("candidate_id") != draft.get("candidate_id")):
         _reject("chapter_commit_review_stale", "review belongs to another project, draft revision or context")
-    authority = validate_project_identity(context["project_identity"]).authority
+    authority = validate_preparation_identity(context).authority
     read_set = context["read_set"]
     # Server adapter separately validates the store's full authority binding and
     # candidate intent. The prepare record binds their exact verified hashes.
@@ -129,12 +128,16 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
         "authority_projection_sha256":trusted_context.authority_projection_sha256}
     if review_authority != expected_authority:
         _reject("chapter_commit_authority_invalid", "review authority differs from current trusted context")
-    verify_story_project_read_set(read_set, phase="prepare")
-    prepared = prepare_confirmed_fact_changes(facts=facts, chapter_text=final_prose,
-                                             base_state=view["authoritative_state"])
+    verify_preparation_sources(context, phase="prepare")
+    from core.engine.chapter_fact_support import normalize_fact_support, prepare_supported_fact_changes
+    support = normalize_fact_support(review.get("support"))
+    if support is not None and review.get("support_sha256") != _hash(support):
+        _reject("chapter_commit_review_invalid", "author identity/baseline decisions no longer match the stored review")
+    prepared = prepare_supported_fact_changes(facts=facts, chapter_text=final_prose,
+        base_state=view["authoritative_state"], support=support, book_id=view["book_id"], review_scope=review_id)
     # Recheck after preparation so a source edit during calculation cannot
     # produce a preview which appears fresh. Commit must repeat under its lock.
-    verify_story_project_read_set(read_set, phase="prepare")
+    verify_preparation_sources(context, phase="prepare")
     book_id = view["book_id"]
     binding = {
         "book_id":book_id, "project_id":project_id, "chapter":chapter,
@@ -153,10 +156,14 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
         "state_before_sha256":prepared["base_state_sha256"],
         "committed_through":view["committed_through"],
     }
+    if support is not None:
+        binding["support_sha256"] = _hash(support)
     payload = {"preparation_version":PREPARATION_VERSION, "stage":"facts_prepared",
         "publication_authorized":False, "idempotency_scope_sha256":_hash({"book_id":book_id,"key":key}),
         "binding":binding, "final_prose":final_prose, "facts":copy.deepcopy(facts),
         "fact_preparation":prepared, "read_set":copy.deepcopy(read_set)}
+    if support is not None:
+        payload["support"] = support
     payload["request_sha256"] = _hash({"version":PREPARATION_VERSION, "binding":binding})
     payload["preparation_sha256"] = _hash(payload)
     return payload

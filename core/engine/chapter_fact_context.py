@@ -651,6 +651,10 @@ def _index_authoritative_state(
     *,
     source_prefix: str = "memory_v2.projection.authoritative_state",
 ) -> None:
+    from core.engine.chapter_fact_support import declared_identities
+    for entry in declared_identities(state):
+        index.register(entry["kind"], entry["entity_id"], name=entry["name"], aliases=entry["aliases"],
+            priority=110, source=f"{source_prefix}.identity.{entry['entity_id']}", state=entry)
     for character_id, raw in _sorted_mapping(state.get("characters")):
         record = _object_or_empty(raw)
         index.register(

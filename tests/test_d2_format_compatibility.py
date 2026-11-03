@@ -13,6 +13,7 @@ from core.engine.locked_chapter import recover_locked_chapter
 from core.story_project.authority import AuthorityWriterContractError
 from core.story_project.format_compatibility import assert_project_execution_compatible
 from core.story_project.identity import ProjectIdentityError, load_project_identity
+from core.story_project.runtime import build_generation_story_project_context_loader
 from scripts.experiments.run_d2_b0_compatibility import fixture, inventory
 from workbench.database import WorkbenchDatabase
 from workbench.jobs import CURRENT_JOB_EXECUTION_CONTRACT, JobError, JobStore, JobSupervisor
@@ -48,6 +49,29 @@ def test_control_cli_initialization_still_writes_runtime(tmp_path):
         cwd=REPO, capture_output=True, timeout=30)
     assert process.returncode == 0
     assert (root / ".novelagent/runtime/snapshot.json").is_file()
+
+
+@pytest.mark.parametrize("variant,exception", [
+    ("minimum_only", AuthorityWriterContractError), ("identity_v3", ProjectIdentityError)])
+def test_ephemeral_loader_still_rejects_new_unsupported_format(tmp_path, variant, exception):
+    root = tmp_path / "book"
+    fixture(root, "control")
+    identity_path = root / ".novelagent/project.json"
+    control = identity_path.read_bytes()
+    identity_path.unlink()
+    loader = build_generation_story_project_context_loader(story_project=root, chapter=2)
+    assert loader.project_identity.ephemeral
+    identity_path.write_bytes(control)
+    value = json.loads(control)
+    if variant == "identity_v3":
+        value["schema_version"] = "3.0"
+    else:
+        value["authority"]["minimum_writer_contract"] = 2
+    identity_path.write_text(json.dumps(value), encoding="utf-8")
+    before = inventory(root)
+    with pytest.raises(exception):
+        loader({"chapter_index":2}, {})
+    assert inventory(root) == before
 
 
 @pytest.mark.parametrize("variant,exception", [

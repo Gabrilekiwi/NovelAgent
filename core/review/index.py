@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from core.schema import validate_schema
+from core.engine.persistence import atomic_write_text
+from core.review.storage import review_output_lock
 
 
 INDEX_FILENAME = "review_index.json"
@@ -56,6 +58,11 @@ def update_review_index(
     max_entries: int | None = 200,
 ) -> dict[str, Any]:
     output_dir = Path(review_output_dir)
+    with review_output_lock(review_index_path(output_dir)):
+        return _update_review_index_locked(output_dir=output_dir, entry=entry, max_entries=max_entries)
+
+
+def _update_review_index_locked(*, output_dir: Path, entry: dict[str, Any], max_entries: int | None):
     index = load_review_index(review_output_dir=output_dir)
     entries = [item for item in index.get("entries", []) if item.get("run_id") != entry.get("run_id")]
     entries.append(dict(entry))
@@ -63,10 +70,10 @@ def update_review_index(
     if max_entries is not None:
         entries = entries[: max(0, int(max_entries))]
     updated = _index_for_entries(review_output_dir=str(output_dir), entries=entries)
-    output_dir.mkdir(parents=True, exist_ok=True)
     path = review_index_path(output_dir)
-    path.write_text(json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return validate_schema(updated, "review_index.schema.json")
+    updated = validate_schema(updated, "review_index.schema.json")
+    atomic_write_text(path, json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return updated
 
 
 def load_review_index(*, review_output_dir: str | Path) -> dict[str, Any]:

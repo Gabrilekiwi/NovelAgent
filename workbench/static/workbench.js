@@ -41,6 +41,7 @@
   };
 
   const errorMessage = (payload, status) => {
+    if (payload?.error?.code === "workbench_maintenance_active") return safeText(payload.error.message, "工作台正在维护，暂不能启动新任务或保存编辑。");
     if (status === 409) return safeText(payload?.error?.message, "内容已被其他操作更新。请刷新页面，确认最新版本后再试。");
     if (status === 423) return "该作品正在执行另一项写入任务，请稍后再试。";
     if (status === 401 || status === 403) return "本地工作台会话已失效，请从启动器重新打开。";

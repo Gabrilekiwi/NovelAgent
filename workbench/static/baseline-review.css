@@ -1,0 +1,18 @@
+.baseline-page{max-width:1080px;margin:0 auto;padding:28px 20px 60px;display:grid;gap:20px}
+.baseline-page header p,.baseline-page .panel>p{line-height:1.7}
+.baseline-page .panel{padding:22px;min-width:0}
+.baseline-page .field{display:grid;gap:8px;margin:14px 0}
+.baseline-page select,.baseline-page textarea,.baseline-page input[type=file]{width:100%;max-width:100%}
+.baseline-page .button-row{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+.baseline-page .source-text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto}
+#fact-editors{border:0;padding:0;min-width:0}
+.baseline-category{border-top:1px solid var(--border,#ddd);padding:16px 0}
+.baseline-category summary{cursor:pointer;font-weight:600;margin-bottom:12px}
+.baseline-row{margin:14px 0;padding:16px;border:1px solid var(--border,#ddd);border-radius:10px;min-width:0}
+.baseline-row .fact-form,.baseline-row fieldset{min-width:0}
+.baseline-row textarea{width:100%}
+.baseline-category>label{display:block;margin-top:14px}
+.review-actions{display:grid;gap:18px}
+.baseline-page .form-error{white-space:pre-wrap;overflow-wrap:anywhere}
+.baseline-extra{white-space:pre-wrap;overflow-wrap:anywhere}
+.baseline-page [hidden]{display:none!important}

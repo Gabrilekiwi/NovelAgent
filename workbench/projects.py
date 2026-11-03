@@ -110,6 +110,7 @@ class ProjectRegistry:
         name: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> ProjectRecord:
+        self.database.require_write_access()
         canonical_root = self.validate_project_root(root)
         _require_story_project_directories(canonical_root)
         _require_safe_identity_location(canonical_root)
@@ -137,6 +138,7 @@ class ProjectRegistry:
         language: str = "zh-CN",
         metadata: Mapping[str, Any] | None = None,
     ) -> ProjectRecord:
+        self.database.require_write_access()
         project_name = _required_text("name", name)
         canonical_target = _canonical_new_project_target(target)
         self._assert_allowed(canonical_target)
@@ -219,19 +221,23 @@ class ProjectRegistry:
                 canonical_target.mkdir()
             raise
 
-    def get(self, project_id: str) -> ProjectRecord:
-        with self.database.connection() as connection:
-            row = connection.execute(
-                "SELECT * FROM projects WHERE id = ?", (str(project_id),)
-            ).fetchone()
+    def get(self, project_id: str, *, connection=None) -> ProjectRecord:
+        self.database.require_project_access(project_id)
+        if connection is None:
+            with self.database.connection() as owned:
+                row = owned.execute("SELECT * FROM projects WHERE id = ?", (str(project_id),)).fetchone()
+        else:
+            row = connection.execute("SELECT * FROM projects WHERE id = ?", (str(project_id),)).fetchone()
         if row is None:
             raise ProjectRegistryError(f"unknown workbench project: {project_id}")
         return self._record_from_row(row)
 
     def list_projects(self) -> tuple[ProjectRecord, ...]:
         with self.database.connection() as connection:
+            scope = self.database.restore_scope
             rows = connection.execute(
-                "SELECT * FROM projects ORDER BY updated_at DESC, id"
+                "SELECT * FROM projects" + (" WHERE id=?" if scope is not None else "") + " ORDER BY updated_at DESC, id",
+                (scope.project_id,) if scope is not None else (),
             ).fetchall()
         return tuple(self._record_from_row(row) for row in rows)
 
@@ -311,11 +317,12 @@ class ProjectRegistry:
         return self._record_from_row(row)
 
     def _record_from_row(self, row: sqlite3.Row) -> ProjectRecord:
+        self.database.require_project_access(str(row['id']))
         root = Path(str(row["root"])).resolve(strict=True)
         self._assert_allowed(root)
         _require_story_project_directories(root)
         _require_safe_identity_location(root)
-        identity = load_project_identity(root)
+        identity = self._load_registered_identity(root)
         if identity is None or identity.book_id != row["book_id"]:
             raise ProjectRegistryError(
                 f"registered project identity drifted for {row['id']}"
@@ -332,6 +339,9 @@ class ProjectRegistry:
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
+
+    def _load_registered_identity(self, root: Path):
+        return load_project_identity(root)
 
 
 def validate_public_metadata(value: Mapping[str, Any]) -> dict[str, Any]:

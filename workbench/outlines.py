@@ -21,6 +21,7 @@ from core.story_project.read_set import (
     capture_story_project_read_set,
     declared_read_set_writes,
 )
+from workbench.book_writes import registered_book_write, registered_record_write
 from workbench.database import WorkbenchDatabase
 from workbench.projects import ProjectRecord, ProjectRegistry
 
@@ -113,7 +114,17 @@ class OutlineBatchService:
         *,
         expected_source_fingerprint: str | None = None,
     ) -> OutlineBatchRecord:
-        project = self.projects.get(project_id)
+        with registered_book_write(self.projects, project_id, database=self.database) as write:
+            return self._create_batch_owned(write, project_id, proposal, expected_source_fingerprint=expected_source_fingerprint)
+
+    def _create_batch_owned(
+        self, write,
+        project_id: str,
+        proposal: Sequence[Mapping[str, Any]],
+        *,
+        expected_source_fingerprint: str | None = None,
+    ) -> OutlineBatchRecord:
+        project = write.project
         items = validate_outline_items(proposal)
         next_chapter = infer_next_chapter(project.root)
         if items[0].chapter_index != next_chapter:
@@ -133,7 +144,7 @@ class OutlineBatchService:
         proposal_sha256 = _sha256(proposal_json.encode("utf-8"))
         timestamp = _utc_now()
         batch_id = f"ob_{uuid.uuid4().hex[:24]}"
-        with self.database.transaction() as connection:
+        with write.transaction() as connection:
             connection.execute(
                 """
                 INSERT INTO outline_batches(
@@ -167,12 +178,23 @@ class OutlineBatchService:
         expected_revision: int,
         expected_sha256: str,
     ) -> OutlineBatchRecord:
+        with registered_record_write(self.projects, 'outline_batches', batch_id, database=self.database) as write:
+            return self._update_batch_owned(write, batch_id, proposal, expected_revision=expected_revision, expected_sha256=expected_sha256)
+
+    def _update_batch_owned(
+        self, write,
+        batch_id: str,
+        proposal: Sequence[Mapping[str, Any]],
+        *,
+        expected_revision: int,
+        expected_sha256: str,
+    ) -> OutlineBatchRecord:
         _validate_cas(expected_revision, expected_sha256)
         items = validate_outline_items(proposal)
         proposal_json = _proposal_json(items)
         proposal_sha256 = _sha256(proposal_json.encode("utf-8"))
         timestamp = _utc_now()
-        with self.database.transaction() as connection:
+        with write.transaction() as connection:
             current = connection.execute(
                 "SELECT * FROM outline_batches WHERE id = ?", (str(batch_id),)
             ).fetchone()
@@ -221,8 +243,19 @@ class OutlineBatchService:
         expected_sha256: str,
         adopt_existing: bool = False,
     ) -> OutlineBatchRecord:
+        with registered_record_write(self.projects, 'outline_batches', batch_id, database=self.database) as write:
+            return self._approve_batch_owned(write, batch_id, expected_revision=expected_revision, expected_sha256=expected_sha256, adopt_existing=adopt_existing)
+
+    def _approve_batch_owned(
+        self, write,
+        batch_id: str,
+        *,
+        expected_revision: int,
+        expected_sha256: str,
+        adopt_existing: bool = False,
+    ) -> OutlineBatchRecord:
         _validate_cas(expected_revision, expected_sha256)
-        with self.database.transaction() as connection:
+        with write.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM outline_batches WHERE id = ?", (str(batch_id),)
             ).fetchone()
@@ -268,6 +301,7 @@ class OutlineBatchService:
                     "canonical next chapter changed after this batch was drafted"
                 )
 
+            write.require(connection)
             runtime.mkdir(parents=True, exist_ok=True)
             publication = _build_publication(
                 batch,
@@ -303,6 +337,16 @@ class OutlineBatchService:
 
     def adopt_existing_and_approve_batch(
         self,
+        batch_id: str,
+        *,
+        expected_revision: int,
+        expected_sha256: str,
+    ) -> OutlineBatchRecord:
+        with registered_record_write(self.projects, 'outline_batches', batch_id, database=self.database) as write:
+            return self._adopt_existing_and_approve_batch_owned(write, batch_id, expected_revision=expected_revision, expected_sha256=expected_sha256)
+
+    def _adopt_existing_and_approve_batch_owned(
+        self, write,
         batch_id: str,
         *,
         expected_revision: int,

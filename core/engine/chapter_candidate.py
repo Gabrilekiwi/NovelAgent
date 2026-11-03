@@ -18,6 +18,7 @@ from core.engine.chapter_candidate_context import (
     CHAPTER_CANDIDATE_CONTEXT_VERSION,
     ChapterCandidateContextBuilder,
 )
+from core.engine.execution_activity import execution_activity
 from core.engine.chapter_candidate_resolution import (
     ChapterCandidateProviderResolutionConflict,
     build_candidate_provider_resolution,
@@ -54,10 +55,8 @@ from core.state.generation_state_view import (
 )
 from core.state.input_pack import build_input_pack
 from core.story_project.authority import AUTHORITY_MODE_EVENT
-from core.story_project.identity import load_project_identity, validate_project_identity
 from core.story_project.read_set import (
     StoryProjectSourceDriftError,
-    verify_story_project_read_set,
 )
 from modules.chapter_generator.generator import generate_chapter
 
@@ -218,7 +217,7 @@ class ChapterCandidateStore:
 
     def load_intent(self, candidate_id: str) -> dict[str, Any]:
         candidate_id = _validate_candidate_id(candidate_id)
-        payload = _load_json(self.intent_path(candidate_id), "chapter candidate intent")
+        payload = self._read_json(self.intent_path(candidate_id), "chapter candidate intent")
         checked = _validate_candidate_intent(payload)
         if checked["candidate_id"] != candidate_id:
             raise ChapterCandidateIntegrityError("candidate intent identity does not match its directory")
@@ -227,7 +226,7 @@ class ChapterCandidateStore:
 
     def load_record(self, candidate_id: str) -> dict[str, Any]:
         candidate_id = _validate_candidate_id(candidate_id)
-        payload = _load_json(self.record_path(candidate_id), "chapter candidate record")
+        payload = self._read_json(self.record_path(candidate_id), "chapter candidate record")
         checked = _validate_candidate_record(payload)
         if checked["candidate_id"] != candidate_id:
             raise ChapterCandidateIntegrityError("candidate record identity does not match its directory")
@@ -343,7 +342,7 @@ class ChapterCandidateStore:
             raise ChapterCandidateIntegrityError("candidate model-call reference changed")
         provenance_path = self._run_artifact_path(execution["provenance_artifact_ref"])
         provenance = ExecutionProvenance.from_dict(
-            _load_json(provenance_path, "candidate execution provenance")
+            self._read_json(provenance_path, "candidate execution provenance")
         )
         if provenance.provenance_hash != execution["provenance_hash"]:
             raise ChapterCandidateIntegrityError("candidate execution provenance changed")
@@ -369,7 +368,7 @@ class ChapterCandidateStore:
             prose_text = self._read_bound_text(prose, label="candidate draft")
 
         store = self.model_call_store(intent)
-        actual = _model_call_evidence(store)
+        actual = self._call_evidence(store)
         evidence = record["evidence"]
         if evidence["intent_hashes"] != actual["intent_hashes"]:
             raise ChapterCandidateIntegrityError("candidate model-call intent evidence changed")
@@ -382,7 +381,7 @@ class ChapterCandidateStore:
         if record["status"] in {"completed", "stale"} and record["execution"]["execution_kind"] == "model":
             if prose_text is None:
                 raise ChapterCandidateIntegrityError("model candidate has no prose to bind")
-            selected_response = _selected_response_binding(store, prose_text)
+            selected_response = self._selected_response(store, prose_text)
             if evidence["selected_response"] != selected_response:
                 raise ChapterCandidateIntegrityError(
                     "candidate selected Provider response evidence changed"
@@ -395,7 +394,7 @@ class ChapterCandidateStore:
     def _read_bound_text(self, metadata: Mapping[str, Any], *, label: str) -> str:
         path = self._runtime_artifact_path(str(metadata["artifact_ref"]))
         try:
-            text = path.read_text(encoding="utf-8")
+            text = self._read_text(path)
         except (OSError, UnicodeError) as exc:
             raise ChapterCandidateIntegrityError(f"cannot read {label}: {path}: {exc}") from exc
         if _sha256_text(text) != metadata["sha256"]:
@@ -403,6 +402,18 @@ class ChapterCandidateStore:
         if len(text) != metadata["chars"]:
             raise ChapterCandidateIntegrityError(f"{label} character count mismatch")
         return text
+
+    def _read_json(self, path: Path, label: str):
+        return _load_json(path, label)
+
+    def _read_text(self, path: Path):
+        return path.read_text(encoding="utf-8")
+
+    def _call_evidence(self, store):
+        return _model_call_evidence(store)
+
+    def _selected_response(self, store, prose):
+        return _selected_response_binding(store, prose)
 
     def _runtime_artifact_path(self, artifact_ref: str) -> Path:
         return _resolve_relative_artifact(self.paths.runtime_dir, artifact_ref)
@@ -425,6 +436,8 @@ class ChapterCandidateExecutor:
         provenance_factory: Callable[[], ExecutionProvenance] | None = None,
         clock: Callable[[], datetime] | None = None,
         fault_injector: Callable[[str, str], None] | None = None,
+        execution_budget=None,
+        execution_budget_factory=None,
     ) -> None:
         if execution_kind not in _ALLOWED_EXECUTION_KINDS:
             raise ValueError(
@@ -445,6 +458,8 @@ class ChapterCandidateExecutor:
         self.provenance_factory = provenance_factory
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.fault_injector = fault_injector
+        self.execution_budget = execution_budget
+        self.execution_budget_factory = execution_budget_factory
         self._captured_provenance: ExecutionProvenance | None = None
 
     def execute(
@@ -459,10 +474,10 @@ class ChapterCandidateExecutor:
             confirmation=confirmation,
         )
         with provider_execution_lock(self.paths.run_dir):
-            return self._execute_prepared(
-                prepared,
-                idempotency_key=idempotency_key,
-            )
+            candidate_id = _candidate_id(book_id=prepared["identity"]["book_id"],
+                chapter_index=prepared["chapter_index"], idempotency_key=idempotency_key)
+            with execution_activity(self.paths.run_dir, _execution_id(candidate_id)):
+                return self._execute_prepared(prepared, idempotency_key=idempotency_key)
 
     def _execute_prepared(
         self,
@@ -505,6 +520,7 @@ class ChapterCandidateExecutor:
                 before_verification=prepared["source_verification"],
             )
 
+        self._select_execution_budget(identity['book_id'],prepared['chapter_index'])
         self._raise_for_unresolved_provider_call()
         provenance = self._capture_provenance()
         execution_id = _execution_id(candidate_id)
@@ -557,7 +573,7 @@ class ChapterCandidateExecutor:
 
     def resume(self, candidate_id: str) -> dict[str, Any]:
         candidate_id = _validate_candidate_id(candidate_id)
-        with provider_execution_lock(self.paths.run_dir):
+        with provider_execution_lock(self.paths.run_dir), execution_activity(self.paths.run_dir, _execution_id(candidate_id)):
             self._raise_if_abandoned(candidate_id)
             if self.store.has_record(candidate_id):
                 return self.store.load_record(candidate_id)
@@ -567,6 +583,7 @@ class ChapterCandidateExecutor:
                 intent,
                 input_pack=self.store.load_input(candidate_id),
                 before_verification={"ok": True, "phase": "resume_pending"},
+                local_recovery=True,
             )
 
     def cancel(self, candidate_id: str) -> dict[str, Any]:
@@ -743,13 +760,7 @@ class ChapterCandidateExecutor:
 
         base_snapshot = copy.deepcopy(trusted.snapshot)
         memory = copy.deepcopy(trusted.memory_context)
-        applied_snapshot, applied_memory = StoryProjectContextService.apply_context(
-            context,
-            base_snapshot,
-            memory,
-            snapshot_path=self.paths.snapshot_path,
-            allow_legacy_snapshot_adoption=False,
-        )
+        applied_snapshot, applied_memory = self._apply_candidate_context(context, base_snapshot, memory)
         state_result = build_snapshot_state_with_audit(applied_snapshot, applied_memory)
         runtime_snapshot = StoryProjectContextService.apply_authority(
             context,
@@ -838,7 +849,7 @@ class ChapterCandidateExecutor:
                 "chapter candidates require a strict StoryProject context"
             )
         identity_payload = context.get("project_identity")
-        identity = validate_project_identity(identity_payload)
+        identity = self.context_builder.validate_identity(identity_payload)
         authority = identity.authority if isinstance(identity.authority, dict) else {}
         event_authority = authority.get("mode") == AUTHORITY_MODE_EVENT
         if identity.ephemeral or (
@@ -847,7 +858,7 @@ class ChapterCandidateExecutor:
             raise ChapterCandidateIntegrityError(
                 "chapter candidates require a persisted, strict ProjectIdentity"
             )
-        current = load_project_identity(self.story_project_root)
+        current = self.context_builder._load_persisted_identity()
         if current is None or current.to_dict() != identity.to_dict():
             raise ChapterCandidateIntegrityError(
                 "prepared StoryProject identity differs from the current persisted identity"
@@ -875,20 +886,37 @@ class ChapterCandidateExecutor:
             )
         return chapter_index, identity, read_set
 
+    def _apply_candidate_context(self, context, snapshot, memory):
+        return StoryProjectContextService.apply_context(context, snapshot, memory,
+            snapshot_path=self.paths.snapshot_path, allow_legacy_snapshot_adoption=False)
+
     def _execute_claimed(
         self,
         intent: dict[str, Any],
         *,
         input_pack: str,
         before_verification: dict[str, Any],
+        local_recovery: bool = False,
     ) -> dict[str, Any]:
         self._raise_if_abandoned(intent["candidate_id"])
         self._require_executor_kind(intent)
         self._require_current_provenance(intent)
-        self._raise_for_unresolved_provider_call()
         model_store = self.store.model_call_store(intent)
         tracker = RunBudgetTracker(self.run_budget_limits)
-        runtime = ModelCallRuntimeContext(model_store, tracker=tracker, clock=self.clock)
+        runtime = ModelCallRuntimeContext(model_store, tracker=tracker, clock=self.clock,
+            local_recovery_requested=local_recovery)
+        budget=self._select_execution_budget(intent['book_id'],intent['chapter_index'])
+        if budget is not None:
+            with budget.activate(runtime,intent):
+                return self._execute_claimed_with_runtime(intent,input_pack=input_pack,
+                    before_verification=before_verification,runtime=runtime)
+        return self._execute_claimed_with_runtime(intent,input_pack=input_pack,
+            before_verification=before_verification,runtime=runtime)
+
+    def _execute_claimed_with_runtime(self,intent,*,input_pack,before_verification,runtime):
+        self._raise_for_unresolved_provider_call()
+        model_store=runtime.store
+        tracker=runtime.tracker
         runtime.hydrate_tracker_from_store()
         try:
             # Close the preparation/provenance window before spending a Provider
@@ -897,9 +925,12 @@ class ChapterCandidateExecutor:
                 intent,
                 phase="prepare",
             )
-            with use_model_call_runtime(runtime):
-                with runtime.bind_operation(intent["execution"]["operation_key"]):
-                    prose = self.generator(input_pack)
+            if runtime.local_recovery_response is not None:
+                prose = runtime.local_recovery_response.text
+            else:
+                with use_model_call_runtime(runtime):
+                    with runtime.bind_operation(intent["execution"]["operation_key"]):
+                        prose = self.generator(input_pack)
             prose = validate_language_output(
                 prose,
                 CHAPTER_CONTRACT,
@@ -970,6 +1001,11 @@ class ChapterCandidateExecutor:
                 record=persisted,
                 cause=exc,
             ) from exc
+
+    def _select_execution_budget(self,book_id,chapter):
+        if self.execution_budget_factory is not None:
+            return self.execution_budget_factory(self.story_project_root,book_id=book_id,chapter=chapter)
+        return self.execution_budget
 
     def _verify_trusted_request(
         self,
@@ -1099,6 +1135,8 @@ class ChapterCandidateExecutor:
         )
 
     def _raise_if_abandoned(self, candidate_id: str) -> None:
+        from workbench.restore_execution_policy import require_restored_execution_paths
+        require_restored_execution_paths(self.store.candidate_dir(candidate_id))
         if load_candidate_provider_resolution(self.paths.run_dir, candidate_id) is not None:
             raise ChapterCandidateConflictError(
                 "Candidate Provider uncertainty was abandoned and cannot be resumed or reused"
@@ -1466,10 +1504,42 @@ def _model_call_evidence(store: ModelCallStore) -> dict[str, Any]:
 def _selected_response_binding(
     store: ModelCallStore,
     prose: str,
+    *, _responses=None,
 ) -> dict[str, Any]:
     """Bind normalized prose to exactly one hash-verified successful response."""
 
     matches: list[dict[str, Any]] = []
+    if _responses is not None:
+        responses = _responses
+    else:
+        responses = _successful_candidate_responses(store)
+    for receipt, response_text in responses:
+        if response_text.strip() != prose:
+            continue
+        matches.append(
+            {
+                "call_id": receipt["call_id"],
+                "attempt_id": receipt["attempt_id"],
+                "receipt_hash": receipt["receipt_hash"],
+                "response_artifact_hash": receipt["response_artifact_hash"],
+                "response_artifact_ref": receipt["response_artifact_ref"],
+                "normalization": "utf8-strip-v1",
+                "prose_sha256": _sha256_text(prose),
+            }
+        )
+    if not matches:
+        raise ChapterCandidateIntegrityError(
+            "candidate prose is not bound to a successful Provider response"
+        )
+    if len(matches) != 1:
+        raise ChapterCandidateIntegrityError(
+            "candidate prose ambiguously matches multiple successful Provider responses"
+        )
+    return matches[0]
+
+
+def _successful_candidate_responses(store):
+    responses = []
     paths = sorted(store.receipts_dir.glob("*.json")) if store.receipts_dir.is_dir() else []
     for path in paths:
         receipt = store.load_receipt(path.stem)
@@ -1493,28 +1563,8 @@ def _selected_response_binding(
             raise ChapterCandidateIntegrityError(
                 "successful Provider response artifact hash mismatch"
             )
-        if response_text.strip() != prose:
-            continue
-        matches.append(
-            {
-                "call_id": receipt["call_id"],
-                "attempt_id": receipt["attempt_id"],
-                "receipt_hash": receipt["receipt_hash"],
-                "response_artifact_hash": receipt["response_artifact_hash"],
-                "response_artifact_ref": artifact_ref,
-                "normalization": "utf8-strip-v1",
-                "prose_sha256": _sha256_text(prose),
-            }
-        )
-    if not matches:
-        raise ChapterCandidateIntegrityError(
-            "candidate prose is not bound to a successful Provider response"
-        )
-    if len(matches) != 1:
-        raise ChapterCandidateIntegrityError(
-            "candidate prose ambiguously matches multiple successful Provider responses"
-        )
-    return matches[0]
+        responses.append((receipt, response_text))
+    return responses
 
 
 def _require_successful_model_evidence(evidence: Mapping[str, Any]) -> None:

@@ -126,6 +126,36 @@ def validate_blueprint_coverage(
     return {"name": "story_project", "ok": not problems, "problems": problems}
 
 
+def build_text_blueprint_coverage(chapter_blueprint: dict[str, Any], chapter_text: str) -> dict[str, Any]:
+    """Check a whole-chapter author draft without inventing scene declarations.
+
+    Candidate 1.1 generates one prose response, not scene artifacts. Reuse the
+    existing textual coverage rules for that route, with explicit provenance.
+    This is a lexical heuristic, not proof that an event semantically occurred.
+    Scene-pipeline callers must still use build_blueprint_coverage and validate
+    their actual scene evidence; this function does not relax that contract.
+    """
+    blueprint = blueprint_to_dict(chapter_blueprint)
+    if blueprint is None or not isinstance(chapter_text, str) or not chapter_text.strip():
+        raise ValueError("text coverage requires a blueprint and non-empty final prose")
+    validate_generation_blueprint_contract(blueprint)
+    beats = _normalized_beats(blueprint)
+    indexes = [beat["index"] for beat in beats]
+    if len(set(indexes)) != len(indexes):
+        raise ValueError("text coverage requires unique required beat indexes")
+    checks = [{"beat_index": beat["index"], "required_text": beat["text"],
+               "covered": _text_covers(chapter_text, beat["text"])} for beat in beats]
+    ending = str(blueprint["ending_pressure"]).strip()
+    return {"required_beat_count": len(beats),
+        "covered_beat_indexes": [item["beat_index"] for item in checks if item["covered"]],
+        "missing_beat_indexes": [item["beat_index"] for item in checks if not item["covered"]],
+        "ending_pressure_required": True,
+        "ending_pressure_covered": _text_covers(_ending_window(chapter_text), ending),
+        "basis": "whole_chapter_text_heuristic_v1", "scene_declarations_used": False,
+        "beat_checks": checks, "ending_check": {"required_text": ending,
+            "window": "last_1200_stripped_characters"}}
+
+
 def _normalized_beats(chapter_blueprint: dict[str, Any]) -> list[dict[str, Any]]:
     beats: list[dict[str, Any]] = []
     for position, raw in enumerate(chapter_blueprint.get("required_beats") or [], start=1):
@@ -222,6 +252,7 @@ __all__ = [
     "blueprint_to_dict",
     "build_blueprint_coverage",
     "build_blueprint_plan",
+    "build_text_blueprint_coverage",
     "validate_blueprint_coverage",
     "validate_generation_blueprint_contract",
 ]

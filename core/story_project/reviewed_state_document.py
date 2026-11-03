@@ -14,7 +14,7 @@ import re
 import stat
 from typing import Any
 
-from core.engine.chapter_fact_prepare import prepare_confirmed_fact_changes
+from core.engine.chapter_fact_support import normalize_fact_support, prepare_supported_fact_changes
 from core.engine.safe_paths import FILE_ATTRIBUTE_REPARSE_POINT, RootBinding, SafePathResolver, assert_safe_local_tree
 from core.memory_v2.canonical import canonical_json_hash
 from core.path_refs import validate_path_ref
@@ -140,17 +140,21 @@ def capture_sources(root: Path) -> dict:
                 relative = path.relative_to(root).as_posix()
                 if relative.casefold() == RELATIVE_PATH.casefold():
                     continue
-                text = read_project_bytes(root, relative).decode("utf-8")
-                parsed = parse_managed_block(text)
-                if parsed is not None:
-                    text = text[:parsed.start_char] + text[parsed.end_char:]
-                entries[relative] = digest(text.rstrip("\r\n").encode("utf-8"))
+                entries[relative] = _manual_source_hash(read_project_bytes(root, relative))
 
     for name in ("追踪", "设定"):
         directory = root / name
         if os.path.lexists(directory):
             visit(directory)
     return {"entries": entries, "sha256": digest(entries)}
+
+
+def _manual_source_hash(raw: bytes) -> str:
+    text = raw.decode("utf-8")
+    parsed = parse_managed_block(text)
+    if parsed is not None:
+        text = text[:parsed.start_char] + text[parsed.end_char:]
+    return digest(text.rstrip("\r\n").encode("utf-8"))
 
 
 def _sources(value: Any):
@@ -177,8 +181,12 @@ def _references(references: Any, *, root: Path | None = None):
         seen.add(digest(ref))
         if root is not None:
             raw = read_project_bytes(root, ref["relative_path"])
-            if digest(raw) != ref["sha256"] or ref["text"] not in raw.decode("utf-8"):
-                fail("reviewed_static_reference_changed")
+            _verify_reference_content(ref, raw)
+
+
+def _verify_reference_content(ref, raw: bytes):
+    if digest(raw) != ref["sha256"] or ref["text"] not in raw.decode("utf-8"):
+        fail("reviewed_static_reference_changed")
 
 
 def baseline_request(*, book_id: str, chapter: int, state: dict, sources: dict,
@@ -326,7 +334,12 @@ def prepare_chapter_document(*, document: bytes, book_id: str, preparation: dict
             or binding["acceptance_kind"] != "author"
             or p["request_sha256"] != digest({"version": PREPARATION_VERSION, "binding": binding})):
         fail("reviewed_preparation_stale")
-    fact_plan = prepare_confirmed_fact_changes(facts=p["facts"], chapter_text=p["final_prose"], base_state=value["current_state"])
+    support = normalize_fact_support(p.get("support"))
+    if (support is not None and binding.get("support_sha256") != digest(support)
+            or support is None and "support_sha256" in binding):
+        fail("reviewed_support_binding_mismatch")
+    fact_plan = prepare_supported_fact_changes(facts=p["facts"], chapter_text=p["final_prose"], base_state=value["current_state"],
+        support=support, book_id=book_id, review_scope=binding["review_id"])
     if (p["final_prose"] != normalize_commit_prose(p["final_prose"])
             or p["fact_preparation"] != fact_plan or binding["state_before_sha256"] != digest(value["current_state"])
             or binding["final_prose_sha256"] != digest(p["final_prose"].encode("utf-8"))
@@ -345,6 +358,8 @@ def prepare_chapter_document(*, document: bytes, book_id: str, preparation: dict
         "review_id": binding["review_id"], "review_revision": binding["review_revision"],
         "confirmation_sha256": binding["confirmation_sha256"], "acceptance_kind": binding["acceptance_kind"],
         "idempotency_scope_sha256": p["idempotency_scope_sha256"]}
+    if support is not None:
+        value["last_transition"].update(support=support, support_sha256=digest(support))
     value["head"] = publication_head(run_id=run_id, kind="chapter", request_sha256=p["request_sha256"],
                                      previous_document=document, book_id=book_id)
     result = _render(document, value, book_id=book_id)
@@ -419,9 +434,12 @@ def verify_transition(*, document: bytes, previous_document: bytes, book_id: str
     elif current["head"]["kind"] == "chapter":
         from core.engine.chapter_commit_prepare import normalize_commit_prose
 
+        support = normalize_fact_support(change.get("support"))
         _shape(change, {"kind", "facts", "facts_sha256", "chapter_sha256", "before_sha256", "after_sha256",
             "draft_id", "draft_revision", "review_id", "review_revision", "confirmation_sha256",
-            "acceptance_kind", "idempotency_scope_sha256"}, "reviewed_transition_invalid")
+            "acceptance_kind", "idempotency_scope_sha256"} | ({"support", "support_sha256"} if support is not None else set()), "reviewed_transition_invalid")
+        if support is not None and change["support_sha256"] != digest(support):
+            fail("reviewed_support_binding_mismatch")
         if (change["kind"] != "chapter" or chapter_prose is None or change["chapter_sha256"] != digest(chapter_prose)
                 or current["committed_through"] != previous["committed_through"] + 1
                 or current["source_revision"] != previous["source_revision"]
@@ -439,8 +457,8 @@ def verify_transition(*, document: bytes, previous_document: bytes, book_id: str
                 fail("reviewed_transition_invalid")
         if chapter_prose.decode("utf-8") != normalize_commit_prose(chapter_prose.decode("utf-8")):
             fail("reviewed_prose_not_normalized")
-        prepared = prepare_confirmed_fact_changes(facts=change["facts"], chapter_text=chapter_prose.decode("utf-8"),
-                                                  base_state=previous["current_state"])
+        prepared = prepare_supported_fact_changes(facts=change["facts"], chapter_text=chapter_prose.decode("utf-8"),
+            base_state=previous["current_state"], support=support, book_id=book_id, review_scope=change["review_id"])
         if prepared["state_after"] != current["current_state"]:
             fail("reviewed_chapter_replay_mismatch")
     else:

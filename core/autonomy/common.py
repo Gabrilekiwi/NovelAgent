@@ -15,6 +15,7 @@ from core.engine.persistence import (
     atomic_write_json,
     persistence_run_lock,
 )
+from core.engine.project_output import project_output_lock
 from core.memory_v2.canonical import canonical_json_hash
 from core.schema import SchemaValidationError, validate_schema
 
@@ -114,30 +115,45 @@ def atomic_append_json(path: str | Path, payload: Mapping[str, Any]) -> None:
     """
 
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        atomic_create_json(target, dict(payload))
-    except FileExistsError:
-        existing = load_json_object(target)
-        if existing != dict(payload):
-            raise AutonomyContractError(
-                "autonomy_append_conflict", f"append-only artifact already differs: {target}"
-            )
+        with project_output_lock(target):
+            try:
+                atomic_create_json(target, dict(payload))
+            except FileExistsError:
+                existing = load_json_object(target)
+                if existing != dict(payload):
+                    raise AutonomyContractError(
+                        "autonomy_append_conflict", f"append-only artifact already differs: {target}"
+                    )
+    except PersistenceLockError as exc:
+        raise AutonomyContractError("autonomy_state_locked", "autonomy output is locked") from exc
 
 
 def atomic_replace_json(path: str | Path, payload: Mapping[str, Any]) -> None:
-    atomic_write_json(Path(path), dict(payload))
+    try:
+        with project_output_lock(path):
+            atomic_write_json(Path(path), dict(payload))
+    except PersistenceLockError as exc:
+        raise AutonomyContractError("autonomy_state_locked", "autonomy output is locked") from exc
+
+
+@contextmanager
+def _local_project_state_lock(root):
+    # Acquire the project boundary before persistence_run_lock creates a root.
+    with project_output_lock(Path(root) / '.autonomy-writes', lock_output_paths=False):
+        with persistence_run_lock(Path(root)):
+            yield
 
 
 @contextmanager
 def state_lock(root: str | Path, *state_paths: str | Path):
-    # Autonomy keeps every mutable head under one local runtime root, so one
-    # root lock is sufficient and avoids creating environment-specific shared
-    # lock paths. ``state_paths`` remain part of the call shape as audit labels.
+    # The local root still serializes mutable heads; the outer project lock
+    # coordinates the whole operation with a snapshot. ``state_paths`` remain
+    # audit labels, not additional local locks.
     del state_paths
     deadline = time.monotonic() + 5.0
     while True:
-        manager = persistence_run_lock(Path(root))
+        manager = _local_project_state_lock(root)
         try:
             manager.__enter__()
             break

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>确认作品升级 · NovelAgent</title><link rel="stylesheet" href="/static/workbench.css"><link rel="stylesheet" href="/static/baseline-review.css">
+<script src="/static/workbench.js" defer></script><script src="/static/upgrade.js" defer></script><script src="/static/maintenance.js" defer></script></head>
+<body><main class="baseline-page"><header><a href="/">返回工作台</a><h1>确认作品升级</h1>
+<p>使用已确认的作者基线，将旧作品升级为审核格式。请先在作者审核完成后，回工作台生成新备份并完成恢复认证。</p>
+<a id="review-link" href="/">查看作者基线</a></header>
+<section class="panel" data-maintenance-controls aria-label="维护状态">
+<button class="button button-secondary" data-maintenance-begin hidden>进入维护</button>
+<div data-maintenance-notice role="status" hidden><p data-maintenance-message></p>
+<button class="button button-secondary" data-maintenance-resume hidden>继续原维护</button>
+<button class="button button-secondary" data-maintenance-finish hidden>结束维护，恢复使用</button></div>
+<button class="button button-light" data-maintenance-refresh>刷新状态</button><p data-maintenance-error class="form-error" role="alert" hidden></p></section>
+<p id="upgrade-status" class="notice" role="status" aria-live="polite">正在读取作品审核记录……</p>
+<p id="upgrade-error" class="form-error" role="alert" hidden></p>
+<section class="panel"><h2>选择升级依据</h2><p>这里只列出已确认的最新审核版本。归档编号须与工作台完成认证的归档一致；预览会重新核验归档与当前作品。</p>
+<label class="field">已确认作者基线<select id="upgrade-baseline"><option value="">请选择已确认审核</option></select></label>
+<label class="field">新认证归档<select id="upgrade-archive"><option value="">请选择归档</option></select></label>
+<div class="button-row"><button id="upgrade-refresh" class="button button-light">刷新列表</button><button id="upgrade-more" class="button button-light" hidden>读取更多审核</button>
+<button id="upgrade-preview" class="button button-secondary" disabled>核对升级预览</button></div></section>
+<section id="upgrade-summary" class="panel" hidden><h2>本次升级内容</h2><p id="upgrade-binding"></p><ul id="upgrade-changes"></ul><ul id="upgrade-counts"></ul>
+<h3>恢复前提</h3><ul id="upgrade-policy"></ul><p>升级不会生成或发布新章节，也不会自动调用模型。后续章节需要重新准备。</p></section>
+<section class="panel"><h2>原操作状态与确认</h2><p>提交前会保留原操作查询链接。响应丢失或重启后，刷新只查询原记录，不会自动提交或续办。</p>
+<button id="upgrade-query" class="button button-light" disabled>刷新原操作状态</button>
+<p id="upgrade-operation">尚未选择原操作。</p>
+<label class="field"><span><input id="upgrade-policy-ack" type="checkbox" disabled> 我已核对上述恢复前提，并保留原归档和机器控制资料。</span></label>
+<label class="field"><span><input id="upgrade-author-ack" type="checkbox" disabled> 我已核对所选作者基线及升级差异，明确授权本次操作。</span></label>
+<div class="button-row"><button id="upgrade-commit" class="button" disabled>确认升级作品</button>
+<button id="upgrade-continue" class="button button-secondary" disabled>明确继续原升级</button></div></section></main></body></html>

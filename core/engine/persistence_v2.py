@@ -32,6 +32,9 @@ from core.engine.safe_paths import (
     SafePathResolver,
     assert_safe_local_tree,
 )
+from core.engine.persistence_v2_ownership import (
+    prepare_write_scope, manifest_write_scope, recovery_write_scope, recovery_facts,
+)
 from core.engine.recovery_protocol import reconcile_marker_transaction
 from core.schema import SchemaValidationError, validate_schema
 
@@ -204,243 +207,251 @@ class PersistenceV2Transaction:
         candidate_bytes = _json_bytes(dict(candidate_result))
         candidate_digest = _sha256(candidate_bytes)
 
-        self.transaction_root.mkdir(parents=True, exist_ok=True)
-        with persistence_run_lock(self.transaction_root):
-            if self.journal_dir.exists() or self.pending_entry_path.exists() or self.staging_dir.exists():
-                raise PersistenceV2PreparationError(
-                    f"persistence transaction already exists or requires reconcile: {self.run_id}"
-                )
-            self._verify_story_project_read_set(phase="prepare")
-            registry = self.root_registry.ensure(self.root_map)
-            resolver = self.root_registry.resolver(registry)
-            receipt_ref = resolver.bind(raw_receipt_ref)
-            final_ref = resolver.bind(raw_final_ref)
-            receipt_resolution = resolver.resolve(receipt_ref)
-            receipt_path = receipt_resolution.path
-            final_path = resolver.resolve(final_ref).path
-            if receipt_path == final_path:
-                raise PersistenceV2PreparationError(
-                    "Final RunRecord and Publication Receipt paths must differ"
-                )
-
-            final_record = _validate_final_run_receipt_pointer(
-                final_run_record, receipt_id, raw_receipt_ref
-            )
-            _final_run_receipt_pointer_owner(final_record)["publication_receipt"][
-                "path_ref"
-            ] = receipt_ref.to_dict()
-            final_target = PersistenceV2Target(
-                target_id="final-run-record",
-                kind="final_run_record",
-                path_ref=final_ref,
-                content=_json_bytes(final_record),
-                phase="publication",
-                metadata={"immutable": True},
-            )
-            prepared_targets = self._prepare_target_records(
-                [*apply_items, *artifact_items, final_target],
-                receipt_ref=receipt_ref,
-                resolver=resolver,
-            )
-            self._verify_read_set_target_binding(
-                registry=registry,
-                targets=prepared_targets,
-                read_set=self.story_project_read_set,
-                declared_writes=self.read_set_declared_writes,
-                transaction_binding={"run_id": self.run_id, "context_digest": context_digest,
-                    "generation_input_context_digest": generation_input_context_digest,
-                    "receipt_id": receipt_id, "receipt_path_ref": receipt_ref.to_dict()},
-            )
-            source_revision_after = _validate_story_project_source_revision_after(
-                story_project_source_revision_after,
-                book_id=self.book_id,
-                registry=registry,
-                declared_writes=self.read_set_declared_writes,
-            )
-            if not any(item["phase"] == "apply" for item in prepared_targets):
-                raise PersistenceV2PreparationError("at least one apply target is required")
-            artifact_records = [
-                _target_hash_summary(item)
-                for item in prepared_targets
-                if item["phase"] == "publication" and item["kind"] != "final_run_record"
-            ]
-            final_record_target = next(
-                item for item in prepared_targets if item["kind"] == "final_run_record"
-            )
-            apply_records = [
-                _target_hash_summary(item)
-                for item in prepared_targets
-                if item["phase"] == "apply"
-            ]
-            artifact_bundle_digest = canonical_json_hash(
-                sorted(artifact_records, key=lambda item: item["target_id"])
-            )
-            apply_target_bundle_digest = canonical_json_hash(
-                sorted(apply_records, key=lambda item: item["target_id"])
-            )
-            staged_payloads = [
-                (item.pop("_content"), item.pop("_before")) for item in prepared_targets
-            ]
-            runtime_uuid = registry["roots"]["runtime"]["root_uuid"]
-            manifest_ref = path_ref_for(
-                self.manifest_path,
-                root_id="runtime",
-                root=self.root_map["runtime"],
-                root_uuid=runtime_uuid,
-            )
-            marker_ref = path_ref_for(
-                self.marker_path,
-                root_id="runtime",
-                root=self.root_map["runtime"],
-                root_uuid=runtime_uuid,
-            )
-            immutable = {
-                "book_id": self.book_id,
-                "run_id": self.run_id,
-                "root_map": _root_map_manifest(registry),
-                "root_registry": root_registry_manifest_binding(registry),
-                "context_digest": context_digest,
-                "generation_input_context_digest": generation_input_context_digest,
-                "story_project_source_revision_after": source_revision_after,
-                "story_project_read_set": copy.deepcopy(self.story_project_read_set),
-                "read_set_declared_writes": copy.deepcopy(self.read_set_declared_writes),
-                "candidate": {
-                    "journal_relative_path": "candidate_result.json",
-                    "digest": candidate_digest,
-                    "size": len(candidate_bytes),
-                },
-                "targets": prepared_targets,
-                "artifact_bundle_digest": artifact_bundle_digest,
-                "apply_target_bundle_digest": apply_target_bundle_digest,
-                "final_run": _target_hash_summary(final_record_target),
-                "manifest_path_ref": manifest_ref.to_dict(),
-                "marker_path_ref": marker_ref.to_dict(),
-                "publication_receipt": {
-                    "id": receipt_id,
-                    "path_ref": receipt_ref.to_dict(),
-                    "path_guard": receipt_resolution.guard,
-                },
-                "delivery_jobs": delivery_summaries,
-                "canonical_json_algorithm": CANONICAL_JSON_ALGORITHM,
-            }
-            now = _utc_now()
-            manifest = {
-                "schema_version": PERSISTENCE_V2_SCHEMA_VERSION,
-                "immutable": immutable,
-                "manifest_digest": canonical_json_hash(immutable),
-                "state": "prepared",
-                "progress": {item["target_id"]: "prepared" for item in prepared_targets},
-                "errors": [],
-                "created_at": now,
-                "updated_at": now,
-            }
-            manifest = validate_persistence_manifest_v2(manifest)
-            pending_entry = {
-                "schema_version": PERSISTENCE_V2_SCHEMA_VERSION,
-                "book_id": self.book_id,
-                "run_id": self.run_id,
-                "state": "pending",
-                "journal_relative_path": f"journals/{self.run_id}",
-                "manifest_digest": manifest["manifest_digest"],
-                "registered_at": _utc_now(),
-                "receipt": None,
-                "error_count": 0,
-            }
-            try:
-                self.staging_dir.mkdir(parents=True, exist_ok=False)
-                (self.staging_dir / "staged").mkdir()
-                (self.staging_dir / "backups").mkdir()
-                _inject(self._fault_injector, "after_temporary_journal_created", None, self.staging_dir)
-                for index, (item, payloads) in enumerate(
-                    zip(prepared_targets, staged_payloads, strict=True)
-                ):
-                    content, before = payloads
-                    _write_new_file(
-                        self.staging_dir / item["staged_relative_path"],
-                        content,
-                        durability_hook=self._durability_faults.run,
+        with prepare_write_scope(
+            self.transaction_root, self.root_map, self.book_id,
+            [*apply_items, *artifact_items], [raw_receipt_ref, raw_final_ref],
+            run_id=self.run_id,
+        ):
+            self.transaction_root.mkdir(parents=True, exist_ok=True)
+            with persistence_run_lock(self.transaction_root):
+                if self.journal_dir.exists() or self.pending_entry_path.exists() or self.staging_dir.exists():
+                    raise PersistenceV2PreparationError(
+                        f"persistence transaction already exists or requires reconcile: {self.run_id}"
                     )
-                    if item["phase"] == "apply" and item["before_exists"]:
+                self._verify_story_project_read_set(phase="prepare")
+                registry = self.root_registry.ensure(self.root_map)
+                resolver = self.root_registry.resolver(registry)
+                receipt_ref = resolver.bind(raw_receipt_ref)
+                final_ref = resolver.bind(raw_final_ref)
+                receipt_resolution = resolver.resolve(receipt_ref)
+                receipt_path = receipt_resolution.path
+                final_path = resolver.resolve(final_ref).path
+                if receipt_path == final_path:
+                    raise PersistenceV2PreparationError(
+                        "Final RunRecord and Publication Receipt paths must differ"
+                    )
+
+                final_record = _validate_final_run_receipt_pointer(
+                    final_run_record, receipt_id, raw_receipt_ref
+                )
+                _final_run_receipt_pointer_owner(final_record)["publication_receipt"][
+                    "path_ref"
+                ] = receipt_ref.to_dict()
+                final_target = PersistenceV2Target(
+                    target_id="final-run-record",
+                    kind="final_run_record",
+                    path_ref=final_ref,
+                    content=_json_bytes(final_record),
+                    phase="publication",
+                    metadata={"immutable": True},
+                )
+                prepared_targets = self._prepare_target_records(
+                    [*apply_items, *artifact_items, final_target],
+                    receipt_ref=receipt_ref,
+                    resolver=resolver,
+                )
+                self._verify_read_set_target_binding(
+                    registry=registry,
+                    targets=prepared_targets,
+                    read_set=self.story_project_read_set,
+                    declared_writes=self.read_set_declared_writes,
+                    transaction_binding={"run_id": self.run_id, "context_digest": context_digest,
+                        "generation_input_context_digest": generation_input_context_digest,
+                        "receipt_id": receipt_id, "receipt_path_ref": receipt_ref.to_dict()},
+                )
+                source_revision_after = _validate_story_project_source_revision_after(
+                    story_project_source_revision_after,
+                    book_id=self.book_id,
+                    registry=registry,
+                    declared_writes=self.read_set_declared_writes,
+                )
+                if not any(item["phase"] == "apply" for item in prepared_targets):
+                    raise PersistenceV2PreparationError("at least one apply target is required")
+                artifact_records = [
+                    _target_hash_summary(item)
+                    for item in prepared_targets
+                    if item["phase"] == "publication" and item["kind"] != "final_run_record"
+                ]
+                final_record_target = next(
+                    item for item in prepared_targets if item["kind"] == "final_run_record"
+                )
+                apply_records = [
+                    _target_hash_summary(item)
+                    for item in prepared_targets
+                    if item["phase"] == "apply"
+                ]
+                artifact_bundle_digest = canonical_json_hash(
+                    sorted(artifact_records, key=lambda item: item["target_id"])
+                )
+                apply_target_bundle_digest = canonical_json_hash(
+                    sorted(apply_records, key=lambda item: item["target_id"])
+                )
+                staged_payloads = [
+                    (item.pop("_content"), item.pop("_before")) for item in prepared_targets
+                ]
+                runtime_uuid = registry["roots"]["runtime"]["root_uuid"]
+                manifest_ref = path_ref_for(
+                    self.manifest_path,
+                    root_id="runtime",
+                    root=self.root_map["runtime"],
+                    root_uuid=runtime_uuid,
+                )
+                marker_ref = path_ref_for(
+                    self.marker_path,
+                    root_id="runtime",
+                    root=self.root_map["runtime"],
+                    root_uuid=runtime_uuid,
+                )
+                immutable = {
+                    "book_id": self.book_id,
+                    "run_id": self.run_id,
+                    "root_map": _root_map_manifest(registry),
+                    "root_registry": root_registry_manifest_binding(registry),
+                    "context_digest": context_digest,
+                    "generation_input_context_digest": generation_input_context_digest,
+                    "story_project_source_revision_after": source_revision_after,
+                    "story_project_read_set": copy.deepcopy(self.story_project_read_set),
+                    "read_set_declared_writes": copy.deepcopy(self.read_set_declared_writes),
+                    "candidate": {
+                        "journal_relative_path": "candidate_result.json",
+                        "digest": candidate_digest,
+                        "size": len(candidate_bytes),
+                    },
+                    "targets": prepared_targets,
+                    "artifact_bundle_digest": artifact_bundle_digest,
+                    "apply_target_bundle_digest": apply_target_bundle_digest,
+                    "final_run": _target_hash_summary(final_record_target),
+                    "manifest_path_ref": manifest_ref.to_dict(),
+                    "marker_path_ref": marker_ref.to_dict(),
+                    "publication_receipt": {
+                        "id": receipt_id,
+                        "path_ref": receipt_ref.to_dict(),
+                        "path_guard": receipt_resolution.guard,
+                    },
+                    "delivery_jobs": delivery_summaries,
+                    "canonical_json_algorithm": CANONICAL_JSON_ALGORITHM,
+                }
+                now = _utc_now()
+                manifest = {
+                    "schema_version": PERSISTENCE_V2_SCHEMA_VERSION,
+                    "immutable": immutable,
+                    "manifest_digest": canonical_json_hash(immutable),
+                    "state": "prepared",
+                    "progress": {item["target_id"]: "prepared" for item in prepared_targets},
+                    "errors": [],
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                manifest = validate_persistence_manifest_v2(manifest)
+                pending_entry = {
+                    "schema_version": PERSISTENCE_V2_SCHEMA_VERSION,
+                    "book_id": self.book_id,
+                    "run_id": self.run_id,
+                    "state": "pending",
+                    "journal_relative_path": f"journals/{self.run_id}",
+                    "manifest_digest": manifest["manifest_digest"],
+                    "registered_at": _utc_now(),
+                    "receipt": None,
+                    "error_count": 0,
+                }
+                try:
+                    self.staging_dir.mkdir(parents=True, exist_ok=False)
+                    (self.staging_dir / "staged").mkdir()
+                    (self.staging_dir / "backups").mkdir()
+                    _inject(self._fault_injector, "after_temporary_journal_created", None, self.staging_dir)
+                    for index, (item, payloads) in enumerate(
+                        zip(prepared_targets, staged_payloads, strict=True)
+                    ):
+                        content, before = payloads
                         _write_new_file(
-                            self.staging_dir / str(item["backup_relative_path"]),
-                            before,
+                            self.staging_dir / item["staged_relative_path"],
+                            content,
                             durability_hook=self._durability_faults.run,
                         )
+                        if item["phase"] == "apply" and item["before_exists"]:
+                            _write_new_file(
+                                self.staging_dir / str(item["backup_relative_path"]),
+                                before,
+                                durability_hook=self._durability_faults.run,
+                            )
+                        _inject(
+                            self._fault_injector,
+                            "after_prepare_target_staged",
+                            index,
+                            self.staging_dir / item["staged_relative_path"],
+                        )
+                    _write_new_file(
+                        self.staging_dir / "candidate_result.json",
+                        candidate_bytes,
+                        durability_hook=self._durability_faults.run,
+                    )
+                    _write_new_file(
+                        self.staging_dir / "manifest.json",
+                        _json_bytes(validate_persistence_manifest_v2(manifest)),
+                        durability_hook=self._durability_faults.run,
+                    )
+                    _validate_complete_staged_journal(self.staging_dir, manifest)
+                    _fsync_journal_tree(
+                        self.staging_dir,
+                        durability_hook=self._durability_faults.run,
+                    )
                     _inject(
                         self._fault_injector,
-                        "after_prepare_target_staged",
-                        index,
-                        self.staging_dir / item["staged_relative_path"],
+                        "before_journal_publish",
+                        None,
+                        self.journal_dir,
                     )
-                _write_new_file(
-                    self.staging_dir / "candidate_result.json",
-                    candidate_bytes,
-                    durability_hook=self._durability_faults.run,
-                )
-                _write_new_file(
-                    self.staging_dir / "manifest.json",
-                    _json_bytes(validate_persistence_manifest_v2(manifest)),
-                    durability_hook=self._durability_faults.run,
-                )
-                _validate_complete_staged_journal(self.staging_dir, manifest)
-                _fsync_journal_tree(
-                    self.staging_dir,
-                    durability_hook=self._durability_faults.run,
-                )
-                _inject(
-                    self._fault_injector,
-                    "before_journal_publish",
-                    None,
-                    self.journal_dir,
-                )
-                _atomic_publish_journal(
-                    self.staging_dir,
-                    self.journal_dir,
-                    self.transaction_root,
-                    durability_hook=self._durability_faults.run,
-                )
-                _inject(
-                    self._fault_injector,
-                    "after_journal_publish",
-                    None,
-                    self.journal_dir,
-                )
-                _inject(
-                    self._fault_injector,
-                    "before_pending_registry",
-                    None,
-                    self.pending_entry_path,
-                )
-                _assert_internal_path_safe(
-                    self.transaction_root, self.pending_entry_path
-                )
-                _write_registry_entry_new(
-                    self.pending_entry_path,
-                    pending_entry,
-                    durability_hook=self._durability_faults.run,
-                )
-                _fsync_directory(
-                    self.pending_entry_path.parent,
-                    durability_hook=self._durability_faults.run,
-                )
-                _inject(
-                    self._fault_injector,
-                    "after_pending_registry",
-                    None,
-                    self.pending_entry_path,
-                )
-                return copy.deepcopy(manifest)
-            except Exception as exc:
-                raise PersistenceV2PreparationError(
-                    f"failed to prepare persistence v2.1 transaction: {exc}"
-                ) from exc
+                    _atomic_publish_journal(
+                        self.staging_dir,
+                        self.journal_dir,
+                        self.transaction_root,
+                        durability_hook=self._durability_faults.run,
+                    )
+                    _inject(
+                        self._fault_injector,
+                        "after_journal_publish",
+                        None,
+                        self.journal_dir,
+                    )
+                    _inject(
+                        self._fault_injector,
+                        "before_pending_registry",
+                        None,
+                        self.pending_entry_path,
+                    )
+                    _assert_internal_path_safe(
+                        self.transaction_root, self.pending_entry_path
+                    )
+                    _write_registry_entry_new(
+                        self.pending_entry_path,
+                        pending_entry,
+                        durability_hook=self._durability_faults.run,
+                    )
+                    _fsync_directory(
+                        self.pending_entry_path.parent,
+                        durability_hook=self._durability_faults.run,
+                    )
+                    _inject(
+                        self._fault_injector,
+                        "after_pending_registry",
+                        None,
+                        self.pending_entry_path,
+                    )
+                    return copy.deepcopy(manifest)
+                except Exception as exc:
+                    raise PersistenceV2PreparationError(
+                        f"failed to prepare persistence v2.1 transaction: {exc}"
+                    ) from exc
 
     def commit(self) -> dict[str, Any]:
         manifest = load_persistence_manifest_v2(self.manifest_path)
         resolver = self._resolver_for_manifest(manifest, require_same_revision=True)
         apply_paths = _resolved_target_paths(manifest, phase="apply", resolver=resolver)
-        with persistence_run_lock(self.transaction_root, state_paths=apply_paths):
+        expected_manifest = manifest
+        with manifest_write_scope(self.transaction_root, manifest, fault_injector=self._fault_injector), persistence_run_lock(self.transaction_root, state_paths=apply_paths):
             manifest = load_persistence_manifest_v2(self.manifest_path)
+            if manifest != expected_manifest:
+                raise PersistenceV2IntegrityError("transaction changed while acquiring machine ownership")
             if manifest["state"] != "prepared":
                 raise PersistenceV2Error(f"transaction is not prepared: {manifest['state']}")
             try:
@@ -543,9 +554,14 @@ class PersistenceV2Transaction:
 
     def complete_publication(self) -> dict[str, Any]:
         manifest = load_persistence_manifest_v2(self.manifest_path)
+        if manifest["state"] == "completed":
+            # Receipt verification is a pure historical read.
+            return self._complete_publication_locked()
         resolver = self._resolver_for_manifest(manifest, require_same_revision=True)
         apply_paths = _resolved_target_paths(manifest, phase="apply", resolver=resolver)
-        with persistence_run_lock(self.transaction_root, state_paths=apply_paths):
+        with manifest_write_scope(self.transaction_root, manifest, fault_injector=self._fault_injector), persistence_run_lock(self.transaction_root, state_paths=apply_paths):
+            if load_persistence_manifest_v2(self.manifest_path) != manifest:
+                raise PersistenceV2IntegrityError("transaction changed while acquiring machine ownership")
             return self._complete_publication_locked()
 
     def _complete_publication_locked(self) -> dict[str, Any]:
@@ -790,6 +806,28 @@ class PersistenceV2Transaction:
         )
         from core.story_project.read_set import verify_story_project_read_set
 
+        from core.story_project.reviewed_chapter_transition import is_reviewed_chapter_transition
+        if is_reviewed_chapter_transition(declared):
+            if manifest is None:
+                from core.engine.reviewed_candidate_context import verify_reviewed_candidate_read_set
+                verify_reviewed_candidate_read_set(copy.deepcopy(read_set), phase=phase)
+                return  # prepare validates the complete target bundle before staging.
+            self._verify_read_set_target_binding(
+                registry=self.root_registry.load(), targets=list(immutable["targets"]), read_set=read_set,
+                declared_writes=list(declared), phase=phase,
+                transaction_binding={"run_id": immutable["run_id"], "context_digest": immutable["context_digest"],
+                    "generation_input_context_digest": immutable["generation_input_context_digest"],
+                    "receipt_id": immutable["publication_receipt"]["id"],
+                    "receipt_path_ref": immutable["publication_receipt"]["path_ref"]})
+            from core.story_project.read_set import _verify_story_project_read_set
+            from core.story_project.reviewed_identity import validate_reviewed_identity
+            from core.story_project.reviewed_state_document import read_project_bytes
+            identity = validate_reviewed_identity(json.loads(read_project_bytes(
+                Path(read_set["root_identity"]["resolved_path"]), ".novelagent/project.json")))
+            _verify_story_project_read_set(copy.deepcopy(read_set), declared_writes=list(declared),
+                phase=phase, source_identity=identity)
+            return
+
         verify_story_project_read_set(
             copy.deepcopy(read_set),
             declared_writes=copy.deepcopy(list(declared)),
@@ -818,6 +856,23 @@ class PersistenceV2Transaction:
         phase: str = "prepare",
         transaction_binding: Mapping[str, Any] | None = None,
     ) -> None:
+        from core.story_project.reviewed_chapter_transition import is_reviewed_chapter_transition
+        declared_writes = list(declared_writes)
+        if is_reviewed_chapter_transition(declared_writes):
+            hydrated = []
+            for raw in targets:
+                target = dict(raw)
+                if "_content" not in target:
+                    target["_content"] = _load_staged_content(self.journal_dir, target)
+                    target["_before"] = b""
+                    if target.get("phase") == "apply" and target.get("before_exists"):
+                        backup = _safe_journal_child(self.journal_dir, str(target["backup_relative_path"]))
+                        before = backup.read_bytes()
+                        if _sha256(before) != target["before_sha256"] or len(before) != target["before_size"]:
+                            raise PersistenceV2IntegrityError("reviewed chapter staged before-image changed")
+                        target["_before"] = before
+                hydrated.append(target)
+            targets = hydrated
         _validate_read_set_transaction_binding(
             book_id=self.book_id,
             registry=registry,
@@ -1197,6 +1252,13 @@ def reconcile_pending_persistence_v2(
             "transactions": [],
             "recovery_required": [],
         }
+    with recovery_write_scope(root, expected_book_id=expected_book_id) as facts:
+        return _reconcile_owned_pending_persistence_v2(
+            root, expected_book_id=expected_book_id, fault_injector=fault_injector, facts=facts)
+
+
+def _reconcile_owned_pending_persistence_v2(root, *, expected_book_id, fault_injector, facts):
+    from workbench.book_ownership import BookOwnershipError
     results: list[dict[str, Any]] = []
     discovery_faults = _DurabilityFaultController(fault_injector)
 
@@ -1204,6 +1266,8 @@ def reconcile_pending_persistence_v2(
     # the same global lock as prepare. It must never quarantine a journal that
     # another process is still staging.
     with persistence_run_lock(root):
+        if recovery_facts(root) != facts:
+            raise PersistenceV2IntegrityError("recovery association changed before discovery")
         results.extend(
             _discover_persistence_v2_transactions(
                 root,
@@ -1241,8 +1305,11 @@ def reconcile_pending_persistence_v2(
             apply_paths = _resolved_target_paths(
                 manifest, phase="apply", resolver=resolver
             )
-            with persistence_run_lock(root, state_paths=apply_paths):
+            expected_manifest = manifest
+            with manifest_write_scope(root, manifest), persistence_run_lock(root, state_paths=apply_paths):
                 manifest = load_persistence_manifest_v2(manifest_path)
+                if manifest != expected_manifest:
+                    raise PersistenceV2IntegrityError("transaction changed while acquiring machine ownership")
                 marker_path = journal / "commit.marker"
                 receipt_path = resolver.resolve(
                     manifest["immutable"]["publication_receipt"]["path_ref"]
@@ -1297,7 +1364,7 @@ def reconcile_pending_persistence_v2(
                         on_completed=recover_completed,
                     )
                 )
-        except PersistenceLockError:
+        except (PersistenceLockError, BookOwnershipError):
             # Another normal writer won the lock after discovery. Busy is not
             # evidence of corruption and must not mutate the registry state.
             raise
@@ -1326,6 +1393,16 @@ def gc_persistence_v2(
     completed_keep: int = 10,
     rolled_back_keep: int = 10,
 ) -> dict[str, Any]:
+    root = assert_safe_local_tree(transaction_root)
+    if dry_run or not root.exists():
+        return _gc_persistence_v2(root, dry_run=dry_run, completed_keep=completed_keep, rolled_back_keep=rolled_back_keep)
+    with recovery_write_scope(root) as facts, persistence_run_lock(root):
+        if recovery_facts(root) != facts:
+            raise PersistenceV2IntegrityError("recovery association changed before garbage collection")
+        return _gc_persistence_v2(root, dry_run=False, completed_keep=completed_keep, rolled_back_keep=rolled_back_keep)
+
+
+def _gc_persistence_v2(transaction_root, *, dry_run, completed_keep, rolled_back_keep):
     root = Path(transaction_root).resolve()
     if completed_keep < 0 or rolled_back_keep < 0:
         raise ValueError("retention counts must be non-negative")
@@ -2139,9 +2216,17 @@ def _validate_read_set_transaction_binding(
         from core.story_project.authority import AUTHORITY_MODE_EVENT
         from core.story_project.identity import load_project_identity
         from core.story_project.reviewed_identity import declared_upgrade_identity
+        from core.story_project.reviewed_chapter_transition import (
+            is_reviewed_chapter_transition, validate_reviewed_chapter_transaction_targets,
+        )
 
-        current_identity = declared_upgrade_identity(story_root, read_set=validated,
-            declaration=declarations.get(".novelagent/project.json", {}), phase=phase)
+        if is_reviewed_chapter_transition(declarations.values()):
+            current_identity = validate_reviewed_chapter_transaction_targets(targets=targets,
+                declarations=list(declarations.values()), read_set=validated, transaction_binding=transaction_binding,
+                phase=phase, root=story_root)
+        else:
+            current_identity = declared_upgrade_identity(story_root, read_set=validated,
+                declaration=declarations.get(".novelagent/project.json", {}), phase=phase)
         if current_identity is None:
             current_identity = load_project_identity(story_root)
     except Exception as exc:
@@ -2296,6 +2381,13 @@ def _validate_story_project_source_revision_after(
         raise PersistenceV2IntegrityError(
             "story_project_source_revision_after must be an object"
         )
+    from core.story_project.reviewed_chapter_transition import CHAPTER_TRANSITION, is_reviewed_chapter_transition
+    declared_writes = list(declared_writes)
+    if is_reviewed_chapter_transition(declared_writes):
+        chapter_declarations = [d for d in declared_writes if d.get("transition") == CHAPTER_TRANSITION]
+        if len(chapter_declarations) != 1 or dict(value) != chapter_declarations[0].get("source_revision_after"):
+            raise PersistenceV2IntegrityError("reviewed chapter source checkpoint differs from typed transition")
+        return copy.deepcopy(dict(value))
     identity_declarations = []
     for raw in declared_writes:
         if not isinstance(raw, Mapping):

@@ -27,7 +27,9 @@ from core.engine.chapter_fact_extraction import (
     ChapterFactExtractionError,
     ChapterFactExtractionStore,
 )
+from core.engine.chapter_fact_contract import fact_payload_contracts
 from core.engine.safe_paths import SafePathError
+from core.engine.chapter_fact_support import normalize_fact_support, prepare_fact_support, prepare_supported_fact_changes, support_entity_directory
 from core.schema import SchemaValidationError
 from core.story_project.identity import ProjectIdentityError
 from core.story_project.read_set import StoryProjectSourceDriftError
@@ -93,6 +95,8 @@ class ChapterFactReviewRecord:
     created_at: str
     updated_at: str
     confirmed_at: str | None
+    support: dict[str, Any] | None = None
+    support_sha256: str | None = None
 
 
 class ChapterFactReviewStore:
@@ -101,6 +105,9 @@ class ChapterFactReviewStore:
     def __init__(self, database: WorkbenchDatabase) -> None:
         self.database = database
         self.database.initialize()
+        self.database.initialize_component(self._initialize)
+
+    def _initialize(self) -> None:
         with self.database.transaction() as connection:
             connection.executescript(
                 """
@@ -139,6 +146,19 @@ class ChapterFactReviewStore:
 
                 CREATE INDEX IF NOT EXISTS idx_chapter_fact_reviews_draft
                 ON chapter_fact_reviews(draft_id, source_draft_revision DESC);
+
+                CREATE TABLE IF NOT EXISTS chapter_fact_review_edits (
+                    review_id TEXT NOT NULL,
+                    from_revision INTEGER NOT NULL CHECK (from_revision >= 1),
+                    to_revision INTEGER NOT NULL CHECK (to_revision = from_revision + 1),
+                    before_facts_json TEXT NOT NULL,
+                    before_facts_sha256 TEXT NOT NULL,
+                    after_facts_json TEXT NOT NULL,
+                    after_facts_sha256 TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (review_id, to_revision),
+                    FOREIGN KEY (review_id) REFERENCES chapter_fact_reviews(id) ON DELETE CASCADE
+                );
                 """
             )
             columns = {
@@ -166,6 +186,9 @@ class ChapterFactReviewStore:
                     "ALTER TABLE chapter_fact_reviews ADD COLUMN "
                     "source_extraction_record_hash TEXT"
                 )
+            for name in ("support_json", "support_sha256"):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE chapter_fact_reviews ADD COLUMN {name} TEXT")
 
     def create(
         self,
@@ -338,6 +361,10 @@ class ChapterFactReviewStore:
         review_id = _validated_review_id(review_id)
         expected = _positive_revision(expected_revision)
         current = self.get(review_id)
+        if current.revision != expected:
+            raise ChapterFactReviewConflict(
+                f"fact review changed: expected revision {expected}, current {current.revision}"
+            )
         if current.state != "editing":
             raise ChapterFactReviewConflict(
                 "confirmed fact review is immutable; create a review for a newer draft revision"
@@ -384,6 +411,76 @@ class ChapterFactReviewStore:
                 raise ChapterFactReviewConflict(
                     f"fact review changed: expected revision {expected}, current {row['revision']}"
                 )
+            # Preserve the actual before/after cards in the same CAS transaction.
+            # Legacy reviews begin their history at their first new edit; no
+            # synthetic earlier author decisions are manufactured by migration.
+            connection.execute(
+                """INSERT INTO chapter_fact_review_edits (
+                    review_id, from_revision, to_revision, before_facts_json,
+                    before_facts_sha256, after_facts_json, after_facts_sha256, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (review_id, current.revision, current.revision + 1,
+                 _canonical_json(current.facts), current.facts_sha256,
+                 facts_json, facts_sha, now),
+            )
+        return self.get(review_id)
+
+    def edit_history(self, review_id: str) -> list[dict[str, Any]]:
+        """Read and verify stored author revisions, never client-supplied originals."""
+        with self.database.transaction(immediate=False) as connection:
+            current = self.get(review_id, connection=connection)
+            rows = connection.execute(
+                "SELECT * FROM chapter_fact_review_edits WHERE review_id = ? ORDER BY to_revision",
+                (current.id,),
+            ).fetchall()
+        history: list[dict[str, Any]] = []
+        previous_facts = None
+        previous_revision = 0
+        try:
+            for row in rows:
+                before = json.loads(row["before_facts_json"])
+                after = json.loads(row["after_facts_json"])
+                source_revision, target_revision = int(row["from_revision"]), int(row["to_revision"])
+                if (source_revision < 1 or target_revision != source_revision + 1
+                        or source_revision < previous_revision or target_revision > current.revision):
+                    raise ValueError("invalid revision sequence")
+                for facts, digest in ((before, row["before_facts_sha256"]), (after, row["after_facts_sha256"])):
+                    if (normalize_fact_review_items(facts, chapter_text=current.source_text) != facts
+                            or _sha256_text(_canonical_json(facts)) != digest):
+                        raise ValueError("card snapshot hash or canonical form changed")
+                if (_author_update_transition(before, after) != after
+                        or previous_facts is not None and previous_facts != before):
+                    raise ValueError("card edit history is discontinuous")
+                history.append({"from_revision": source_revision, "to_revision": target_revision,
+                                "before_facts": before, "after_facts": after,
+                                "created_at": str(row["created_at"])})
+                previous_facts, previous_revision = after, target_revision
+            if previous_facts is not None and previous_facts != current.facts:
+                raise ValueError("last snapshot differs from current cards")
+        except (TypeError, ValueError, KeyError, ChapterFactReviewError) as exc:
+            raise ChapterFactReviewIntegrity("fact review edit history is corrupt") from exc
+        return history
+
+    def update_support(self, review_id: str, *, support, expected_revision: int) -> ChapterFactReviewRecord:
+        current = self.get(review_id)
+        expected = _positive_revision(expected_revision)
+        if current.revision != expected:
+            raise ChapterFactReviewConflict("fact review changed before supplement update")
+        if current.state != "editing":
+            raise ChapterFactReviewConflict("confirmed fact review is immutable")
+        value = normalize_fact_support(support)
+        encoded = None if value is None else _canonical_json(value)
+        checksum = None if encoded is None else _sha256_text(encoded)
+        with self.database.transaction() as connection:
+            _require_current_draft_binding(connection, project_id=current.project_id, chapter=current.chapter,
+                candidate_id=current.candidate_id, draft_id=current.draft_id,
+                revision=current.source_draft_revision, sha256=current.source_draft_sha256)
+            changed = connection.execute("""UPDATE chapter_fact_reviews SET support_json=?, support_sha256=?,
+                revision=revision+1, confirmation_sha256=NULL, confirmed_at=NULL, updated_at=?
+                WHERE id=? AND revision=? AND state='editing'""",
+                (encoded, checksum, _utc_now(), current.id, expected))
+            if changed.rowcount != 1:
+                raise ChapterFactReviewConflict("fact review changed before supplement update")
         return self.get(review_id)
 
     def confirm(
@@ -463,10 +560,13 @@ class ChapterFactReviewService:
         database: WorkbenchDatabase,
         projects: ProjectRegistry,
         candidate_drafts: CandidateDraftStore,
+        context_builder_factory=None,
     ) -> None:
         self.projects = projects
         self.candidate_drafts = candidate_drafts
         self.reviews = ChapterFactReviewStore(database)
+        # Explicit service configuration, not supplied by author review payloads.
+        self.context_builder_factory = context_builder_factory or ChapterCandidateContextBuilder
 
     def create(
         self,
@@ -524,14 +624,104 @@ class ChapterFactReviewService:
     def get(self, review_id: str) -> dict[str, Any]:
         return self._public(self.reviews.get(review_id), include_facts=True)
 
+    def editor_context(self, review_id: str) -> dict[str, Any]:
+        """Read-only prose, original suggestions and authoritative form options.
+
+        Stale reviews retain their original prose/model suggestions and audit
+        trail, but do not expose a current-state supplement preparation.
+        """
+        record = self.reviews.get(review_id)
+        fresh, stale_reason = self._freshness(record)
+        history = self.reviews.edit_history(record.id)
+        result: dict[str, Any] = {
+            "review_id": record.id,
+            "revision": record.revision,
+            "source_text": record.source_text,
+            "original_model_facts": self._original_model_facts(record),
+            "payload_contracts": copy.deepcopy(fact_payload_contracts()),
+            "fresh": fresh,
+            "stale_reason": stale_reason,
+            "support_supported": False,
+            "entity_directory": [],
+            "baseline_state": None,
+            "support_preview": None,
+            "edit_history": history[-20:],
+            "edit_history_total": len(history),
+            "publication_authorized": False,
+        }
+        if fresh:
+            project = self.projects.get(record.project_id)
+            context = self.context_builder_factory(project.root).build(record.chapter)
+            payload = context.story_project_context
+            if context.context_sha256 != record.context_sha256:
+                raise ChapterFactReviewConflict("fact editor belongs to a changed chapter context")
+            if payload["project_identity"].get("schema_version") == "3.0":
+                from core.story_project.reviewed_state_context import validated_reviewed_state_context
+                state = validated_reviewed_state_context(payload)["authoritative_state"]
+                result.update(
+                    support_supported=True,
+                    entity_directory=support_entity_directory(state),
+                    baseline_state=copy.deepcopy(state),
+                    support_preview=(prepare_fact_support(
+                        base_state=state, support=record.support, book_id=project.book_id,
+                        review_scope=record.id,
+                    ) if record.support is not None else None),
+                )
+        latest = self.reviews.get(record.id)
+        if latest.revision != record.revision or latest.state != record.state:
+            raise ChapterFactReviewConflict("fact review changed while loading editor context")
+        return result
+
+    def _original_model_facts(self, record: ChapterFactReviewRecord) -> list[dict[str, Any]]:
+        if record.source_extraction_id is None:
+            return []
+        project = self.projects.get(record.project_id)
+        try:
+            store = ChapterFactExtractionStore(project.root)
+            extraction = store.load(record.source_extraction_id)
+            source_text = store.load_source(record.source_extraction_id)
+            authority_view = store.load_authority_view(record.source_extraction_id)
+            intent, execution, proposal = extraction["intent"], extraction["record"], extraction["proposal"]
+            authority_binding = authority_view.get("authority_binding")
+            actual_authority = {
+                **copy.deepcopy(intent["authority"]),
+                "authority_projection_sha256": (
+                    authority_binding.get("authority_projection_sha256")
+                    if isinstance(authority_binding, Mapping) else None
+                ),
+            }
+            if (not isinstance(execution, Mapping) or not isinstance(proposal, Mapping)
+                    or execution["status"] != "completed"
+                    or execution["record_hash"] != record.source_extraction_record_hash
+                    or intent["book_id"] != project.book_id
+                    or intent["chapter_index"] != record.chapter
+                    or intent["candidate"] != {"candidate_id": record.candidate_id, "intent_hash": record.candidate_intent_hash}
+                    or intent["draft"]["draft_id"] != record.draft_id
+                    or intent["draft"]["revision"] != record.source_draft_revision
+                    or intent["draft"]["sha256"] != record.source_draft_sha256
+                    or intent["context"]["context_sha256"] != record.context_sha256
+                    or source_text != record.source_text or actual_authority != record.authority):
+                raise ValueError("extraction differs from the review's immutable source")
+            original = normalize_fact_review_items(proposal["facts"], chapter_text=record.source_text)
+            original_by_id = {item["fact_id"]: item for item in original}
+            model_ids = {item["fact_id"] for item in record.facts if item["review"]["origin"] == "model"}
+            if (set(original_by_id) != model_ids or any(
+                    item["review"] != {"origin": "model", "decision": "pending", "author_edited": False, "reason": None}
+                    for item in original)):
+                raise ValueError("model provenance differs from the original extraction")
+            return copy.deepcopy(original)
+        except (ChapterFactExtractionError, SafePathError, OSError, ValueError, TypeError, KeyError) as exc:
+            raise ChapterFactReviewIntegrity("original model fact evidence cannot be verified") from exc
+
     def verify_draft_source(
         self,
         draft_id: str,
+        *, connection=None,
     ) -> tuple[CandidateDraftRecord, dict[str, Any]]:
         """Return the current draft and its fully verified Candidate Intent."""
 
-        draft = self.candidate_drafts.get(draft_id)
-        return draft, self._verified_candidate_intent(draft)
+        draft = self.candidate_drafts.get(draft_id, connection=connection)
+        return draft, self._verified_candidate_intent(draft, **({} if connection is None else {"connection": connection}))
 
     def create_from_extraction(
         self,
@@ -665,6 +855,33 @@ class ChapterFactReviewService:
         )
         return self._public(updated, include_facts=True)
 
+    def update_support(self, review_id: str, *, support, expected_revision: int, author_confirmed: bool) -> dict[str, Any]:
+        if author_confirmed is not True:
+            raise ChapterFactReviewConflict("explicit author confirmation is required for identity/baseline decisions")
+        current = self.reviews.get(review_id)
+        self._require_fresh(current)
+        preview = self._support_preparation(current, support, require_facts=False)
+        updated = self.reviews.update_support(review_id, support=support, expected_revision=expected_revision)
+        return {**self._public(updated, include_facts=True), "support_preview":preview}
+
+    def _support_preparation(self, record, support, *, require_facts):
+        project = self.projects.get(record.project_id)
+        context = self.context_builder_factory(project.root).build(record.chapter)
+        payload = context.story_project_context
+        if payload["project_identity"].get("schema_version") != "3.0":
+            raise ChapterFactReviewConflict("identity/baseline supplements require the reviewed project workflow")
+        if context.context_sha256 != record.context_sha256:
+            raise ChapterFactReviewConflict("supplement belongs to a changed chapter context")
+        value = normalize_fact_support(support)
+        if value is None:
+            return None
+        from core.story_project.reviewed_state_context import validated_reviewed_state_context
+        state = validated_reviewed_state_context(payload)["authoritative_state"]
+        args = dict(base_state=state, support=value, book_id=project.book_id, review_scope=record.id)
+        if require_facts:
+            return prepare_supported_fact_changes(facts=record.facts, chapter_text=record.source_text, **args)
+        return prepare_fact_support(**args)
+
     def confirm(
         self,
         review_id: str,
@@ -690,6 +907,8 @@ class ChapterFactReviewService:
                 code="chapter_fact_source_draft_changed",
             )
         self._require_fresh(current)
+        if current.support is not None:
+            self._support_preparation(current, current.support, require_facts=True)
         confirmed = self.reviews.confirm(
             review_id,
             expected_revision=expected_revision,
@@ -700,8 +919,9 @@ class ChapterFactReviewService:
     def _verified_candidate_intent(
         self,
         draft: CandidateDraftRecord,
+        *, connection=None,
     ) -> dict[str, Any]:
-        project = self.projects.get(draft.project_id)
+        project = self.projects.get(draft.project_id, **({} if connection is None else {"connection": connection}))
         try:
             store = ChapterCandidateStore(project.root)
             intent = store.load_intent(draft.candidate_id)
@@ -720,7 +940,7 @@ class ChapterFactReviewService:
                 "Candidate draft is not bound to a completed Candidate"
             )
         try:
-            ChapterCandidateContextBuilder(project.root).verify_binding(
+            self.context_builder_factory(project.root).verify_binding(
                 chapter_index=draft.chapter,
                 source=intent["source"],
                 authority=intent["authority"],
@@ -844,6 +1064,8 @@ class ChapterFactReviewService:
             "updated_at": record.updated_at,
             "confirmed_at": record.confirmed_at,
         }
+        if record.support is not None:
+            payload.update(support=copy.deepcopy(record.support), support_sha256=record.support_sha256)
         if include_facts:
             payload["facts"] = facts
         return payload
@@ -905,6 +1127,8 @@ def _decode_review_from_row(row: Any) -> ChapterFactReviewRecord:
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
         confirmed_at=(str(row["confirmed_at"]) if row["confirmed_at"] else None),
+        support=json.loads(row["support_json"]) if row["support_json"] is not None else None,
+        support_sha256=str(row["support_sha256"]) if row["support_sha256"] is not None else None,
     )
     if (
         record.record_type != FACT_REVIEW_RECORD_TYPE
@@ -953,6 +1177,12 @@ def _decode_review_from_row(row: Any) -> ChapterFactReviewRecord:
         raise ChapterFactReviewIntegrity("fact review items are not canonical")
     if _sha256_text(_canonical_json(record.facts)) != record.facts_sha256:
         raise ChapterFactReviewIntegrity("fact review facts hash mismatch")
+    if (record.support is None) != (record.support_sha256 is None):
+        raise ChapterFactReviewIntegrity("fact review supplement binding is incomplete")
+    if record.support is not None:
+        if (normalize_fact_support(record.support) != record.support
+                or _sha256_text(_canonical_json(record.support)) != record.support_sha256):
+            raise ChapterFactReviewIntegrity("fact review supplement hash mismatch")
     if record.state == "confirmed":
         try:
             require_confirmed_fact_review(
@@ -1037,9 +1267,9 @@ def _author_update_transition(
 
     current_by_id = {str(item["fact_id"]): item for item in current}
     proposed_by_id = {str(item["fact_id"]): item for item in proposed}
-    if set(current_by_id) != set(proposed_by_id):
+    if not set(current_by_id).issubset(proposed_by_id):
         raise ChapterFactReviewConflict(
-            "fact cards cannot be added or removed during review; mark unwanted cards "
+            "fact cards cannot be removed during review; mark unwanted cards "
             "rejected with reason author_deleted"
         )
 
@@ -1053,10 +1283,16 @@ def _author_update_transition(
     )
     for item in proposed:
         fact_id = str(item["fact_id"])
-        before = current_by_id[fact_id]
-        before_review = before["review"]
         after = copy.deepcopy(dict(item))
         after_review = after["review"]
+        if fact_id not in current_by_id:
+            if after_review["origin"] != "author":
+                raise ChapterFactReviewConflict("new fact cards must explicitly have author origin")
+            after_review["author_edited"] = True
+            result.append(after)
+            continue
+        before = current_by_id[fact_id]
+        before_review = before["review"]
         if after_review["origin"] != before_review["origin"]:
             raise ChapterFactReviewConflict(
                 f"fact card {fact_id} origin is immutable"
@@ -1084,6 +1320,8 @@ def _fact_confirmation_sha256(record: ChapterFactReviewRecord) -> str:
         "authority_sha256": record.authority_sha256,
         "author_confirmed": True,
     }
+    if record.support is not None:
+        payload["support_sha256"] = record.support_sha256
     if record.source_extraction_id is not None:
         payload["source_extraction_id"] = record.source_extraction_id
         payload["source_extraction_record_hash"] = (

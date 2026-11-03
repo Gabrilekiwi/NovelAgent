@@ -80,7 +80,7 @@ def prepare_reviewed_upgrade(*, trusted_context, baseline_state: dict, confirmed
     return result
 
 
-def prepare_reviewed_upgrade_transaction(*, preparation: dict) -> PersistenceV2Transaction:
+def prepare_reviewed_upgrade_transaction(*, preparation: dict, fault_injector=None) -> PersistenceV2Transaction:
     """Stage the verified upgrade for an already gated caller; no auto commit."""
     p = preparation
     if (p.get("version") != UPGRADE_PREPARATION_VERSION or p.get("publication_authorized") is not False
@@ -152,7 +152,8 @@ def prepare_reviewed_upgrade_transaction(*, preparation: dict) -> PersistenceV2T
             ("reviewed_calibration", f"reviewed/upgrades/{run_id}-calibration.json", json_bytes(report)),
             ("reviewed_upgrade_preparation", f"reviewed/upgrades/{run_id}-preparation.json", json_bytes(p)))]
     tx = PersistenceV2Transaction(transaction_root=transaction_root, run_id=run_id, book_id=identity.book_id,
-        root_map=roots, story_project_read_set=p["read_set"], read_set_declared_writes=declared)
+        root_map=roots, story_project_read_set=p["read_set"], read_set_declared_writes=declared,
+        fault_injector=fault_injector)
     tx.prepare(apply_targets=[state_target, identity_target], artifacts=artifacts, final_run_record=final,
         final_run_path_ref=ref(f"reviewed/runs/{run_id}.json", "runtime"), receipt_id=upgrade["receipt_id"],
         receipt_path_ref=receipt_ref, context_digest=binding["context_sha256"],

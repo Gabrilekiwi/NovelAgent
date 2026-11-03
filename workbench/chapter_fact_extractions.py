@@ -1,6 +1,8 @@
 from __future__ import annotations
+from core.engine.execution_activity import execution_is_active
 
 import copy
+import hashlib
 import re
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,6 +22,8 @@ from core.engine.chapter_fact_extraction import (
     ChapterFactExtractionExecutor,
     ChapterFactExtractionIntegrityError,
     ChapterFactExtractionStore,
+    _extraction_id_from_digest,
+    _execution_id,
 )
 from core.engine.chapter_fact_extraction_resolution import (
     ChapterFactExtractionProviderResolutionConflict,
@@ -45,6 +49,7 @@ from workbench.chapter_facts import (
     ChapterFactReviewService,
 )
 from workbench.projects import ProjectRegistry
+from workbench.chapter_budget_scope import chapter_service_operation
 
 
 _EXTRACTION_ID = re.compile(r"^fact_extraction_[0-9a-f]{40}$")
@@ -84,10 +89,12 @@ class ChapterFactExtractionService:
         candidate_drafts: CandidateDraftStore,
         chapter_facts: ChapterFactReviewService,
         executor_factory: ExecutorFactory | None = None,
+        context_builder_factory=None,
     ) -> None:
         self.projects = projects
         self.candidate_drafts = candidate_drafts
         self.chapter_facts = chapter_facts
+        self.context_builder_factory = context_builder_factory or ChapterCandidateContextBuilder
         self.executor_factory = executor_factory or (
             lambda root: ChapterFactExtractionExecutor(story_project_root=root)
         )
@@ -106,6 +113,16 @@ class ChapterFactExtractionService:
                 "explicit author confirmation is required to extract fact candidates"
             )
         key = _validated_idempotency_key(idempotency_key)
+        draft=self.candidate_drafts.get(draft_id)
+        project=self.projects.get(draft.project_id)
+        executor=self.executor_factory(project.root)
+        extraction_id=_extraction_id_from_digest(book_id=project.book_id,chapter_index=draft.chapter,
+            idempotency_key_sha256=hashlib.sha256(key.encode('utf-8')).hexdigest())
+        with chapter_service_operation(executor,project,draft.chapter,_execution_id(extraction_id),
+                completed=ChapterFactExtractionStore(project.root).has_record(extraction_id)):
+            return self._start_in_operation(draft_id,expected_draft_revision,expected_draft_sha256,key,executor)
+
+    def _start_in_operation(self,draft_id,expected_draft_revision,expected_draft_sha256,key,executor):
         draft, intent, trusted, project = self._prepare_current_draft(
             draft_id,
             expected_revision=expected_draft_revision,
@@ -119,7 +136,6 @@ class ChapterFactExtractionService:
                 code=exc.code,
             ) from exc
         with _extraction_error_boundary():
-            executor = self.executor_factory(project.root)
             try:
                 record = executor.execute(
                     book_id=project.book_id,
@@ -171,10 +187,56 @@ class ChapterFactExtractionService:
                 raise ChapterFactExtractionWorkbenchConflict(
                     "fact-extraction Intent changed before resume"
                 )
-            try:
-                self.executor_factory(project.root).resume(extraction_id)
-            except ChapterFactExtractionExecutionError:
-                pass
+            executor=self.executor_factory(project.root)
+            store=ChapterFactExtractionStore(project.root)
+            with chapter_service_operation(executor,project,draft.chapter,_execution_id(extraction_id),
+                    completed=store.has_record(extraction_id),resume=True):
+                try:
+                    executor.resume(extraction_id)
+                except ChapterFactExtractionExecutionError:
+                    pass
+                return self._finalize(draft, extraction_id, include_facts=True)
+
+    def open_review(
+        self,
+        draft_id: str,
+        extraction_id: str,
+        *,
+        expected_record_hash: str,
+        author_confirmed: bool,
+    ) -> dict[str, Any]:
+        """Adopt a completed local result without constructing an executor.
+
+        A process can stop after publishing its terminal extraction record and
+        before creating the Workbench review. Reads keep that gap visible; this
+        explicit action completes only the local review import. _finalize also
+        returns any existing review without replacing the author's edits.
+        """
+        if author_confirmed is not True:
+            raise ChapterFactExtractionWorkbenchConflict(
+                "explicit author confirmation is required to open extracted fact cards"
+            )
+        draft = self.candidate_drafts.get(draft_id)
+        project = self.projects.get(draft.project_id)
+        with _extraction_error_boundary():
+            loaded = self._load_for_draft(project.root, draft, extraction_id)
+            record = loaded["record"]
+            if not isinstance(record, Mapping) or record["status"] != "completed":
+                raise ChapterFactExtractionWorkbenchConflict(
+                    "only a completed fact extraction can open review cards"
+                )
+            if record["record_hash"] != _validated_sha256(
+                expected_record_hash, "expected_record_hash"
+            ):
+                raise ChapterFactExtractionWorkbenchConflict(
+                    "fact-extraction record changed before review import"
+                )
+            fresh, _reason = self._source_freshness(draft, loaded["intent"])
+            if not fresh:
+                raise ChapterFactExtractionWorkbenchConflict(
+                    "fact extraction is stale; preserve it and extract from the current draft",
+                    code="chapter_fact_extraction_stale",
+                )
             return self._finalize(draft, extraction_id, include_facts=True)
 
     def cancel(
@@ -274,7 +336,7 @@ class ChapterFactExtractionService:
             )
         project = self.projects.get(draft.project_id)
         try:
-            trusted = ChapterCandidateContextBuilder(project.root).build(draft.chapter)
+            trusted = self.context_builder_factory(project.root).build(draft.chapter)
         except StoryProjectSourceDriftError as exc:
             raise ChapterFactExtractionWorkbenchConflict(
                 "可信章节输入在读取期间发生变化；事实提取尚未启动。",
@@ -361,8 +423,18 @@ class ChapterFactExtractionService:
             extraction_id,
         )
         unresolved = store.model_call_store(intent).list_uncertain_calls()
+        active = False
+        if not isinstance(record, Mapping):
+            active = execution_is_active(store.paths.run_dir, intent["execution"]["execution_id"])
+            if not active:
+                # A terminal result can appear while the read probes activity.
+                loaded = self._load_for_draft(project.root, draft, extraction_id)
+                record, proposal = loaded["record"], loaded["proposal"]
+                unresolved = store.model_call_store(intent).list_uncertain_calls()
         if isinstance(record, Mapping):
             raw_status = str(record["status"])
+        elif active:
+            raw_status = "running"
         elif unresolved:
             raw_status = "provider_uncertain"
         else:

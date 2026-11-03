@@ -340,7 +340,7 @@ class AgentExecutor:
                 if self._requires_execution_evidence(persist=persist)
                 else nullcontext()
             )
-            with lock_scope:
+            with self._machine_write_scope(persist=persist), lock_scope:
                 self._execution_evidence = self._begin_execution_evidence(persist=persist)
                 self._run_budget_tracker = RunBudgetTracker(self.run_budget_limits)
                 model_calls_ref = (
@@ -370,6 +370,18 @@ class AgentExecutor:
             self._run_budget_tracker = previous_tracker
             self._model_call_runtime = previous_runtime
             self._execution_scope_depth = 0
+
+    def _machine_write_scope(self, *, persist: bool):
+        if not self._requires_execution_evidence(persist=persist):
+            return nullcontext()
+        from workbench.book_ownership import book_output_write_lock
+        paths = [self.run_dir, self.persistence_dir, self.chapter_dir, self.snapshot_path]
+        root = self._configured_story_project_root()
+        if root is not None:
+            paths.append(root)
+        if hasattr(self.memory_writer, "path"):
+            paths.append(Path(self.memory_writer.path))
+        return book_output_write_lock(*paths)
 
     def _requires_execution_evidence(self, *, persist: bool) -> bool:
         return (
@@ -587,6 +599,22 @@ class AgentExecutor:
             self._event_authority_operation = None
 
     def _invoke_persist_once(
+        self,
+        *,
+        snapshot_override: dict[str, Any] | None,
+        previous_result: dict[str, Any] | None,
+        chapter_hint: int | None,
+    ) -> dict[str, Any]:
+        # Also protect direct/internal persistence entry before identity setup,
+        # recovery or model work. Public calls hold this before provenance too.
+        with self._machine_write_scope(persist=True):
+            return self._invoke_owned_persist_once(
+                snapshot_override=snapshot_override,
+                previous_result=previous_result,
+                chapter_hint=chapter_hint,
+            )
+
+    def _invoke_owned_persist_once(
         self,
         *,
         snapshot_override: dict[str, Any] | None,
@@ -1296,12 +1324,15 @@ class AgentExecutor:
         stop_on_rejection: bool = True,
         observer: LoopObserver | None = None,
     ) -> dict[str, Any]:
-        return self._run_loop_impl(
-            steps=steps,
-            persist=persist,
-            stop_on_rejection=stop_on_rejection,
-            observer=observer,
-        )
+        # The loop also persists its session summary after a step exits. Keep
+        # that write (including failure diagnostics) inside the same boundary.
+        with self._machine_write_scope(persist=persist):
+            return self._run_loop_impl(
+                steps=steps,
+                persist=persist,
+                stop_on_rejection=stop_on_rejection,
+                observer=observer,
+            )
 
     def _run_loop_impl(
         self,

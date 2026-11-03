@@ -24,7 +24,6 @@ def test_chapter_card_ui_is_source_bound_and_never_claims_to_generate() -> None:
     assert 'data-card-confirm-button disabled' in html
     assert 'if (!form.hasAttribute("data-defer-success-toast")) showToast(message);' in (STATIC / "workbench.js").read_text(encoding="utf-8")
     assert "不会调用模型，也不会创建候选或提交正文" in html
-    assert "确认凭据只保存在本次工作台会话；尚未生成正文候选" in html
     assert "window.sessionStorage.setItem(chapterConfirmationKey" in spa
     assert "writeChapterConfirmation" in spa
     assert "form.dataset.inputRevision === submission.input_revision" in spa

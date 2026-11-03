@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.engine.execution_activity import execution_activity
 
 import copy
 import hashlib
@@ -36,7 +37,8 @@ from core.execution_provenance import (
     capture_execution_provenance,
 )
 from core.memory_v2.canonical import canonical_json_hash
-from core.model_call_runtime import ModelCallRuntimeContext, ProviderCallUncertainError
+from core.model_call_runtime import (ModelCallRuntimeContext, ProviderCallUncertainError,
+    current_model_call_runtime, use_model_call_runtime)
 from core.model_calls import ModelCallStore
 from core.runtime_paths import RuntimePaths
 from core.schema import SchemaValidationError, validate_schema
@@ -269,7 +271,7 @@ class ChapterFactExtractionStore:
 
     def load_intent(self, extraction_id: str) -> dict[str, Any]:
         extraction_id = _validate_extraction_id(extraction_id)
-        payload = _load_json(
+        payload = self._read_json(
             self.intent_path(extraction_id),
             "chapter fact-extraction Intent",
         )
@@ -283,7 +285,7 @@ class ChapterFactExtractionStore:
 
     def load_record(self, extraction_id: str) -> dict[str, Any]:
         extraction_id = _validate_extraction_id(extraction_id)
-        payload = _load_json(
+        payload = self._read_json(
             self.record_path(extraction_id),
             "chapter fact-extraction record",
         )
@@ -310,7 +312,7 @@ class ChapterFactExtractionStore:
 
     def load_proposal(self, extraction_id: str) -> dict[str, Any]:
         extraction_id = _validate_extraction_id(extraction_id)
-        proposal = _load_json(
+        proposal = self._read_json(
             self.proposal_path(extraction_id),
             "chapter fact-extraction proposal",
         )
@@ -421,7 +423,7 @@ class ChapterFactExtractionStore:
         provenance_path = self._run_artifact_path(
             intent["execution"]["provenance_artifact_ref"]
         )
-        provenance = _load_json(provenance_path, "fact-extraction provenance")
+        provenance = self._read_json(provenance_path, "fact-extraction provenance")
         try:
             checked = validate_schema(provenance, "execution_provenance.schema.json")
             verified = ExecutionProvenance.from_dict(checked)
@@ -440,7 +442,7 @@ class ChapterFactExtractionStore:
         record: Mapping[str, Any],
         intent: Mapping[str, Any],
     ) -> None:
-        current_evidence = _model_call_evidence(self.model_call_store(intent))
+        current_evidence = self._call_evidence(self.model_call_store(intent))
         for field in (
             "intent_hashes",
             "receipt_hashes",
@@ -455,7 +457,7 @@ class ChapterFactExtractionStore:
         selected = record["evidence"]["selected_response"]
         raw_response: str | None = None
         if selected is not None:
-            raw_response = _load_selected_response(
+            raw_response = self._selected_response(
                 self.model_call_store(intent),
                 selected,
             )
@@ -513,7 +515,7 @@ class ChapterFactExtractionStore:
     def _read_bound_text(self, metadata: Mapping[str, Any], *, label: str) -> str:
         path = self._runtime_artifact_path(str(metadata["artifact_ref"]))
         try:
-            text = path.read_text(encoding="utf-8")
+            text = self._read_text(path)
         except (OSError, UnicodeError) as exc:
             raise ChapterFactExtractionIntegrityError(
                 f"cannot read {label}: {path}: {exc}"
@@ -531,7 +533,7 @@ class ChapterFactExtractionStore:
         label: str,
     ) -> dict[str, Any]:
         path = self._runtime_artifact_path(str(metadata["artifact_ref"]))
-        value = _load_json(path, label)
+        value = self._read_json(path, label)
         if canonical_json_hash(value, exclude_environment_fields=False) != metadata[
             "sha256"
         ]:
@@ -539,6 +541,18 @@ class ChapterFactExtractionStore:
         if len(_canonical_json(value)) != metadata["chars"]:
             raise ChapterFactExtractionIntegrityError(f"{label} length mismatch")
         return value
+
+    def _read_json(self, path: Path, label: str):
+        return _load_json(path, label)
+
+    def _read_text(self, path: Path):
+        return path.read_text(encoding="utf-8")
+
+    def _call_evidence(self, store):
+        return _model_call_evidence(store)
+
+    def _selected_response(self, store, selected):
+        return _load_selected_response(store, selected)
 
     def _runtime_artifact_path(self, artifact_ref: str) -> Path:
         return _resolve_relative_artifact(self.paths.runtime_dir, artifact_ref)
@@ -560,6 +574,8 @@ class ChapterFactExtractionExecutor:
         provenance_factory: Callable[[], ExecutionProvenance] | None = None,
         clock: Callable[[], datetime] | None = None,
         fault_injector: Callable[[str, str], None] | None = None,
+        execution_budget=None,
+        execution_budget_factory=None,
     ) -> None:
         if execution_kind not in _ALLOWED_EXECUTION_KINDS:
             raise ValueError(
@@ -578,6 +594,8 @@ class ChapterFactExtractionExecutor:
         self.provenance_factory = provenance_factory
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.fault_injector = fault_injector
+        self.execution_budget = execution_budget
+        self.execution_budget_factory = execution_budget_factory
         self._captured_provenance: ExecutionProvenance | None = None
 
     def execute(
@@ -607,7 +625,8 @@ class ChapterFactExtractionExecutor:
             author_confirmed=author_confirmed,
         )
         with provider_execution_lock(self.paths.run_dir):
-            return self._execute_prepared(prepared)
+            with execution_activity(self.paths.run_dir, _execution_id(prepared["extraction_id"])):
+                return self._execute_prepared(prepared)
 
     def _execute_prepared(self, prepared: Mapping[str, Any]) -> dict[str, Any]:
         extraction_id = prepared["extraction_id"]
@@ -624,6 +643,7 @@ class ChapterFactExtractionExecutor:
                 code="chapter_fact_extraction_recovery_required",
             )
 
+        self._select_execution_budget(prepared['book_id'],prepared['chapter_index'])
         self._raise_for_unresolved_provider_call()
         provenance = self._capture_provenance()
         execution_id = _execution_id(extraction_id)
@@ -682,14 +702,14 @@ class ChapterFactExtractionExecutor:
 
     def resume(self, extraction_id: str) -> dict[str, Any]:
         extraction_id = _validate_extraction_id(extraction_id)
-        with provider_execution_lock(self.paths.run_dir):
+        with provider_execution_lock(self.paths.run_dir), execution_activity(self.paths.run_dir, _execution_id(extraction_id)):
             self._raise_if_abandoned(extraction_id)
             if self.store.has_record(extraction_id):
                 return self.store.load_record(extraction_id)
             intent = self.store.load_intent(extraction_id)
             self._require_executor_kind(intent)
             self._require_current_provenance(intent)
-            return self._execute_claimed(intent)
+            return self._execute_claimed(intent,local_recovery=True)
 
     def cancel(self, extraction_id: str) -> dict[str, Any]:
         extraction_id = _validate_extraction_id(extraction_id)
@@ -823,12 +843,23 @@ class ChapterFactExtractionExecutor:
                 resolution,
             )
 
-    def _execute_claimed(self, intent: dict[str, Any]) -> dict[str, Any]:
+    def _execute_claimed(self, intent: dict[str, Any], *, local_recovery=False) -> dict[str, Any]:
         extraction_id = intent["extraction_id"]
         self._raise_if_abandoned(extraction_id)
         self._require_executor_kind(intent)
         self._require_current_provenance(intent)
         model_store = self.store.model_call_store(intent)
+        runtime=ModelCallRuntimeContext(model_store,clock=self.clock,local_recovery_requested=local_recovery)
+        budget=self._select_execution_budget(intent['book_id'],intent['chapter_index'])
+        if budget is not None:
+            with budget.activate(runtime,intent),use_model_call_runtime(runtime):
+                return self._execute_claimed_with_runtime(intent,runtime)
+        with use_model_call_runtime(runtime):
+            return self._execute_claimed_with_runtime(intent,runtime)
+
+    def _execute_claimed_with_runtime(self,intent,runtime):
+        extraction_id=intent['extraction_id']
+        model_store=runtime.store
         evidence = _model_call_evidence(model_store)
         selected: dict[str, Any] | None = None
         raw_response: str | None = None
@@ -854,10 +885,14 @@ class ChapterFactExtractionExecutor:
                         call_id=str(first["call_id"]),
                         attempt_id=str(first["attempt_id"]),
                     )
-                if evidence["intent_hashes"]:
+                only_not_sent=(runtime.chapter_budget is not None and evidence['receipt_statuses']
+                    and set(evidence['receipt_statuses'])=={'request_not_sent'})
+                if evidence["intent_hashes"] and not only_not_sent:
                     raw_response, selected = _load_single_successful_response(model_store)
 
             if raw_response is None:
+                if runtime.dispatch_forbidden:
+                    raise ChapterFactExtractionIntegrityError('local recovery has no verified response to parse')
                 self._raise_for_unresolved_provider_call()
                 messages = build_fact_extraction_messages(
                     chapter_index=intent["chapter_index"],
@@ -921,6 +956,11 @@ class ChapterFactExtractionExecutor:
                 record=persisted,
                 cause=exc,
             ) from exc
+
+    def _select_execution_budget(self,book_id,chapter):
+        if self.execution_budget_factory is not None:
+            return self.execution_budget_factory(self.story_project_root,book_id=book_id,chapter=chapter)
+        return self.execution_budget
 
     def _build_record(
         self,
@@ -1008,6 +1048,8 @@ class ChapterFactExtractionExecutor:
             )
 
     def _raise_if_abandoned(self, extraction_id: str) -> None:
+        from workbench.restore_execution_policy import require_restored_execution_paths
+        require_restored_execution_paths(self.store.extraction_dir(extraction_id))
         if (
             load_fact_extraction_provider_resolution(
                 self.paths.run_dir,
@@ -1496,6 +1538,7 @@ def _response_binding(
 def _load_selected_response(
     store: ModelCallStore,
     selected: Mapping[str, Any],
+    *, _responses=None,
 ) -> str:
     attempt_id = str(selected.get("attempt_id") or "")
     receipt = store.load_receipt(attempt_id)
@@ -1516,7 +1559,7 @@ def _load_selected_response(
         )
     matches = [
         raw
-        for candidate_receipt, raw in _successful_responses(store)
+        for candidate_receipt, raw in (_successful_responses(store) if _responses is None else _responses)
         if candidate_receipt["attempt_id"] == attempt_id
     ]
     if len(matches) != 1:
@@ -1538,7 +1581,11 @@ def _durable_openai_fact_provider(
     call_id: str,
     evidence_root: Path,
 ) -> str:
-    runtime = ModelCallRuntimeContext(ModelCallStore(evidence_root))
+    runtime = current_model_call_runtime()
+    if runtime is None:
+        runtime = ModelCallRuntimeContext(ModelCallStore(evidence_root))
+    elif runtime.store.root != Path(evidence_root).resolve():
+        raise ChapterFactExtractionIntegrityError('active model runtime belongs to a different fact execution')
     response = chat_completion(
         messages,
         temperature=0.1,

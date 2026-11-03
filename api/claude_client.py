@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from api.execution_deadline import RequestExecutionDeadline
+from api.budget_endpoint import endpoint_fingerprint
 
 from api.contracts import (
+    reported_model_usage,
     MODEL_ENDPOINT_OFFICIAL,
     MODEL_ENDPOINT_UNKNOWN,
     ModelCallError,
@@ -124,16 +127,20 @@ def polish_chapter(
     evidence_request["stream"] = bool(config.claude_stream)
     client_holder: dict[str, Any] = {}
     physical_attempt = 0
+    deadline = (RequestExecutionDeadline(runtime,policy,configured_timeout=config.claude_timeout_seconds,
+        extra_remaining=retry_budget_remaining) if runtime.active_interval is not None else None)
 
     def invoke_provider(client: Any) -> ModelResponse:
+        timed_kwargs = {**request_kwargs,'timeout':deadline.timeout} if deadline is not None else request_kwargs
         if config.claude_stream:
             return _stream_message_text(
                 client,
-                request_kwargs,
+                timed_kwargs,
                 model=model,
                 endpoint_type=endpoint_type,
+                check_execution_time=deadline.remaining if deadline is not None else None,
             )
-        response = client.messages.create(**request_kwargs)
+        response = client.messages.create(**timed_kwargs)
         return _extract_message_text(
             response,
             model=model,
@@ -158,10 +165,13 @@ def polish_chapter(
             max_output_tokens=max(0, int(request_kwargs["max_tokens"])),
             operation=lambda: invoke_provider(client),
             input_tokens=input_tokens,
+            before_dispatch=deadline.prepare if deadline is not None else None,
+            endpoint_fingerprint=(endpoint_fingerprint('anthropic',getattr(client,'base_url',None)
+                or config.claude_base_url or 'https://api.anthropic.com') if runtime.chapter_budget is not None else None),
         )
 
     try:
-        execution = policy.execute(invoke, budget_remaining_seconds=retry_budget_remaining)
+        execution = policy.execute(invoke, budget_remaining_seconds=deadline.retry_remaining if deadline is not None else retry_budget_remaining)
     except RetryOperationError as exc:
         report = exc.report
         cause_summary = (
@@ -201,6 +211,7 @@ def _stream_message_text(
     *,
     model: str | None,
     endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
+    check_execution_time: Callable[[], Any] | None = None,
 ) -> ModelResponse:
     stream_factory = getattr(client.messages, "stream", None)
     if stream_factory is None:
@@ -223,6 +234,7 @@ def _stream_message_text(
                 for part in text_stream:
                     if part:
                         parts.append(str(part))
+                    if check_execution_time is not None:check_execution_time()
             if not parts:
                 for event in stream:
                     text = getattr(event, "text", None)
@@ -234,7 +246,7 @@ def _stream_message_text(
                         actual_model = _optional_metadata(
                             getattr(message, "model", None)
                         ) or actual_model
-                        message_usage = _sdk_mapping(getattr(message, "usage", None))
+                        message_usage = reported_model_usage(_sdk_mapping(getattr(message, "usage", None)))
                         if message_usage:
                             usage.update(message_usage)
                     delta = getattr(event, "delta", None)
@@ -242,16 +254,19 @@ def _stream_message_text(
                         finish_reason = _optional_metadata(
                             getattr(delta, "stop_reason", None)
                         ) or finish_reason
-                    event_usage = _sdk_mapping(getattr(event, "usage", None))
+                    event_usage = reported_model_usage(_sdk_mapping(getattr(event, "usage", None)))
                     if event_usage:
                         usage.update(event_usage)
+                    if check_execution_time is not None:check_execution_time()
 
+            if check_execution_time is not None:check_execution_time()
             final_message = None
             final_getter = getattr(stream, "get_final_message", None)
             if callable(final_getter):
                 final_message = final_getter()
+            if check_execution_time is not None:check_execution_time()
             if final_message is not None:
-                final_usage = _sdk_mapping(getattr(final_message, "usage", None))
+                final_usage = reported_model_usage(_sdk_mapping(getattr(final_message, "usage", None)))
                 if final_usage:
                     usage = final_usage
                 finish_reason = _optional_metadata(
@@ -334,7 +349,7 @@ def _extract_message_text(
         )
     return ModelResponse(
         "\n".join(parts),
-        usage=_sdk_mapping(getattr(response, "usage", None)),
+        usage=reported_model_usage(_sdk_mapping(getattr(response, "usage", None))),
         finish_reason=_optional_metadata(getattr(response, "stop_reason", None)),
         request_id=_anthropic_request_id(response),
         actual_model=_optional_metadata(getattr(response, "model", None)) or model,

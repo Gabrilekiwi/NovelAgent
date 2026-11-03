@@ -1,0 +1,12 @@
+.publication-page { max-width: 1000px; margin: 40px auto; padding: 0 24px 60px; }
+.publication-page .panel { margin: 20px 0; padding: 24px; }
+.publication-page h1 { margin: 12px 0; }
+.publication-page h2 { margin: 16px 0; }
+.publication-prose { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 560px; overflow: auto; font: inherit; line-height: 1.9; }
+.publication-actions { display: grid; gap: 18px; }
+.publication-page details { padding: 12px 0; border-bottom: 1px solid #ddd; }
+.publication-page summary { cursor: pointer; }
+.publication-page dl { display: grid; grid-template-columns: minmax(100px, 1fr) 3fr; gap: 6px 18px; padding: 8px 0 8px 14px; }
+.publication-page dd { margin: 0; overflow-wrap: anywhere; }
+.publication-page ul { padding-left: 24px; }
+.publication-page [hidden] { display: none !important; }

@@ -24,6 +24,7 @@ from core.model_calls import load_model_call_intent, load_model_call_receipt
 from core.runtime_paths import RuntimePaths
 from workbench.database import WorkbenchDatabase
 from workbench.instance import InstanceLease
+from workbench.maintenance import maintenance_for, MaintenanceBlocked, MaintenanceError
 
 
 TERMINAL_JOB_STATES = frozenset({"completed", "cancelled", "failed"})
@@ -176,7 +177,7 @@ class JobStore:
     def __init__(self, database: WorkbenchDatabase) -> None:
         self.database = database
         self.database.initialize()
-        self.initialize()
+        self.database.initialize_component(self.initialize)
 
     def initialize(self) -> None:
         with self.database.transaction() as connection:
@@ -520,6 +521,7 @@ class JobStore:
             row = connection.execute("SELECT * FROM jobs WHERE id = ?", (str(job_id),)).fetchone()
         if row is None:
             raise JobError(f"unknown job: {job_id}")
+        self.database.require_project_access(row['project_id'])
         return _job_from_row(row)
 
     def stream_snapshot(self, job_id: str) -> tuple[JobRecord, int]:
@@ -541,6 +543,7 @@ class JobStore:
             ).fetchone()
         if row is None:
             raise JobError(f"unknown job: {job_id}")
+        self.database.require_project_access(row['project_id'])
         return _job_from_row(row), int(row["last_event_id"])
 
     def list_jobs(
@@ -550,6 +553,10 @@ class JobStore:
         states: Iterable[str] | None = None,
         limit: int = 50,
     ) -> tuple[JobRecord, ...]:
+        if self.database.restore_scope is not None:
+            if project_id is not None:
+                self.database.require_project_access(project_id)
+            project_id = self.database.restore_scope.project_id
         bounded_limit = max(1, min(int(limit), 200))
         clauses: list[str] = []
         values: list[Any] = []
@@ -592,6 +599,33 @@ class JobStore:
                 {"finish_current_chapter": True},
                 timestamp=timestamp,
             )
+        return self.get(job_id)
+
+    def pause_for_maintenance(self, job_id: str, *, chapter: int, operation_id: str) -> JobRecord:
+        """Yield a claimed, settled chapter boundary without losing its receipt.
+
+        The worker must still own admission and have proven its child exited.
+        A running/uncertain chapter cannot be converted into this safe pause.
+        """
+        if not isinstance(operation_id,str) or re.fullmatch(r'[0-9a-f]{32}',operation_id) is None:
+            raise JobError('maintenance operation identity is invalid')
+        timestamp=_utc_now()
+        with self.database.transaction() as connection:
+            row=_require_job_row(connection,job_id)
+            _require_job_execution_contract(row)
+            if row['state'] in TERMINAL_JOB_STATES | PAUSED_JOB_STATES:
+                return _job_from_row(row)
+            if (row['kind']!='generation_session' or row['state'] not in {'starting','pause_requested'}
+                    or row['next_chapter']!=chapter or row['error_json'] is not None):
+                raise JobError('maintenance pause requires a settled chapter boundary')
+            cancelled=bool(row['cancel_requested'])
+            connection.execute('''UPDATE jobs SET state=?,manual_confirmation_required=?,
+                pause_after_chapter=0,updated_at=?,finished_at=?,revision=revision+1 WHERE id=?''',
+                ('cancelled' if cancelled else 'awaiting_input',0 if cancelled else 1,
+                 timestamp,timestamp if cancelled else None,job_id))
+            self._append_event_in_transaction(connection,job_id,'job.cancelled' if cancelled else 'job.paused',
+                {'reason':'workbench_maintenance','operation_id':operation_id,'chapter':chapter,
+                 'completed_chapters':chapter-int(row['start_chapter']),'automatic_resume':False},timestamp=timestamp)
         return self.get(job_id)
 
     def request_cancel(self, job_id: str) -> JobRecord:
@@ -919,6 +953,8 @@ class JobStore:
         return self.get(job_id)
 
     def claim_next(self) -> JobRecord | None:
+        if self.database.restore_scope is not None:
+            return None
         self.quarantine_incompatible_jobs()
         timestamp = _utc_now()
         with self.database.transaction() as connection:
@@ -1408,12 +1444,14 @@ class JobSupervisor:
         process_factory: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
         poll_interval: float = 0.2,
         instance_lease: InstanceLease | None = None,
+        startup_recovery: Callable[[], None] | None = None,
     ) -> None:
         self.store = store
         self.project_lookup = project_lookup
         self.repo_root = Path(repo_root).resolve(strict=True)
         self.runtime_root = Path(runtime_root).resolve(strict=False)
-        self.runtime_root.mkdir(parents=True, exist_ok=True)
+        if store.database.restore_scope is None:
+            self.runtime_root.mkdir(parents=True, exist_ok=True)
         self.python_executable = str(python_executable or sys.executable)
         self.process_factory = process_factory
         self.poll_interval = max(0.05, float(poll_interval))
@@ -1424,8 +1462,14 @@ class JobSupervisor:
         self._active_process: subprocess.Popen[str] | None = None
         self._instance_lease = instance_lease
         self._owns_instance_lease = False
+        self._maintenance=maintenance_for(instance_lease) if instance_lease is not None else None
+        self._startup_recovery=startup_recovery
+        self._startup_recovery_pending=True
+        self._uncertain_admissions=[]
 
     def start(self) -> None:
+        if self.store.database.restore_scope is not None:
+            return
         if self._thread is not None and self._thread.is_alive():
             return
         self._require_no_active_process()
@@ -1433,6 +1477,7 @@ class JobSupervisor:
             self._instance_lease = InstanceLease(self.store.database.path.parent).acquire()
             self._owns_instance_lease = True
         self._instance_lease.require_held()
+        self._maintenance=maintenance_for(self._instance_lease)
         try:
             self._start_worker()
         except BaseException:
@@ -1443,13 +1488,12 @@ class JobSupervisor:
             raise
 
     def _start_worker(self) -> None:
-        self.store.recover_after_restart()
-        self.store.quarantine_incompatible_jobs()
-        self._reconcile_receipted_restart_commits()
-        self._reconcile_known_review_pauses()
-        self._reconcile_pre_provider_context_failures()
-        self._reconcile_pre_provider_provenance_failures()
-        self._reconcile_repair_not_converging_failures()
+        self._startup_recovery_pending=True
+        try:
+            with self._maintenance.admit('worker'):
+                self._recover_startup_once()
+        except MaintenanceBlocked:
+            pass  # Keep the durable request; no restart writes or scheduling.
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._worker_loop,
@@ -1458,6 +1502,18 @@ class JobSupervisor:
         )
         self._thread.start()
         self._wake.set()
+
+    def _recover_startup_once(self) -> None:
+        if not self._startup_recovery_pending:return
+        if self._startup_recovery is not None:self._startup_recovery()
+        self.store.recover_after_restart()
+        self.store.quarantine_incompatible_jobs()
+        self._reconcile_receipted_restart_commits()
+        self._reconcile_known_review_pauses()
+        self._reconcile_pre_provider_context_failures()
+        self._reconcile_pre_provider_provenance_failures()
+        self._reconcile_repair_not_converging_failures()
+        self._startup_recovery_pending=False
 
     def notify(self) -> None:
         self._wake.set()
@@ -1482,40 +1538,52 @@ class JobSupervisor:
                 if self._active_process.poll() is None:
                     raise JobError("执行子进程尚未确认退出，保留工作台所有权，禁止继续调度。")
                 self._active_process = None
+            permits,self._uncertain_admissions=self._uncertain_admissions,[]
+        for permit in permits:permit.close()
 
     def _worker_loop(self) -> None:
         while not self._stop.is_set():
-            job = self.store.claim_next()
-            if job is None:
+            try:permit=self._maintenance.admit('worker')
+            except MaintenanceBlocked:
                 self._wake.wait(timeout=0.5)
                 self._wake.clear()
                 continue
-            try:
-                if job.kind == "generation_session":
-                    self._run_generation_session(job)
-                elif job.kind == "locked_chapter_recovery":
-                    self._run_recovery(job)
-                else:
-                    self.store.fail_job(job.id, {"code": "unsupported_job_kind", "kind": job.kind})
-            except ProcessMonitorError:
-                # Monitoring already attempted to persist an uncertain pause.
-                # If the database is unavailable, leave the running record for
-                # restart recovery; never downgrade it to an ordinary failure.
+            except MaintenanceError:
                 self._stop.set()
-            except Exception as exc:  # noqa: BLE001 - worker must persist diagnostics and survive.
+                return
+            try:
+                self._recover_startup_once()
+                processed=self._run_one_job()
+            finally:
+                # A monitor exception is not proof that its child exited.
                 try:
-                    current = self.store.get(job.id)
-                    if current.state not in TERMINAL_JOB_STATES | PAUSED_JOB_STATES:
-                        self.store.fail_job(
-                            job.id,
-                            {
-                                "code": "workbench_worker_error",
-                                "type": type(exc).__name__,
-                                "message": str(exc),
-                            },
-                        )
+                    self._require_no_active_process()
                 except Exception:
-                    pass
+                    with self._process_lock:self._uncertain_admissions.append(permit)
+                    self._stop.set()
+                else:permit.close()
+            if not processed:
+                self._wake.wait(timeout=0.5)
+                self._wake.clear()
+
+    def _run_one_job(self) -> bool:
+        job=self.store.claim_next()
+        if job is None:return False
+        try:
+            if job.kind == "generation_session":self._run_generation_session(job)
+            elif job.kind == "locked_chapter_recovery":self._run_recovery(job)
+            else:self.store.fail_job(job.id,{"code":"unsupported_job_kind","kind":job.kind})
+        except ProcessMonitorError:
+            # Preserve the original uncertain pause; never downgrade to failure.
+            self._stop.set()
+        except Exception as exc:
+            try:
+                current=self.store.get(job.id)
+                if current.state not in TERMINAL_JOB_STATES | PAUSED_JOB_STATES:
+                    self.store.fail_job(job.id,{'code':'workbench_worker_error',
+                        'type':type(exc).__name__,'message':str(exc)})
+            except Exception:pass
+        return True
 
     def _reconcile_receipted_restart_commits(self) -> None:
         for job in self.store.list_jobs(states=("needs_recovery",), limit=200):
@@ -1682,6 +1750,13 @@ class JobSupervisor:
         project = self.project_lookup(job.project_id)
         project_root = Path(project.root).resolve(strict=True)
         while job.next_chapter <= job.end_chapter and not self._stop.is_set():
+            if self._maintenance is not None:
+                maintenance=self._maintenance.status()
+                if maintenance['state']!='idle':
+                    self._require_no_active_process()
+                    self.store.pause_for_maintenance(job.id,chapter=job.next_chapter,
+                        operation_id=maintenance['operation_id'])
+                    return
             assert_project_execution_compatible(project_root, expected_book_id=getattr(project, "book_id", None))
             chapter = job.next_chapter
             expected_state_head = job.config.get("project_state_head")

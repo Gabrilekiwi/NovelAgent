@@ -2,6 +2,12 @@
 
 状态：进行中。阶段 B 检查点 `edea18d`；完整 T3.2 尚未验收，正常入口仍拒绝 identity 3.0。
 
+后续最新进度：[共享提交服务](shared-chapter-publication.md) 已接机器作品所有权、同一SQLite写事务、持久原请求意图、并发重复提交和原事务恢复/索引重建。内部后端可复用，当前主项转为实际应用/worker/API/UI装配及完整T3.2验收。下面保留事务层检查点。
+
+最新进度：实际 identity 3.0 的正式章节事务已接通，详见 [新版章节事务](reviewed-chapter-transaction.md)。真实升级后从候选、作者事实审核、标准质量到原子发布，再到下一章新进程读取与已发布请求索引重建均有隔离证据。缺失或错配的请求/质量/正文/来源会阻断；marker前回滚、marker后完成原事务。事务组件要求上层持有所有权并核验DB，完整共享服务仍待接作品/DB锁、pending/回滚幂等、recovery/job/API/UI，T3.2尚未完成。
+
+此前完成的 [新版候选接入](reviewed-candidate-context.md)、[候选质量接入](chapter-candidate-quality.md) 可直接复用。整章 Candidate 1.1 不含分场景证据，使用冻结蓝图对最终作者稿检查；standard覆盖完整，strict缺模型仍阻断。质量准备本身不授予发布权限。
+
 ## 已实现的准备边界
 
 `core/engine/chapter_commit_prepare.py` 提供只读 `prepare_reviewed_chapter`、当前输入重验和同幂等键请求比较。输入必须由服务端核验后的草稿/审核记录及真实上下文 builder 提供，不能将客户端 JSON 作为 trusted context、作者确认或基线来源。
@@ -22,7 +28,7 @@
 
 ## 后续实现顺序
 
-最新检查点：本地质量准备、持久请求证据与真实 receipt→SQLite 已发布索引已通过定向验证，详见 [质量与索引实施](chapter-commit-index-quality.md)。质量仍缺 Candidate scene/blueprint 校验，所有准备均 `publication_authorized=false`；索引重建不等于整个DB恢复或已完成锁内提交。下列正式服务集成仍待完成。
+前一检查点：本地质量准备、持久请求证据与真实 receipt→SQLite 已发布索引已通过定向验证，详见 [质量与索引实施](chapter-commit-index-quality.md)。当时缺少的 Candidate 校验已由上文后续补齐，所有准备仍 `publication_authorized=false`；索引重建不等于整个DB恢复或已完成锁内提交。下列正式服务集成仍待完成。
 
 正式 codec 和凭证历史 reader 已实现，详见 [格式实施记录](reviewed-state-format.md)。它们仍仅由内部注入使用；已通过实际 v2.1 隔离发布及候选→服务端准备→下一章上下文桥接。当前状态必须匹配唯一历史末端，逐章重算事实，并绑定完整基线。这个检查点没有启用 identity 3.0，也没有把测试发布 helper 接入产品。
 

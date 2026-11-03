@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import re
 import stat
 import tempfile
+import threading
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +50,105 @@ class PersistenceLockError(PersistenceError):
     """Raised when another process owns the run-directory persistence lock."""
 
 
+class PersistenceLockBusy(PersistenceLockError):
+    """Ordinary OS lock contention, distinct from a damaged lock or handle."""
+
+
+_HELD_LOCK_READERS = ContextVar('novelagent_held_persistence_readers', default=())
+_BORROWED_RUN_READERS = ContextVar('novelagent_verified_source_run_borrowers', default=())
+
+
+class _HeldLockReader:
+    """Read through the owner handle; a second Windows handle cannot read it."""
+    def __init__(self,path,handle,*,origin='run'):
+        self.path=path.absolute()
+        self.handle=handle
+        self.active=True
+        self.owner=(os.getpid(),threading.get_ident())
+        self.origin=origin
+        self.identity=_existing_lock_file_identity(path)
+
+    def read(self,path,*,limit=1024*1024):
+        if (not self.active or self.handle.closed or Path(path).absolute()!=self.path
+                or self.owner!=(os.getpid(),threading.get_ident())):
+            raise PersistenceLockError('persistence lock reader is no longer active')
+        assert_safe_local_tree(self.path.parent)
+        before=os.fstat(self.handle.fileno())
+        current=self.path.lstat()
+        def identity(info):return info.st_dev,info.st_ino,stat.S_IFMT(info.st_mode)
+        if (identity(before)!=self.identity or identity(current)!=self.identity
+                or before.st_nlink!=1 or current.st_nlink!=1
+                or getattr(current,'st_file_attributes',0)&FILE_ATTRIBUTE_REPARSE_POINT
+                or before.st_size<1 or before.st_size>limit):
+            raise PersistenceLockError('persistence lock reader physical binding changed')
+        position=self.handle.tell()
+        try:
+            self.handle.seek(0)
+            value=self.handle.read(limit+1)
+        finally:self.handle.seek(position)
+        after=self.path.lstat()
+        if (len(value)!=before.st_size or identity(after)!=self.identity
+                or after.st_size!=before.st_size or after.st_mtime_ns!=before.st_mtime_ns):
+            raise PersistenceLockError('persistence lock file changed while reading')
+        return value
+
+
+def held_persistence_lock_readers():
+    """Active lock handles owned by this execution context, never other threads."""
+    return {reader.path:reader for reader in _HELD_LOCK_READERS.get()
+            if reader.active and reader.owner==(os.getpid(),threading.get_ident())}
+
+
+@contextmanager
+def _borrow_held_run_locks():
+    """Explicit synchronous handoff after a source verifier's final check.
+
+    Keep the original OS handles held. This does not make ordinary nested run
+    locks reentrant, and a copied context in another thread cannot borrow them.
+    Only roots already held when this scope starts are eligible.
+    """
+    readers=tuple(reader for path,reader in held_persistence_lock_readers().items()
+                  if path.name=='.persistence.lock' or path.name.startswith('state-'))
+    for reader in readers:reader.read(reader.path)
+    token=_BORROWED_RUN_READERS.set(readers)
+    try:
+        yield
+        for reader in readers:reader.read(reader.path)
+    finally:_BORROWED_RUN_READERS.reset(token)
+
+
+def _state_lock_paths(state_paths: Iterable[str | Path]) -> set[Path]:
+    shared_lock_root = Path(tempfile.gettempdir()) / "novelagent-state-locks"
+    paths = set()
+    for state_path in state_paths:
+        identity = Path(state_path).resolve(strict=False)
+        canonical = os.path.normcase(str(identity))
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
+        paths.add(shared_lock_root / f"state-{digest}.lock")
+    return paths
+
+
+@contextmanager
+def persistence_state_lock(state_paths: Iterable[str | Path]):
+    """Coordinate auxiliary writes without creating a run directory.
+
+    A synchronous operation may borrow an active lock already held by its own
+    thread/context (for example, review indexing inside generation). Validate
+    the owner handle; a copied context in another thread cannot borrow it.
+    Existing run-lock acquisition remains non-reentrant.
+    """
+    ordered = sorted(_state_lock_paths(state_paths), key=lambda p: os.path.normcase(str(p)))
+    held = held_persistence_lock_readers()
+    with ExitStack() as stack:
+        for path in ordered:
+            reader = held.get(path.absolute())
+            if reader is None:
+                stack.enter_context(_exclusive_file_lock(path, origin='state'))
+            else:
+                reader.read(path)
+        yield tuple(ordered)
+
+
 @contextmanager
 def persistence_run_lock(
     run_dir: str | Path,
@@ -65,21 +167,32 @@ def persistence_run_lock(
         root.mkdir(parents=True, exist_ok=True)
         root_identity = None
     lock_paths = {root / ".persistence.lock"}
-    shared_lock_root = Path(tempfile.gettempdir()) / "novelagent-state-locks"
-    for state_path in state_paths:
-        identity = Path(state_path).resolve(strict=False)
-        canonical = os.path.normcase(str(identity))
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
-        lock_paths.add(shared_lock_root / f"state-{digest}.lock")
+    shared_paths=_state_lock_paths(state_paths)
+    lock_paths.update(shared_paths)
     ordered = sorted(lock_paths, key=lambda item: os.path.normcase(str(item)))
+    held=held_persistence_lock_readers()
+    borrowed={reader.path:reader for reader in _BORROWED_RUN_READERS.get()}
     with ExitStack() as stack:
         for path in ordered:
+            reader=held.get(path.absolute())
+            if path.absolute() in borrowed:
+                if reader is not borrowed[path.absolute()]:
+                    raise PersistenceLockError('borrowed source run lock no longer belongs to this thread/context')
+                reader.read(path)
+                continue
+            # A persistence_state_lock fence may be entered by a run writer on the
+            # same thread. State fences taken through another run directory stay
+            # non-reentrant unless explicitly borrowed with the source handoff.
+            if reader is not None and getattr(reader, 'origin', None) == 'state':
+                reader.read(path)
+                continue
             stack.enter_context(
                 _exclusive_file_lock(
                     path,
                     require_existing=(
                         require_existing_lock and path == root / ".persistence.lock"
                     ),
+                    origin='run',
                 )
             )
         if root_identity is not None and _existing_lock_root_identity(root) != root_identity:
@@ -90,7 +203,7 @@ def persistence_run_lock(
 
 
 @contextmanager
-def _exclusive_file_lock(path: Path, *, require_existing: bool = False):
+def _exclusive_file_lock(path: Path, *, require_existing: bool = False, origin: str = 'run'):
     if require_existing:
         expected_identity = _existing_lock_file_identity(path)
         try:
@@ -130,17 +243,23 @@ def _exclusive_file_lock(path: Path, *, require_existing: bool = False):
             try:
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as exc:
-                raise PersistenceLockError(f"persistence state is locked: {path}") from exc
+                failure = PersistenceLockBusy if exc.errno in {errno.EACCES, errno.EAGAIN} else PersistenceLockError
+                raise failure(f"persistence state is locked: {path}") from exc
         else:
             import fcntl
 
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
-                raise PersistenceLockError(f"persistence state is locked: {path}") from exc
+                failure = PersistenceLockBusy if exc.errno in {errno.EACCES, errno.EAGAIN} else PersistenceLockError
+                raise failure(f"persistence state is locked: {path}") from exc
+        reader=_HeldLockReader(path,handle,origin=origin)
+        token=_HELD_LOCK_READERS.set((*_HELD_LOCK_READERS.get(),reader))
         try:
             yield path
         finally:
+            reader.active=False
+            _HELD_LOCK_READERS.reset(token)
             handle.seek(0)
             if os.name == "nt":
                 import msvcrt
@@ -282,6 +401,22 @@ class LocalPersistenceTransaction:
         *,
         candidate_result: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from workbench.book_ownership import book_output_write_lock
+        targets = tuple(targets)
+        for index, target in enumerate(targets):
+            if not isinstance(target, PersistenceTarget):
+                raise PersistencePreparationError(f"target {index} must be PersistenceTarget")
+        with book_output_write_lock(
+            self.journal_dir, *self.allowed_roots, *(t.path for t in targets), book_id=self.book_id
+        ):
+            return self._prepare_owned(targets, candidate_result=candidate_result)
+
+    def _prepare_owned(
+        self,
+        targets: tuple[PersistenceTarget, ...],
+        *,
+        candidate_result: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
         if self.journal_dir.exists():
             raise PersistencePreparationError(f"transaction journal already exists: {self.journal_dir}")
 
@@ -342,6 +477,11 @@ class LocalPersistenceTransaction:
             raise PersistencePreparationError(f"failed to prepare transaction {self.run_id}: {exc}") from exc
 
     def commit(self) -> PersistenceResult:
+        manifest = self._load_or_current_manifest()
+        with _legacy_machine_write_scope(self.journal_dir, manifest):
+            return self._commit_owned()
+
+    def _commit_owned(self) -> PersistenceResult:
         manifest = self._load_or_current_manifest()
         if manifest.get("state") != "prepared":
             raise PersistenceError(f"transaction is not prepared: state={manifest.get('state')!r}")
@@ -406,6 +546,14 @@ class LocalPersistenceTransaction:
             return self._rollback(error=exc)
 
     def complete_publication(self) -> PersistenceResult:
+        manifest = self._load_or_current_manifest()
+        terminal = _terminal_persistence_result(self.journal_dir, manifest)
+        if terminal is not None and terminal.state == "completed":
+            return terminal
+        with _legacy_machine_write_scope(self.journal_dir, manifest):
+            return self._complete_publication_owned()
+
+    def _complete_publication_owned(self) -> PersistenceResult:
         manifest = self._load_or_current_manifest()
         marker_error = _validate_commit_marker(
             self.commit_marker_path,
@@ -659,6 +807,36 @@ def reconcile_persistence(
     }
 
 
+@contextmanager
+def _legacy_machine_write_scope(journal, manifest):
+    # A journal may live outside the book. Include its declared roots and real
+    # target paths; an enrolled ID alone never authorizes an external runtime.
+    from workbench.book_ownership import book_output_write_lock
+    paths = [journal, *_manifest_allowed_roots(manifest)]
+    for target in manifest.get("targets", []):
+        if not isinstance(target, dict) or not isinstance(target.get("path"), str):
+            raise PersistenceError("transaction target path cannot establish write ownership")
+        paths.append(target["path"])
+    with book_output_write_lock(*paths, book_id=manifest.get("book_id")):
+        yield
+
+
+def _terminal_persistence_result(journal, manifest):
+    # Historical terminal reads remain possible after the book is revoked.
+    # Every branch that repairs targets or changes a manifest takes the gate.
+    try:
+        marker = _journal_child(journal, str(manifest.get("commit_marker") or "commit.marker"))
+    except Exception:
+        return None
+    if manifest.get("state") == "rolled_back" and not marker.exists():
+        return _result_from_manifest(journal, manifest)
+    if manifest.get("state") == "completed" and marker.exists() and _validate_commit_marker(
+        marker, str(manifest.get("run_id") or journal.name), manifest.get("candidate_sha256")
+    ) is None:
+        return _result_from_manifest(journal, manifest)
+    return None
+
+
 def reconcile_persistence_transaction(journal_dir: str | Path) -> PersistenceResult:
     journal = Path(journal_dir).resolve()
     try:
@@ -675,6 +853,17 @@ def reconcile_persistence_transaction(journal_dir: str | Path) -> PersistenceRes
             errors=(_error_payload("manifest_unreadable", exc),),
             candidate_result_path=str(journal / "candidate_result.json") if (journal / "candidate_result.json").exists() else None,
         )
+
+    terminal = _terminal_persistence_result(journal, manifest)
+    if terminal is not None:
+        return terminal
+    with _legacy_machine_write_scope(journal, manifest):
+        if _load_manifest(journal) != manifest:
+            raise PersistenceError("transaction changed while acquiring write ownership")
+        return _reconcile_owned_persistence_transaction(journal, manifest)
+
+
+def _reconcile_owned_persistence_transaction(journal, manifest):
 
     try:
         marker = _journal_child(journal, str(manifest.get("commit_marker") or "commit.marker"))
@@ -728,6 +917,16 @@ def reconcile_persistence_transaction(journal_dir: str | Path) -> PersistenceRes
 def complete_persistence_transaction(journal_dir: str | Path) -> PersistenceResult:
     journal = Path(journal_dir).resolve()
     manifest = _load_manifest(journal)
+    terminal = _terminal_persistence_result(journal, manifest)
+    if terminal is not None and terminal.state == "completed":
+        return terminal
+    with _legacy_machine_write_scope(journal, manifest):
+        if _load_manifest(journal) != manifest:
+            raise PersistenceError("transaction changed while acquiring write ownership")
+        return _complete_owned_persistence_transaction(journal, manifest)
+
+
+def _complete_owned_persistence_transaction(journal, manifest):
     marker = _journal_child(journal, str(manifest.get("commit_marker") or "commit.marker"))
     marker_error = _validate_commit_marker(
         marker,
@@ -1222,4 +1421,5 @@ __all__ = [
     "reconcile_persistence",
     "reconcile_persistence_transaction",
     "persistence_run_lock",
+    "persistence_state_lock",
 ]

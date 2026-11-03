@@ -1,9 +1,9 @@
 {
-  "date": "2026-09-09",
+  "date": "2026-09-10",
   "stage": "C",
-  "stage_status": "in_progress",
-  "current_task": "T3.2",
-  "task_complete": false,
+  "stage_status": "accepted_working_tree",
+  "current_task": null,
+  "task_complete": true,
   "goal_complete": false,
   "stage_b_commit": "edea18d",
   "completed_substeps": [
@@ -12,15 +12,25 @@
     "formal_reviewed_codec_receipt_history_and_internal_context_bridge",
     "internal_identity_v3_upgrade_transaction_and_cold_evidence_verification",
     "local_final_prose_quality_evidence_with_explicit_pending_gates",
-    "durable_commit_request_evidence_and_receipt_verified_publication_index"
+    "durable_commit_request_evidence_and_receipt_verified_publication_index",
+    "server_verified_whole_candidate_final_quality_and_blueprint_gate",
+    "actual_identity_v3_candidate_author_review_and_quality_internal_workflow",
+    "actual_identity_v3_typed_chapter_transaction_and_cold_quality_request_verification",
+    "owned_shared_chapter_commit_service_same_db_transaction_and_original_intent_idempotency",
+    "explicit_publication_api_direct_ui_and_durable_recovery_blockers",
+    "main_reviewed_workbench_owned_candidate_fact_dispatch_and_publication_navigation",
+    "full_suite_regression_fix_ephemeral_to_persisted_identity_and_fixture_lifespan",
+    "t22_pure_identity_resolution_and_explicit_declaration_component",
+    "t22_author_bound_identity_and_explicit_missing_baseline_support",
+    "t22_shared_commit_recovery_and_next_chapter_identity_cold_read"
   ],
-  "next_action": "Connect server-verified Candidate scene/blueprint evidence and full final quality gates, then writer/DB locks, pending or rolled-back intent idempotency, locked revalidation and the formal chapter transaction. Integrate v3 context/read-set/Candidate/writer/recovery/job contracts together before ordinary entrypoints; complete API/UI and T3.2 acceptance. Real upgrade remains gated by maintenance, T7.1 backup and T2.2 onboarding.",
+  "next_action": "Stage C accepted. Continue stage D T5.2; authoritative ongoing progress is docs/development/stage-d-progress.json. Do not rerun completed browser or full suite without new changes.",
   "publication_authorized": false,
   "normal_v3_reader_writer_enabled": false,
   "files": [
     {
       "path": "core/engine/chapter_commit_prepare.py",
-      "sha256": "bc8a3eaaede61a6b4c9e385d2dcfd372aad21f50e7f1adae2cd10c27894edc83"
+      "sha256": "13ef67987b3604aeca6e569e5ea8012abb8bc17fb5fa2af5accd5b4f575081db"
     },
     {
       "path": "tests/test_chapter_commit_prepare.py",
@@ -28,19 +38,19 @@
     },
     {
       "path": "core/engine/chapter_fact_context.py",
-      "sha256": "05ab075335dcd2c9e7e853d790a5742b2961bafd15d4a922f68adcba84dac486"
+      "sha256": "65956b92ad2945832dc1c720ae877f887932b3c2cbcba919c4e996a2284ce2b8"
     },
     {
       "path": "workbench/chapter_candidates.py",
-      "sha256": "f9f2ea830e8e83a31fec4110af2a9e4bca1721a183139531da4bc44609cb975d"
+      "sha256": "2e3a84b9e9514baaae4dadad62f4f34f77515aee57138497edd54d3475429430"
     },
     {
       "path": "workbench/chapter_facts.py",
-      "sha256": "2ce2ea68ea4782466a319a8bb1414ff14086092ecbbdc23bec2cfb3eef77df7e"
+      "sha256": "c775812a6a09e886868cee0303d7eff6654df1e1bd0465cfb695dcbc59f35d94"
     },
     {
       "path": "workbench/chapter_commits.py",
-      "sha256": "ebf0012c0a229d26043fcf21c4577275e3512ec2acd6473cc8bf57aeec222b08"
+      "sha256": "d9a0dcdd1ffe61963058e95ef3da353ad096821350924a6f4cdf90e2e49587df"
     },
     {
       "path": "tests/test_workbench_chapter_commits.py",
@@ -48,11 +58,11 @@
     },
     {
       "path": "core/story_project/reviewed_state_document.py",
-      "sha256": "fe7b021a933e70961d1c5e075fbb51f34ebd7d55dffd60ec7e244ec2de5cde5a"
+      "sha256": "5f3d0092c32b18ae8f664106b4004e62abceace1dd7f472daa5804e3280c6e67"
     },
     {
       "path": "core/story_project/reviewed_state_store.py",
-      "sha256": "daf3db87f8137870cd9335fe645a633c3b2f31eff1bbeb4aa5eef53fcf935bff"
+      "sha256": "7add625afe4f99e1afbec6b0a9f08569c7b0f54c8629cff61a497b49667c5d67"
     },
     {
       "path": "tests/test_reviewed_state_document.py",
@@ -64,15 +74,15 @@
     },
     {
       "path": "core/story_project/reviewed_identity.py",
-      "sha256": "35924887e5088b14b9f6946ea58070eadb2879d7fb2312ca7e104256dbbd058d"
+      "sha256": "9e7cede7531b495f93effee05ffd310f2843b54c9853eebb38aa43b407fbee59"
     },
     {
       "path": "core/engine/persistence_v2.py",
-      "sha256": "67e78cfd2b8f8371d8ce9a2bc0faa845efea1eb5c3014ed345a9b08ccf7f54c6"
+      "sha256": "ffd1939e0e2e064a4fa3603eb0e147d58e6316fb14d4df2a7083063984ec3fa0"
     },
     {
       "path": "core/story_project/read_set.py",
-      "sha256": "ef62a12426b332381a24e9bad1880627ef6223b02d6d7f4601818e9ed7f64545"
+      "sha256": "cd0bab322ad500cfcd3bdaa56166cbe90f2f3df787346da4728b043d9292f32d"
     },
     {
       "path": "schemas/reviewed_project_identity.schema.json",
@@ -84,7 +94,7 @@
     },
     {
       "path": "core/engine/reviewed_chapter_quality.py",
-      "sha256": "f836dc6c1ff2719b832331c6aef2dc50e8a195a66889c6f3be12706bec4eb89f"
+      "sha256": "1832dd92ffb21c954c2e02d57bc85dcbb8f739631178cec6728d7501adddd76f"
     },
     {
       "path": "core/engine/chapter_commit_request.py",
@@ -101,6 +111,310 @@
     {
       "path": "tests/test_chapter_commit_index.py",
       "sha256": "afd2b76424a7c9d44f932ed7ca9c2874907cdcad3aa2b27cde34600bec01a72d"
+    },
+    {
+      "path": "core/story_project/coverage.py",
+      "sha256": "25649abd6073aa962b26cc03e80be1aaba8437719d0acde9ddc6430c92123d9e"
+    },
+    {
+      "path": "tests/test_story_project_coverage.py",
+      "sha256": "ab79548fca8404341aae667a8ba9e037968ba5e71300b31a83538ff9454fbe83"
+    },
+    {
+      "path": "tests/test_reviewed_candidate_quality.py",
+      "sha256": "c8f5d8a3055a4d1c8dec2348b61bc9cebc396d7e708b0dc8a12379558d9e566f"
+    },
+    {
+      "path": "core/engine/chapter_candidate.py",
+      "sha256": "73bcd84fad4f18011ada0b14a745fd595d7eabbc62603553df2a89c965dab213"
+    },
+    {
+      "path": "core/engine/chapter_candidate_context.py",
+      "sha256": "7ad4852860410ac36e2e949277ee34d2d728bfd4163d92e71aae0a40d0d2cc9c"
+    },
+    {
+      "path": "core/engine/reviewed_candidate_context.py",
+      "sha256": "67d56d3377754c32e1e92e3026760977fc11de7291af29df9629a71584e13241"
+    },
+    {
+      "path": "core/engine/reviewed_candidate.py",
+      "sha256": "279029f7f2cbc2756964e07ee11f9d1cd0fd98533125775f7bd4aa7d9d7a1996"
+    },
+    {
+      "path": "workbench/projects.py",
+      "sha256": "5066f797149e4ffbea0691d8636284b0c9de1a4915a16865b85b6aa775fec36e"
+    },
+    {
+      "path": "workbench/reviewed_projects.py",
+      "sha256": "3f5bc3ba6e47cbc02eab30bebbebaa4ce5426972523c6a4b9b917ba4c067bba8"
+    },
+    {
+      "path": "workbench/chapter_cards.py",
+      "sha256": "6079c5a4b1abf4836d1f9d7f693b1276f62cfdaba155b872b4bf1d757ba6129b"
+    },
+    {
+      "path": "tests/test_reviewed_candidate_context.py",
+      "sha256": "854b8488760c75995316d041393d384c3ab09c4473359bab7cc81f9eacad51b7"
+    },
+    {
+      "path": "docs/development/reviewed-candidate-context.md",
+      "sha256": "533eec8e828d5cc756e42ed6c3f330914c1d68bc69762e943a41aa2a820f21eb"
+    },
+    {
+      "path": "core/engine/reviewed_chapter_commit.py",
+      "sha256": "4dd67e4ed3d84c9de9a9c2959bc5211b751d5b00f2af0f3ba4f082decf9cab11"
+    },
+    {
+      "path": "core/story_project/reviewed_chapter_transition.py",
+      "sha256": "5b45ad25c1ae665d9611dc6f8adc4a9f12054aff020832ea5663e78d2a127812"
+    },
+    {
+      "path": "tests/test_reviewed_chapter_commit.py",
+      "sha256": "cd999ead91ed27056bd6fb50bbac1445f759658821c8dc37b83c84f075160df3"
+    },
+    {
+      "path": "docs/development/reviewed-chapter-transaction.md",
+      "sha256": "e04621230c50577f68b3ddca79fa1687a796aa3be4a50835ab59e89af7aab1b4"
+    },
+    {
+      "path": "workbench/book_ownership.py",
+      "sha256": "3c9c57f66675fa0a730b8ce6105796e551ca48815bbc031de9e2a73f6672a4c3"
+    },
+    {
+      "path": "workbench/chapter_publication.py",
+      "sha256": "f583643906b8673595a58cfb7fb5796eab946841182c60f11b05b975880d1752"
+    },
+    {
+      "path": "tests/test_book_ownership.py",
+      "sha256": "f08d0efe5d78f552c11b4f3988b736781314bfb677a4f96986f92cf2577bad23"
+    },
+    {
+      "path": "tests/test_chapter_publication_service.py",
+      "sha256": "b09bf83adb419f4c1b4782123dcea7824d47bc27b7c3b58c8ad3f5232efc5721"
+    },
+    {
+      "path": "docs/development/shared-chapter-publication.md",
+      "sha256": "8a85b10e49f0f1e03ef30662414f43168281c1b9f56037a45cabdcbee237dd88"
+    },
+    {
+      "path": "workbench/app.py",
+      "sha256": "d2be9aac3ce718f79b75b0f109e897b67f4c3d929cc85063fe99e6f7c21b9093"
+    },
+    {
+      "path": "workbench/chapter_publication_api.py",
+      "sha256": "a44ea165968739d6a0649bfff0569939bc034a12204a9ff78aec76ec5cbf03e5"
+    },
+    {
+      "path": "workbench/static/chapter-publication.html",
+      "sha256": "3149272bffb8cfdffc9bfcc3231172329a1a2884db18c5104e86db4f15e2cff8"
+    },
+    {
+      "path": "workbench/static/chapter-publication.css",
+      "sha256": "9cf500666018747b3008663037cf73eea48858712bef2ac239a3dcd1f71e7a7b"
+    },
+    {
+      "path": "workbench/static/chapter-publication.js",
+      "sha256": "000562fc10cefcdec25160f3c092efde69331ddbfab95ad81914ac5c6d6be467"
+    },
+    {
+      "path": "tests/test_chapter_publication_api.py",
+      "sha256": "bf5f1fa4cbdb62c23b0117856f1362780496f3ed20e12081b4d8e3ecda5dd969"
+    },
+    {
+      "path": "docs/development/chapter-publication-api.md",
+      "sha256": "6341f772b0c3dc59775235e92f62a89eb27fea4080a30a384d6ecc495976ce4b"
+    },
+    {
+      "path": "docs/development/chapter-publication-browser-verification.md",
+      "sha256": "1bd4c1fcb895abf0c3c4affad5b1d5e9899948bb944623f6b83933d2abe6f260"
+    },
+    {
+      "path": "workbench/reviewed_workflow.py",
+      "sha256": "491a55068dc198f7727275de18a1c8df5f3d09c4da6643c5ba8d6f7d0aa70d79"
+    },
+    {
+      "path": "workbench/reviewed_project_views.py",
+      "sha256": "ceab6850d68e6e0192b74c41608aaac378808b1844db8813ac6a23b737a909d9"
+    },
+    {
+      "path": "workbench/chapter_fact_extractions.py",
+      "sha256": "10000607e313c3bf3bc57264d506e2e9e12b3079cadac89ad5c9e254dce2a850"
+    },
+    {
+      "path": "workbench/static/index.html",
+      "sha256": "8e3f840cf70f3ceb5d48a4956bb0e03ab50384216b0cff7acd888b9b516e15dc"
+    },
+    {
+      "path": "workbench/static/workbench-spa.js",
+      "sha256": "0b9712d3b46c98fec699e96fcf623704e1c45ab042dd16df07f17389b39ac6ff"
+    },
+    {
+      "path": "tests/test_reviewed_workbench_workflow.py",
+      "sha256": "676c9a911d001749c3d003b230db3d8c8c222be10c25ef7357106abfb38a5756"
+    },
+    {
+      "path": "docs/development/reviewed-workbench-workflow.md",
+      "sha256": "25ee454046f2e4838288292f54a9dd5c65d3b36d44c4429713b484306e62dfb6"
+    },
+    {
+      "path": "docs/development/reviewed-workbench-browser-verification.md",
+      "sha256": "29895d8f68298a852b872f7c326d87f0115b9000d9aa289be27d4f1ce13800f3"
+    },
+    {
+      "path": "docs/development/t32-acceptance.md",
+      "sha256": "d1968124d2a3e77280ea50901c6a486a3f4ace46d553199e727c93e9eb46c71a"
+    },
+    {
+      "path": "docs/development/t22-identity-design.md",
+      "sha256": "4c70a1513e4df2624c06e00fb13167cbdeea9c8cf6e5c6b74a168036a82f9dd3"
+    },
+    {
+      "path": "core/story_project/runtime.py",
+      "sha256": "a9ea11da6701a0f491c05748bcea89874e486124ccdcf11b6c651de1f1583662"
+    },
+    {
+      "path": "tests/test_story_project_runtime.py",
+      "sha256": "b906254ddf9117025ba0abf47cd98cf9e71a8f676dd7ecc295e9368f868f41f6"
+    },
+    {
+      "path": "tests/test_d2_format_compatibility.py",
+      "sha256": "a47f8561064409d8a0696f54d58ab903941b1d3e233f192d8820901b3c54e604"
+    },
+    {
+      "path": "tests/test_prepare_chapter20_recovery_fixture.py",
+      "sha256": "8bfbf8a35f25b918bd57d8fb105268951d1ab8e66e6193c05b26a88349393c70"
+    },
+    {
+      "path": "core/engine/chapter_fact_identity.py",
+      "sha256": "9ccaf05032ccbf314e192b55992150bd7f5b68c9b91a083fb27765fc6c187605"
+    },
+    {
+      "path": "tests/test_chapter_fact_identity.py",
+      "sha256": "cbc7258d63a16c49111a92b8ef0e4ec494c3d735ef2780ab250d426b9413f289"
+    },
+    {
+      "path": "core/engine/chapter_fact_support.py",
+      "sha256": "b2eb94be62d12eac68c108f68a3cb9dd8624c5ce9995e207050de7b808a472cc"
+    },
+    {
+      "path": "core/engine/chapter_fact_prepare.py",
+      "sha256": "902876bdbff80c610ddb07e8ccda0f3e8e1ce2156618423dcfc189eba5c1bcdc"
+    },
+    {
+      "path": "tests/test_chapter_fact_support.py",
+      "sha256": "eeeb76029323ed98645ab044b1a7c2e79fcf2f073c8378f0ac54d3e9ec890e9a"
+    },
+    {
+      "path": "tests/test_reviewed_fact_support_workflow.py",
+      "sha256": "cb660e015243263b258bbcfa7c25d3294e6208dbcc8288cbe90a5dec6fed548d"
+    },
+    {
+      "path": "workbench/static/workbench.css",
+      "sha256": "776b534794dd69d0d0ee2f234063b8e48600d60bf14588d93a62b14869bcd480"
+    },
+    {
+      "path": "workbench/static/fact-form.js",
+      "sha256": "f4c57e08426688a7667011735e16fe8968b364bfcbdce3293dcb39cfb5270655"
+    },
+    {
+      "path": "workbench/static/fact-support-form.js",
+      "sha256": "bcd65550b525f082dd35b683420df044224575b8584120d72bbde3120256464a"
+    },
+    {
+      "path": "tests/test_chapter_fact_author_supplement.py",
+      "sha256": "46dfd3fc37c2785148a792a924b9c8bbb1341e432e55a54c710c372baabcda2e"
+    },
+    {
+      "path": "tests/test_fact_form.py",
+      "sha256": "a6a116b28a2f60f731986786b39f21834c25a70f229d760cc5566da175101301"
+    },
+    {
+      "path": "core/engine/execution_activity.py",
+      "sha256": "75308480697632b363bc5c1dd7756db86494bfb8f2374582ee06682ab37d2c08"
+    },
+    {
+      "path": "core/engine/chapter_fact_extraction.py",
+      "sha256": "716a80aac048786a6962dd6e125a2787358b38d79885e960ad8b5211d0a81d67"
+    },
+    {
+      "path": "tests/test_execution_activity.py",
+      "sha256": "cf3ae4ca7b8ef807dc71fd0dff603a728100d08dfec54659bf2458a21f17783b"
+    },
+    {
+      "path": "tests/test_reviewed_execution_activity.py",
+      "sha256": "c29751c227617fab4c12703a650d0145f11994004585c046a37e3311e7b39ec0"
+    },
+    {
+      "path": "tests/test_chapter_progress_ui.py",
+      "sha256": "a308909ce2744a1ed3d53a4ffa44f82e089aa6d134796e7b42ba6ccb8eed2d7c"
+    },
+    {
+      "path": "tests/test_fact_extraction_import.py",
+      "sha256": "f54cb4452772026808b65eea0ffbf999d096c727492d081c37161614e7bdb5b7"
+    },
+    {
+      "path": "docs/development/t41-unified-workflow.md",
+      "sha256": "af2439085bff1c940ecb95da50d53cf0f9b6af8e828ae85d01a2dde0caac75a9"
+    },
+    {
+      "path": "docs/development/t51-usage-investigation.md",
+      "sha256": "3756803c69f48e83952a2120d73e90e575ee8a43ede715d8b0baaa90fd9d09bf"
+    },
+    {
+      "path": "api/__init__.py",
+      "sha256": "e1cc0ee15167920d949cd189d5a5c5c2419a2eeb285fe56252ebf800a9ec3ec1"
+    },
+    {
+      "path": "api/contracts.py",
+      "sha256": "04d95ace71b8f590c2a9adf2d3d62341b33ab8eeb8e65c715a7b5df306f234ce"
+    },
+    {
+      "path": "api/openai_client.py",
+      "sha256": "cdfadeb117a5cae494baf8866e8c66a7b900af24bc8cb1ad3e955eee4ff6140e"
+    },
+    {
+      "path": "api/claude_client.py",
+      "sha256": "a0471b0f267d59f6091baf831e9feb4c7b0221eae1cc12853d43b9fea8f3e1c8"
+    },
+    {
+      "path": "core/model_call_usage.py",
+      "sha256": "36f4d7302d0d178ab0bba10da789def45e50a15a5ebb729718f4f2aceb60555a"
+    },
+    {
+      "path": "workbench/model_usage.py",
+      "sha256": "51a7aa4df734b53b94894932862a17c593eea9d195230ec86933281930bc2131"
+    },
+    {
+      "path": "workbench/static/model-usage.js",
+      "sha256": "8842049a8074c5fe9cbd1a7bdc6474c1b49d04a6a27cf1d189b0bb5ccb56d66b"
+    },
+    {
+      "path": "tests/test_model_call_usage.py",
+      "sha256": "36a19267627dd5418a42013a2d8e9cbceb14de56898b1a08e4a80bf89963f777"
+    },
+    {
+      "path": "tests/test_workbench_model_usage.py",
+      "sha256": "786c2c4777e966ab8055bc663cecf91e5e686e341893c8a1df8e30514aa92827"
+    },
+    {
+      "path": "tests/test_model_usage_api.py",
+      "sha256": "29642279e92222a6fa3f5cf2dc3fdb5d1e1c807240e06ce216641b02b305f146"
+    },
+    {
+      "path": "tests/test_model_usage_ui.py",
+      "sha256": "434c1fe4f506408a67a0d7a87a67326c37eab8b1f4d7b301651138076d86c3fe"
+    },
+    {
+      "path": "docs/development/t51-model-usage.md",
+      "sha256": "a740a5ad220f7bc56772763e6241f6ff61012e59961d5d009d10ab7eaa9cd491"
+    },
+    {
+      "path": "docs/development/t42-two-chapter-browser.md",
+      "sha256": "43480c2d34dc42b73769faa7c99f87432346560de8507f1852b557637987660d"
+    },
+    {
+      "path": "tests/test_workbench_static_contract.py",
+      "sha256": "b520645017707dc326f715975845a348292d3cc88e961c36a6bdc1853e9aa394"
     }
   ],
   "tests": [
@@ -257,18 +571,1196 @@
       ],
       "pytest_passed": 1,
       "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-candidate-quality-regression.xml",
+      "sha256": "b4d4bef46d0e1d117c4de955fca301f547ff2dd38298d768c23bb5c979180f76",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "70",
+          "time": "57.654",
+          "timestamp": "2026-09-09T13:37:49.977769+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 57,
+      "subtests_passed": 13
+    },
+    {
+      "path": ".tmp/stage-c-candidate-quality-scene-gates.xml",
+      "sha256": "a3f977c5dc88362207c0b17c4d2aea80df684db311ea1ef471fc536a304d7000",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "24",
+          "time": "6.903",
+          "timestamp": "2026-09-09T13:39:19.468358+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 24,
+      "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-v3-workflow-regression.xml",
+      "sha256": "cd7864bb0b9ff6bff5ba183100c629a5e9a03d48a1aa42387529b17094300580",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "106",
+          "time": "120.906",
+          "timestamp": "2026-09-09T13:58:07.906826+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 92,
+      "subtests_passed": 14
+    },
+    {
+      "path": ".tmp/stage-c-v3-context-regression.xml",
+      "sha256": "4e46f9b2c8eb6a441a45e1c8dab6669a6d73eba248005434c3848ee1e4d7d226",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "92",
+          "time": "36.114",
+          "timestamp": "2026-09-09T13:56:59.715326+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 86,
+      "subtests_passed": 6
+    },
+    {
+      "path": ".tmp/stage-c-v3-format-ea-regression.xml",
+      "sha256": "937ca5971487485609d7870efe8b799fc95e1817de5a00ecde70144fcfb0080a",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "49",
+          "time": "17.691",
+          "timestamp": "2026-09-09T13:58:57.374798+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 46,
+      "subtests_passed": 3
+    },
+    {
+      "path": ".tmp/stage-c-v3-tx-regression.xml",
+      "sha256": "f0da76c6b407bd75d89005ab7ac16fd6368d7827eb6f81cddda7060775b46b6a",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "18",
+          "time": "223.896",
+          "timestamp": "2026-09-09T14:13:46.160985+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 18,
+      "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-v3-tx-persistence-regression.xml",
+      "sha256": "c5c1cc3441088ba5f06210bd8265a8728102ea896792c461830e4477109b87db",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "223",
+          "time": "136.507",
+          "timestamp": "2026-09-09T14:13:56.357145+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 123,
+      "subtests_passed": 100
+    },
+    {
+      "path": ".tmp/stage-c-v3-tx-entrypoint-regression.xml",
+      "sha256": "ca7cb834a1bdfe2c7c9d8a25c1a96c0557ef1a73713497d03bc8c237c218d0ae",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "66",
+          "time": "84.014",
+          "timestamp": "2026-09-09T14:17:26.451533+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 63,
+      "subtests_passed": 3
+    },
+    {
+      "path": ".tmp/stage-c-shared-commit-initial.xml",
+      "sha256": "f59ed6cf3756aff772e3e272dcd693b17da51a3166e0932043b75277e6350fba",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "9",
+          "time": "147.013",
+          "timestamp": "2026-09-09T14:30:55.040381+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 9,
+      "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-shared-commit-boundaries-final.xml",
+      "sha256": "80f195b12db901de43d7db57ab2c6a1a94ae7c43c59d508ba2aa7f39b37a8f85",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "6",
+          "time": "85.633",
+          "timestamp": "2026-09-09T14:47:38.880711+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 6,
+      "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-book-ownership.xml",
+      "sha256": "7d2aa997bff14e0b209e5239b3978193c1313dc34b571cd3130d84e74541b391",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "5",
+          "time": "8.648",
+          "timestamp": "2026-09-09T14:33:15.868411+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 5,
+      "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-shared-prepare-regression.xml",
+      "sha256": "dc2ba73b3cc36fc895f464e29d41297c65ae9fd393d74c8dddd61621b0b30508",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "67",
+          "time": "68.390",
+          "timestamp": "2026-09-09T14:31:05.362690+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 53,
+      "subtests_passed": 14
+    },
+    {
+      "path": ".tmp/stage-c-shared-commit-transaction-regression.xml",
+      "sha256": "603a138797524ead9577c76e4bc095ec59e448c25bf8939ae060942a8933f224",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "53",
+          "time": "223.688",
+          "timestamp": "2026-09-09T14:35:56.833747+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "pytest_passed": 53,
+      "subtests_passed": 0
+    },
+    {
+      "path": ".tmp/stage-c-publication-persistent-recovery-regression.xml",
+      "sha256": "111ec7b1a8d31809c52d66c1ba7e360cc724006a1b977f3a3f376fdbb6a65b17",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "17",
+          "time": "221.221",
+          "timestamp": "2026-09-09T15:01:21.415474+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-publication-api.xml",
+      "sha256": "b2f670e5bf4d5cf066e27cdbd44af55bd437a089951ca72043a7ff104d21e459",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "26",
+          "time": "353.855",
+          "timestamp": "2026-09-09T15:22:00.869228+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-publication-api-regression.xml",
+      "sha256": "5923269c029cc2162b4b00313fa8c5d1d2a15fb6b601db3e162bb953ecdb1e42",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "60",
+          "time": "100.458",
+          "timestamp": "2026-09-09T15:28:50.420892+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-publication-app-final.xml",
+      "sha256": "207a1bd737cbc2ed665b300475f2a5e3d0d6be2893efe332a95df240a44950e4",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "45",
+          "time": "387.546",
+          "timestamp": "2026-09-09T15:31:17.629881+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-publication-gap-final.xml",
+      "sha256": "f076179e182a02f8338611fd45f9e81350bc4ee6df5c492ecaa0b07cb4095410",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "1",
+          "time": "15.662",
+          "timestamp": "2026-09-09T15:35:22.872512+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-publication-request-boundary-final.xml",
+      "sha256": "01f76358b8a802c7b1cfcca40e14687df86fb0f4fdc06e3aef12a346cb36e8f7",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "1",
+          "time": "9.423",
+          "timestamp": "2026-09-09T15:37:48.235616+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-workflow-card-initial.xml",
+      "sha256": "2b1cfd3939889b6ca9f4b459528175e6a523d16dbcfa3cfb6e10db20616691ca",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "1",
+          "time": "10.177",
+          "timestamp": "2026-09-10T08:05:54.166076+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-reviewed-workflow-initial.xml",
+      "sha256": "0c6010e623cbcadb06ca1847465ad73550a30ac68abdd1d1a45f4601f43daf00",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "3",
+          "time": "48.312",
+          "timestamp": "2026-09-10T08:07:43.382895+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-main-reviewed-workflow.xml",
+      "sha256": "8d33f85e87a5e89c40cf7f8840139322a0d360c81c073ff02e673a4e65051f87",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "27",
+          "time": "105.602",
+          "timestamp": "2026-09-10T08:14:02.380973+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-main-workflow-regression.xml",
+      "sha256": "ddc141da4439ef4207c7faaab953a8455d1c122e9c6cea033735c78c53b03d58",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "34",
+          "time": "86.091",
+          "timestamp": "2026-09-10T08:17:58.464823+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-main-static-final.xml",
+      "sha256": "dfbdbcf8f22ad5a29f3c9736c54f1c6f75f5211da8da94c61f006cc1b4a129e8",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "23",
+          "time": "0.534",
+          "timestamp": "2026-09-10T08:21:21.135927+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-main-workflow-final.xml",
+      "sha256": "ea4989aa218515295c1765358d47c7356daef2228a6dca1651236a03bf1a1d50",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "29",
+          "time": "111.787",
+          "timestamp": "2026-09-10T08:24:41.212984+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-main-export-final.xml",
+      "sha256": "2f92618417fc0b253645329e6b75b66d27a62902b3560d3fe048e198fca3f56b",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "1",
+          "time": "19.299",
+          "timestamp": "2026-09-10T08:27:08.715644+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-main-views-final.xml",
+      "sha256": "c710036762344d612a9760e383a987ab713b01e892cf60b462787f112e4cf56b",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "2",
+          "time": "36.763",
+          "timestamp": "2026-09-10T08:29:00.435904+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t32-full.xml",
+      "sha256": "c864ffc45aea6463fe977b5b27e18115fd7381031d3212deed290a4c4afa02e8",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "1",
+          "failures": "7",
+          "skipped": "8",
+          "tests": "2849",
+          "time": "1216.134",
+          "timestamp": "2026-09-10T08:32:26.382052+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t32-fixes.xml",
+      "sha256": "9d9b7d14153bdabb37724b9294952cb3f37ff733f43aaf5fa74681dfb36ef85b",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "126",
+          "time": "24.261",
+          "timestamp": "2026-09-10T08:55:46.218318+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t32-full-final.xml",
+      "sha256": "26a5310fe2936903b94116235199c8e2886a16d66bf664e9a14c51a326a156f2",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "8",
+          "tests": "2852",
+          "time": "1236.868",
+          "timestamp": "2026-09-10T08:56:40.920124+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-identity-initial.xml",
+      "sha256": "0d6935561047a6d245f659e9c8067743253004998a5b762b8f044c75fc6ffb56",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "17",
+          "time": "0.125",
+          "timestamp": "2026-09-10T09:01:32.449819+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-identity-final.xml",
+      "sha256": "a29b6801cdb6ce6424e97206c462fbd635350a0b6b4350f69c8e5c2b25a69453",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "20",
+          "time": "9.307",
+          "timestamp": "2026-09-10T09:03:05.591580+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-identity-verified.xml",
+      "sha256": "7ee2fbd9a5cebba086e997941bece9ad4d3ca7d248b1d5f6adc2f096b01220f5",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "20",
+          "time": "9.382",
+          "timestamp": "2026-09-10T09:03:53.718569+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-initial.xml",
+      "sha256": "122641d72408edbc0e510d57a46d5290f490395bf139a96fd635b80ec7bcd07c",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "39",
+          "time": "1.487",
+          "timestamp": "2026-09-10T09:25:00.344204+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-final.xml",
+      "sha256": "325d598eb00bb95672fa0998e8cfa03e2b3037661b4e91cf88239b9211a2767c",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "39",
+          "time": "1.248",
+          "timestamp": "2026-09-10T09:25:25.388007+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-verified.xml",
+      "sha256": "b7a5ac07282016915724c37d62367a2358776f7aa1e587f09a412fb101f41b37",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "39",
+          "time": "1.103",
+          "timestamp": "2026-09-10T09:25:57.205093+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-workflow.xml",
+      "sha256": "8210b6f7cddf9e2096490f737af2594c97fbd7702e74a5aa9359d40f02cfaf4e",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "2",
+          "time": "47.500",
+          "timestamp": "2026-09-10T09:31:01.284644+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-workflow-final.xml",
+      "sha256": "db1c6f51b84d4d72d0ae4728dec40c69a9ae632030ff7912c58602ef1a7a0264",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "0",
+          "time": "0.002",
+          "timestamp": "2026-09-10T09:32:12.874528+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-workflow-verified.xml",
+      "sha256": "113e7a7c5539db5467a6e175134b0e021febeeb0c5161f4ec24fe2c64b9ecce6",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "0",
+          "time": "0.002",
+          "timestamp": "2026-09-10T09:32:34.788349+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-regression.xml",
+      "sha256": "8dfa492083700611d7ca4c2ecfe32517dada7fcabba99c61d0ab795ec87505df",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "65",
+          "time": "237.192",
+          "timestamp": "2026-09-10T09:29:09.764646+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-workflow-checked.xml",
+      "sha256": "70825c03511e39a41a58e2c3f4edc2278625c671884d2540e486a2d3b5b86c3b",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "37",
+          "time": "53.526",
+          "timestamp": "2026-09-10T09:32:53.697749+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-boundaries.xml",
+      "sha256": "decd1861eb89dac52b3c396e6f5f90a73193ccf1d87ec55a297d9b374e10c49a",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "37",
+          "time": "159.064",
+          "timestamp": "2026-09-10T09:34:44.126014+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-final-quality-static.xml",
+      "sha256": "6037bd8c31d4f3f5aaefcc4f7f4fa1f61bad253fa54afa96d5ce4081b990ff2b",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "54",
+          "time": "35.359",
+          "timestamp": "2026-09-10T09:39:03.458644+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-support-ownership-final.xml",
+      "sha256": "79978e18e6b678a8815affe48fd8340b795136445309a186143d4c26bbe4bec3",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "1",
+          "time": "12.944",
+          "timestamp": "2026-09-10T09:39:53.422264+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t22-alias-final.xml",
+      "sha256": "48a16a21b1c12e285f64a1e08b1e1b397cf342e0506bfba4a103511e4e3b8b3b",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "36",
+          "time": "9.332",
+          "timestamp": "2026-09-10T09:46:11.698046+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-author-backend-initial.xml",
+      "sha256": "5ad694e83c802b38f8185c9f43032cffe457edef6f766b2f2a9ea058b0f4f435",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "6",
+          "time": "31.585",
+          "timestamp": "2026-09-10T09:57:21.469265+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-author-backend-regression.xml",
+      "sha256": "0c1001a22fd64e0e7d1037de1ef60cdcc3172cc219a6bfffff7427c555f5445e",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "14",
+          "time": "18.574",
+          "timestamp": "2026-09-10T09:57:54.624739+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-author-backend-final.xml",
+      "sha256": "68cf0dbc41ed53f8d0384f43a54b15488e60a773ac76254426bb88b1b2511652",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "20",
+          "time": "49.994",
+          "timestamp": "2026-09-10T09:59:05.757594+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-fact-form.xml",
+      "sha256": "f25532f709f42b1b1e970bf0dd48e6620dfbb1a0e76d64146f621b62120b0027",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "19",
+          "time": "1.528",
+          "timestamp": "2026-09-10T10:00:56.811612+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-author-backend-verified.xml",
+      "sha256": "4fe9d30cc0d81a54d84ec88cbb8cd776db037bae4a7ecb1f06f3e97ed36178c4",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "20",
+          "time": "65.000",
+          "timestamp": "2026-09-10T10:00:11.651130+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-ui-integration.xml",
+      "sha256": "4c7164b9809a3639623a94cfbe7a5db85f1cfdb7cd106909a67c942560f2331d",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "28",
+          "time": "135.978",
+          "timestamp": "2026-09-10T10:01:28.690042+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-form-explicit.xml",
+      "sha256": "42a626d38134f69898f9628ffb0c1dc792eef71fb0bb44db0244cff68e3afc23",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "22",
+          "time": "1.591",
+          "timestamp": "2026-09-10T13:06:35.454325+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-form-explicit-final.xml",
+      "sha256": "957efe43efc9c483de83bfa233e25292c6837eda554912cb0ad16403b7077638",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "22",
+          "time": "1.526",
+          "timestamp": "2026-09-10T13:07:46.071380+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t23-author-ui-final.xml",
+      "sha256": "63522edc636839bf512b247738ef2f2c3e318b201e889b01ad4cbf4873de681f",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "51",
+          "time": "32.720",
+          "timestamp": "2026-09-10T13:14:54.733886+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t41-activity-initial.xml",
+      "sha256": "8ca88d02c6049750bd5861dcdbc07a8058a5c021bc75b419fa5d4a0840480249",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "4",
+          "time": "42.714",
+          "timestamp": "2026-09-10T13:28:58.043401+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t41-activity-regression.xml",
+      "sha256": "7828df784e0ef151d54042a6914c7cbc4fceb751a07f115b81cb549e022abf5e",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "20",
+          "skipped": "0",
+          "tests": "43",
+          "time": "43.440",
+          "timestamp": "2026-09-10T13:30:09.595496+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t41-activity-verified.xml",
+      "sha256": "6f8fb32f45c3b3d7aa8d2d548236215268d1e8a437184b04e91fb0139510a773",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "43",
+          "time": "46.390",
+          "timestamp": "2026-09-10T13:32:30.276819+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t41-ui.xml",
+      "sha256": "52cb29ad49a5f653b8735ac48eac5244e65cdad76fb4d5db5a5acf6816c29d78",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "26",
+          "time": "0.902",
+          "timestamp": "2026-09-10T13:39:59.417461+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/t41-fact-import.xml",
+      "sha256": "6d94706cc6db68a4bf74d26ee79a0c55545e9fb8df3f6e0ee6ab02ed51fe3ad0",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "6",
+          "time": "93.962",
+          "timestamp": "2026-09-10T13:43:06.115298+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/t41-fact-import-corrected.xml",
+      "sha256": "dc0c86775468b5b55f1bb6f3ade72427ba0e5701a6e6689329ca0f22d8b7709e",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "1",
+          "time": "14.391",
+          "timestamp": "2026-09-10T13:50:26.618280+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t41-ui-verified.xml",
+      "sha256": "eb4fcd7da05cfbc6f7beb2276cede545d74a530d68fe247cd5158a077bced256",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "28",
+          "time": "0.973",
+          "timestamp": "2026-09-10T13:51:30.054663+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t41-read-race.xml",
+      "sha256": "89c161bdefb240fedb8390885ae6b894ca6a436fd115458c64c00568f5db8739",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "4",
+          "time": "56.365",
+          "timestamp": "2026-09-10T13:57:51.656443+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t41-workflow-regression.xml",
+      "sha256": "94fe796b46bbc29c774d2a59316494f6555159b2b92bac883e3dfebe18db1798",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "16",
+          "time": "234.813",
+          "timestamp": "2026-09-10T13:55:47.047193+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-usage-initial.xml",
+      "sha256": "e5ee7c32c5388cbd5c93541795e2a78481cdc079e661507961ac2395f3b2d06c",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "22",
+          "time": "0.345",
+          "timestamp": "2026-09-10T14:11:24.856435+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-usage-provenance.xml",
+      "sha256": "9285feef493e95ef5c8ca1d653af1946955eaa20f29379ccf8b86efe1d7c89d3",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "63",
+          "time": "1.448",
+          "timestamp": "2026-09-10T14:12:36.345990+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-report-initial.xml",
+      "sha256": "45dba1793904398cbc133191546335ab48250f2fee65cfca80b6251e552369b8",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "1",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "1",
+          "time": "0.595",
+          "timestamp": "2026-09-10T14:15:13.028955+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-report-verified.xml",
+      "sha256": "5a47a183db694c04390565fe629dd97aa0065119d17b38a64631eb654ca19b36",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "66",
+          "time": "4.647",
+          "timestamp": "2026-09-10T14:16:04.290353+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-api-ui.xml",
+      "sha256": "89a6af22a439d8fc3c455d32b5b2abd11546d3cfbb05711e4e13b877b50ccd8d",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "0",
+          "tests": "26",
+          "time": "11.591",
+          "timestamp": "2026-09-10T14:22:16.692617+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-cost-sources.xml",
+      "sha256": "643da1805d7b287ff7984578cb53e5d58cead0b8bf4d25444ad86d768cb51288",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "61",
+          "time": "1.751",
+          "timestamp": "2026-09-10T14:23:33.540812+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-api-ui-corrected.xml",
+      "sha256": "4eb963f9a2a48a07f51f11bc8eccc53d5ca57adddb69390dec7afda9a1f043df",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "2",
+          "time": "1.552",
+          "timestamp": "2026-09-10T14:24:58.274202+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-all-stores.xml",
+      "sha256": "27047e50ec955eab34e52d0c90d552ce92d15b7c0cd0ef8633e2ce38ba4e9bd5",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "7",
+          "time": "0.723",
+          "timestamp": "2026-09-10T14:28:10.586097+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-c-t51-api-ui-final.xml",
+      "sha256": "0bf53837639cad2e486f7f5eb26e6e3999885b0e32a94443b7d43d46c6aeb1fa",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "4",
+          "time": "10.580",
+          "timestamp": "2026-09-10T14:29:36.093629+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
     }
   ],
-  "new_test_count": 136,
+  "new_test_count": 350,
   "provider_calls": 0,
   "real_book_writes": 0,
   "active_processes": [],
   "limitations": [
-    "No public upgrade/commit API or shared writer/DB commit service yet. Local quality explicitly lacks Candidate scene/blueprint evidence; strict policy lacks model validation. Published request receipt/index recovery is verified, but pending/rolled-back intent idempotency and double-click single logical commit are not integrated.",
-    "Identity 3.0 has an internal codec and verified upgrade transaction. Ordinary project schema still supports 1/2 and CURRENT_WRITER_CONTRACT remains 1; ordinary v3 candidate/runtime entrypoints reject.",
+    "Main app now explicitly dispatches v3 Candidate/draft/extraction/author-review mutations under machine ownership and connects confirmed reviews to publication UI. Read-only v3 project views show pending diagnostics and receipt-verified chapters/export. Automatic worker/acceptance, job history, planning and amendment integration remain incomplete; capabilities reflect the current support only.",
+    "Actual identity 3.0 upgrade, Candidate, author review, standard quality, typed chapter publication, cold next-chapter state and receipt-derived request index are verified internally. Ordinary identity schema supports 1/2 and global writer contract remains 1; ordinary v3 registry/Candidate/runtime reject.",
     "Real upgrade still requires maintenance ownership, active-process stop, unresolved Provider/transaction checks, T7.1 verified backup and T2.2 onboarding. Synthetic Strict reports are not real-book calibration.",
     "Typed upgrade preserves legacy epoch/head with a complete validated identity/state/preparation bundle. It does not enable ordinary legacy writes on reviewed-format books.",
-    "Reader checks retained history in full. Full T3.2 pytest/smoke/browser, final B0 rejection and T7.2 writable restore remain required."
+    "T3.2 acceptance complete in working tree. T2.2 identity component is separately tested and not yet bound to persisted author review or formal state. Automatic integration, recovery/backup productization and real usage validation remain in later stages."
   ],
   "adapter_commit": "26dff05",
   "codec_commit": "2703232",
@@ -284,5 +1776,362 @@
     "agent": "commit_quality",
     "scope": "bounded_read_only_request_evidence_and_index",
     "result": "No reproducible new bypass found. Index row recovery does not cover the entire database or drafts."
+  },
+  "candidate_quality_base_commit": "bbedefc",
+  "candidate_quality_checkpoint_status": {
+    "state": "verified_worktree_not_staged",
+    "head": "bbedefc",
+    "blocked_action": "git add for local checkpoint",
+    "reason": "Automatic approval review failed: workspace out of credits",
+    "automatic_review_rejected": true,
+    "worktree_and_test_evidence_saved": true,
+    "next_checkpoint_action": "Save the verified local checkpoint when approval service credits recover; do not bypass the rejected escalation."
+  },
+  "candidate_quality_review": {
+    "agent": "commit_quality",
+    "status": "credit_error_no_work",
+    "implementation": "root completed implementation, targeted tests and self-review; no independent review claimed"
+  },
+  "reviewed_candidate_checkpoint_status": {
+    "state": "verified_worktree_not_staged",
+    "head": "bbedefc",
+    "previous_checkpoint_rejection": "Automatic approval review failed: workspace out of credits",
+    "worktree_and_test_evidence_saved": true,
+    "independent_review": "agent credit error; root implemented and verified",
+    "ordinary_v3_enabled": false,
+    "formal_v3_chapter_publication": false
+  },
+  "typed_chapter_checkpoint": {
+    "state": "verified_worktree_not_staged",
+    "head": "bbedefc",
+    "prior_git_add_rejection": "Automatic approval review failed: workspace out of credits",
+    "independent_review": "No current review; helper previously errored for credits",
+    "new_test_count": 20,
+    "internal_formal_v3_chapter_transaction": true,
+    "shared_commit_service": false,
+    "ordinary_v3_enabled": false,
+    "goal_turn_classification": "progress"
+  },
+  "shared_service_checkpoint": {
+    "state": "verified_worktree_not_staged",
+    "head": "bbedefc",
+    "prior_git_add_rejection": "Automatic approval review failed: workspace out of credits",
+    "independent_review": "Helper reproduced P1 persistent recovery marker bypass and added fix/tests before credit error; root completed verification and extended unregistered-journal gap guard.",
+    "new_test_count": 20,
+    "shared_commit_service_backend": true,
+    "app_api_ui_installed": "explicit publication API and direct page only; main workflow pending",
+    "ordinary_v3_enabled": false,
+    "goal_turn_classification": "progress",
+    "unpublished_retry": "Same key returns original rolled_back/interrupted_before_stage; explicit resubmission needs a new key."
+  },
+  "publication_api_checkpoint": {
+    "state": "verified_worktree_not_staged",
+    "head": "bbedefc",
+    "goal_turn_classification": "progress",
+    "new_test_count": 12,
+    "latest_unique_test_cases": 104,
+    "latest_failures": 0,
+    "earlier_failures_retained": [
+      "initial test used wrong quality field; fixed and rerun",
+      "unregistered damaged manifest raised PersistenceV2Error; exact catch added and negative test passed"
+    ],
+    "browser_report": "docs/development/chapter-publication-browser-verification.md",
+    "main_v3_workflow_integrated": false,
+    "automatic_publication_adapter_integrated": false,
+    "test_sessions_terminal": [
+      23458,
+      53506,
+      32062,
+      38314,
+      98315,
+      84352
+    ],
+    "helper_test_session": "52372 handle missing; completed XML verifies 17 passed",
+    "prior_git_add_rejection": "Automatic approval review failed: workspace out of credits; not retried or bypassed",
+    "browser_cleanup": {
+      "servers_terminal": [
+        76033,
+        56116
+      ],
+      "retained_page_id": 2,
+      "reason": "close_page auto-review rejected: workspace out of credits; no bypass"
+    }
+  },
+  "main_workflow_checkpoint": {
+    "date": "2026-09-10",
+    "state": "verified_worktree_not_staged",
+    "head": "bbedefc",
+    "goal_turn_classification": "progress",
+    "new_test_count": 6,
+    "latest_unique_test_cases": 57,
+    "latest_failures": 0,
+    "main_manual_workflow_integrated": true,
+    "automatic_acceptance_integrated": false,
+    "browser_report": "docs/development/reviewed-workbench-browser-verification.md",
+    "test_sessions_terminal": [
+      51916,
+      22009,
+      76447,
+      49452,
+      25926,
+      46440,
+      66545
+    ],
+    "server_sessions_terminal": [
+      23953,
+      62264
+    ],
+    "retained_browser_page": 2,
+    "screenshot": "auto-review rejected: workspace out of credits; no screenshot or bypass",
+    "independent_review": "helper credit_error; root verification only for this main-workflow component",
+    "prior_failure": "static default project-route rewriting expectation retained, capability branches applied afterward; 23 tests rerun passed"
+  },
+  "scope_correction": {
+    "date": "2026-09-10",
+    "source": "docs/development-plan-final-2026-09-08.md",
+    "detail": "Earlier next-action notes wrongly placed automatic policy/worker and full two-mode browser acceptance within T3.2. Follow the original plan: T3.2 final checks, T2.2 next, T4.2 browser restart scenarios, stage E T6 automatic integration."
+  },
+  "t32_acceptance": {
+    "state": "complete_verified_worktree_not_committed",
+    "full_pytest_session": 77718,
+    "observed_nonpassing": true,
+    "audit": "docs/development/t32-acceptance.md",
+    "independent_review": "t22_inventory failed before delivering findings: workspace out of credits; no retry",
+    "smoke": {
+      "exit_code": 0,
+      "log": ".tmp/stage-c-t32-smoke.log",
+      "result": "Smoke v1: OK",
+      "work_dir": ".tmp/t32-smoke-final",
+      "skip_tests": true,
+      "reason": "Full pytest runs separately."
+    },
+    "initial_full_result": {
+      "passed": 2255,
+      "failed": 7,
+      "errors": 1,
+      "skipped": 8,
+      "subtests_passed": 578,
+      "duration_seconds": 1216.2,
+      "session": 39147,
+      "exit_code": 1
+    },
+    "fixes": {
+      "session": 89625,
+      "exit_code": 0,
+      "passed": 116,
+      "subtests_passed": 10,
+      "details": "Read compatible persisted identity after preview bootstrap; real supplied ids remain pinned; unsupported formats still reject before runtime side effects. Recovery fixture uses actual TestClient lifespan to release Windows instance lock."
+    },
+    "final_xml": ".tmp/stage-c-t32-full-final.xml",
+    "final_log": ".tmp/stage-c-t32-full-final.log",
+    "last_observed": "Session77718 terminal exit0, XML and log verified; no full-suite rerun required absent new shared-path changes.",
+    "task_complete": true,
+    "final_result": {
+      "session": 77718,
+      "exit_code": 0,
+      "passed": 2266,
+      "skipped": 8,
+      "subtests_passed": 578,
+      "duration_seconds": 1236.91
+    },
+    "skipped_cases": [
+      {
+        "classname": "tests.test_autonomy_runner_e2e.AutonomyRunnerE2ETest",
+        "name": "test_fifty_chapter_deterministic_acceptance",
+        "reason": "set NOVELAGENT_RUN_50_CHAPTER_SIM=1 for the long deterministic acceptance run"
+      },
+      {
+        "classname": "tests.test_autonomy_runner_e2e.AutonomyRunnerE2ETest",
+        "name": "test_reparse_or_symlink_operator_root_is_rejected_at_construction",
+        "reason": "directory symlink unavailable: [WinError 1314] 客户端没有所需的特权。: 'D:\\\\Pycharm\\\\PythonProject\\\\NovelAgent\\\\.tmp\\\\ar\\\\014c8b1b\\\\external' -> 'D:\\\\Pycharm\\\\PythonProject\\\\NovelAgent\\\\.tmp\\\\ar\\\\014c8b1b\\\\external-link'"
+      },
+      {
+        "classname": "tests.test_delivery_queue.DeliveryQueueTest",
+        "name": "test_uuid_file_delivery_rejects_symlink_root_replacement",
+        "reason": "directory symlink creation is not permitted"
+      },
+      {
+        "classname": "tests.test_memory_v2_history_revision.HistoricalRevisionTransactionTest",
+        "name": "test_dependency_inventory_rejects_linked_or_reparse_autonomy_root",
+        "reason": "directory symlinks are not available in this Windows environment"
+      },
+      {
+        "classname": "tests.test_project_identity.ProjectIdentityTest",
+        "name": "test_path_ref_rejects_existing_symlink_escape_when_supported",
+        "reason": "directory symlinks are not available in this Windows environment"
+      },
+      {
+        "classname": "tests.test_real_storyproject_e2e.RealStoryProjectE2ETest",
+        "name": "test_two_chapter_real_openai_storyproject_e2e",
+        "reason": "set NOVELAGENT_REAL_STORYPROJECT_E2E=1 for the billable real OpenAI StoryProject E2E"
+      },
+      {
+        "classname": "tests.test_story_project_migration_v2.StoryProjectMigrationV2Test",
+        "name": "test_linked_sources_are_rejected_when_supported",
+        "reason": "symlink creation is not permitted"
+      },
+      {
+        "classname": "tests.test_workbench_jobs",
+        "name": "test_provenance_classifier_rejects_model_call_symlink",
+        "reason": "file symlinks are unavailable on this Windows host: [WinError 1314] 客户端没有所需的特权。: 'D:\\\\Pycharm\\\\PythonProject\\\\NovelAgent\\\\.tmp\\\\pytest-cases\\\\test_provenance_classifier_rejects_model_call_sy-dc7f1ac31d0d4f489681591c124bb93e\\\\outside-model-call.json' -> 'D:\\\\Pycharm\\\\PythonProject\\\\NovelAgent\\\\.tmp\\\\pytest-cases\\\\test_provenance_classifier_rejects_model_call_sy-dc7f1ac31d0d4f489681591c124bb93e\\\\books\\\\test-book\\\\.novelagent\\\\runtime\\\\runs\\\\executions\\\\execution-test\\\\model_calls\\\\intent.json'"
+      }
+    ],
+    "final_smoke": {
+      "exit_code": 0,
+      "log": ".tmp/stage-c-t32-smoke-final.log",
+      "sha256": "c35e574ab095fb73e24fb3b9d0786f9a0fcf9078417be7815a47bbf306b0c973",
+      "work_dir": ".tmp/t32-smoke-verified",
+      "result": "Smoke v1: OK"
+    }
+  },
+  "t22_identity_checkpoint": {
+    "state": "integrated_and_accepted",
+    "task_complete": true,
+    "new_test_count": 21,
+    "latest_passed": 21,
+    "xml": ".tmp/stage-c-t22-identity-verified.xml",
+    "sessions_terminal": [
+      58943,
+      77642
+    ],
+    "real_reviewed_directory_input_tested": true,
+    "formal_state_write": true,
+    "baseline_supplementation": true,
+    "author_review_integration": true,
+    "note": "Formal writes only in deterministic isolated fixtures; latest completion is t22_support_checkpoint."
+  },
+  "goal_turn_classification": "progress_and_verified_wait",
+  "completed_tasks": [
+    "T3.2",
+    "T2.2",
+    "T2.3",
+    "T4.1",
+    "T5.1",
+    "T4.2"
+  ],
+  "t22_support_checkpoint": {
+    "state": "accepted_working_tree",
+    "task_complete": true,
+    "new_test_count": 41,
+    "latest_distinct_cases_passed": 206,
+    "pure_identity_support_final": {
+      "xml": ".tmp/stage-c-t22-alias-final.xml",
+      "passed": 36
+    },
+    "actual_api_faults_and_context": {
+      "xml": ".tmp/stage-c-t22-support-boundaries.xml",
+      "passed": 37
+    },
+    "quality_static": {
+      "xml": ".tmp/stage-c-t22-final-quality-static.xml",
+      "passed": 54
+    },
+    "ownership_final": {
+      "xml": ".tmp/stage-c-t22-support-ownership-final.xml",
+      "passed": 1
+    },
+    "browser": "docs/development/t22-support-browser-verification.md",
+    "design": "docs/development/t22-support-workflow.md",
+    "formal_fixture_commit_and_cold_read": true,
+    "real_book_writes": false,
+    "real_provider_calls": false,
+    "author_forms_next_task": "T2.3"
+  },
+  "t23_author_review_checkpoint": {
+    "state": "accepted_working_tree",
+    "task_complete": true,
+    "new_test_count": 28,
+    "distinct_latest_tests_passed": 70,
+    "final_related_xml": ".tmp/stage-c-t23-author-ui-final.xml",
+    "final_related_passed": 51,
+    "browser": "docs/development/t23-author-review-browser.md",
+    "design": "docs/development/t23-author-review.md",
+    "cold_read": ".tmp/stage-c-t23-browser-cold.json",
+    "real_book_writes": false,
+    "real_provider_calls": false,
+    "auxiliary_note": "Backend helper completed 20 tests. Form helper delivered working component then credit_error during explicit-default correction; parent completed correction and final 22 tests.",
+    "stale_browser_verified": true,
+    "stale_browser_fixture": ".tmp/t23-stale-browser-state.json",
+    "terminal_sessions": [
+      23177,
+      9422,
+      41259,
+      95502,
+      54064,
+      80705
+    ]
+  },
+  "t41_workflow_checkpoint": {
+    "state": "accepted_working_tree",
+    "task_complete": true,
+    "new_test_count": 17,
+    "latest_unique_test_results": {
+      "passed": 93
+    },
+    "browser_fixture": ".tmp/t41-browser-state.json",
+    "browser_metrics": ".tmp/t41-browser-metrics.json",
+    "notes": "Core workflow browser verification complete, source-default intent used; optional text fill was rejected by automatic approval and not bypassed. All focused tests terminal. Full T4.2 two-chapter/four-restart browser validation remains pending.",
+    "browser_report": "docs/development/t41-unified-workflow.md",
+    "cold_evidence": ".tmp/stage-c-t41-browser-cold.json",
+    "terminal_sessions": [
+      64624,
+      74956,
+      32875,
+      41741
+    ]
+  },
+  "t51_usage_checkpoint": {
+    "state": "accepted_working_tree",
+    "task_complete": true,
+    "report": "docs/development/t51-model-usage.md",
+    "findings": [
+      "existing immutable Intent/Receipt per physical attempt",
+      "no explicit billing currency/price source in existing receipt contract",
+      "old zero budget accumulator is not zero actual cost",
+      "reviewed chapter calls not accessible through legacy job history"
+    ],
+    "new_test_count": 36,
+    "latest_unique_test_results": {
+      "passed": 101
+    },
+    "implementation": "Verified physical-attempt projection, source-marked SDK usage, exact currencies and attributed cost, project read-only API and expandable UI. Legacy zero fee unknown; no real rates/paid calls. Price calculation validation currently supports uncached input/output only; other billed semantics remain unknown.",
+    "browser_fixture": ".tmp/t51-browser-state.json",
+    "cold_evidence": ".tmp/stage-c-t51-browser-cold.json",
+    "terminal_sessions": [
+      72267,
+      35922,
+      52706,
+      97734
+    ]
+  },
+  "t42_browser_checkpoint": {
+    "state": "accepted_working_tree",
+    "task_complete": true,
+    "new_test_count": 0,
+    "latest_unique_test_results": {
+      "passed": 23
+    },
+    "report": "docs/development/t42-two-chapter-browser.md",
+    "cold_evidence": ".tmp/stage-c-t42-browser-cold.json",
+    "two_chapters": [
+      2,
+      3
+    ],
+    "restarts": [
+      "after_generation",
+      "after_editing",
+      "after_checks",
+      "after_commit_marker"
+    ],
+    "terminal_sessions": [
+      84796,
+      28010,
+      90088,
+      17332,
+      13699
+    ],
+    "active_processes": [],
+    "real_book_writes": false,
+    "real_provider_calls": false
   }
 }

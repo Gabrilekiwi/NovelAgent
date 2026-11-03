@@ -111,8 +111,7 @@ def build_generation_story_project_context(
     chapter_index = chapter_resolution.resolved_chapter if chapter_resolution else None
     if root is None or chapter_index is None:
         raise ValueError("StoryProject generation requires a resolved root and chapter.")
-    assert_project_execution_compatible(root, expected_book_id=project_identity.book_id if project_identity else None)
-    identity = project_identity or create_ephemeral_project_identity(root)
+    identity = _execution_identity(root, project_identity)
     event_authority = _uses_event_authority(identity)
     context = build_story_project_runtime_context(
         root,
@@ -282,7 +281,7 @@ def build_generation_story_project_context_loader(
     if not resolution.ok or resolution.root is None:
         raise ValueError(resolution.error or "StoryProject root could not be resolved.")
     requested_chapter = _normalized_requested_chapter(chapter)
-    identity = project_identity or create_ephemeral_project_identity(resolution.root)
+    identity = _execution_identity(resolution.root, project_identity)
     return GenerationStoryProjectContextLoader(
         story_project_root=resolution.root.resolve(),
         requested_chapter=requested_chapter,
@@ -292,6 +291,19 @@ def build_generation_story_project_context_loader(
         outline_override=outline_override,
         runtime_cache_policy=_validated_runtime_cache_policy(runtime_cache_policy),
     )
+
+
+def _execution_identity(root: Path, supplied: ProjectIdentity | None) -> ProjectIdentity:
+    # A preview loader can predate runtime onboarding. Its temporary id is not
+    # a persisted book binding; use the compatible identity created by the
+    # runtime before loading authority/caches. Real supplied ids stay pinned.
+    pinned = supplied is not None and not supplied.ephemeral
+    current = assert_project_execution_compatible(
+        root, expected_book_id=supplied.book_id if pinned else None,
+    )
+    if pinned:
+        return supplied
+    return current or supplied or create_ephemeral_project_identity(root)
 
 
 def _load_memory_v2_context(

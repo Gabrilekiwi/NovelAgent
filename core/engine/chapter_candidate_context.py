@@ -114,7 +114,7 @@ class ChapterCandidateContextBuilder:
             raise ChapterCandidateContextError(
                 "stored read set is bound to another project or chapter"
             )
-        verification = verify_story_project_read_set(read_set, phase=phase)
+        verification = self._verify_read_set(read_set, phase=phase)
         identity = self._load_persisted_identity()
         event_authority = _uses_event_authority(identity)
         identity_authority = (
@@ -230,8 +230,8 @@ class ChapterCandidateContextBuilder:
             context["reviewed_state"] = self.reviewed_state_loader(copy.deepcopy(context))
             validated_reviewed_state_context(context)
         read_set = context["read_set"]
-        verification = verify_story_project_read_set(read_set, phase="prepare")
-        verify_story_project_read_set(before_read_set, phase="prepare")
+        verification = self._verify_read_set(read_set, phase="prepare")
+        self._verify_read_set(before_read_set, phase="prepare")
         current_identity = self._load_persisted_identity()
         if (
             current_identity.to_dict() != identity.to_dict()
@@ -299,6 +299,13 @@ class ChapterCandidateContextBuilder:
                 code="chapter_candidate_identity_missing",
             )
         return identity
+
+    def validate_identity(self, payload):
+        from core.story_project.identity import validate_project_identity
+        return validate_project_identity(payload)
+
+    def _verify_read_set(self, read_set, *, phase):
+        return verify_story_project_read_set(read_set, phase=phase)
 
     def _validate_context_binding(
         self,

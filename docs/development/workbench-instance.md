@@ -12,6 +12,8 @@ Windows 使用 `CreateFileW` 以读写访问、只共享读打开 `workbench.loc
 
 ## 地址与关闭
 
+2026-10-01 增加恢复副本启动入口：`run_workbench.py --restore-dir "恢复副本目录"` 打开已有 `workbench.sqlite`，核对完整范围凭据，且关闭自动导入和 worker。`--data-dir` 发现恢复文件也执行相同核验；未完成副本或同时存在 `workbench.db` 时拒绝启动，避免误开空工作台。重复启动仍须验证原活实例身份。此入口不创建恢复副本或授予写资格；完整验证见 `t72-restore-launcher.md`。
+
 `workbench-instance.json` 只是地址发现记录。重复启动仅接受本机 HTTP 地址，必须实时请求 `/api/instance` 并核对本次随机实例标识；旧记录或不能验证的地址不能成为接管依据。持锁但服务不可访问时返回中文诊断与退出码 2，保持任务原状。
 
 启动时直接 bind/listen 并把原 socket 交给 Uvicorn，避免先探测空闲端口再绑定的竞争。默认端口已占用时尝试后续端口，最后由系统分配；所有地址仅监听 127.0.0.1。

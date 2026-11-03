@@ -146,6 +146,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .icon-button:hover { border-color: var(--line-strong); background: #fff; }
 .panel { min-width: 0; padding: 23px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); }
 .panel-wide { grid-column: span 2; }
+.backup-panel { margin: 16px 0 24px; font-size: 13px; overflow-wrap: anywhere; }
+.backup-panel > summary { cursor: pointer; font-weight: 700; }
+.backup-panel > p { line-height: 1.7; }
+.backup-panel .field { max-width: 520px; }
+.backup-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.backup-list { padding-left: 20px; }
+.backup-list li { margin: 12px 0; }
+.backup-list button { margin: 6px 10px; }
+[data-backup-error] { color: var(--accent); }
 .compact-panel { padding: 18px; }
 .notice { margin-bottom: 22px; padding: 15px 18px; border: 1px solid; border-radius: 11px; font-size: 13px; }
 .notice strong { display: block; margin-bottom: 4px; }
@@ -547,6 +556,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .chapter-card-confirmed { margin-top: 15px; }
 .chapter-card-confirmed code { display: block; margin-top: 7px; }
 .chapter-candidate-panel, .chapter-candidate-editor, .chapter-fact-panel { margin-top: 20px; }
+.chapter-flow { margin-bottom: 24px; }
+.model-usage-panel { margin-top: 24px; }
+.model-usage-panel summary { cursor: pointer; font-weight: 600; line-height: 1.7; }
+.model-usage-summary { margin: 16px 0; }
+.model-usage-attempt { border-top: 1px solid var(--line); padding: 14px 0; }
+.model-usage-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 14px; }
+.model-usage-grid dt { font-size: 11px; color: var(--muted); }
+.model-usage-grid dd { margin: 5px 0 0; font-size: 12px; }
+.model-usage-attempt p, .model-usage-grid dd { overflow-wrap: anywhere; }
+.chapter-flow p { margin: 0 0 12px; color: var(--ink-soft); line-height: 1.6; }
+.chapter-flow .button-row { flex-wrap: wrap; }
+.chapter-flow .is-current { border-color: var(--accent); box-shadow: inset 0 -3px var(--accent); }
+[data-chapter-card], [data-candidate-editor], [data-chapter-candidate-panel], [data-chapter-fact-panel] { scroll-margin-top: 20px; }
 .chapter-candidate-message { margin: 0 0 16px; color: var(--ink-soft); font-size: 12px; line-height: 1.75; }
 .chapter-candidate-binding { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 6px 12px; margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); }
 .chapter-candidate-binding span { color: var(--muted); font-size: 9px; font-weight: 700; }
@@ -794,3 +816,47 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Author fact review: source stays available beside the change being reviewed. */
+.fact-comparison-layout { display: grid; grid-template-columns: minmax(240px, .85fr) minmax(360px, 1.4fr); gap: 20px; align-items: start; }
+.fact-source-pane { position: sticky; top: 72px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+.fact-source-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; max-height: 70vh; overflow-y: auto; font-size: 14px; }
+.fact-source-text mark { background: #ffe0a3; color: #29211a; }
+.fact-select-label { display: flex; gap: 5px; align-items: center; white-space: nowrap; font-size: 11px; }
+.fact-select-label input { width: auto; }
+.fact-batch-actions, .fact-add-actions { align-items: end; margin-block: 16px; flex-wrap: wrap; }
+.fact-card[hidden] { display: none; }
+.fact-baseline { padding: 10px; background: var(--surface, #f1eee7); border-radius: 6px; font-size: 13px; }
+.fact-original { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.fact-original summary { cursor: pointer; font-weight: 600; }
+.fact-support-row { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-block: 12px; }
+.fact-form, .fact-form-field-content { padding: 0; margin: 0; border: 0; min-width: 0; }
+.fact-form-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fact-form-field, .fact-form-row { margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.fact-form-field:has(.fact-form-array), .fact-form-field:has(.fact-form-object) { grid-column: 1 / -1; }
+.fact-form legend { font-size: 12px; color: var(--ink-soft); padding-inline: 4px; }
+.fact-form input:not([type="checkbox"]), .fact-form textarea, .fact-form select { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 5px; padding: 8px; background: var(--paper); color: var(--ink); font: inherit; font-size: 12px; }
+.fact-form input:disabled, .fact-form textarea:disabled, .fact-form select:disabled { opacity: .85; }
+.fact-form button { margin-top: 8px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink-soft); cursor: pointer; }
+.fact-form-list { display: grid; gap: 8px; }
+.fact-form-hint { font-size: 11px; color: var(--muted); margin-bottom: 0; }
+.fact-form-reference { margin-top: 5px; }
+.fact-form-type { margin-bottom: 5px; }
+.fact-quote-fields { margin-top: 14px; }
+[data-fact-support-panel] { margin-block: 22px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; }
+[data-fact-support-save] { margin-top: 18px; }
+[data-fact-support-state] { display: block; padding-top: 8px; color: var(--muted); }
+.chapter-fact-panel.is-readonly .fact-card-fields { display: grid; }
+.chapter-fact-panel.is-readonly .fact-add-actions, .chapter-fact-panel.is-readonly [data-fact-batch],
+.chapter-fact-panel.is-readonly .fact-select-label, .chapter-fact-panel.is-readonly [data-fact-support-save] { display: none; }
+@media (max-width: 1100px) {
+  .fact-comparison-layout { grid-template-columns: 1fr; }
+  .fact-source-pane { position: static; }
+  .fact-source-text { max-height: 35vh; }
+}
+@media (max-width: 680px) { .fact-form-fields { grid-template-columns: 1fr; } }
+/* Chapter limits stay adjacent to the actions they constrain. */
+.chapter-budget-panel { margin-block: 20px; padding: 24px; }
+.chapter-budget-panel .form-grid { margin-block: 16px; }
+.chapter-budget-panel .check-field { margin-block: 16px; }
+.chapter-budget-panel [data-chapter-budget-status] { font-weight: 600; }

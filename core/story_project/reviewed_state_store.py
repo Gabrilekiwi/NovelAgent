@@ -33,11 +33,11 @@ def _one(bindings: list[dict], target_id: str) -> dict:
     return found[0]
 
 
-def _content(binding: dict, roots: dict) -> bytes:
+def _content(binding: dict, roots: dict, *, read_bytes=None) -> bytes:
     ref = binding["path_ref"]
     if ref["root_id"] not in roots:
         fail("reviewed_receipt_root_missing")
-    raw = read_project_bytes(Path(roots[ref["root_id"]]), ref["relative_path"])
+    raw = (read_bytes or read_project_bytes)(Path(roots[ref["root_id"]]), ref["relative_path"])
     if binding["sha256"] != digest(raw) or binding["size"] != len(raw):
         fail("reviewed_receipt_current_target_mismatch")
     return raw
@@ -55,8 +55,29 @@ def verify_reviewed_history(*, root: Path, book_id: str, root_map: dict,
     return result
 
 
+class _LiveReviewedEvidence:
+    """Ordinary readers always retain local root and receipt PathGuard checks."""
+    def read(self, root, relative):
+        return read_project_bytes(root, relative)
+
+    def directory(self, path):
+        return assert_safe_local_tree(path)
+
+    def receipt(self, value, *, root_map):
+        return verify_publication_receipt(value, root_map=root_map)
+
+    def children(self, directory):
+        if not directory.is_dir():
+            fail("reviewed_publication_missing")
+        return sorted(directory.iterdir())
+
+    def prose(self, root, chapter):
+        return resolve_prose(root, chapter).path
+
+
 def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
-                           baseline_document_sha256: str) -> tuple[dict, dict]:
+                           baseline_document_sha256: str, _parent_document: bytes | None = None,
+                           _evidence=None) -> tuple[dict, dict]:
     """Verify all retained receipts and require the current file to be the tip.
 
     Each transaction publishes an immutable state snapshot as well as applying
@@ -64,41 +85,43 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
     from that confirmed baseline and those fact decisions. This is local
     integrity evidence, not a signature against a fully rewritten book/history.
     """
-    root = assert_safe_local_tree(root)
+    evidence = _evidence or _LiveReviewedEvidence()
+    root = evidence.directory(root)
     if (Path(root_map["story_project"]).absolute() != root
             or not Path(root_map["runtime"]).absolute().is_relative_to(root)
             or Path(root_map["runtime"]).absolute() == root):
         fail("reviewed_root_map_invalid")
-    runtime = assert_safe_local_tree(root_map["runtime"])
-    current_document = read_project_bytes(root, RELATIVE_PATH)
+    runtime = evidence.directory(root_map["runtime"])
+    observed_document = evidence.read(root, RELATIVE_PATH)
+    # Only the typed transaction verifier may check the retained history at its
+    # staged before-image during apply. Public readers always use current bytes.
+    current_document = observed_document if _parent_document is None else _parent_document
     current = decode_document(current_document, book_id=book_id)
-    directory = assert_safe_local_tree(runtime / RECEIPT_DIRECTORY)
-    if not directory.is_dir():
-        fail("reviewed_publication_missing")
+    directory = evidence.directory(runtime / RECEIPT_DIRECTORY)
     records = {}
     revisions = set()
     # This namespace contains only these transactions for this book. Looking
     # at all receipts detects a rollback to an older valid state or a fork.
-    for path in sorted(directory.iterdir()):
+    for path in evidence.children(directory):
         relative = path.relative_to(runtime).as_posix()
-        raw = read_project_bytes(runtime, relative)
+        raw = evidence.read(runtime, relative)
         if path.suffix != ".json":
             fail("reviewed_receipt_namespace_invalid")
         receipt = json.loads(raw.decode("utf-8"))
-        result = verify_publication_receipt(receipt, root_map=root_map)
+        result = evidence.receipt(receipt, root_map=root_map)
         if not result["valid"] or receipt["schema_version"] != "2.1" or receipt["book_id"] != book_id:
             fail("reviewed_publication_invalid")
         state_binding = _one(receipt["artifacts"], "reviewed_state_archive")
         run_id = receipt["run_id"]
         _path(state_binding, "runtime", f"{STATE_DIRECTORY}/{run_id}.md")
-        document = _content(state_binding, root_map)
+        document = _content(state_binding, root_map, read_bytes=evidence.read)
         value = decode_document(document, book_id=book_id)
         head = value["head"]
         checkpoint = source_revision_after(document, book_id=book_id)
         if any(t["target_id"] == "reviewed_identity" for t in receipt["apply_targets"]):
             if head["kind"] != "baseline":
                 fail("reviewed_upgrade_receipt_kind_invalid")
-            checkpoint = _upgrade_checkpoint(receipt, document=document, roots=root_map)
+            checkpoint = _upgrade_checkpoint(receipt, document=document, roots=root_map, read_bytes=evidence.read)
         if (head["run_id"] != run_id or head["receipt_id"] != receipt["receipt_id"]
                 or head["receipt_relative_path"] != relative
                 or value["revision"] in revisions
@@ -109,7 +132,7 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         _path(applied, "story_project", RELATIVE_PATH)
         if applied["sha256"] != state_binding["sha256"] or applied["size"] != len(document):
             fail("reviewed_applied_state_mismatch")
-        final = json.loads(_content(receipt["final_run"], root_map).decode("utf-8"))
+        final = json.loads(_content(receipt["final_run"], root_map, read_bytes=evidence.read).decode("utf-8"))
         if (final.get("record_type") != "reviewed_legacy_commit" or final.get("id") != run_id
                 or final.get("book_id") != book_id or final.get("kind") != head["kind"]
                 or final.get("request_sha256") != head["request_sha256"]
@@ -119,23 +142,23 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         if head["kind"] == "chapter":
             archived = _one(receipt["artifacts"], "reviewed_chapter_archive")
             _path(archived, "runtime", f"{PROSE_DIRECTORY}/{run_id}.md")
-            prose = _content(archived, root_map)
+            prose = _content(archived, root_map, read_bytes=evidence.read)
             target = _one(receipt["apply_targets"], "reviewed_chapter")
             ref = target["path_ref"]
-            actual_prose = resolve_prose(root, value["committed_through"])
-            if (ref["root_id"] != "story_project" or actual_prose.path is None
-                    or actual_prose.path.relative_to(root).as_posix() != ref["relative_path"]):
+            actual_prose = evidence.prose(root, value["committed_through"])
+            if (ref["root_id"] != "story_project" or actual_prose is None
+                    or actual_prose.relative_to(root).as_posix() != ref["relative_path"]):
                 fail("reviewed_chapter_path_invalid")
-            if _content(target, root_map) != prose:
+            if _content(target, root_map, read_bytes=evidence.read) != prose:
                 fail("reviewed_chapter_archive_mismatch")
         revisions.add(value["revision"])
         records[relative] = {"document": document, "value": value, "prose": prose,
                              "receipt": receipt, "final": final}
     if not records:
         fail("reviewed_publication_missing")
-    archives = assert_safe_local_tree(runtime / STATE_DIRECTORY)
+    archives = evidence.directory(runtime / STATE_DIRECTORY)
     expected_archives = {f"{item['value']['head']['run_id']}.md" for item in records.values()}
-    if not archives.is_dir() or {path.name for path in archives.iterdir()} != expected_archives:
+    if {path.name for path in evidence.children(archives)} != expected_archives:
         fail("reviewed_archive_receipt_coverage_mismatch")
     tip = max(records.values(), key=lambda item: item["value"]["revision"])
     if tip["document"] != current_document:
@@ -161,10 +184,48 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         pending = before
     if len(visited) != len(records) or len(records) != current["revision"]:
         fail("reviewed_history_fork")
-    if read_project_bytes(root, RELATIVE_PATH) != current_document:
+    identity_payload = json.loads(evidence.read(root, ".novelagent/project.json").decode("utf-8-sig"))
+    from core.story_project.reviewed_chapter_transition import CHAPTER_TRANSITION
+    for item in records.values():
+        if item["value"]["head"]["kind"] != "chapter":
+            continue
+        if identity_payload.get("schema_version") == "3.0" or item["final"].get("chapter_transition") == CHAPTER_TRANSITION:
+            parent = records[item["value"]["head"]["previous"]["receipt_relative_path"]]
+            _verify_typed_chapter_checkpoint(item, previous_document=parent["document"], roots=root_map, read_bytes=evidence.read)
+    if evidence.read(root, RELATIVE_PATH) != observed_document:
         fail("reviewed_source_changed_during_read")
     return ({"value": copy.deepcopy(current), "document_sha256": digest(current_document),
              "receipt_count": len(records), "receipt_hash": tip["receipt"]["receipt_hash"]}, records)
+
+
+def _verify_typed_chapter_checkpoint(item, *, previous_document, roots, read_bytes=None):
+    read_bytes = read_bytes or read_project_bytes
+    from core.engine.persistence_v2 import validate_persistence_manifest_v2
+    from core.story_project.reviewed_chapter_transition import (
+        CHAPTER_TRANSITION, QUALITY_DIRECTORY, QUALITY_TARGET, verify_chapter_bundle,
+    )
+    receipt = item["receipt"]
+    run_id = receipt["run_id"]
+    request_binding = _one(receipt["artifacts"], "reviewed_commit_request")
+    quality_binding = _one(receipt["artifacts"], QUALITY_TARGET)
+    _path(request_binding, "runtime", f"reviewed/requests/{run_id}.json")
+    _path(quality_binding, "runtime", f"{QUALITY_DIRECTORY}/{run_id}.json")
+    ref = receipt["manifest"]["path_ref"]
+    manifest = validate_persistence_manifest_v2(json.loads(read_bytes(Path(roots[ref["root_id"]]), ref["relative_path"])))
+    if manifest["manifest_digest"] != receipt["manifest"]["sha256"]:
+        fail("reviewed_chapter_manifest_changed")
+    declared = manifest["immutable"]["read_set_declared_writes"]
+    state_declarations = [d for d in declared if d["relative_path"] == RELATIVE_PATH]
+    if (len(state_declarations) != 1 or state_declarations[0].get("transition") != CHAPTER_TRANSITION
+            or state_declarations[0].get("source_revision_after") != receipt["story_project_source_revision_after"]):
+        fail("reviewed_chapter_transition_missing")
+    verify_chapter_bundle(previous_document=previous_document, document=item["document"], prose=item["prose"],
+        evidence=json.loads(_content(request_binding, roots, read_bytes=read_bytes)),
+        quality=json.loads(_content(quality_binding, roots, read_bytes=read_bytes)),
+        final_record=item["final"], read_set=manifest["immutable"]["story_project_read_set"],
+        transaction_binding={"run_id": run_id, "context_digest": receipt["context_digest"],
+            "generation_input_context_digest": receipt["generation_input_context_digest"],
+            "receipt_id": receipt["receipt_id"], "receipt_path_ref": receipt["receipt_path_ref"]})
 
 
 def read_verified_commit_requests(*, root: Path, book_id: str, root_map: dict,
@@ -218,7 +279,8 @@ def read_verified_commit_requests(*, root: Path, book_id: str, root_map: dict,
     return publications
 
 
-def _upgrade_checkpoint(receipt: dict, *, document: bytes, roots: dict) -> dict:
+def _upgrade_checkpoint(receipt: dict, *, document: bytes, roots: dict, read_bytes=None) -> dict:
+    read_bytes = read_bytes or read_project_bytes
     from core.story_project.activation import validate_story_state_calibration_report
     from core.engine.persistence_v2 import validate_persistence_manifest_v2
     from core.story_project.reviewed_identity import verify_reviewed_identity_transition, verify_upgrade_preparation_evidence
@@ -229,28 +291,37 @@ def _upgrade_checkpoint(receipt: dict, *, document: bytes, roots: dict) -> dict:
     calibration = _one(receipt["artifacts"], "reviewed_calibration")
     for binding, suffix in ((before, "before"), (after, "after"), (calibration, "calibration")):
         _path(binding, "runtime", f"reviewed/upgrades/{run_id}-{suffix}.json")
-    after_bytes = _content(after, roots)
-    identity = verify_reviewed_identity_transition(old_identity_bytes=_content(before, roots),
+    after_bytes = _content(after, roots, read_bytes=read_bytes)
+    identity = verify_reviewed_identity_transition(old_identity_bytes=_content(before, roots, read_bytes=read_bytes),
         new_identity_bytes=after_bytes, baseline_document=document)
     applied = _one(receipt["apply_targets"], "reviewed_identity")
     _path(applied, "story_project", ".novelagent/project.json")
-    if _content(applied, roots) != after_bytes:
+    if _content(applied, roots, read_bytes=read_bytes) != after_bytes:
         fail("reviewed_upgrade_identity_mismatch")
-    report = validate_story_state_calibration_report(json.loads(_content(calibration, roots).decode("utf-8")))
+    report = validate_story_state_calibration_report(json.loads(_content(calibration, roots, read_bytes=read_bytes).decode("utf-8")))
     if (not report["strict_eligible"] or report["book_id"] != identity.book_id
             or report["report_sha256"] != identity.payload["activation"]["calibration_report_sha256"]):
         fail("reviewed_upgrade_calibration_mismatch")
     preparation = _one(receipt["artifacts"], "reviewed_upgrade_preparation")
     _path(preparation, "runtime", f"reviewed/upgrades/{run_id}-preparation.json")
     manifest_ref = receipt["manifest"]["path_ref"]
-    manifest = validate_persistence_manifest_v2(json.loads(read_project_bytes(
+    manifest = validate_persistence_manifest_v2(json.loads(read_bytes(
         Path(roots[manifest_ref["root_id"]]), manifest_ref["relative_path"]).decode("utf-8")))
     if manifest["manifest_digest"] != receipt["manifest"]["sha256"]:
         fail("reviewed_upgrade_manifest_changed")
+    # The reviewed baseline was accepted as of these existing chapters. Later
+    # candidates must not silently build on an edited/deleted historical prose
+    # file while retaining facts confirmed against its old bytes. New chapters
+    # are checked against their own apply/archive targets above.
+    for entry in manifest["immutable"]["story_project_read_set"]["membership"]:
+        if entry["relative_path"].startswith("正文/"):
+            current = read_bytes(Path(roots["story_project"]), entry["relative_path"])
+            if digest(current) != entry["sha256"] or len(current) != entry["size"]:
+                fail("reviewed_upgrade_baseline_prose_changed")
     verify_upgrade_preparation_evidence(
-        preparation=json.loads(_content(preparation, roots).decode("utf-8")),
-        final_record=json.loads(_content(receipt["final_run"], roots).decode("utf-8")),
-        old_identity_bytes=_content(before, roots), new_identity_bytes=after_bytes, baseline_document=document,
+        preparation=json.loads(_content(preparation, roots, read_bytes=read_bytes).decode("utf-8")),
+        final_record=json.loads(_content(receipt["final_run"], roots, read_bytes=read_bytes).decode("utf-8")),
+        old_identity_bytes=_content(before, roots, read_bytes=read_bytes), new_identity_bytes=after_bytes, baseline_document=document,
         calibration_report=report, read_set=manifest["immutable"]["story_project_read_set"],
         transaction_binding={"run_id": receipt["run_id"], "context_digest": receipt["context_digest"],
             "generation_input_context_digest": receipt["generation_input_context_digest"],

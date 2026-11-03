@@ -19,6 +19,16 @@ def recover_latest_chapter_draft(
     chapter_dir: str | Path = DEFAULT_CHAPTER_DIR,
     expected_book_id: str | None = None,
 ) -> dict[str, Any]:
+    from core.engine.persistence import persistence_run_lock
+
+    if not Path(run_dir).exists():
+        raise RecoveryError(f"run_dir does not exist: {run_dir}")
+    with persistence_run_lock(run_dir, state_paths=(chapter_dir,),require_existing_root=True):
+        return _recover_latest_chapter_draft_locked(run_dir=run_dir,chapter_dir=chapter_dir,
+            expected_book_id=expected_book_id)
+
+
+def _recover_latest_chapter_draft_locked(*,run_dir,chapter_dir,expected_book_id):
     result = _latest_recoverable_run(Path(run_dir), expected_book_id=expected_book_id)
     run = result["run"]
     draft_text = _recoverable_draft_text(run)

@@ -45,14 +45,16 @@ class ChapterIntentCard:
 class ChapterCardService:
     """Build and confirm a compact, zero-write view of trusted chapter inputs."""
 
-    def __init__(self, projects: ProjectRegistry) -> None:
+    def __init__(self, projects: ProjectRegistry, *, context_builder_factory=None) -> None:
         self.projects = projects
+        # Internal integration dependency; never a card/request field.
+        self.context_builder_factory = context_builder_factory or ChapterCandidateContextBuilder
 
     def get(self, project_id: str, chapter_index: int) -> ChapterIntentCard:
         chapter_index = _positive_chapter_index(chapter_index)
         project = self.projects.get(project_id)
         try:
-            trusted = ChapterCandidateContextBuilder(project.root).build(chapter_index)
+            trusted = self.context_builder_factory(project.root).build(chapter_index)
         except ChapterCandidateContextError as exc:
             if exc.code == "chapter_candidate_context_not_strict":
                 message = "项目的可信状态尚未激活；请先在健康检查中完成校准并激活，再确认章节卡。"
