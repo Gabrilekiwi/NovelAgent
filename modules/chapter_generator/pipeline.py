@@ -595,12 +595,34 @@ def _json_string_can_end_at(value: str, quote_index: int) -> bool:
     return cursor == len(value) or value[cursor] in ",}]:"
 
 
+def _repair_trailing_extra_closing_braces(payload: str) -> dict[str, Any] | None:
+    """Accept one complete scene object followed only by extra closing braces.
+
+    Some provider responses emit a valid scene JSON object and then one or more
+    stray `}` characters.  When the remainder is braces-only, the leading
+    object is unambiguous and can be kept.
+    """
+
+    text = _structured_json_text(payload)
+    try:
+        value, end = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, dict) or "prose" not in value:
+        return None
+    remainder = text[end:].strip()
+    if not remainder or set(remainder) != {"}"}:
+        return None
+    return value
+
+
 def _load_scene_response(payload: str) -> dict[str, Any]:
     try:
         value = _load_plan_json(payload)
     except json.JSONDecodeError as exc:
         value = (
             _repair_premature_scene_object_close(payload)
+            or _repair_trailing_extra_closing_braces(payload)
             or _repair_unescaped_scene_string_quotes(payload)
         )
         if value is None:

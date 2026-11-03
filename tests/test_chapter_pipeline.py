@@ -62,6 +62,46 @@ class ChapterPipelineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not valid structured JSON"):
             pipeline_module._load_scene_response(payload)
 
+    def test_scene_response_repairs_trailing_extra_closing_braces(self) -> None:
+        expected = {
+            "prose": "The isolation room keeps checking the local routing copy.",
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "No location change.",
+        }
+        payload = json.dumps(expected, ensure_ascii=False, separators=(",", ":")) + "}"
+
+        result = pipeline_module._load_scene_response(payload)
+
+        self.assertEqual(expected, result)
+
+    def test_scene_response_does_not_repair_non_brace_trailing_junk(self) -> None:
+        expected = {
+            "prose": "usable text",
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "x",
+        }
+        # Trailing braces mixed with non-brace junk must stay rejected.
+        payload = json.dumps(expected, ensure_ascii=False, separators=(",", ":")) + "}junk"
+
+        with self.assertRaisesRegex(ValueError, "not valid structured JSON"):
+            pipeline_module._load_scene_response(payload)
+
     def test_scene_response_repairs_one_premature_close_before_continuity_note(
         self,
     ) -> None:
