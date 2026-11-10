@@ -2127,6 +2127,83 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertIsNone(load_latest_run_summary(self.run_dir))
         self.assertEqual([], _unresolved_provider_calls(self.run_dir))
 
+    def test_unbound_uncertain_execution_without_run_is_classifiable(self) -> None:
+        execution_id = "execution_unbound_uncertain"
+        self._write_execution(
+            execution_id,
+            successful=[],
+            missing_stage="chapter_generation",
+        )
+        self.assertTrue(_unresolved_provider_calls(self.run_dir))
+
+        result = self._recover()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("reset", result["action"])
+        self.assertEqual("provider_call_uncertain_without_run", result["reason"])
+        self.assertEqual(f"unbound_{execution_id}", result["source_run_id"])
+        self.assertEqual(1, result["resolved_execution_count"])
+        self.assertEqual(0, result["reusable_scene_count"])
+        self.assertIn("结果不确定", result["message"])
+        self.assertEqual([], _unresolved_provider_calls(self.run_dir))
+        self.assertIsNone(
+            active_locked_chapter_checkpoint(
+                self.run_dir,
+                chapter_index=1,
+                expected_book_id=self.book_id,
+            )
+        )
+        self.assertIsNone(load_latest_run_summary(self.run_dir))
+        retry = self._recover()
+        self.assertEqual("not_locked", retry["status"])
+
+    def test_unbound_uncertain_execution_force_reset_clears_lock(self) -> None:
+        execution_id = "execution_unbound_force_reset"
+        self._write_execution(
+            execution_id,
+            successful=[],
+            missing_stage="chapter_generation",
+        )
+
+        result = recover_locked_chapter(
+            story_project_root=self.story_root,
+            run_dir=self.run_dir,
+            snapshot_path=self.snapshot_path,
+            expected_book_id=self.book_id,
+            language="zh-CN",
+            force_reset=True,
+            clock=lambda: self.now,
+            id_factory=lambda: "unboundreset",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("reset", result["action"])
+        self.assertEqual("operator_requested_reset", result["reason"])
+        self.assertEqual([], _unresolved_provider_calls(self.run_dir))
+
+    def test_unbound_uncertain_execution_rejects_manual_draft_until_reset(self) -> None:
+        execution_id = "execution_unbound_manual"
+        self._write_execution(
+            execution_id,
+            successful=[],
+            missing_stage="chapter_generation",
+        )
+        draft = self.story_root / "draft.txt"
+        draft.write_text("陆沉停在门口，先把灯关掉。" * 40, encoding="utf-8")
+
+        with self.assertRaises(LockedChapterRecoveryError):
+            recover_locked_chapter(
+                story_project_root=self.story_root,
+                run_dir=self.run_dir,
+                snapshot_path=self.snapshot_path,
+                expected_book_id=self.book_id,
+                language="zh-CN",
+                manual_draft_path=draft,
+                clock=lambda: self.now,
+                id_factory=lambda: "unbounddraft",
+            )
+        self.assertTrue(_unresolved_provider_calls(self.run_dir))
+
     def test_forced_reset_discards_a_trustworthy_scene_prefix(self) -> None:
         execution_id = "execution_forced_reset"
         self._write_execution(

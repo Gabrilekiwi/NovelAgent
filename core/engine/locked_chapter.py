@@ -96,6 +96,28 @@ def recover_locked_chapter(
             language=language,
         )
         if unresolved:
+            bound_execution_ids = {
+                str(item["payload"]["run"].get("execution_evidence", {}).get("execution_id") or "")
+                if isinstance(item["payload"]["run"].get("execution_evidence"), dict)
+                else ""
+                for item in runs
+            }
+            unbound = [
+                item
+                for item in unresolved
+                if item["execution_id"] not in bound_execution_ids
+            ]
+            if unbound and len(unbound) == len(unresolved):
+                return _recover_unbound_uncertain_executions(
+                    unbound,
+                    runtime_root=runtime_root,
+                    chapter_index=chapter_index,
+                    expected_book_id=expected_book_id,
+                    force_reset=force_reset,
+                    manual_draft_path=manual_draft_path,
+                    clock=now,
+                    id_factory=make_id,
+                )
             owners = _bind_unresolved_to_runs(
                 unresolved,
                 runs,
@@ -311,6 +333,92 @@ def recover_locked_chapter(
         marker_path = runtime_root / "locked_chapter_resolutions" / f"{marker_id}.json"
         atomic_create_json(marker_path, marker)
         return _public_result(marker, marker_path)
+
+
+
+def _recover_unbound_uncertain_executions(
+    unresolved: list[dict[str, Any]],
+    *,
+    runtime_root: Path,
+    chapter_index: int,
+    expected_book_id: str,
+    force_reset: bool,
+    manual_draft_path: str | Path | None,
+    clock: Callable[[], datetime],
+    id_factory: Callable[[], str],
+) -> dict[str, Any]:
+    """Classify an uncertain mid-chapter execution that never wrote a RunRecord.
+
+    A crash after writing an intent (and possibly some receipts) can leave the
+    book locked for the next production attempt, but locked-chapter recovery
+    used to stop because it required a durable run owner.  Safe classification
+    writes an append-only reset marker so the author can start a new attempt
+    without deleting evidence or formal prose.  Scene reuse is not claimed
+    here: scene provenance still requires a source run.
+    """
+
+    if manual_draft_path is not None:
+        raise LockedChapterRecoveryError(
+            "an unresolved model execution has no durable chapter run; "
+            "a manual draft cannot be bound until the uncertain attempt is reset"
+        )
+
+    expected_scene_count = _expected_scene_count_from_unbound_executions(unresolved)
+    source_run_id = f"unbound_{unresolved[0]['execution_id']}"
+    created_at = clock().astimezone(timezone.utc)
+    marker_id = f"resolution_{created_at.strftime('%Y%m%dT%H%M%S%fZ')}_{id_factory()}"
+    reason = (
+        "operator_requested_reset"
+        if force_reset
+        else "provider_call_uncertain_without_run"
+    )
+    marker = {
+        "schema_version": LOCKED_CHAPTER_RESOLUTION_VERSION,
+        "id": marker_id,
+        "created_at": created_at.isoformat(),
+        "book_id": expected_book_id,
+        "chapter_index": chapter_index,
+        "action": "reset",
+        "source_run_id": source_run_id,
+        "resolved_execution_ids": sorted(item["execution_id"] for item in unresolved),
+        "resolved_attempt_ids": sorted(
+            call["attempt_id"] for item in unresolved for call in item["calls"]
+        ),
+        "discarded_run_ids": [],
+        "expected_scene_count": expected_scene_count,
+        "complete_draft": None,
+        "scenes": [],
+        "reason": reason,
+    }
+    marker["resolution_hash"] = canonical_json_hash(
+        marker,
+        exclude_fields=("resolution_hash",),
+        exclude_environment_fields=False,
+    )
+    marker = validate_locked_chapter_resolution(marker)
+    marker_path = runtime_root / "locked_chapter_resolutions" / f"{marker_id}.json"
+    atomic_create_json(marker_path, marker)
+    result = _public_result(marker, marker_path)
+    result["message"] = (
+        "上次模型调用结果不确定（已有调用意图但没有耐久回执），且还没有形成章节 RunRecord。"
+        "系统没有盲目重试，正式正文与快照未改写。已结束这次失败尝试，作者可以重新开写本章。"
+    )
+    return result
+
+
+def _expected_scene_count_from_unbound_executions(unresolved: list[dict[str, Any]]) -> int:
+    import re as _re
+
+    highest = 0
+    pattern = _re.compile(r"scene-0*([1-9][0-9]*)", _re.IGNORECASE)
+    for item in unresolved:
+        for call in item.get("calls") or []:
+            for value in (call.get("call_id"), call.get("attempt_id"), call.get("stage")):
+                if not isinstance(value, str):
+                    continue
+                for match in pattern.finditer(value):
+                    highest = max(highest, int(match.group(1)))
+    return highest or 1
 
 
 def _load_manual_recovery_draft(
