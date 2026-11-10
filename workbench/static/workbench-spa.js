@@ -2162,6 +2162,36 @@
       form.dataset.successMessage = "恢复分类任务已启动。";
       setText("[data-recover-button]", "先做无模型恢复分类");
     }
+    const forceResetPanel = one("[data-force-reset-panel]");
+    const forceResetForm = one("[data-force-reset-form]");
+    const forceResetChapter = one("[data-force-reset-chapter]", forceResetForm);
+    const forceResetButton = one("[data-force-reset-button]", forceResetForm);
+    const classifiedCheckpoint = Boolean(issue.checkpoint) && issue.checkpoint.action !== "reset";
+    const forceResetAllowed = Boolean(
+      forceResetPanel
+      && forceResetForm
+      && classifiedCheckpoint
+      && issue.recoverable !== false
+      && issue.formal_prose_exists !== true
+      && issue.execution_compatible !== false
+      && pausedParent?.execution_compatible !== false
+      && !provenanceFailure
+      && !contextBudget
+    );
+    if (forceResetPanel) {
+      forceResetPanel.hidden = !forceResetAllowed;
+      if (forceResetAllowed) {
+        forceResetChapter.value = String(chapter);
+        forceResetForm.action = issue.recover_url
+          || (issue.project_recovery
+            ? `/api/projects/${encodeURIComponent(state.projectId)}/recovery`
+            : `/api/jobs/${encodeURIComponent(issue.job_id || issue.id || pausedParent?.job_id || pausedParent?.id)}/recover`);
+        forceResetForm.dataset.confirm = `确认结束第 ${chapter} 章失败尝试并允许新尝试？只会追加重置标记，不删除失败证据，也不改写正式正文。`;
+        forceResetForm.dataset.successMessage = `第 ${chapter} 章强制重置任务已启动。`;
+        forceResetButton.disabled = false;
+        setText("[data-force-reset-copy]", `安全分类已完成。若需要丢弃当前失败 run 的复用边界并重新开写第 ${chapter} 章，可结束本章并允许新尝试；证据保留可追溯，正式正文与快照不会被改写。`);
+      }
+    }
     renderRecoveryDraft(issue);
     if (issue.execution_compatible === false || pausedParent?.execution_compatible === false) {
       UI.updateStatusBadge(one(".recovery-hero .status-badge"), "blocked", "旧任务版本不兼容");
@@ -2174,6 +2204,8 @@
       setText("[data-recovery-action-detail]", incompatibleJobMessage);
       form.dataset.confirm = "";
       all("input, button", form).forEach((control) => { control.disabled = true; });
+      const forceResetPanelLocked = one("[data-force-reset-panel]");
+      if (forceResetPanelLocked) forceResetPanelLocked.hidden = true;
       setText("[data-recover-button]", "旧任务版本不兼容");
     }
     all(".pending-item", one("[data-pending-list]")).forEach((node) => node.classList.toggle("is-active", node.dataset.pendingId === String(issue.id)));
@@ -3362,6 +3394,10 @@
         await loadProject(state.projectId, true);
         window.location.hash = projectHash("production");
       }
+    }
+    else if (form.matches("[data-force-reset-form]")) {
+      await loadPending();
+      if (payload.job || payload.job_id) await loadProject(state.projectId, true);
     }
     else if (form.matches("[data-draft-update-form]")) await loadPending();
     else if (form.matches("[data-draft-validate-form], [data-draft-confirm-form]")) { await loadPending(); if (payload.job) window.location.hash = projectHash("production"); }
