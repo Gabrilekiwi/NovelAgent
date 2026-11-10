@@ -116,11 +116,114 @@ def validate_spatial(
     return {"name": "spatial", "ok": not problems, "problems": problems}
 
 
+def _story_state(snapshot: dict[str, Any]) -> dict[str, Any]:
+    value = snapshot.get("story_state")
+    return value if isinstance(value, dict) else {}
+
+
+_AUTHORITATIVE_PLACE_RE = re.compile(
+    r"在([A-Za-z0-9\u4e00-\u9fff_-]{2,24}?)(?:外侧|内侧|门口|门边|门后|标线|附近|旁边|一侧|里|内|前|后|旁)"
+)
+
+
+def _authoritative_ending_texts(snapshot: dict[str, Any]) -> list[str]:
+    authority = snapshot.get("authoritative_state")
+    if not isinstance(authority, dict):
+        return []
+    characters = authority.get("characters")
+    if not isinstance(characters, dict):
+        return []
+    last_characters = [
+        str(item).strip()
+        for item in _story_state(snapshot).get("last_scene_characters", [])
+        if str(item).strip()
+    ]
+    texts: list[str] = []
+    for name, record in characters.items():
+        if not isinstance(record, dict):
+            continue
+        aliases = [
+            str(item).strip()
+            for item in (record.get("aliases") if isinstance(record.get("aliases"), list) else [])
+            if str(item).strip()
+        ]
+        identities = {
+            str(name).strip(),
+            str(record.get("canonical_name") or "").strip(),
+            str(record.get("character_id") or "").strip(),
+            *aliases,
+        }
+        identities.discard("")
+        if last_characters and not identities.intersection(last_characters):
+            continue
+        for key in ("after", "current_goal", "location", "reason"):
+            value = str(record.get(key) or "").strip()
+            if value:
+                texts.append(value)
+    return texts
+
+
+def _ending_location_from_authoritative_state(snapshot: dict[str, Any]) -> str:
+    texts = _authoritative_ending_texts(snapshot)
+    if not texts:
+        return ""
+    joined = chr(10).join(texts)
+    last_location = str(_story_state(snapshot).get("last_scene_location") or "").strip()
+    if last_location and last_location in joined:
+        return last_location
+    found: list[str] = []
+    for match in _AUTHORITATIVE_PLACE_RE.finditer(joined):
+        location = match.group(1).rstrip("的了着过")
+        if len(location) >= 2 and location not in found:
+            found.append(location)
+    return max(found, key=len) if found else ""
+
+
+def continuity_story_state(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Prefer the formal ending location when last_scene_location is stale.
+
+    Chapter writeback can leave last_scene_location and required_opening_bridge
+    on the opening place even after characters have already moved. Authoritative
+    after/current_goal text is the durable ending signal already stored on the
+    snapshot, so opening continuity should follow that when it conflicts.
+    """
+
+    story_state = dict(_story_state(snapshot))
+    last_location = str(story_state.get("last_scene_location") or "").strip()
+    ending_location = _ending_location_from_authoritative_state(snapshot)
+    if not ending_location or ending_location == last_location:
+        return story_state
+    bridge = str(story_state.get("required_opening_bridge") or "")
+    if last_location and last_location in bridge:
+        story_state["required_opening_bridge"] = bridge.replace(last_location, ending_location, 1)
+    else:
+        characters = [
+            str(item).strip()
+            for item in story_state.get("last_scene_characters", [])
+            if str(item).strip()
+        ]
+        if any("\u4e00" <= char <= "\u9fff" for char in ending_location):
+            joined = "、".join(characters)
+            story_state["required_opening_bridge"] = (
+                f"{ending_location}；{joined}" if joined else ending_location
+            )
+        else:
+            joined = ", ".join(characters)
+            story_state["required_opening_bridge"] = (
+                f"{ending_location}; {joined}" if joined else ending_location
+            )
+    story_state["last_scene_location"] = ending_location
+    return story_state
+
+
 def validate_bridge_preconditions(snapshot: dict[str, Any]) -> dict[str, Any]:
-    story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
+    story_state = continuity_story_state(snapshot)
     spatial_state = snapshot.get("spatial_state") if isinstance(snapshot.get("spatial_state"), dict) else {}
     locations = get_locations(snapshot)
     last_location = str(story_state.get("last_scene_location") or "").strip()
+    if last_location and last_location not in locations:
+        locations = dict(locations)
+        locations[last_location] = {"source": "authoritative_ending"}
     required_bridge = str(story_state.get("required_opening_bridge") or "").strip()
     problems: list[dict[str, Any]] = []
 
@@ -167,7 +270,7 @@ def _validate_opening_bridge(
     chapter_text: str,
     locations: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
+    story_state = continuity_story_state(snapshot)
     bridge = str(story_state.get("required_opening_bridge") or "").strip()
     last_location = str(story_state.get("last_scene_location") or "").strip()
     last_characters = [str(item).strip() for item in story_state.get("last_scene_characters", []) if str(item).strip()]
@@ -221,7 +324,7 @@ def _validate_location_transition(
     chapter_text: str,
     locations: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    story_state = snapshot.get("story_state") if isinstance(snapshot.get("story_state"), dict) else {}
+    story_state = continuity_story_state(snapshot)
     spatial_state = snapshot.get("spatial_state") if isinstance(snapshot.get("spatial_state"), dict) else {}
     last_location = str(story_state.get("last_scene_location") or "").strip()
     if not last_location or not locations:

@@ -1118,6 +1118,7 @@ class AgentExecutor:
                         chapter_pipeline,
                         snapshot,
                         authority_delta=authority_delta,
+                        chapter_text=chapter,
                     ),
                     "analysis_result.schema.json",
                 )
@@ -4740,6 +4741,7 @@ def _attach_authoritative_scene_delta(
     snapshot: dict[str, Any] | None = None,
     *,
     authority_delta: dict[str, Any] | None = None,
+    chapter_text: str | None = None,
 ) -> dict[str, Any]:
     result = dict(analysis)
     if authority_delta is None:
@@ -4762,6 +4764,7 @@ def _attach_authoritative_scene_delta(
         result,
         chapter_pipeline,
         language=project_language(snapshot or {}),
+        chapter_text=chapter_text,
     )
     return result
 
@@ -4771,6 +4774,7 @@ def _reconcile_story_state_with_final_scene(
     chapter_pipeline: dict[str, Any] | None,
     *,
     language: str | None = None,
+    chapter_text: str | None = None,
 ) -> dict[str, Any]:
     """Make the verified final Scene boundary the next chapter's continuity.
 
@@ -4808,6 +4812,11 @@ def _reconcile_story_state_with_final_scene(
     result = copy.deepcopy(analysis)
     story_state = result["story_state"]
     if location:
+        location = _prefer_ending_consistent_location(
+            scene_location=location,
+            analyzer_location=str(existing_story_state.get("last_scene_location") or "").strip(),
+            chapter_text=chapter_text,
+        )
         story_state["last_scene_location"] = location
         _ensure_analysis_registers_location(result, location)
     if characters_present_declared:
@@ -4835,6 +4844,30 @@ def _reconcile_story_state_with_final_scene(
             language=language,
         )
     return result
+
+
+def _prefer_ending_consistent_location(
+    *,
+    scene_location: str,
+    analyzer_location: str,
+    chapter_text: str | None,
+) -> str:
+    """Do not copy a stale opening location over an ending the prose already reached.
+
+    Scene ``current_location`` can remain on the chapter opening when later
+    movement never wrote a location delta. If the chapter ending names the
+    analyzer's location and does not name the Scene location, keep the ending.
+    Without chapter text, preserve the existing Scene-final preference.
+    """
+
+    if not chapter_text or not analyzer_location or analyzer_location == scene_location:
+        return scene_location
+    body = str(chapter_text)
+    analyzer_index = body.rfind(analyzer_location)
+    scene_index = body.rfind(scene_location)
+    if analyzer_index > scene_index:
+        return analyzer_location
+    return scene_location
 
 
 def _ensure_analysis_registers_location(analysis: dict[str, Any], location: str) -> None:

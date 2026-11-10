@@ -112,6 +112,34 @@ class AnalyzerTest(unittest.TestCase):
         self.assertEqual("回潮桥", analysis["story_state"]["last_scene_location"])
         self.assertEqual("回潮桥", analysis["spatial_state"]["character_positions"]["顾北"])
 
+    def test_last_scene_follows_new_ending_location_not_known_opening(self) -> None:
+        chapter = (
+            "上一轮通信结束后，陆沉和顾岚仍留在未登记电缆夹层靠外盲区，守着预警纸。"
+            "苏晴说必须等顾岚复核之后才能动。"
+            "两人确认靠外夹层已经清空，才沿复核过的低矮段撤进废弃管廊支仓。"
+            "陆沉守在支仓外侧的标线后，等待下一次定时联络。"
+            "脱离扫描区不过是换了一个落脚处，算不上进入安全基地。"
+            "门外，水流撞上废管，发出一声比刚才更近的空响。"
+        )
+        snapshot = {
+            "project_profile": {
+                "known_characters": ["陆沉", "顾岚"],
+                "known_locations": ["未登记电缆夹层靠外盲区"],
+            }
+        }
+
+        analysis = analyze_chapter(chapter, {"ok": True}, snapshot=snapshot)
+
+        self.assertEqual("废弃管廊支仓", analysis["story_state"]["last_scene_location"])
+        self.assertIn("废弃管廊支仓", analysis["new_locations"])
+        self.assertNotEqual("未登记电缆夹层靠外盲区", analysis["story_state"]["last_scene_location"])
+        self.assertNotIn("安全基地", analysis["story_state"]["last_scene_location"])
+        self.assertIn("废弃管廊支仓", analysis["story_state"]["required_opening_bridge"])
+        self.assertEqual(
+            {"to": "废弃管廊支仓", "source": "chapter_analysis"},
+            analysis["spatial_state"]["last_transition"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

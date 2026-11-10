@@ -537,6 +537,37 @@ class AuthoritativeStateTests(unittest.TestCase):
         self.assertIn("北侧维护通道", (attached.get("spatial_state") or {}).get("spaces") or {})
         self.assertIn("陆沉", attached["story_state"]["required_opening_bridge"])
 
+    def test_stale_opening_scene_location_does_not_override_ending_in_prose(self) -> None:
+        attached = _reconcile_story_state_with_final_scene(
+            {
+                "new_locations": ["未登记电缆夹层靠外盲区", "废弃管廊支仓"],
+                "story_state": {
+                    "last_chapter_ending": "门外，水流撞上废管，发出一声比刚才更近的空响。",
+                    "last_scene_location": "废弃管廊支仓",
+                    "last_scene_characters": ["陆沉", "顾岚"],
+                    "open_threads": [],
+                    "required_opening_bridge": "废弃管廊支仓；陆沉、顾岚",
+                },
+            },
+            {
+                "scene_state_final": {
+                    "current_location": "未登记电缆夹层靠外盲区",
+                    "characters_present": ["陆沉", "顾岚"],
+                }
+            },
+            language="zh-CN",
+            chapter_text=(
+                "上一轮通信结束后，陆沉和顾岚仍留在未登记电缆夹层靠外盲区。"
+                "两人确认靠外夹层已经清空，才沿复核过的低矮段撤进废弃管廊支仓。"
+                "陆沉守在支仓外侧的标线后，等待下一次定时联络。"
+                "门外，水流撞上废管，发出一声比刚才更近的空响。"
+            ),
+        )
+
+        self.assertEqual("废弃管廊支仓", attached["story_state"]["last_scene_location"])
+        self.assertIn("废弃管廊支仓", attached["story_state"]["required_opening_bridge"])
+        self.assertNotIn("未登记电缆夹层靠外盲区", attached["story_state"]["required_opening_bridge"])
+
     def test_memory_event_is_the_replayable_authority(self) -> None:
         memory = create_empty_typed_canonical_memory(book_id="book-authority")
         delta = {

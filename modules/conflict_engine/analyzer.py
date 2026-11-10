@@ -190,16 +190,108 @@ def _location_mention_index(text: str, term: str) -> int:
     return -1
 
 
-def _extract_candidate_locations(text: str, known_locations: list[str] | None = None) -> list[str]:
-    candidates = [
-        (_location_mention_index(text, term), term)
-        for term in (known_locations or _KNOWN_LOCATION_TERMS)
+_MOVEMENT_VERBS = (
+    "撤进",
+    "撤入",
+    "转入",
+    "转到",
+    "进入",
+    "进了",
+    "退到",
+    "退入",
+    "抵达",
+    "来到",
+    "走到",
+    "回到",
+    "迁入",
+    "搬进",
+    "守在",
+    "留在",
+    "留到",
+    "待在",
+    "待到",
+)
+_MOVEMENT_NEGATION_PREFIXES = (
+    "算不上",
+    "谈不上",
+    "没有",
+    "没能",
+    "未能",
+    "无法",
+    "不能",
+    "不是",
+    "并非",
+    "并未",
+    "绝不",
+    "还未",
+    "还没",
+    "并不",
+    "不再",
+    "未",
+)
+_LOCATION_TRAILING_PARTICLES = (
+    "外侧",
+    "内侧",
+    "门口",
+    "门边",
+    "门后",
+    "标线",
+    "附近",
+    "旁边",
+    "一侧",
+    "方向",
+)
+_MOVEMENT_DEST_RE = re.compile(
+    "(?:" + "|".join(sorted(_MOVEMENT_VERBS, key=len, reverse=True)) + ")"
+    + r"([A-Za-z0-9\u4e00-\u9fff_-]{2,24})"
+)
+
+
+def _extract_movement_destinations(text: str) -> list[str]:
+    """Collect destinations of actual movement, including places not yet registered."""
+
+    body = str(text or "")
+    found: list[str] = []
+    for match in _MOVEMENT_DEST_RE.finditer(body):
+        prefix = body[max(0, match.start() - 8) : match.start()]
+        if any(prefix.endswith(negation) for negation in _MOVEMENT_NEGATION_PREFIXES):
+            continue
+        location = _trim_movement_destination(match.group(1))
+        if location and location not in found:
+            found.append(location)
+    return found
+
+
+def _trim_movement_destination(value: str) -> str:
+    location = str(value or "").strip(" ,.;:!?，。；：！？、")
+    if not location:
+        return ""
+    cut_points = [
+        location.find(particle)
+        for particle in _LOCATION_TRAILING_PARTICLES
+        if particle in location
     ]
+    if cut_points:
+        cut = min(point for point in cut_points if point >= 2)
+        location = location[:cut]
+    location = location.rstrip("的了着过")
+    if len(location) < 2:
+        return ""
+    return location
+
+
+def _extract_candidate_locations(text: str, known_locations: list[str] | None = None) -> list[str]:
+    mentions = {
+        term: _location_mention_index(text, term)
+        for term in (known_locations or _KNOWN_LOCATION_TERMS)
+    }
+    for destination in _extract_movement_destinations(text):
+        mentions.setdefault(destination, _location_mention_index(text, destination))
     return [
         term
-        for position, term in sorted(
-            (item for item in candidates if item[0] >= 0),
-            key=lambda item: item[0],
+        for term, position in sorted(
+            ((item, index) for item, index in mentions.items() if index >= 0),
+            key=lambda item: item[1],
         )
     ]
 
@@ -309,18 +401,38 @@ def _extract_character_changes(
     return changes[:10]
 
 
+def _canonical_location_name(location: str, locations: list[str]) -> str:
+    longer = [
+        candidate
+        for candidate in locations
+        if candidate != location and candidate.endswith(location)
+    ]
+    return max(longer, key=len) if longer else location
+
+
+def _location_family_index(text: str, location: str, locations: list[str]) -> int:
+    best = _location_mention_index(text, location)
+    for alias in locations:
+        if alias == location:
+            continue
+        if alias.endswith(location) or location.endswith(alias):
+            best = max(best, _location_mention_index(text, alias))
+    return best
+
+
 def _last_known_location(
     text: str,
     character_changes: list[dict[str, str]],
     new_locations: list[str],
 ) -> str:
     mentioned_locations = [
-        (index, location)
+        (_location_family_index(text, location, new_locations), location)
         for location in new_locations
-        if location and (index := _location_mention_index(text, location)) >= 0
+        if location and _location_family_index(text, location, new_locations) >= 0
     ]
     if mentioned_locations:
-        return max(mentioned_locations, key=lambda item: item[0])[1]
+        _, raw_location = max(mentioned_locations, key=lambda item: (item[0], len(item[1])))
+        return _canonical_location_name(raw_location, new_locations)
     for change in reversed(character_changes):
         location = change.get("current_location")
         if location:

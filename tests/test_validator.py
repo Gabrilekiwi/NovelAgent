@@ -714,6 +714,53 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotIn("missing_opening_bridge", problem_codes)
         self.assertNotIn("missing_last_scene_continuity", problem_codes)
 
+    def test_opening_continuity_follows_authoritative_ending_not_stale_last_scene(self) -> None:
+        snapshot = {
+            "chapter_index": 52,
+            "world_state": {
+                "locations": {
+                    "未登记电缆夹层靠外盲区": {},
+                    "废弃管廊支仓": {},
+                }
+            },
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "门外，水流撞上废管，发出一声比刚才更近的空响。",
+                "last_scene_location": "未登记电缆夹层靠外盲区",
+                "last_scene_characters": ["陆沉", "顾岚"],
+                "open_threads": [],
+                "required_opening_bridge": "未登记电缆夹层靠外盲区；陆沉、顾岚",
+            },
+            "spatial_state": {
+                "spaces": {"未登记电缆夹层靠外盲区": {"source": "chapter_analysis"}},
+                "connections": [],
+                "character_positions": {},
+                "blocked_paths": [],
+                "last_transition": {"to": "未登记电缆夹层靠外盲区"},
+            },
+            "authoritative_state": {
+                "characters": {
+                    "陆沉": {
+                        "canonical_name": "陆沉",
+                        "aliases": ["陆沉"],
+                        "after": "遵守未解除的隔离约束，在废弃管廊支仓外侧标线后保持与赵铁的隔离间距并等待定时联络",
+                        "current_goal": "遵守未解除的隔离约束，在废弃管廊支仓外侧标线后保持与赵铁的隔离间距并等待定时联络",
+                    }
+                }
+            },
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "陆沉和顾岚守在废弃管廊支仓外侧的标线后，听着门外上涨的积水。",
+            {"validation_focus": ["spatial"]},
+        )
+
+        problem_codes = {problem["code"] for problem in result["problems"]}
+        self.assertNotIn("missing_last_scene_continuity", problem_codes)
+        self.assertNotIn("missing_opening_bridge", problem_codes)
+
     def test_rejects_invalid_spatial_transition_with_dedicated_code(self) -> None:
         snapshot = {
             "chapter_index": 2,
