@@ -140,6 +140,29 @@ class AnalyzerTest(unittest.TestCase):
             analysis["spatial_state"]["last_transition"],
         )
 
+    def test_movement_destination_starting_with_embedded_particle_does_not_crash(self) -> None:
+        # "另一侧折返点" contains the trailing particle "一侧" at index 1.
+        # Trimming must keep the full name instead of calling min() on an empty cut list.
+        from modules.conflict_engine.analyzer import _trim_movement_destination
+
+        self.assertEqual("另一侧折返点", _trim_movement_destination("另一侧折返点"))
+        self.assertEqual("废弃管廊支仓", _trim_movement_destination("废弃管廊支仓外侧"))
+        self.assertEqual("外侧", _trim_movement_destination("外侧"))
+
+        chapter = (
+            "医院侧递送者只走到另一侧折返点，中间靠无人交接。"
+            "陆沉仍守在废弃管廊支仓，等待下一次定时联络。"
+        )
+        snapshot = {
+            "project_profile": {
+                "known_characters": ["陆沉"],
+                "known_locations": ["废弃管廊支仓"],
+            }
+        }
+        analysis = analyze_chapter(chapter, {"ok": True}, snapshot=snapshot)
+        self.assertIn("另一侧折返点", analysis["new_locations"])
+        self.assertEqual("废弃管廊支仓", analysis["story_state"]["last_scene_location"])
+
 
 if __name__ == "__main__":
     unittest.main()

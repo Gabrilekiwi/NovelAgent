@@ -271,9 +271,9 @@ def _trim_movement_destination(value: str) -> str:
         for particle in _LOCATION_TRAILING_PARTICLES
         if particle in location
     ]
-    if cut_points:
-        cut = min(point for point in cut_points if point >= 2)
-        location = location[:cut]
+    valid_cuts = [point for point in cut_points if point >= 2]
+    if valid_cuts:
+        location = location[: min(valid_cuts)]
     location = location.rstrip("的了着过")
     if len(location) < 2:
         return ""
