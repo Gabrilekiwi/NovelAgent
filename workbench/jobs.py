@@ -4014,6 +4014,12 @@ def _has_pre_provider_provenance_retry_evidence(connection: Any, parent: Any) ->
     return _git_provenance_preflight(project_root)["ok"] is True
 
 
+def _recovery_draft_text_equivalent(left: str, right: str) -> bool:
+    """Match checkpoint prose to the author draft after language-validation strip()."""
+
+    return left == right or left.strip() == right.strip()
+
+
 def _manual_recovery_draft_matches(
     connection: Any,
     *,
@@ -4049,13 +4055,14 @@ def _manual_recovery_draft_matches(
         revision = int(draft["revision"])
     except (TypeError, ValueError):
         return False
+    draft_text = str(draft["text"])
     if (
         str(draft["project_id"]) != project_id
         or int(draft["chapter"]) != chapter
         or str(draft["state"]) != "validated"
         or revision != expected_revision + 1
-        or str(draft["text"]) != text
-        or str(draft["sha256"]) != digest
+        or not _recovery_draft_text_equivalent(draft_text, text)
+        or str(draft["sha256"]) != _sha256_text(draft_text)
     ):
         return False
     draft_source_run_id = str(draft["source_run_id"] or "").strip() or None
@@ -4066,7 +4073,7 @@ def _manual_recovery_draft_matches(
         archive_path.relative_to(project_root)
         if _is_reparse_or_link(archive_path) or not archive_path.is_file():
             return False
-        if archive_path.read_text(encoding="utf-8") != text:
+        if not _recovery_draft_text_equivalent(archive_path.read_text(encoding="utf-8"), text):
             return False
         validation = json.loads(str(draft["validation_json"]))
     except (OSError, ValueError, json.JSONDecodeError):
