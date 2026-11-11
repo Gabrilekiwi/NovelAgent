@@ -4066,7 +4066,12 @@ def _manual_recovery_draft_matches(
     ):
         return False
     draft_source_run_id = str(draft["source_run_id"] or "").strip() or None
-    if draft_source_run_id != latest_run_id:
+    if not _source_run_covers_empty_pre_provider_latest(
+        project_root,
+        chapter=chapter,
+        latest_run_id=latest_run_id,
+        source_run_id=draft_source_run_id,
+    ):
         return False
     try:
         archive_path = Path(manual_path_value).resolve(strict=True)
@@ -4087,6 +4092,111 @@ def _manual_recovery_draft_matches(
         return Path(checkpoint_value).resolve(strict=True) == checkpoint
     except OSError:
         return False
+
+
+
+def _empty_pre_provider_context_failure(value: Mapping[str, Any], *, chapter: int) -> bool:
+    """Return True when a chapter run failed before any provider call or prose existed."""
+
+    run = value.get("run")
+    if not isinstance(run, Mapping) or int(run.get("chapter_index") or 0) != int(chapter):
+        return False
+    if run.get("status") not in {"failed", "rejected"}:
+        return False
+    if value.get("accepted") is not False or value.get("committed") is not False:
+        return False
+    if run.get("accepted") is not False or run.get("committed") is not False:
+        return False
+    run_error = run.get("error")
+    if not isinstance(run_error, Mapping):
+        return False
+    error_message = run_error.get("message")
+    if not isinstance(error_message, str):
+        return False
+    markers = (
+        "required_markdown_context_exceeds_budget",
+        "story_project_context_budget_exceeded",
+    )
+    if not any(marker in error_message for marker in markers):
+        return False
+    error_type = str(run_error.get("type") or "")
+    if error_type not in {"StructuredContextError", "ContextBudgetError", "WorkflowExecutionError"}:
+        return False
+    execution_evidence = run.get("execution_evidence")
+    budget = (
+        execution_evidence.get("budget")
+        if isinstance(execution_evidence, Mapping)
+        else None
+    )
+    if not isinstance(budget, Mapping):
+        return False
+    provider_calls = budget.get("provider_calls")
+    unsettled = budget.get("unsettled_attempt_count")
+    if (
+        not isinstance(provider_calls, int)
+        or isinstance(provider_calls, bool)
+        or provider_calls != 0
+        or not isinstance(unsettled, int)
+        or isinstance(unsettled, bool)
+        or unsettled != 0
+    ):
+        return False
+    run_chapter = run.get("chapter")
+    chapter_chars = run_chapter.get("chars") if isinstance(run_chapter, Mapping) else None
+    if not isinstance(chapter_chars, int) or isinstance(chapter_chars, bool) or chapter_chars != 0:
+        return False
+    generated_chapter = value.get("chapter")
+    if isinstance(generated_chapter, str) and generated_chapter.strip():
+        return False
+    persistence = run.get("persistence")
+    if isinstance(persistence, Mapping) and (
+        persistence.get("committed") is True
+        or persistence.get("state") in {"committed", "completed"}
+    ):
+        return False
+    story_project = run.get("story_project")
+    writeback = story_project.get("writeback") if isinstance(story_project, Mapping) else None
+    if isinstance(writeback, Mapping) and writeback.get("applied") is True:
+        return False
+    return True
+
+
+def _latest_run_is_empty_pre_provider_failure(project_root: Path, chapter: int) -> bool:
+    try:
+        run_manifest_ok, latest_run_id = _latest_strict_chapter_run_id(
+            project_root,
+            int(chapter),
+        )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return False
+    if not run_manifest_ok or not isinstance(latest_run_id, str) or not latest_run_id:
+        return False
+    try:
+        run_path = _safe_project_file(
+            Path(project_root),
+            Path(project_root) / ".novelagent" / "runtime" / "runs" / f"{latest_run_id}.json",
+        )
+        value = json.loads(run_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(value, Mapping) and _empty_pre_provider_context_failure(
+        value,
+        chapter=int(chapter),
+    )
+
+
+def _source_run_covers_empty_pre_provider_latest(
+    project_root: Path,
+    *,
+    chapter: int,
+    latest_run_id: str | None,
+    source_run_id: str | None,
+) -> bool:
+    if source_run_id == latest_run_id:
+        return True
+    if not source_run_id or not latest_run_id:
+        return False
+    return _latest_run_is_empty_pre_provider_failure(project_root, int(chapter))
 
 
 def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
@@ -4167,9 +4277,19 @@ def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
             if checkpoint_run_id is not None or configured_run_id is not None:
                 continue
         else:
-            if checkpoint_run_id != latest_run_id:
+            if not _source_run_covers_empty_pre_provider_latest(
+                project_root,
+                chapter=int(parent["next_chapter"]),
+                latest_run_id=latest_run_id,
+                source_run_id=checkpoint_run_id,
+            ):
                 continue
-            if "source_run_id" in config and configured_run_id != latest_run_id:
+            if "source_run_id" in config and not _source_run_covers_empty_pre_provider_latest(
+                project_root,
+                chapter=int(parent["next_chapter"]),
+                latest_run_id=latest_run_id,
+                source_run_id=configured_run_id,
+            ):
                 continue
         complete_draft = payload.get("complete_draft")
         if payload.get("reason") == "manual_repaired_draft_provided":

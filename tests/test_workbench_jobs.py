@@ -1612,6 +1612,289 @@ def test_validated_manual_draft_unblocks_recovery_when_checkpoint_strips_trailin
     assert store.resume(parent.id, confirmed=True).state == "queued"
 
 
+
+def test_validated_manual_draft_unblocks_resume_after_empty_pre_provider_rerun(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A paid draft from an earlier run can confirm after a 0-call context-budget rerun."""
+
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id)
+    paused = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={"code": "engine_result_unreadable"},
+        uncertain=False,
+    )
+    project_root = tmp_path / "books" / "test-book"
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True)
+    source_run_id = "chapter_1_20261111T000002332925Z"
+    latest_run_id = "chapter_1_20261111T010312972548Z"
+    (run_dir / f"{source_run_id}.json").write_text(
+        json.dumps(
+            {
+                "accepted": False,
+                "committed": False,
+                "chapter": "paid polished draft already isolated",
+                "run": {
+                    "id": source_run_id,
+                    "chapter_index": 1,
+                    "status": "failed",
+                    "accepted": False,
+                    "committed": False,
+                    "finished_at": "2026-11-11T00:05:18+00:00",
+                    "chapter": {"chars": 3641},
+                    "execution_evidence": {"budget": {"provider_calls": 6, "unsettled_attempt_count": 1}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / f"{latest_run_id}.json").write_text(
+        json.dumps(
+            {
+                "accepted": False,
+                "committed": False,
+                "chapter": "",
+                "run": {
+                    "id": latest_run_id,
+                    "chapter_index": 1,
+                    "status": "failed",
+                    "accepted": False,
+                    "committed": False,
+                    "finished_at": "2026-11-11T01:03:15+00:00",
+                    "error": {
+                        "type": "StructuredContextError",
+                        "message": "required_markdown_context_exceeds_budget: required complete Markdown/JSON entries exceed 10500 characters",
+                    },
+                    "chapter": {"chars": 0},
+                    "execution_evidence": {
+                        "budget": {"provider_calls": 0, "unsettled_attempt_count": 0}
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manual_text = "陆沉把撤回标记抄进只读副本，不再追开着的门。" * 40
+    draft = store.upsert_draft(
+        project_id=project_id,
+        chapter=1,
+        text=manual_text,
+        source_run_id=source_run_id,
+    )
+    draft_path = (
+        project_root
+        / ".novelagent"
+        / "workbench"
+        / "drafts"
+        / f"{draft.id}_r{draft.revision}.md"
+    )
+    draft_path.parent.mkdir(parents=True, exist_ok=True)
+    draft_path.write_text(draft.text, encoding="utf-8")
+    checkpoint_path = run_dir / "locked_chapter_resolutions" / "resolution_manual.json"
+    checkpoint_path.parent.mkdir(exist_ok=True)
+    checkpoint_path.write_text(
+        json.dumps(
+            {
+                "chapter_index": 1,
+                "source_run_id": source_run_id,
+                "reason": "manual_repaired_draft_provided",
+                "complete_draft": {
+                    "text": draft.text,
+                    "sha256": draft.sha256,
+                    "source_stage": "scene_repair",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    recovery = store.create_job(
+        project_id=project_id,
+        kind="locked_chapter_recovery",
+        start_chapter=1,
+        end_chapter=1,
+        config={
+            "parent_job_id": parent.id,
+            "parent_failure_revision": paused.revision,
+            "draft_id": draft.id,
+            "draft_revision": draft.revision,
+            "manual_draft_path": str(draft_path),
+            "source_run_id": source_run_id,
+        },
+    )
+    claimed = store.claim_next()
+    assert claimed is not None and claimed.id == recovery.id
+    result = {
+        "ok": True,
+        "status": "recovered",
+        "action": "repair_draft",
+        "reason": "manual_repaired_draft_provided",
+        "checkpoint_path": str(checkpoint_path),
+        "provider_calls": 0,
+    }
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_execute_subprocess",
+        lambda *_args, **_kwargs: {
+            "cancelled": False,
+            "exit_code": 0,
+            "result": result,
+            "stderr_tail": "",
+        },
+    )
+    monkeypatch.setattr(
+        "workbench.jobs._git_provenance_preflight",
+        lambda _root: {"ok": True, "dependency": "git"},
+    )
+
+    supervisor._run_recovery(claimed)
+
+    assert store.get_draft(draft.id).state == "validated"
+    assert store.resume_ready(parent.id) is True
+    assert store.resume(parent.id, confirmed=True).state == "queued"
+
+
+def test_mismatched_manual_draft_stays_blocked_when_latest_run_produced_prose(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id)
+    paused = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={"code": "engine_result_unreadable"},
+        uncertain=False,
+    )
+    project_root = tmp_path / "books" / "test-book"
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True)
+    source_run_id = "chapter_1_old_paid"
+    latest_run_id = "chapter_1_later_with_prose"
+    (run_dir / f"{source_run_id}.json").write_text(
+        json.dumps({"run": {"id": source_run_id, "chapter_index": 1, "status": "failed", "committed": False}}),
+        encoding="utf-8",
+    )
+    (run_dir / f"{latest_run_id}.json").write_text(
+        json.dumps(
+            {
+                "accepted": False,
+                "committed": False,
+                "chapter": "",
+                "run": {
+                    "id": latest_run_id,
+                    "chapter_index": 1,
+                    "status": "failed",
+                    "accepted": False,
+                    "committed": False,
+                    "finished_at": "2026-11-11T02:00:00+00:00",
+                    "error": {
+                        "type": "StructuredContextError",
+                        "message": "required_markdown_context_exceeds_budget: required complete Markdown/JSON entries exceed 10500 characters",
+                    },
+                    "chapter": {"chars": 120},
+                    "execution_evidence": {
+                        "budget": {"provider_calls": 1, "unsettled_attempt_count": 0}
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manual_text = "旧稿不能在后续已经写出新正文后直接当作恢复证据。" * 20
+    draft = store.upsert_draft(
+        project_id=project_id,
+        chapter=1,
+        text=manual_text,
+        source_run_id=source_run_id,
+    )
+    draft_path = (
+        project_root
+        / ".novelagent"
+        / "workbench"
+        / "drafts"
+        / f"{draft.id}_r{draft.revision}.md"
+    )
+    draft_path.parent.mkdir(parents=True, exist_ok=True)
+    draft_path.write_text(draft.text, encoding="utf-8")
+    checkpoint_path = run_dir / "locked_chapter_resolutions" / "resolution_manual.json"
+    checkpoint_path.parent.mkdir(exist_ok=True)
+    checkpoint_path.write_text(
+        json.dumps(
+            {
+                "chapter_index": 1,
+                "source_run_id": source_run_id,
+                "reason": "manual_repaired_draft_provided",
+                "complete_draft": {
+                    "text": draft.text,
+                    "sha256": draft.sha256,
+                    "source_stage": "scene_repair",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    recovery = store.create_job(
+        project_id=project_id,
+        kind="locked_chapter_recovery",
+        start_chapter=1,
+        end_chapter=1,
+        config={
+            "parent_job_id": parent.id,
+            "parent_failure_revision": paused.revision,
+            "draft_id": draft.id,
+            "draft_revision": draft.revision,
+            "manual_draft_path": str(draft_path),
+            "source_run_id": source_run_id,
+        },
+    )
+    claimed = store.claim_next()
+    assert claimed is not None and claimed.id == recovery.id
+    result = {
+        "ok": True,
+        "status": "recovered",
+        "action": "repair_draft",
+        "reason": "manual_repaired_draft_provided",
+        "checkpoint_path": str(checkpoint_path),
+        "provider_calls": 0,
+    }
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_execute_subprocess",
+        lambda *_args, **_kwargs: {
+            "cancelled": False,
+            "exit_code": 0,
+            "result": result,
+            "stderr_tail": "",
+        },
+    )
+    monkeypatch.setattr(
+        "workbench.jobs._git_provenance_preflight",
+        lambda _root: {"ok": True, "dependency": "git"},
+    )
+    supervisor._run_recovery(claimed)
+    assert store.get_draft(draft.id).state == "validated"
+    assert store.resume_ready(parent.id) is False
+
 def test_recovery_source_upgrade_replaces_only_an_untouched_draft(tmp_path: Path) -> None:
     _, store, project_id = _job_store(tmp_path)
     original = store.upsert_draft(
