@@ -378,7 +378,12 @@
         <!-- History -->
         <section data-spa-view="history" hidden>
           <div class="page-heading"><div><p class="eyebrow">可追溯运行</p><h1>历史</h1><p class="lede">每次生成、校验、恢复和提交都保留可读摘要。</p></div></div>
-          <div class="metrics-grid history-metrics"><article class="metric-card"><p class="eyebrow">运行总数</p><p class="metric-value" data-history-total>0</p></article><article class="metric-card metric-jade"><p class="eyebrow">首次通过率</p><p class="metric-value" data-history-pass-rate>—</p></article><article class="metric-card"><p class="eyebrow">人工介入</p><p class="metric-value" data-history-manual>0</p></article><article class="metric-card"><p class="eyebrow">估算总费用</p><p class="metric-value" data-history-cost>—</p></article></div>
+          <div class="metrics-grid history-metrics">
+            <article class="metric-card"><p class="eyebrow">运行总数</p><p class="metric-value" data-history-total>0</p><p class="metric-note" data-history-total-note></p></article>
+            <article class="metric-card metric-jade"><p class="eyebrow">首次通过率</p><p class="metric-value" data-history-pass-rate>—</p><p class="metric-note" data-history-pass-note></p></article>
+            <article class="metric-card"><p class="eyebrow">安全恢复</p><p class="metric-value" data-history-recoveries>0</p><p class="metric-note" data-history-recoveries-note></p></article>
+            <article class="metric-card"><p class="eyebrow">用量与费用</p><p class="metric-value" data-history-cost>—</p><p class="metric-note" data-history-cost-note></p></article>
+          </div>
           <section class="panel history-panel"><div class="toolbar"><label class="search-field"><span>⌕</span><input type="search" name="history_search" placeholder="搜索章号、运行 ID" data-spa-history-search></label></div><div class="table-scroll"><table class="data-table"><thead><tr><th>时间</th><th>章节 / 操作</th><th>结果</th><th>用时</th><th>Tokens</th><th>费用</th><th>详情</th></tr></thead><tbody data-history-rows></tbody></table></div></section>
           <section class="panel" data-history-detail hidden aria-live="polite"></section>
         </section>

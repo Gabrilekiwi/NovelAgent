@@ -264,6 +264,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .metric-card .eyebrow { margin-bottom: 11px; color: var(--muted); }
 .metric-value { margin-bottom: 5px; font: 700 25px/1.15 "STZhongsong", "Songti SC", serif; }
 .metric-note { margin: 0; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.history-metrics .metric-note { margin-top: 6px; overflow: visible; text-overflow: unset; white-space: normal; line-height: 1.45; }
+.history-metrics .metric-note { margin-top: 6px; overflow: visible; text-overflow: unset; white-space: normal; line-height: 1.45; }
 .metric-jade { border-top-color: var(--jade); }
 .metric-attention { border-top-color: var(--accent); background: #fffaf7; }
 .attention-banner { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 18px; margin-bottom: 20px; padding: 18px 20px; border-radius: var(--radius); color: #fff; background: var(--accent); box-shadow: 0 10px 24px rgba(166,63,46,.18); }

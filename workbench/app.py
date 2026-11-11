@@ -939,10 +939,14 @@ def _create_app_owned(
     @app.get("/api/projects/{project_id}/history")
     async def project_history(project_id: str) -> dict[str, Any]:
         record = projects.get(project_id)
-        return {
-            "jobs": [item.to_dict() for item in jobs.list_jobs(project_id=record.id, limit=100)],
-            "runs": _run_history(record.root),
-        }
+        from workbench.history_stats import build_project_history_payload
+
+        return build_project_history_payload(
+            root=record.root,
+            project_id=record.id,
+            job_store=jobs,
+            compact_run=_compact_run,
+        )
 
     @app.get("/api/projects/{project_id}/history/{entry_id}")
     async def project_history_detail(

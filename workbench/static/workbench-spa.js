@@ -2703,12 +2703,16 @@
       created_at_label: job.created_at ? new Date(job.created_at).toLocaleString("zh-CN") : "—"
     }));
     state.runs = [...jobRecords, ...runRecords.map((run) => ({ ...run, history_source: "run" }))];
-    const stats = payload.stats || {};
-    setText("[data-history-total]", stats.total_runs ?? state.runs.length);
-    const completed = jobRecords.filter((job) => ["completed", "committed"].includes(job.status)).length;
-    setText("[data-history-pass-rate]", stats.first_pass_rate || (jobRecords.length ? `${Math.round(completed / jobRecords.length * 100)}%` : "—"));
-    setText("[data-history-manual]", stats.manual_interventions ?? jobRecords.filter((job) => job.manual_confirmation_required).length);
-    setText("[data-history-cost]", stats.cost_label || "—");
+    const stats = payload.stats;
+    const hasStats = Boolean(stats) && typeof stats === "object";
+    setText("[data-history-total]", hasStats && stats.total_runs != null ? stats.total_runs : "—");
+    setText("[data-history-total-note]", hasStats ? (stats.range_label || "") : "");
+    setText("[data-history-pass-rate]", hasStats && stats.first_pass_rate ? stats.first_pass_rate : "—");
+    setText("[data-history-pass-note]", hasStats ? (stats.first_pass_note || "") : "");
+    setText("[data-history-recoveries]", hasStats && stats.recoveries != null ? stats.recoveries : "—");
+    setText("[data-history-recoveries-note]", hasStats ? (stats.intervention_note || "") : "");
+    setText("[data-history-cost]", hasStats && stats.cost_label ? stats.cost_label : "—");
+    setText("[data-history-cost-note]", hasStats ? (stats.token_label || "") : "");
     const tbody = one("[data-history-rows]"); clear(tbody);
     state.runs.forEach((run) => {
       const row = el("tr"); row.dataset.searchValue = `${run.chapter || ""} ${run.id || ""} ${run.title || ""}`;
