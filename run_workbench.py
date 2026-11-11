@@ -12,6 +12,7 @@ import uvicorn
 
 from workbench.app import create_app, _local_app_root
 from workbench.instance import InstanceAlreadyRunning, InstanceLease, existing_instance_url
+from workbench.official_launch import OfficialLaunchError, launch_from_official_plan, plan_official_launch
 from workbench.backup_archive import _lineage
 from workbench.backup_files import _ordinary
 from workbench.restore_scope import RestoreScopeError, load_restore_scope
@@ -31,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
     directories.add_argument("--data-dir", type=Path, help="工作台数据目录；默认使用本机应用数据目录")
     directories.add_argument("--restore-dir", type=Path, help="打开已核验的恢复副本目录；不会自动执行任务")
     parser.add_argument("--no-active-import", action="store_true", help="不自动登记当前活动作品")
+    parser.add_argument(
+        "--use-working-tree",
+        action="store_true",
+        help="使用当前工作区源码启动（包括未提交改动）；默认在工作区与 HEAD 不一致时改用已提交界面",
+    )
     return parser
 
 
@@ -63,9 +69,32 @@ def _launch_database(directory: Path, *, require_restore: bool = False) -> tuple
     return restored, True
 
 
+def _should_redirect_official_launch(args: argparse.Namespace) -> bool:
+    if args.use_working_tree or args.restore_dir is not None:
+        return False
+    # Pytest exercises this module in-process and via subprocess against the
+    # local checkout. Those runs must keep using the working tree, not a live
+    # official worktree checkout.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    return True
+
+
 def main() -> int:
     args = build_parser().parse_args()
     repository = Path(__file__).resolve().parent
+    if _should_redirect_official_launch(args):
+        plan = plan_official_launch(
+            repository,
+            sys.argv[1:],
+            use_working_tree=args.use_working_tree,
+        )
+        if plan.redirected:
+            try:
+                return launch_from_official_plan(plan)
+            except OfficialLaunchError as exc:
+                print(f"工作台未启动：{exc}", file=sys.stderr)
+                return 2
     workspaces = [Path(value).resolve(strict=True) for value in args.workspace] or [repository]
     directory = Path(args.restore_dir or args.data_dir or _local_app_root()).expanduser().absolute()
     try:

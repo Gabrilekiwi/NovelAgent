@@ -2,6 +2,9 @@
 setlocal
 cd /d "%~dp0"
 
+REM Official start: if workbench/core sources differ from HEAD, run_workbench.py
+REM serves committed HEAD UI from a sibling official worktree, not dirty overlays.
+
 title NovelAgent Workbench
 set "PYTHONUTF8=1"
 
