@@ -63,6 +63,10 @@ _REPAIR_NOT_CONVERGING_PATTERN = re.compile(
 )
 
 
+def _formal_prose_exists(project_root: str | Path, chapter: int) -> bool:
+    return resolve_prose(project_root, chapter).path is not None
+
+
 class JobError(RuntimeError):
     """Raised when a workbench task transition would be unsafe."""
 
@@ -365,7 +369,9 @@ class JobStore:
                 },
                 timestamp=timestamp,
             )
-        return self.get(job_id)
+        record = self.get(job_id)
+        self.archive_recovery_draft_for_committed_chapter(record.project_id, chapter)
+        return record
 
     def create_job(
         self,
@@ -1080,7 +1086,9 @@ class JobStore:
                     {"reason": "author_requested_after_chapter", "next_chapter": next_chapter},
                     timestamp=timestamp,
                 )
-        return self.get(job_id)
+        record = self.get(job_id)
+        self.archive_recovery_draft_for_committed_chapter(record.project_id, chapter)
+        return record
 
     def chapter_failed(
         self,
@@ -1215,6 +1223,11 @@ class JobStore:
         timestamp = _utc_now()
         draft_id = f"draft_{uuid.uuid4().hex}"
         with self.database.transaction() as connection:
+            project_root = self._project_root(str(project_id), connection)
+            if _formal_prose_exists(project_root, int(chapter)):
+                raise JobError(
+                    f"chapter {int(chapter)} already has formal committed prose"
+                )
             existing = connection.execute(
                 "SELECT * FROM drafts WHERE project_id = ? AND chapter = ?",
                 (str(project_id), int(chapter)),
@@ -1310,6 +1323,7 @@ class JobStore:
             row = connection.execute("SELECT * FROM drafts WHERE id = ?", (str(draft_id),)).fetchone()
             if row is None:
                 raise JobError(f"unknown draft: {draft_id}")
+            self._require_actionable_recovery_draft_row(connection, row)
             if int(row["revision"]) != int(expected_revision):
                 raise JobError(
                     f"draft revision conflict: expected {expected_revision}, current {row['revision']}"
@@ -1338,6 +1352,7 @@ class JobStore:
             row = connection.execute("SELECT * FROM drafts WHERE id = ?", (str(draft_id),)).fetchone()
             if row is None:
                 raise JobError(f"unknown draft: {draft_id}")
+            self._require_actionable_recovery_draft_row(connection, row)
             if int(row["revision"]) != int(expected_revision):
                 raise JobError("draft revision conflict during validation")
             connection.execute(
@@ -1351,6 +1366,125 @@ class JobStore:
                     str(draft_id),
                     int(expected_revision),
                 ),
+            )
+        return self.get_draft(draft_id)
+
+    def _project_root(self, project_id: str, connection: Any | None = None) -> Path:
+        def load(conn: Any) -> Path:
+            row = conn.execute(
+                "SELECT root FROM projects WHERE id = ?", (str(project_id),)
+            ).fetchone()
+            if row is None:
+                raise JobError(f"unknown workbench project: {project_id}")
+            return Path(row["root"])
+
+        if connection is not None:
+            return load(connection)
+        with self.database.connection() as connection:
+            return load(connection)
+
+    def _require_actionable_recovery_draft_row(self, connection: Any, row: Any) -> None:
+        chapter = int(row["chapter"])
+        if str(row["state"]) == "archived":
+            raise JobError(
+                f"chapter {chapter} recovery draft has been archived after formal commit"
+            )
+        project_root = self._project_root(str(row["project_id"]), connection)
+        if _formal_prose_exists(project_root, chapter):
+            raise JobError(f"chapter {chapter} already has formal committed prose")
+
+    def require_actionable_recovery_draft(self, draft_id: str) -> DraftRecord:
+        with self.database.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM drafts WHERE id = ?", (str(draft_id),)
+            ).fetchone()
+            if row is None:
+                raise JobError(f"unknown draft: {draft_id}")
+            self._require_actionable_recovery_draft_row(connection, row)
+            return _draft_from_row(row)
+
+    def list_actionable_drafts(self, project_id: str) -> tuple[DraftRecord, ...]:
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id FROM drafts
+                WHERE project_id = ? AND state != 'archived'
+                ORDER BY updated_at DESC
+                """,
+                (str(project_id),),
+            ).fetchall()
+        return tuple(self.get_draft(str(row["id"])) for row in rows)
+
+    def archive_recovery_draft_for_committed_chapter(
+        self,
+        project_id: str,
+        chapter: int,
+        *,
+        project_root: str | Path | None = None,
+    ) -> DraftRecord | None:
+        root = Path(project_root) if project_root is not None else self._project_root(project_id)
+        if not _formal_prose_exists(root, int(chapter)):
+            return None
+        draft = self.get_project_chapter_draft(project_id, int(chapter))
+        if draft is None:
+            return None
+        return self._archive_recovery_draft(draft.id, project_root=root)
+
+    def archive_settled_recovery_drafts(
+        self,
+        project_id: str,
+        *,
+        project_root: str | Path | None = None,
+    ) -> tuple[DraftRecord, ...]:
+        root = Path(project_root) if project_root is not None else self._project_root(project_id)
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, chapter FROM drafts
+                WHERE project_id = ? AND state != 'archived'
+                ORDER BY chapter, id
+                """,
+                (str(project_id),),
+            ).fetchall()
+        archived: list[DraftRecord] = []
+        for row in rows:
+            record = self.archive_recovery_draft_for_committed_chapter(
+                project_id,
+                int(row["chapter"]),
+                project_root=root,
+            )
+            if record is not None:
+                archived.append(record)
+        return tuple(archived)
+
+    def _archive_recovery_draft(
+        self,
+        draft_id: str,
+        *,
+        project_root: Path | None = None,
+    ) -> DraftRecord | None:
+        timestamp = _utc_now()
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM drafts WHERE id = ?", (str(draft_id),)
+            ).fetchone()
+            if row is None:
+                return None
+            if str(row["state"]) == "archived":
+                return _draft_from_row(row)
+            root = (
+                project_root
+                if project_root is not None
+                else self._project_root(str(row["project_id"]), connection)
+            )
+            if not _formal_prose_exists(root, int(row["chapter"])):
+                return None
+            connection.execute(
+                """
+                UPDATE drafts SET state = 'archived', revision = revision + 1, updated_at = ?
+                WHERE id = ? AND state != 'archived'
+                """,
+                (timestamp, str(draft_id)),
             )
         return self.get_draft(draft_id)
 

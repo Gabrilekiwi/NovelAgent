@@ -1322,6 +1322,7 @@ def _create_app_owned(
 
     @app.put("/api/drafts/{draft_id}")
     async def update_draft(draft_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        jobs.require_actionable_recovery_draft(draft_id)
         draft = jobs.update_draft(
             draft_id,
             text=payload.get("text"),
@@ -1331,7 +1332,7 @@ def _create_app_owned(
 
     @app.post("/api/drafts/{draft_id}/validate", status_code=202)
     async def validate_draft(draft_id: str, payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-        draft = jobs.get_draft(draft_id)
+        draft = jobs.require_actionable_recovery_draft(draft_id)
         project = projects.get(draft.project_id)
         draft_path = (
             Path(project.root)
@@ -1364,7 +1365,7 @@ def _create_app_owned(
 
     @app.post("/api/drafts/{draft_id}/confirm")
     async def confirm_draft(draft_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        draft = jobs.get_draft(draft_id)
+        draft = jobs.require_actionable_recovery_draft(draft_id)
         if draft.state != "validated":
             raise JobError("draft must pass recovery validation before confirmation")
         parent_id = str(payload.get("job_id") or "")
@@ -1688,13 +1689,8 @@ def _pending_payload(
 ) -> dict[str, Any]:
     recent_jobs = jobs.list_jobs(project_id=record.id, limit=100)
     paused = tuple(job for job in recent_jobs if job.state in PAUSED_JOB_STATES)
-    drafts = []
-    with jobs.database.connection() as connection:
-        rows = connection.execute(
-            "SELECT id FROM drafts WHERE project_id = ? ORDER BY updated_at DESC", (record.id,)
-        ).fetchall()
-    for row in rows:
-        drafts.append(jobs.get_draft(str(row["id"])).to_dict())
+    jobs.archive_settled_recovery_drafts(record.id, project_root=record.root)
+    drafts = [draft.to_dict() for draft in jobs.list_actionable_drafts(record.id)]
     paused_payload = []
     for job in paused:
         item = job.to_dict()
