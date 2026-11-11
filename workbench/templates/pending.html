@@ -9,8 +9,8 @@
 <section class="page-heading">
   <div>
     <p class="eyebrow">作者决策队列</p>
-    <h1>{{ pending_items|default([])|length }} 项需要你处理</h1>
-    <p class="lede">自动生产在不确定处停下。这里只展示必须由作者做决定的内容。</p>
+    <h1>{% if pending_items|default([]) %}{{ pending_items|length }} 项需要你处理{% else %}没有待处理项{% endif %}</h1>
+    <p class="lede">{% if pending_items|default([]) %}自动生产在不确定处停下。这里只展示必须由作者做决定的内容。{% else %}连续生产没有被阻塞。没有需要你现在决定的事项。{% endif %}</p>
   </div>
 </section>
 

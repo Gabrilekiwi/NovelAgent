@@ -521,6 +521,30 @@ def test_pending_page_does_not_flash_chapter_20_placeholder() -> None:
     assert 'layout.hidden = state.pending.length === 0; empty.hidden = state.pending.length > 0;' in spa
 
 
+def test_pending_empty_heading_does_not_claim_production_stopped() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    template = (ROOT / "workbench" / "templates" / "pending.html").read_text(encoding="utf-8")
+
+    pending_start = html.find('data-spa-view="pending"')
+    pending_end = html.find('data-spa-view="history"')
+    assert pending_start != -1 and pending_end > pending_start
+    pending = html[pending_start:pending_end]
+    heading = pending.split("data-pending-empty", 1)[0]
+
+    assert "data-pending-heading-idle" in pending
+    assert "data-pending-heading-active hidden" in pending
+    assert "没有待处理项" in heading
+    assert "连续生产没有被阻塞。没有需要你现在决定的事项。" in heading
+    assert "自动生产在不确定处停下" not in heading
+    assert "pendingHeadingIdle.hidden = state.pending.length > 0" in spa
+    assert "pendingHeadingActive.hidden = state.pending.length === 0" in spa
+    assert 'state.pending.length === 0 ? "连续生产没有被阻塞。没有需要你现在决定的事项。"' in spa
+    assert "自动生产在不确定处停下，这里只展示必须由作者决定的内容。" in spa
+    assert "{% if pending_items|default([]) %}{{ pending_items|length }} 项需要你处理{% else %}没有待处理项{% endif %}" in template
+    assert "{% if pending_items|default([]) %}自动生产在不确定处停下。这里只展示必须由作者做决定的内容。{% else %}连续生产没有被阻塞。没有需要你现在决定的事项。{% endif %}" in template
+
+
 def test_quality_revision_pause_uses_parent_resume_without_recovery_classification() -> None:
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
