@@ -634,6 +634,111 @@ def test_settled_scene_retry_headroom_failure_is_not_reported_as_pre_provider() 
     assert "先执行无模型恢复分类，核对已结算回执和可复用场景" in spa
 
 
+def test_settled_repair_context_headroom_failure_explains_the_real_stopping_stage() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+
+    assert "const contextHeadroomDetailsOfRun = (run) =>" in spa
+    assert "story_project_repair_context_headroom_exceeded" in spa
+    assert "repair input requires" in spa
+    assert 'stage === "repair"' in spa
+    assert "const contextHeadroomIsRepair = (failure) => failure?.stage === \"repair\"" in spa
+    assert "修订输入超过安全余量" in spa
+    assert "修订输入为 ${contextHeadroom.requiredTokens} tokens" in spa
+    assert "这次自动修订输入需要 ${contextHeadroom.requiredTokens} tokens" in spa
+    assert "修订模型请求尚未发出" in spa
+    assert "候选正文已保留，修订请求尚未发出" in spa
+    assert "也不会直接重试这次超限的修订" in spa
+    assert 'form.dataset.recoveryMode = "repair-context-headroom-classify"' in spa
+    assert "自动修订的输入超过本地安全余量，修订请求尚未发出" in spa
+    # Scene-retry copy must remain, and must not be the only headroom wording.
+    assert "边界重生输入超过安全余量" in spa
+    assert spa.count("修订输入超过安全余量") >= 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_repair_context_headroom_classifier_recognizes_official_failure_and_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { contextHeadroomDetailsOfRun };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const officialRepairRun = {
+  error_type: "ContextBudgetError",
+  error_message: "story_project_repair_context_headroom_exceeded: repair input requires 32761 tokens; safe target is 30000; hard limit is 32000",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 7,
+  chapter_chars: 4867
+};
+const sceneRun = {
+  error_type: "ContextBudgetError",
+  error_message: "story_project_context_headroom_exceeded: scene input requires 31000 tokens; safe target is 30000; hard limit is 32000",
+  unsettled_attempt_count: 0
+};
+const classify = sandbox.__evidence.contextHeadroomDetailsOfRun;
+const output = {
+  officialRepair: classify(officialRepairRun),
+  sceneRetry: classify(sceneRun),
+  unsettled: classify({ ...officialRepairRun, unsettled_attempt_count: 1 }),
+  committed: classify({ ...officialRepairRun, committed: true }),
+  noCandidate: classify({ ...officialRepairRun, chapter_chars: 0 }),
+  missingCalls: classify({ ...officialRepairRun, provider_calls: undefined }),
+  wrongType: classify({ ...officialRepairRun, error_type: "ValueError" }),
+  incompleteMessage: classify({ ...officialRepairRun, error_message: "story_project_repair_context_headroom_exceeded" }),
+  unreadableOnly: classify({
+    error_type: "engine_result_unreadable",
+    error_message: "story_project_repair_context_headroom_exceeded: repair input requires 32761 tokens; safe target is 30000; hard limit is 32000",
+    unsettled_attempt_count: 0,
+    committed: false,
+    provider_calls: 7,
+    chapter_chars: 4867
+  })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["officialRepair"]["stage"] == "repair"
+    assert result["officialRepair"]["requiredTokens"] == 32761
+    assert result["officialRepair"]["safeTarget"] == 30000
+    assert result["officialRepair"]["hardLimit"] == 32000
+    assert result["officialRepair"]["overageTokens"] == 2761
+    assert result["officialRepair"]["providerCalls"] == 7
+    assert result["officialRepair"]["chapterChars"] == 4867
+    assert result["sceneRetry"]["stage"] == "scene"
+    assert result["sceneRetry"]["requiredTokens"] == 31000
+    assert result["sceneRetry"]["overageTokens"] == 1000
+    assert "providerCalls" not in result["sceneRetry"]
+    assert result["unsettled"] is None
+    assert result["committed"] is None
+    assert result["noCandidate"] is None
+    assert result["missingCalls"] is None
+    assert result["wrongType"] is None
+    assert result["incompleteMessage"] is None
+    assert result["unreadableOnly"] is None
+
+
 def test_settled_repair_authority_failure_explains_the_real_stopping_stage() -> None:
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
 
