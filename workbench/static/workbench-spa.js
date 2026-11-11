@@ -1711,7 +1711,8 @@
   const renderCohorts = async (payload) => {
     const cohorts = arrayFrom(payload.cohorts, "items");
     state.scoreDimensions = payload.score_dimensions || Object.keys(scoreDimensionLabels);
-    UI.updateStatusBadge(one("[data-product-readiness]"), payload.self_use_production_ready ? "strict" : "experimental", payload.self_use_production_ready ? "自用生产版已达标" : `${cohorts.filter((item) => item.status === "passed").length} / 2 轮通过`);
+    const officialLaunch = payload.official_launch || {};
+    UI.updateStatusBadge(one("[data-product-readiness]"), "idle", officialLaunch.badge_label || "上线不以十章验收轮次为准");
     const active = cohorts.find((item) => item.status === "active");
     const latest = active || cohorts[0] || null;
     const createPanel = one("[data-cohort-create-panel]");

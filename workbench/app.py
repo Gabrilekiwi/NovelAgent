@@ -970,6 +970,7 @@ def _create_app_owned(
             "cohorts": [item.to_dict() for item in cohort_items],
             "score_dimensions": list(SCORE_DIMENSIONS),
             "self_use_production_ready": cohorts.production_ready(record.id),
+            "official_launch": cohorts.official_launch_declaration(record.id),
         }
 
     @app.get("/api/projects/{project_id}/outline-batches")

@@ -104,8 +104,31 @@ class ChapterEvaluation:
         }
 
 
+def build_official_launch_declaration(
+    *,
+    passed_count: int,
+    consecutive_ten_chapter_ready: bool,
+) -> dict[str, Any]:
+    """Describe official launch without using the historical two-cohort gate."""
+
+    return {
+        "criterion": "author_self_serve_workbench",
+        "summary": (
+            "正式上线以作者能否在工作台独立完成写作、处理待办并提交正文为准，"
+            "不再以连续两轮十章人工评分验收作为门槛。"
+        ),
+        "badge_label": "上线不以十章验收轮次为准",
+        "uses_two_cohort_gate": False,
+        "cohort_trials": {
+            "passed_count": int(passed_count),
+            "consecutive_ten_chapter_ready": bool(consecutive_ten_chapter_ready),
+            "required_for_official_launch": False,
+        },
+    }
+
+
 class CohortService:
-    """Freezes and evaluates the two honest ten-chapter production trials."""
+    """Optional ten-chapter acceptance trials and their historical ledger."""
 
     def __init__(
         self,
@@ -259,6 +282,13 @@ class CohortService:
         return self.get(cohort_id)
 
     def production_ready(self, project_id: str) -> bool:
+        """Return whether two contiguous closed cohorts both passed.
+
+        This is the historical ten-chapter trial ledger, not the official
+        launch declaration. Official launch is author self-serve writing
+        in the workbench; see official_launch_declaration().
+        """
+
         closed = [item for item in reversed(self.list_for_project(project_id)) if item.closed_at]
         if len(closed) < 2:
             return False
@@ -267,6 +297,13 @@ class CohortService:
             first.status == "passed"
             and second.status == "passed"
             and second.start_chapter == first.end_chapter + 1
+        )
+
+    def official_launch_declaration(self, project_id: str) -> dict[str, Any]:
+        items = self.list_for_project(project_id)
+        return build_official_launch_declaration(
+            passed_count=sum(1 for item in items if item.status == "passed"),
+            consecutive_ten_chapter_ready=self.production_ready(project_id),
         )
 
     def _approved_outline_binding(
