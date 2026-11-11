@@ -1175,6 +1175,107 @@ process.stdout.write(JSON.stringify(output));
     assert result["legacyViaRun"]["verified"] is True
 
 
+
+
+def test_settled_local_budget_after_provider_failure_explains_next_step() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    assert "const localBudgetAfterProviderDetailsOfRun = (run) =>" in spa
+    assert "const localBudgetAfterProviderDetailsOf = (job) =>" in spa
+    assert 'value.code === "local_budget_after_provider"' in spa
+    assert "local_budget_after_provider: localBudgetAfterProvider" in spa
+    assert "已付费后本地预算中断" in spa
+    assert "调用已有终态回执，已付费内容已保留" in spa
+    assert "不是调用前的预算拒绝" in spa
+    assert 'form.dataset.recoveryMode = "local-budget-after-provider-classify"' in spa
+    assert "尚未调用模型" not in spa.split("localBudgetAfterProviderFailure ?")[1].split(";")[0]
+
+    assert stream.count('"chapter.local_budget_after_provider"') >= 3
+    assert '"chapter.local_budget_after_provider": "本地预算在已有调用后中断，已保留已付费内容，任务已安全暂停"' in stream
+    assert '"chapter.local_budget_after_provider": "awaiting_input"' in stream
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_local_budget_after_provider_browser_classifier_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { localBudgetAfterProviderDetailsOf, localBudgetAfterProviderDetailsOfRun };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const completeRun = {
+  error_type: "ModelCallError",
+  error_message: "OpenAI chat completion failed (local_budget; run_input_token_budget_exceeded: max_total_input_tokens exceeded).",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 4,
+  chapter_chars: 12
+};
+const completeDetails = {
+  failure_origin: "local_budget_after_provider",
+  provider_calls: 4,
+  settled_provider_calls: 4,
+  succeeded_provider_calls: 3,
+  unsettled_attempt_count: 0,
+  candidate_chars: 12,
+  provider_reached: true,
+  formal_prose_exists: false,
+  accepted: false,
+  committed: false,
+  writeback_attempted: false,
+  writeback_applied: false,
+  automatic_retry: false,
+  safe_to_retry: false,
+  recovery_required: true,
+  rejected_receipt_status: "budget_rejected",
+  source_error_type: "ModelCallError",
+  source_error_message: "OpenAI chat completion failed (local_budget; run_input_token_budget_exceeded: max_total_input_tokens exceeded)."
+};
+const output = {
+  fromRun: sandbox.__evidence.localBudgetAfterProviderDetailsOfRun(completeRun),
+  zeroCalls: sandbox.__evidence.localBudgetAfterProviderDetailsOfRun({ ...completeRun, provider_calls: 1 }),
+  obsoleteRun: sandbox.__evidence.localBudgetAfterProviderDetailsOfRun({ ...completeRun, error_message: "OpenAI chat completion failed (provider_error; ContextBudgetError)." }),
+  unreadableJob: sandbox.__evidence.localBudgetAfterProviderDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "ModelCallError: OpenAI chat completion failed (local_budget; run_input_token_budget_exceeded: max_total_input_tokens exceeded)." } }),
+  incompleteJob: sandbox.__evidence.localBudgetAfterProviderDetailsOf({ error: { code: "local_budget_after_provider", details: { ...completeDetails, writeback_applied: undefined } } }),
+  verifiedJob: sandbox.__evidence.localBudgetAfterProviderDetailsOf({ error: { code: "local_budget_after_provider", details: completeDetails } }),
+  legacyViaRun: sandbox.__evidence.localBudgetAfterProviderDetailsOf({ error: { code: "engine_result_unreadable" }, latest_run: completeRun })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["fromRun"]["providerCalls"] == 4
+    assert result["fromRun"]["chapterChars"] == 12
+    assert result["zeroCalls"] is None
+    assert result["obsoleteRun"] is None
+    assert result["unreadableJob"] is None
+    assert result["incompleteJob"] is None
+    assert result["verifiedJob"]["verified"] is True
+    assert result["verifiedJob"]["providerCalls"] == 4
+    assert result["legacyViaRun"]["verified"] is True
+
+
 def test_settled_scene_schema_validation_failure_explains_next_step() -> None:
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
     stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
