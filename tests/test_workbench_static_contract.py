@@ -778,7 +778,7 @@ def test_settled_stale_scene_evidence_failure_explains_retained_candidate() -> N
     assert "不会直接重试这次失败的修订" in spa
     assert "不要盲目重试这次失败修订" in spa
     assert 'form.dataset.recoveryMode = "stale-scene-evidence-classify"' in spa
-    assert "!staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
+    assert "!staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
 
     assert stream.count('"chapter.stale_scene_evidence"') >= 3
     assert '"chapter.stale_scene_evidence": "自动修订与场景证据对不齐，任务已安全暂停"' in stream
@@ -971,6 +971,107 @@ process.stdout.write(JSON.stringify(output));
     assert result["verifiedJob"]["providerCalls"] == 2
     assert result["legacyViaRun"]["verified"] is True
 
+
+
+
+def test_settled_bridge_prevalidation_failure_explains_next_step() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    assert "const bridgePrevalidationDetailsOfRun = (run) =>" in spa
+    assert 'message.startsWith("bridge pre-validation failed:")' in spa
+    assert "const bridgePrevalidationDetailsOf = (job) =>" in spa
+    assert 'value.code === "bridge_prevalidation"' in spa
+    assert "bridge_prevalidation: bridgePrevalidation" in spa
+    assert "开写前衔接预检未通过" in spa
+    assert "模型请求尚未发出，衔接预检未通过" in spa
+    assert "先做无模型恢复分类" in spa
+    assert "不会盲目重试这次失败的衔接预检" in spa
+    assert 'form.dataset.recoveryMode = "bridge-prevalidation-classify"' in spa
+    assert "边界重生" not in spa.split("bridgePrevalidationFailure ?")[1].split(";")[0]
+
+    assert stream.count('"chapter.bridge_prevalidation"') >= 3
+    assert '"chapter.bridge_prevalidation": "开写前衔接预检未通过，任务已安全暂停"' in stream
+    assert '"chapter.bridge_prevalidation": "awaiting_input"' in stream
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_bridge_prevalidation_browser_classifier_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { bridgePrevalidationDetailsOf, bridgePrevalidationDetailsOfRun };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const completeRun = {
+  error_type: "ValueError",
+  error_message: "bridge pre-validation failed: missing_last_scene_continuity",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 0,
+  chapter_chars: 0
+};
+const completeDetails = {
+  failure_origin: "bridge_prevalidation",
+  provider_calls: 0,
+  settled_provider_calls: 0,
+  unsettled_attempt_count: 0,
+  candidate_chars: 0,
+  provider_reached: false,
+  formal_prose_exists: false,
+  accepted: false,
+  committed: false,
+  writeback_attempted: false,
+  writeback_applied: false,
+  automatic_retry: false,
+  safe_to_retry: false,
+  recovery_required: true,
+  source_error_type: "ValueError",
+  source_error_message: "bridge pre-validation failed: missing_last_scene_continuity",
+  problem_codes: ["missing_last_scene_continuity"]
+};
+const output = {
+  fromRun: sandbox.__evidence.bridgePrevalidationDetailsOfRun(completeRun),
+  withCalls: sandbox.__evidence.bridgePrevalidationDetailsOfRun({ ...completeRun, provider_calls: 1 }),
+  schemaRun: sandbox.__evidence.bridgePrevalidationDetailsOfRun({ ...completeRun, error_message: "Scene response was not valid structured JSON" }),
+  unreadableJob: sandbox.__evidence.bridgePrevalidationDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "ValueError: bridge pre-validation failed: missing_last_scene_continuity" } }),
+  incompleteJob: sandbox.__evidence.bridgePrevalidationDetailsOf({ error: { code: "bridge_prevalidation", details: { ...completeDetails, writeback_applied: undefined } } }),
+  verifiedJob: sandbox.__evidence.bridgePrevalidationDetailsOf({ error: { code: "bridge_prevalidation", details: completeDetails } }),
+  legacyViaRun: sandbox.__evidence.bridgePrevalidationDetailsOf({ error: { code: "engine_result_unreadable" }, latest_run: completeRun })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["fromRun"]["providerCalls"] == 0
+    assert result["fromRun"]["problemCodes"] == ["missing_last_scene_continuity"]
+    assert result["withCalls"] is None
+    assert result["schemaRun"] is None
+    assert result["unreadableJob"] is None
+    assert result["incompleteJob"] is None
+    assert result["verifiedJob"]["verified"] is True
+    assert result["verifiedJob"]["providerCalls"] == 0
+    assert result["legacyViaRun"]["verified"] is True
 
 
 def test_settled_scene_schema_validation_failure_explains_next_step() -> None:

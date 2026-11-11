@@ -50,6 +50,7 @@ REPAIR_NOT_CONVERGING_ERROR = "chapter_repair_not_converging"
 STALE_SCENE_EVIDENCE_ERROR = "stale_scene_evidence"
 SCENE_BOUNDARY_VALIDATION_ERROR = "scene_boundary_validation"
 SCENE_SCHEMA_VALIDATION_ERROR = "scene_schema_validation"
+BRIDGE_PREVALIDATION_ERROR = "bridge_prevalidation"
 _CONTEXT_BUDGET_PATTERN = re.compile(
     r"(?P<stage>[A-Za-z][A-Za-z0-9_-]*) input requires "
     r"(?P<required>[0-9]+) tokens; hard limit is (?P<hard>[0-9]+)"
@@ -1093,6 +1094,63 @@ class JobStore:
             )
         return self.get(job_id)
 
+    def reconcile_bridge_prevalidation_failure(
+        self,
+        job_id: str,
+        *,
+        result: Mapping[str, Any],
+        error: Mapping[str, Any],
+        expected_legacy_error_sha256: str,
+    ) -> JobRecord:
+        """Upgrade one proven bridge pre-validation failure without requeueing it."""
+
+        if not _is_bridge_prevalidation_error(error):
+            raise JobError("bridge pre-validation reconciliation requires structured evidence")
+        timestamp = _utc_now()
+        with self.database.transaction() as connection:
+            row = _require_job_row(connection, job_id)
+            current_error = _stored_job_error(row)
+            current_error_sha256 = _sha256_text(_canonical_json(current_error))
+            if (
+                row["kind"] != "generation_session"
+                or row["state"] != "awaiting_input"
+                or row["result_json"] is not None
+                or current_error.get("code") != "engine_result_unreadable"
+                or current_error_sha256 != expected_legacy_error_sha256
+            ):
+                raise JobError("job is not the unchanged legacy bridge pre-validation pause")
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET result_json = ?, error_json = ?,
+                    manual_confirmation_required = 1, updated_at = ?, revision = revision + 1
+                WHERE id = ? AND state = 'awaiting_input' AND revision = ?
+                    AND result_json IS NULL AND error_json = ?
+                """,
+                (
+                    _canonical_json(_compact_result(result)),
+                    _canonical_json(_safe_event_payload(error)),
+                    timestamp,
+                    str(job_id),
+                    int(row["revision"]),
+                    str(row["error_json"]),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise JobError("legacy bridge pre-validation reconciliation CAS failed")
+            self._append_event_in_transaction(
+                connection,
+                str(job_id),
+                "chapter.bridge_prevalidation",
+                {
+                    "chapter": int(row["next_chapter"]),
+                    "automatic_retry": False,
+                    "reconciled_from": "engine_result_unreadable",
+                    "error": _safe_event_payload(error),
+                },
+                timestamp=timestamp,
+            )
+        return self.get(job_id)
+
     def reconcile_review_pause(
         self,
         job_id: str,
@@ -1309,6 +1367,8 @@ class JobStore:
                 if _is_scene_boundary_validation_error(error)
                 else "chapter.scene_schema_validation"
                 if _is_scene_schema_validation_error(error)
+                else "chapter.bridge_prevalidation"
+                if _is_bridge_prevalidation_error(error)
                 else "chapter.needs_recovery" if uncertain else "chapter.needs_revision"
             )
             self._append_event_in_transaction(
@@ -1836,6 +1896,7 @@ class JobSupervisor:
         self._reconcile_stale_scene_evidence_failures()
         self._reconcile_scene_boundary_validation_failures()
         self._reconcile_scene_schema_validation_failures()
+        self._reconcile_bridge_prevalidation_failures()
         self._startup_recovery_pending=False
 
     def notify(self) -> None:
@@ -2170,6 +2231,41 @@ class JobSupervisor:
                 # Any tamper, ambiguity, or unsettled call retains the generic pause.
                 continue
 
+
+    def _reconcile_bridge_prevalidation_failures(self) -> None:
+        """Explain proven legacy bridge pre-validation failures without requeueing them."""
+
+        for job in self.store.list_jobs(states=("awaiting_input",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
+            if job.kind != "generation_session" or not isinstance(job.error, Mapping):
+                continue
+            if job.error.get("code") != "engine_result_unreadable" or job.result is not None:
+                continue
+            try:
+                project = self.project_lookup(job.project_id)
+                project_root = Path(project.root).resolve(strict=True)
+                legacy_error_sha256 = _sha256_text(_canonical_json(job.error))
+                classification = _classify_bridge_prevalidation_failure(
+                    project_root,
+                    job.next_chapter,
+                    exit_code=job.error.get("exit_code"),
+                    stderr_tail=job.error.get("stderr_tail"),
+                    started_at=job.started_at,
+                    finished_at=job.updated_at,
+                )
+                if classification is None:
+                    continue
+                self.store.reconcile_bridge_prevalidation_failure(
+                    job.id,
+                    result=classification["result"],
+                    error=classification["error"],
+                    expected_legacy_error_sha256=legacy_error_sha256,
+                )
+            except Exception:
+                # Any tamper, ambiguity, or unsettled call retains the generic pause.
+                continue
+
     def _run_generation_session(self, initial_job: JobRecord) -> None:
         _require_job_execution_contract(initial_job.to_dict())
         job = initial_job
@@ -2378,6 +2474,22 @@ class JobSupervisor:
                         uncertain=False,
                     )
                     return
+                bridge_prevalidation_classification = _classify_bridge_prevalidation_failure(
+                    project_root,
+                    chapter,
+                    exit_code=execution.get("exit_code"),
+                    stderr_tail=execution.get("stderr_tail"),
+                    prior_fingerprints=run_records_before,
+                )
+                if bridge_prevalidation_classification is not None:
+                    self.store.chapter_failed(
+                        job.id,
+                        chapter=chapter,
+                        result=bridge_prevalidation_classification["result"],
+                        error=bridge_prevalidation_classification["error"],
+                        uncertain=False,
+                    )
+                    return
                 self.store.chapter_failed(
                     job.id,
                     chapter=chapter,
@@ -2464,6 +2576,22 @@ class JobSupervisor:
                     chapter=chapter,
                     result=scene_schema_classification["result"],
                     error=scene_schema_classification["error"],
+                    uncertain=False,
+                )
+                return
+            bridge_prevalidation_classification = _classify_bridge_prevalidation_failure(
+                project_root,
+                chapter,
+                exit_code=execution.get("exit_code"),
+                stderr_tail=execution.get("stderr_tail"),
+                prior_fingerprints=run_records_before,
+            )
+            if bridge_prevalidation_classification is not None:
+                self.store.chapter_failed(
+                    job.id,
+                    chapter=chapter,
+                    result=bridge_prevalidation_classification["result"],
+                    error=bridge_prevalidation_classification["error"],
                     uncertain=False,
                 )
                 return
@@ -3382,6 +3510,10 @@ def _is_scene_boundary_validation_error(value: Mapping[str, Any] | None) -> bool
 
 def _is_scene_schema_validation_error(value: Mapping[str, Any] | None) -> bool:
     return isinstance(value, Mapping) and value.get("code") == SCENE_SCHEMA_VALIDATION_ERROR
+
+
+def _is_bridge_prevalidation_error(value: Mapping[str, Any] | None) -> bool:
+    return isinstance(value, Mapping) and value.get("code") == BRIDGE_PREVALIDATION_ERROR
 
 
 def _chapter_run_record_fingerprints(project_root: Path, chapter: int) -> dict[str, str]:
@@ -4790,6 +4922,246 @@ def _classify_scene_schema_validation_failure(
     return matches[0] if len(matches) == 1 else None
 
 
+_BRIDGE_PREVALIDATION_PREFIX = "bridge pre-validation failed:"
+_BRIDGE_PREVALIDATION_STDERR_MARK = "ValueError: bridge pre-validation failed:"
+_BRIDGE_PREVALIDATION_MESSAGE_PATTERN = re.compile(
+    r"^bridge pre-validation failed: (?P<codes>[A-Za-z][A-Za-z0-9_]*(?:, [A-Za-z][A-Za-z0-9_]*)*)$"
+)
+
+
+def _bridge_prevalidation_problem_codes(codes_text: str) -> list[str] | None:
+    codes: list[str] = []
+    for raw in codes_text.split(","):
+        token = raw.strip()
+        if not token or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", token):
+            return None
+        codes.append(token)
+    return codes or None
+
+
+def _zero_call_model_calls_ref_is_safe(project_root: Path, run: Mapping[str, Any]) -> bool:
+    execution_evidence = run.get("execution_evidence")
+    if not isinstance(execution_evidence, Mapping):
+        return False
+    reference = execution_evidence.get("model_calls_ref")
+    if reference is None:
+        return True
+    if not isinstance(reference, str) or not reference.strip():
+        return False
+    runs_root = Path(project_root) / ".novelagent" / "runtime" / "runs"
+    try:
+        model_calls_root = (runs_root / reference).resolve()
+        model_calls_root.relative_to((runs_root / "executions").resolve())
+    except (OSError, ValueError):
+        return False
+    if not model_calls_root.exists():
+        # Official zero-call failures may leave a dangling execution pointer.
+        return True
+    return _provider_call_artifacts_are_settled(
+        project_root,
+        run,
+        expected_calls=0,
+    )
+
+
+def _bridge_prevalidation_evidence(
+    project_root: Path,
+    value: Mapping[str, Any],
+    *,
+    chapter: int,
+    stderr_text: str,
+) -> dict[str, Any] | None:
+    """Validate one zero-call local bridge pre-validation failure."""
+
+    run = value.get("run")
+    if not isinstance(run, Mapping) or int(run.get("chapter_index") or 0) != int(chapter):
+        return None
+    run_error = run.get("error")
+    if not isinstance(run_error, Mapping) or run_error.get("type") != "ValueError":
+        return None
+    error_message = run_error.get("message")
+    if not isinstance(error_message, str) or not error_message.startswith(_BRIDGE_PREVALIDATION_PREFIX):
+        return None
+    parsed = _BRIDGE_PREVALIDATION_MESSAGE_PATTERN.fullmatch(error_message)
+    if parsed is None or f"ValueError: {error_message}" not in stderr_text:
+        return None
+    problem_codes = _bridge_prevalidation_problem_codes(parsed.group("codes"))
+    if not problem_codes:
+        return None
+    if run.get("status") != "failed" or _result_is_uncertain(value):
+        return None
+    if not _zero_call_pre_provider_run_guards(value, run):
+        return None
+    settled_provider_calls = _settled_provider_calls_from_trace(run)
+    if settled_provider_calls not in (None, 0):
+        return None
+    if not _zero_call_model_calls_ref_is_safe(project_root, run):
+        return None
+    try:
+        if resolve_prose(project_root, chapter).candidates:
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    story_project = run.get("story_project")
+    writeback = story_project.get("writeback") if isinstance(story_project, Mapping) else None
+    if (
+        not isinstance(writeback, Mapping)
+        or writeback.get("attempted") is not False
+        or writeback.get("applied") is not False
+    ):
+        return None
+    persistence = run.get("persistence")
+    if persistence not in (None, {}):
+        return None
+
+    trace = run.get("trace")
+    if not isinstance(trace, (list, tuple)):
+        return None
+    if any(
+        isinstance(event, Mapping) and event.get("action") == "generate_chapter"
+        for event in trace
+    ):
+        return None
+    failures = [
+        event
+        for event in trace
+        if isinstance(event, Mapping)
+        and event.get("action") == "pre_validate_bridge"
+        and event.get("status") == "failed"
+        and event.get("error_type") == "ValueError"
+        and event.get("error_message") == error_message
+    ]
+    if len(failures) != 1:
+        return None
+    precheck = failures[0].get("bridge_precheck")
+    if isinstance(precheck, Mapping):
+        precheck_codes = precheck.get("problem_codes")
+        if not isinstance(precheck_codes, list) or precheck_codes != problem_codes:
+            return None
+        if precheck.get("ok") is not False:
+            return None
+    run_id = run.get("id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return None
+    return {
+        "failure_origin": "bridge_prevalidation",
+        "run_id": run_id,
+        "provider_calls": 0,
+        "settled_provider_calls": 0,
+        "unsettled_attempt_count": 0,
+        "candidate_chars": 0,
+        "formal_prose_exists": False,
+        "accepted": False,
+        "committed": False,
+        "persistence_committed": False,
+        "writeback_attempted": False,
+        "writeback_applied": False,
+        "provider_reached": False,
+        "problem_codes": problem_codes,
+        "source_error_type": "ValueError",
+        "source_error_message": error_message,
+        "automatic_retry": False,
+        "safe_to_retry": False,
+        "recovery_required": True,
+    }
+
+
+def _classify_bridge_prevalidation_failure(
+    project_root: str | Path,
+    chapter: int,
+    *,
+    exit_code: Any,
+    stderr_tail: Any,
+    prior_fingerprints: Mapping[str, str] | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> dict[str, Any] | None:
+    """Classify one uniquely evidenced zero-call bridge pre-validation failure."""
+
+    if (
+        not isinstance(exit_code, int)
+        or isinstance(exit_code, bool)
+        or exit_code == 0
+    ):
+        return None
+    stderr_text = str(stderr_tail or "")
+    if _BRIDGE_PREVALIDATION_STDERR_MARK not in stderr_text:
+        return None
+    if (
+        "SceneBoundaryValidationError" in stderr_text
+        or "SceneEvidenceAlignmentError" in stderr_text
+        or "stale_scene_evidence:" in stderr_text
+        or "Scene response was not valid structured JSON" in stderr_text
+        or "ContextBudgetError" in stderr_text
+        or "StructuredContextError" in stderr_text
+    ):
+        return None
+    root = Path(project_root).resolve(strict=True)
+    fingerprints = _strict_chapter_run_artifact_fingerprints(root, chapter)
+    if fingerprints is None:
+        return None
+    window_start = _parse_timestamp(started_at)
+    window_end = _parse_timestamp(finished_at)
+    matches: list[dict[str, Any]] = []
+    for relative, digest in fingerprints.items():
+        if prior_fingerprints is not None and prior_fingerprints.get(relative) == digest:
+            continue
+        try:
+            path = _safe_project_file(root, relative)
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest:
+                continue
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, Mapping):
+                continue
+            run = value.get("run")
+            run_finished = _parse_timestamp(
+                run.get("finished_at") if isinstance(run, Mapping) else None
+            )
+            if window_start is not None or window_end is not None:
+                if run_finished is None:
+                    continue
+                finished_epoch = run_finished.timestamp()
+                if window_start is not None and finished_epoch < window_start.timestamp() - 2.0:
+                    continue
+                if window_end is not None and finished_epoch > window_end.timestamp() + 2.0:
+                    continue
+            evidence = _bridge_prevalidation_evidence(
+                root,
+                value,
+                chapter=chapter,
+                stderr_text=stderr_text,
+            )
+            if evidence is None:
+                continue
+            details = {
+                **evidence,
+                "run_record_path": relative,
+                "run_record_sha256": digest,
+            }
+            problem_label = "、".join(details["problem_codes"])
+            matches.append(
+                {
+                    "result": dict(value),
+                    "error": {
+                        "code": BRIDGE_PREVALIDATION_ERROR,
+                        "message": (
+                            f"第 {chapter} 章开写前衔接预检未通过（{problem_label}）；"
+                            "本次没有调用模型，本章尚无候选正文，正式正文尚未提交。"
+                        ),
+                        "details": details,
+                        "exit_code": exit_code,
+                        "automatic_retry": False,
+                        "safe_to_retry": False,
+                        "recovery_required": True,
+                    },
+                }
+            )
+        except (OSError, UnicodeError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+    return matches[0] if len(matches) == 1 else None
+
+
 _STRUCTURED_CHARACTER_BUDGET_CODES = (
     "required_json_item_exceeds_budget",
     "required_markdown_context_exceeds_budget",
@@ -6032,6 +6404,7 @@ __all__ = [
     "STALE_SCENE_EVIDENCE_ERROR",
     "SCENE_BOUNDARY_VALIDATION_ERROR",
     "SCENE_SCHEMA_VALIDATION_ERROR",
+    "BRIDGE_PREVALIDATION_ERROR",
     "DraftRecord",
     "DraftSourceConflict",
     "JobError",

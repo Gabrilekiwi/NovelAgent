@@ -409,6 +409,73 @@
   };
 
 
+
+  const bridgePrevalidationDetailsOfRun = (run) => {
+    if (run?.error_type !== "ValueError" || Number(run?.unsettled_attempt_count) !== 0 || run?.committed !== false) return null;
+    const message = String(run?.error_message || "");
+    if (!message.startsWith("bridge pre-validation failed:")) return null;
+    const providerCalls = Number(run?.provider_calls);
+    const chapterChars = Number(run?.chapter_chars);
+    if (!Number.isFinite(providerCalls) || providerCalls !== 0 || !Number.isFinite(chapterChars) || chapterChars !== 0) return null;
+    const codes = message.slice("bridge pre-validation failed:".length).split(",").map((item) => item.trim()).filter(Boolean);
+    if (!codes.length || !codes.every((code) => /^[A-Za-z][A-Za-z0-9_]*$/.test(code))) return null;
+    return {
+      providerCalls: 0,
+      chapterChars: 0,
+      problemCodes: codes,
+      verified: true
+    };
+  };
+  const bridgePrevalidationDetailsOf = (job) => {
+    if (!job || typeof job !== "object") return null;
+    const structuredError = errorCandidatesOf(job).find((value) => value.code === "bridge_prevalidation");
+    const details = structuredError?.details && typeof structuredError.details === "object"
+      ? structuredError.details
+      : null;
+    const integer = (name) => Number.isInteger(details?.[name]) && details[name] >= 0 ? details[name] : null;
+    const problemCodes = Array.isArray(details?.problem_codes)
+      && details.problem_codes.length
+      && details.problem_codes.every((code) => typeof code === "string" && code.trim())
+      ? details.problem_codes
+      : null;
+    if (
+      !structuredError
+      || details?.failure_origin !== "bridge_prevalidation"
+      || integer("provider_calls") !== 0
+      || integer("settled_provider_calls") !== 0
+      || details?.unsettled_attempt_count !== 0
+      || integer("candidate_chars") !== 0
+      || details?.provider_reached !== false
+      || details?.formal_prose_exists !== false
+      || details?.accepted !== false
+      || details?.committed !== false
+      || details?.writeback_attempted !== false
+      || details?.writeback_applied !== false
+      || details?.automatic_retry !== false
+      || details?.safe_to_retry !== false
+      || details?.recovery_required !== true
+      || details?.source_error_type !== "ValueError"
+      || !problemCodes
+    ) {
+      return bridgePrevalidationDetailsOfRun(job.latest_run);
+    }
+    return {
+      providerCalls: 0,
+      settledProviderCalls: 0,
+      chapterChars: 0,
+      problemCodes,
+      verified: true
+    };
+  };
+  const bridgePrevalidationSummary = (failure) => {
+    if (!failure) return "开写前衔接预检未通过。";
+    const codes = Array.isArray(failure.problemCodes) && failure.problemCodes.length
+      ? `（${failure.problemCodes.join("、")}）`
+      : "";
+    return `开写前衔接预检未通过${codes}；没有模型调用，没有候选正文，正式正文未提交。`;
+  };
+
+
   const qualityRejectionDetailsOfRun = (run) => {
     if (run?.status !== "rejected" || run?.committed !== false || Number(run?.unsettled_attempt_count) !== 0) return null;
     const validation = run?.validation;
@@ -2278,7 +2345,7 @@
       ? qualityRejectionDetailsOfRun(payload.chapter_recovery?.latest_run)
       : null;
     const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && (Boolean(qualityRejection) || isQualityRevisionPause(session));
-    const providerUncertain = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !qualityRejection && jobStatus === "needs_recovery";
+    const providerUncertain = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation && !qualityRejection && jobStatus === "needs_recovery";
     const polishedDraftReady = durablePolishedDraftAvailable(payload.chapter_recovery || session);
     const resetCleared = (payload.chapter_recovery?.reset_cleared === true || payload.chapter_recovery?.checkpoint?.action === "reset")
       && payload.chapter_recovery?.formal_prose_exists !== true
@@ -2485,6 +2552,10 @@
       ? (issue.scene_schema_validation || sceneSchemaValidationDetailsOf(issue) || sceneSchemaValidationDetailsOfRun(issue.latest_run))
       : null;
     const sceneSchemaFailure = Boolean(sceneSchemaValidation) || (!provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision && issue.scene_schema_failure === true);
+    const bridgePrevalidation = !provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision && !sceneSchemaFailure
+      ? (issue.bridge_prevalidation || bridgePrevalidationDetailsOf(issue) || bridgePrevalidationDetailsOfRun(issue.latest_run))
+      : null;
+    const bridgePrevalidationFailure = Boolean(bridgePrevalidation) || (!provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision && !sceneSchemaFailure && issue.bridge_prevalidation_failure === true);
     const contextHeadroom = !provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision
       ? (issue.context_headroom || contextHeadroomDetailsOfRun(issue.latest_run))
       : null;
@@ -2493,12 +2564,12 @@
     const repairAuthorityFailure = !provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision && issue.repair_authority_failure === true;
     const repairAuthority = repairAuthorityFailure ? issue.repair_authority : null;
     const settledGenerationFailure = sceneSchemaFailure || (contextHeadroomFailure && !repairContextHeadroomFailure) || repairAuthorityFailure || staleSceneEvidenceFailure || sceneBoundaryValidationFailure || Boolean(repairConvergence?.verified);
-    setText("[data-pending-detail-eyebrow]", provenanceFailure ? "本机运行环境错误" : contextBudget ? "本地上下文超限" : repairConvergence ? "自动修订未收敛" : qualityRevision ? "质量审核需修订" : sceneSchemaFailure ? "模型响应格式错误" : contextHeadroomFailure ? "本地安全余量不足" : repairAuthorityFailure ? "修订上下文装配错误" : staleSceneEvidenceFailure ? "修订跨越场景边界" : sceneBoundaryValidationFailure ? "场景边界校验未通过" : "可恢复生成");
+    setText("[data-pending-detail-eyebrow]", provenanceFailure ? "本机运行环境错误" : contextBudget ? "本地上下文超限" : repairConvergence ? "自动修订未收敛" : qualityRevision ? "质量审核需修订" : sceneSchemaFailure ? "模型响应格式错误" : bridgePrevalidationFailure ? "开写前衔接预检未通过" : contextHeadroomFailure ? "本地安全余量不足" : repairAuthorityFailure ? "修订上下文装配错误" : staleSceneEvidenceFailure ? "修订跨越场景边界" : sceneBoundaryValidationFailure ? "场景边界校验未通过" : "可恢复生成");
     UI.updateStatusBadge(one(".recovery-hero .status-badge"), provenanceFailure ? (provenanceReady ? "paused_recoverable" : "needs_revision") : contextBudget ? (contextBudgetReady ? "paused_recoverable" : "needs_revision") : repairConvergence ? (repairConvergence.verified ? "paused_recoverable" : "needs_revision") : qualityRevision ? "needs_revision" : "paused_recoverable", provenanceFailure ? (provenanceReady ? "可重新执行" : provenanceFailure.verified ? "等待系统修复" : "安全核对中") : contextBudget ? (contextBudgetReady ? "可重新执行" : contextBudget.verified ? "等待系统修复" : "安全核对中") : repairConvergence ? (repairConvergence.verified ? "等待恢复分类" : "安全核对中") : qualityRevision ? "待修订" : "可恢复");
     setText("[data-pending-title]", issue.title || (provenanceFailure ? (provenanceFailure.verified ? `第 ${pendingChapterLabel(issue)} 章在模型请求前停止` : `第 ${pendingChapterLabel(issue)} 章正在安全核对`) : contextBudget ? `第 ${pendingChapterLabel(issue)} 章输入上下文超出安全上限` : repairConvergence ? (repairConvergence.verified ? `第 ${pendingChapterLabel(issue)} 章自动修订未收敛` : `第 ${pendingChapterLabel(issue)} 章修订故障正在安全核对`) : repairContextHeadroomFailure ? `第 ${pendingChapterLabel(issue)} 章修订输入超过安全余量而停止` : contextHeadroomFailure ? `第 ${pendingChapterLabel(issue)} 章边界重生输入超过安全余量而停止` : repairAuthorityFailure ? `第 ${pendingChapterLabel(issue)} 章修订上下文装配失败` : staleSceneEvidenceFailure ? `第 ${pendingChapterLabel(issue)} 章自动修订因场景证据对不齐而停止` : sceneBoundaryValidationFailure ? `第 ${pendingChapterLabel(issue)} 章因场景边界校验失败而停止` : qualityRevision ? `第 ${pendingChapterLabel(issue)} 章质量审核需修订` : `第 ${pendingChapterLabel(issue)} 章生成中断`));
     setText("[data-pending-summary]", provenanceFailure ? `${preProviderProvenanceSummary(provenanceFailure)} ${preProviderProvenanceStopDetail(provenanceFailure)}` : contextBudget ? `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)}` : repairConvergence ? repairNotConvergingSummary(repairConvergence) : staleSceneEvidenceFailure ? staleSceneEvidenceSummary(staleSceneEvidence) : sceneBoundaryValidationFailure ? sceneBoundaryValidationSummary(sceneBoundaryValidation) : issue.summary || issue.reason || (qualityRevision ? "Provider 已成功结束，完整候选草稿已保留，正式正文未提交。" : "回执完整的场景候选会先重跑当前状态边界；通过后才会复用。"));
     setText("[data-pending-chapter]", pendingChapterLabel(issue));
-    setText("[data-pending-section-title]", provenanceFailure ? (provenanceFailure.verified ? "模型请求前停止" : "安全状态仍在核对") : contextBudget ? (contextBudget.verified ? "请求在发送给模型前已停止" : "安全状态仍在核对") : repairConvergence ? (repairConvergence.verified ? "原候选已保留，失败修订稿已拒绝" : "安全状态仍在核对") : qualityRevision ? "本章已经完成生成，但尚未通过质量门" : sceneSchemaFailure ? "调用已结算，格式错误没有进入正文" : repairContextHeadroomFailure ? "候选正文已保留，修订请求尚未发出" : contextHeadroomFailure ? "调用已结算，边界重生请求被本地预算门拦下" : repairAuthorityFailure ? "候选正文已保留，修订请求尚未发出" : staleSceneEvidenceFailure ? "候选正文已保留，越界修订已被拒绝" : sceneBoundaryValidationFailure ? "调用已结算，场景边界未通过，正文未提交" : "已完成内容不会重写");
+    setText("[data-pending-section-title]", provenanceFailure ? (provenanceFailure.verified ? "模型请求前停止" : "安全状态仍在核对") : contextBudget ? (contextBudget.verified ? "请求在发送给模型前已停止" : "安全状态仍在核对") : repairConvergence ? (repairConvergence.verified ? "原候选已保留，失败修订稿已拒绝" : "安全状态仍在核对") : qualityRevision ? "本章已经完成生成，但尚未通过质量门" : sceneSchemaFailure ? "调用已结算，格式错误没有进入正文" : bridgePrevalidationFailure ? "模型请求尚未发出，衔接预检未通过" : repairContextHeadroomFailure ? "候选正文已保留，修订请求尚未发出" : contextHeadroomFailure ? "调用已结算，边界重生请求被本地预算门拦下" : repairAuthorityFailure ? "候选正文已保留，修订请求尚未发出" : staleSceneEvidenceFailure ? "候选正文已保留，越界修订已被拒绝" : sceneBoundaryValidationFailure ? "调用已结算，场景边界未通过，正文未提交" : "已完成内容不会重写");
     setText("[data-pending-safe-chip]", provenanceFailure ? (provenanceFailure.verified ? "✓ 本次新增调用 0 · 新增费用 0 · 无草稿正文" : "! 调用、费用与产物尚未完全确认") : contextBudget ? (contextBudget.verified ? "✓ 本次新增调用与新增费用均为 0" : "! 调用、费用与产物尚未完全确认") : repairConvergence ? (repairConvergence.verified ? `✓ ${repairConvergence.settledProviderCalls}/${repairConvergence.providerCalls} 次调用已结算 · ${repairConvergence.candidateChars} 字原候选已保留 · 正式正文未提交` : "! 调用、候选正文与提交状态尚未完全确认") : qualityRejection ? `✓ ${qualityRejection.providerCalls} 次调用已结算 · ${qualityRejection.chapterChars} 字候选已保留` : qualityRevision ? "✓ 草稿已保留" : repairContextHeadroomFailure ? `✓ ${contextHeadroom.providerCalls} 次调用已结算 · ${contextHeadroom.chapterChars} 字候选已保留` : repairAuthorityFailure ? `✓ ${repairAuthority.providerCalls} 次调用已结算 · ${repairAuthority.chapterChars} 字候选已保留` : staleSceneEvidenceFailure ? `✓ ${staleSceneEvidence.providerCalls} 次调用已结算 · ${staleSceneEvidence.chapterChars} 字候选已保留 · 正式正文未提交` : sceneBoundaryValidationFailure ? `✓ ${sceneBoundaryValidation.providerCalls} 次调用已结算 · 正式正文未提交` : settledGenerationFailure ? `✓ ${Number(issue.latest_run?.provider_calls) || 0} 次调用已结算 · ${Number(issue.reusable_scene_count) || 0} 个场景可复用` : "✓ 哈希绑定");
     const scenes = one("[data-recovery-scenes]"); clear(scenes);
     let sceneItems = arrayFrom(issue.scenes || issue.recoverable_scenes, "items");
@@ -2607,9 +2678,9 @@
     );
     setText(
       "[data-recovery-action-label]",
-      provenanceFailure ? (provenanceReady ? "Git 环境已修复，等待你的确认" : provenanceFailure.verified ? "等待系统修复 Git 环境" : "安全核对完成前不能重新执行") : contextBudget ? (contextBudgetReady ? "系统修复已完成，等待你的确认" : contextBudget.verified ? `修复完成后重新执行第 ${pendingChapterLabel(issue)} 章` : "安全核对完成前不能重新执行") : repairConvergence ? (!repairConvergence.verified ? "安全核对完成前不能恢复或重试" : issue.checkpoint ? "恢复证据已建立，等待安全继续" : "先执行无模型恢复分类") : repairContextHeadroomFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新校验" : "先执行无模型恢复分类") : staleSceneEvidenceFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新校验" : "先执行无模型恢复分类") : sceneBoundaryValidationFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新校验" : "先执行无模型恢复分类") : sceneSchemaFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新校验" : "先执行无模型恢复分类") : qualityRejection ? (!issue.checkpoint ? "先生成可编辑恢复草稿" : qualityDraft?.state === "validated" ? "草稿已通过恢复验证，等待确认提交" : "建议：修改下方草稿并重新验证") : qualityRevision ? "建议：自动修复并重新校验" : issue.checkpoint ? (allScenesReusable ? (completeSequenceNeedsRevalidation ? `建议：复核全部 ${reusableCount} 份场景候选，仅重生未通过场景` : `建议：复核全部 ${reusableCount} 个场景候选，再重新执行导演决策与校验`) : `建议：复核前 ${reusableCount} 个场景候选后从场景 ${nextScene} 继续`) : "先识别最新可信恢复边界"
+      provenanceFailure ? (provenanceReady ? "Git 环境已修复，等待你的确认" : provenanceFailure.verified ? "等待系统修复 Git 环境" : "安全核对完成前不能重新执行") : contextBudget ? (contextBudgetReady ? "系统修复已完成，等待你的确认" : contextBudget.verified ? `修复完成后重新执行第 ${pendingChapterLabel(issue)} 章` : "安全核对完成前不能重新执行") : repairConvergence ? (!repairConvergence.verified ? "安全核对完成前不能恢复或重试" : issue.checkpoint ? "恢复证据已建立，等待安全继续" : "先执行无模型恢复分类") : repairContextHeadroomFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新校验" : "先执行无模型恢复分类") : staleSceneEvidenceFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新校验" : "先执行无模型恢复分类") : sceneBoundaryValidationFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新校验" : "先执行无模型恢复分类") : sceneSchemaFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新校验" : "先执行无模型恢复分类") : bridgePrevalidationFailure ? (issue.checkpoint ? "恢复证据已建立，等待确认后重新开写" : "先执行无模型恢复分类") : qualityRejection ? (!issue.checkpoint ? "先生成可编辑恢复草稿" : qualityDraft?.state === "validated" ? "草稿已通过恢复验证，等待确认提交" : "建议：修改下方草稿并重新验证") : qualityRevision ? "建议：自动修复并重新校验" : issue.checkpoint ? (allScenesReusable ? (completeSequenceNeedsRevalidation ? `建议：复核全部 ${reusableCount} 份场景候选，仅重生未通过场景` : `建议：复核全部 ${reusableCount} 个场景候选，再重新执行导演决策与校验`) : `建议：复核前 ${reusableCount} 个场景候选后从场景 ${nextScene} 继续`) : "先识别最新可信恢复边界"
     );
-    setText("[data-recovery-action-detail]", provenanceFailure ? (provenanceReady ? "只有点击下方按钮并再次确认后，系统才会重新执行并调用真实模型；不点击则继续暂停，不新增费用。" : provenanceFailure.verified ? "当前不能重新执行；系统修复 Git 环境前，按钮保持禁用。" : "调用、费用与产物证据尚未完全确认；安全核对完成前按钮保持禁用。") : contextBudget ? (contextBudgetReady ? "只有点击下方按钮并再次确认后，系统才会调用真实模型；不点击则继续保持暂停，不新增费用。" : contextBudget.verified ? "系统修复并重新核对输入预算后才能再次执行；当前不会调用模型。" : "调用、费用与产物证据尚未完全确认；安全核对完成前按钮保持禁用。") : repairConvergence ? (!repairConvergence.verified ? "结构化安全证据尚未闭环；按钮保持禁用，不会盲目重试或调用模型。" : !issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执、原候选与可信场景边界；这一步不会调用模型、提交正文或写回状态。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会直接重试失败修订稿。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试。") : repairContextHeadroomFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执与已保留候选正文；这一步不会调用模型、提交正文或写回状态，也不会直接重试这次超限的修订。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会直接重试这次超限的修订，已保留候选不会被隐藏。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试这次超限修订。") : staleSceneEvidenceFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执与已保留候选正文；这一步不会调用模型、提交正文或写回状态，也不会直接重试这次失败的修订。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会直接重试这次失败的越界修订，已保留候选不会被隐藏。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试这次失败修订。") : sceneBoundaryValidationFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执与场景边界问题；这一步不会调用模型、提交正文或写回状态，也不会盲目重试这次失败的场景生成。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会盲目重试这次失败的场景生成。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试这次失败的场景生成。") : sceneSchemaFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执与可复用场景；这一步不会调用模型、提交正文或写回状态，也不会盲目重试这次格式错误的场景生成。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会盲目重试这次格式错误的场景生成。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试这次格式错误的场景生成。") : qualityRejection ? (!issue.checkpoint ? "先做无模型分类，把完整候选转成带 revision/SHA 的可编辑草稿；不会调用模型或提交正文。" : draftSourceConflict ? "你的编辑已原样保留；请先对照下方更新来源稿完成合并，再保存并重新验证。" : qualityDraft?.state === "validated" ? "请使用下方“确认提交并继续”；原任务只会在再次确认后恢复，并且仍须通过质量门。" : "在下方只修改阻断问题，保存后点击“重新验证”；正式正文在验证通过前不会提交。") : qualityRevision ? "此操作会调用真实模型；只有修复内容重新通过校验与质量门后，才会提交正式正文。" : settledGenerationFailure ? (issue.checkpoint ? (completeSequenceNeedsRevalidation ? `将载入 ${reusableCount} 份候选并逐场重跑边界校验；只有未通过的场景会调用模型重生，全部通过后才会继续审核与提交。` : `将保留前 ${Number(issue.reusable_scene_count) || 0} 个可信场景，从场景 ${Number(issue.next_scene) || 1} 继续；恢复会调用真实模型完成剩余场景。`) : "先执行无模型恢复分类，核对已结算回执和可复用场景；这一步不会调用模型或提交正文。") : "恢复会创建追加式检查点，不改写正式正文或历史快照。");
+    setText("[data-recovery-action-detail]", provenanceFailure ? (provenanceReady ? "只有点击下方按钮并再次确认后，系统才会重新执行并调用真实模型；不点击则继续暂停，不新增费用。" : provenanceFailure.verified ? "当前不能重新执行；系统修复 Git 环境前，按钮保持禁用。" : "调用、费用与产物证据尚未完全确认；安全核对完成前按钮保持禁用。") : contextBudget ? (contextBudgetReady ? "只有点击下方按钮并再次确认后，系统才会调用真实模型；不点击则继续保持暂停，不新增费用。" : contextBudget.verified ? "系统修复并重新核对输入预算后才能再次执行；当前不会调用模型。" : "调用、费用与产物证据尚未完全确认；安全核对完成前按钮保持禁用。") : repairConvergence ? (!repairConvergence.verified ? "结构化安全证据尚未闭环；按钮保持禁用，不会盲目重试或调用模型。" : !issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执、原候选与可信场景边界；这一步不会调用模型、提交正文或写回状态。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会直接重试失败修订稿。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试。") : repairContextHeadroomFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执与已保留候选正文；这一步不会调用模型、提交正文或写回状态，也不会直接重试这次超限的修订。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会直接重试这次超限的修订，已保留候选不会被隐藏。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试这次超限修订。") : staleSceneEvidenceFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执与已保留候选正文；这一步不会调用模型、提交正文或写回状态，也不会直接重试这次失败的修订。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会直接重试这次失败的越界修订，已保留候选不会被隐藏。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试这次失败修订。") : sceneBoundaryValidationFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执与场景边界问题；这一步不会调用模型、提交正文或写回状态，也不会盲目重试这次失败的场景生成。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会盲目重试这次失败的场景生成。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试这次失败的场景生成。") : sceneSchemaFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对已结算回执与可复用场景；这一步不会调用模型、提交正文或写回状态，也不会盲目重试这次格式错误的场景生成。" : issue.resume_ready === true ? "恢复证据已绑定原暂停任务；只有再次明确确认后才会调用模型重新校验，系统不会盲目重试这次格式错误的场景生成。" : "恢复检查点已经建立，但尚未绑定到原暂停任务；当前不能直接重试这次格式错误的场景生成。") : bridgePrevalidationFailure ? (!issue.checkpoint ? "先执行无模型恢复分类，核对接续问题；这一步不会调用模型、提交正文或写回状态，也不会盲目重试这次失败的衔接预检。" : "衔接预检仍未通过，不能直接重新开写；已确认没有模型调用和候选正文。") : qualityRejection ? (!issue.checkpoint ? "先做无模型分类，把完整候选转成带 revision/SHA 的可编辑草稿；不会调用模型或提交正文。" : draftSourceConflict ? "你的编辑已原样保留；请先对照下方更新来源稿完成合并，再保存并重新验证。" : qualityDraft?.state === "validated" ? "请使用下方“确认提交并继续”；原任务只会在再次确认后恢复，并且仍须通过质量门。" : "在下方只修改阻断问题，保存后点击“重新验证”；正式正文在验证通过前不会提交。") : qualityRevision ? "此操作会调用真实模型；只有修复内容重新通过校验与质量门后，才会提交正式正文。" : settledGenerationFailure ? (issue.checkpoint ? (completeSequenceNeedsRevalidation ? `将载入 ${reusableCount} 份候选并逐场重跑边界校验；只有未通过的场景会调用模型重生，全部通过后才会继续审核与提交。` : `将保留前 ${Number(issue.reusable_scene_count) || 0} 个可信场景，从场景 ${Number(issue.next_scene) || 1} 继续；恢复会调用真实模型完成剩余场景。`) : "先执行无模型恢复分类，核对已结算回执和可复用场景；这一步不会调用模型或提交正文。") : "恢复会创建追加式检查点，不改写正式正文或历史快照。");
     const form = one("[data-recover-form]");
     const chapter = pendingChapterNumber(issue) ?? "—";
     const checkpointReady = Boolean(issue.checkpoint);
@@ -2722,6 +2793,12 @@
       form.action = `/api/jobs/${encodeURIComponent(pausedParent?.job_id || pausedParent?.id || exactParentId)}/recover`;
       form.dataset.recoveryMode = "scene-schema-validation-classify";
       form.dataset.confirm = "先执行无模型恢复分类，核对已结算回执与可复用场景。这一步不会调用模型、提交正文或写回状态，也不会盲目重试这次格式错误的场景生成，确认吗？";
+      form.dataset.successMessage = "无模型恢复分类任务已启动。";
+      setText("[data-recover-button]", "先做无模型恢复分类");
+    } else if (bridgePrevalidationFailure && !checkpointReady) {
+      form.action = `/api/jobs/${encodeURIComponent(pausedParent?.job_id || pausedParent?.id || exactParentId)}/recover`;
+      form.dataset.recoveryMode = "bridge-prevalidation-classify";
+      form.dataset.confirm = "先执行无模型恢复分类，核对接续问题。这一步不会调用模型、提交正文或写回状态，也不会盲目重试这次失败的衔接预检，确认吗？";
       form.dataset.successMessage = "无模型恢复分类任务已启动。";
       setText("[data-recover-button]", "先做无模型恢复分类");
     } else if (qualityRejection) {
@@ -2962,6 +3039,8 @@
     const latestRecoveryRun = recovery?.latest_run || {};
     const sceneSchemaValidation = sceneSchemaValidationDetailsOf(pausedRecoveryJob) || sceneSchemaValidationDetailsOfRun(latestRecoveryRun);
     const sceneSchemaFailure = Boolean(sceneSchemaValidation);
+    const bridgePrevalidation = bridgePrevalidationDetailsOf(pausedRecoveryJob) || bridgePrevalidationDetailsOfRun(latestRecoveryRun);
+    const bridgePrevalidationFailure = Boolean(bridgePrevalidation);
     const contextHeadroom = contextHeadroomDetailsOfRun(latestRecoveryRun);
     const contextHeadroomFailure = Boolean(contextHeadroom);
     const repairContextHeadroomFailure = contextHeadroomFailure && contextHeadroomIsRepair(contextHeadroom);
@@ -2987,6 +3066,8 @@
         reset_cleared: recovery.reset_cleared === true,
         scene_schema_failure: sceneSchemaFailure,
         scene_schema_validation: sceneSchemaValidation,
+        bridge_prevalidation: bridgePrevalidation,
+        bridge_prevalidation_failure: bridgePrevalidationFailure,
         context_headroom_failure: contextHeadroomFailure,
         context_headroom: contextHeadroom,
         repair_authority_failure: repairAuthorityFailure,
@@ -2999,11 +3080,13 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
-        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，等待无模型恢复分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，等待无模型恢复分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章已安全暂停`,
+        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，等待无模型恢复分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，等待无模型恢复分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，等待无模型恢复分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章已安全暂停`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
           : sceneSchemaFailure
           ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；场景响应的 JSON 格式错误。`
+          : bridgePrevalidationFailure
+          ? bridgePrevalidationSummary(bridgePrevalidation)
           : repairContextHeadroomFailure
           ? `本次 ${contextHeadroom.providerCalls} 次模型调用均已结算；修订输入为 ${contextHeadroom.requiredTokens} tokens，超过 ${contextHeadroom.safeTarget} 安全目标 ${contextHeadroom.overageTokens} tokens。`
           : contextHeadroomFailure
@@ -3025,6 +3108,8 @@
           ? "正式正文没有提交；已保留候选仍可核对。先执行无模型恢复分类，不要盲目重试这次失败修订。"
           : sceneBoundaryValidationFailure
           ? "正式正文没有提交，场景边界校验未通过。先执行无模型恢复分类，不要盲目重试这次失败的场景生成。"
+          : bridgePrevalidationFailure
+          ? "正式正文没有提交，也没有模型调用。先执行无模型恢复分类，核对接续问题，不要盲目重试这次失败的衔接预检。"
           : sceneSchemaFailure || contextHeadroomFailure || repairAuthorityFailure || qualityRejectionFailure
           ? "正式正文没有提交；先执行无模型恢复分类，核对候选正文、回执与最新运行后再继续。"
           : recovery.uncertain_without_run
@@ -3041,6 +3126,8 @@
         resume_ready: pausedRecoveryJob?.resume_ready === true,
         scene_schema_failure: sceneSchemaFailure,
         scene_schema_validation: sceneSchemaValidation,
+        bridge_prevalidation: bridgePrevalidation,
+        bridge_prevalidation_failure: bridgePrevalidationFailure,
         context_headroom_failure: contextHeadroomFailure,
         context_headroom: contextHeadroom,
         repair_authority_failure: repairAuthorityFailure,
@@ -3053,11 +3140,13 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
-        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，已安全分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章可安全恢复`,
+        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，已安全分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，已安全分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章可安全恢复`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
           : sceneSchemaFailure
           ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；场景响应的 JSON 格式错误。`
+          : bridgePrevalidationFailure
+          ? bridgePrevalidationSummary(bridgePrevalidation)
           : repairContextHeadroomFailure
           ? `本次 ${contextHeadroom.providerCalls} 次模型调用均已结算；修订输入超过 ${contextHeadroom.safeTarget} 安全目标 ${contextHeadroom.overageTokens} tokens。`
           : contextHeadroomFailure

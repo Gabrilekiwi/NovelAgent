@@ -473,6 +473,7 @@
         "chapter.stale_scene_evidence": "自动修订与场景证据对不齐，任务已安全暂停",
         "chapter.scene_boundary_validation": "场景边界校验未通过，任务已安全暂停",
         "chapter.scene_schema_validation": "场景响应格式错误，任务已安全暂停",
+        "chapter.bridge_prevalidation": "开写前衔接预检未通过，任务已安全暂停",
         "chapter.needs_revision": "章节需要作者修订",
         "chapter.needs_recovery": "章节已安全暂停，等待恢复",
         "draft.source_upgrade_conflict": "作者草稿已保留，发现更新恢复源",
@@ -498,6 +499,7 @@
         "chapter.stale_scene_evidence": "awaiting_input",
         "chapter.scene_boundary_validation": "awaiting_input",
         "chapter.scene_schema_validation": "awaiting_input",
+        "chapter.bridge_prevalidation": "awaiting_input",
         "chapter.needs_revision": "awaiting_input",
         "chapter.needs_recovery": "needs_recovery",
         "recovery.completed": "completed"
@@ -647,7 +649,7 @@
       "job.queued", "job.starting", "job.pause_requested", "job.paused", "job.completed",
       "job.failed", "job.needs_recovery", "job.cancel_requested", "job.cancelled_provider_uncertain",
        "job.author_confirmed_resume", "chapter.started", "chapter.committed", "chapter.needs_revision",
-       "chapter.pre_provider_context_budget_exceeded", "chapter.pre_provider_provenance_unavailable", "chapter.repair_not_converging", "chapter.stale_scene_evidence", "chapter.scene_boundary_validation", "chapter.scene_schema_validation",
+       "chapter.pre_provider_context_budget_exceeded", "chapter.pre_provider_provenance_unavailable", "chapter.repair_not_converging", "chapter.stale_scene_evidence", "chapter.scene_boundary_validation", "chapter.scene_schema_validation", "chapter.bridge_prevalidation",
         "chapter.needs_recovery", "draft.source_upgrade_conflict", "recovery.completed", "loop_start", "step_start", "step_end",
       "step_failed", "loop_end", "engine.progress"
     ].forEach((type) => source.addEventListener(type, receive));
