@@ -25,6 +25,7 @@ from core.runtime_paths import RuntimePaths
 from workbench.database import WorkbenchDatabase
 from workbench.instance import InstanceLease
 from workbench.maintenance import maintenance_for, MaintenanceBlocked, MaintenanceError
+from workbench.review_status import resolve_review_status
 
 
 TERMINAL_JOB_STATES = frozenset({"completed", "cancelled", "failed"})
@@ -4500,12 +4501,7 @@ def _require_job_row(connection: Any, job_id: str) -> Any:
 
 
 def _review_status(result: Mapping[str, Any]) -> str:
-    review = result.get("review_pipeline")
-    if not isinstance(review, Mapping):
-        run = result.get("run")
-        review = run.get("review_pipeline") if isinstance(run, Mapping) else None
-    value = review.get("status") if isinstance(review, Mapping) else None
-    return str(value) if value in {"pass", "warning", "needs_revision", "blocked", "error"} else "unknown"
+    return resolve_review_status(result)
 
 
 def _run_id(result: Mapping[str, Any]) -> str | None:

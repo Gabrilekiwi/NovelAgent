@@ -498,7 +498,7 @@ def test_quality_revision_pause_uses_parent_resume_without_recovery_classificati
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
 
-    assert 'job?.state === "awaiting_input" && reviewStatusOf(job) === "needs_revision"' in spa
+    assert 'job?.state === "awaiting_input" && ["needs_revision", "blocked", "error"].includes(reviewStatusOf(job))' in spa
     assert 'quality_revision: true' in spa
     assert 'Provider 已成功结束，正式正文未提交' in spa
     assert 'form.dataset.recoveryMode = "quality-repair"' in spa

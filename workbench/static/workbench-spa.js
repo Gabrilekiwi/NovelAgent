@@ -283,7 +283,33 @@
     ? `自动修订把阻断问题从 ${failure.originalProblemCount} 项降到 ${failure.finalProblemCount} 项，但新增了更严重的${repairNewProblemLabel(failure)}问题；系统已拒绝采用修订稿。`
     : "检测到修订未收敛，但模型调用、候选正文与提交状态的结构化证据尚未核对完成。";
   const reviewStatusOf = (job) => job?.result?.review_status || job?.review_status || job?.result?.review_pipeline?.status;
-  const isQualityRevisionPause = (job) => job?.state === "awaiting_input" && reviewStatusOf(job) === "needs_revision" && !preProviderProvenanceDetailsOf(job) && !contextBudgetDetailsOf(job) && !repairNotConvergingDetailsOf(job);
+  const isQualityRevisionPause = (job) => job?.state === "awaiting_input" && ["needs_revision", "blocked", "error"].includes(reviewStatusOf(job)) && !preProviderProvenanceDetailsOf(job) && !contextBudgetDetailsOf(job) && !repairNotConvergingDetailsOf(job);
+  const durablePolishedDraftAvailable = (issue) => {
+    const recovery = issue?.chapter_recovery || issue;
+    const checkpoint = issue?.checkpoint || recovery?.checkpoint;
+    if (recovery?.formal_prose_exists === true || issue?.formal_prose_exists === true) return false;
+    if (recovery?.uncertain_without_run === true || issue?.uncertain_without_run === true) return false;
+    if (!checkpoint || checkpoint.action === "reset") return false;
+    return recovery?.durable_polished_draft_available === true
+      || issue?.durable_polished_draft_available === true
+      || (checkpoint.reason === "durable_polished_draft_available" && checkpoint.has_complete_draft === true);
+  };
+  const polishedDraftGuidance = (issue) => {
+    const draftState = issue?.draft?.state || issue?.quality_draft?.state;
+    if (draftState === "validated" || issue?.resume_ready === true) {
+      return "已有完整润色稿并通过验证。请确认提交已有草稿继续本章，不要结束失败尝试或新开一章。";
+    }
+    return "已有完整润色稿，不确定调用已写入恢复记录。请先验证或确认已有草稿，不要结束失败尝试或新开一章。";
+  };
+  const providerUncertainCopy = (issue) => {
+    if (durablePolishedDraftAvailable(issue)) return polishedDraftGuidance(issue);
+    const error = issue?.error || {};
+    const pieces = [error.user_message, error.message, error.reason, error.stderr_tail, issue?.reason, issue?.summary].filter(Boolean).join("\n");
+    if (issue?.uncertain_without_run === true || /ProviderCallUncertainError|provider_call_uncertain|without a durable receipt|没有耐久回执|没有完整回执/.test(pieces)) {
+      return "上次模型调用结果不确定，没有完整回执。不要盲目重试；请先结束本章失败尝试，再开始新的一次写作。";
+    }
+    return null;
+  };
 
   const api = async (path, options = {}) => {
     const headers = UI.requestHeaders(options.headers || {});
@@ -1732,6 +1758,7 @@
       : null;
     const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && (Boolean(qualityRejection) || isQualityRevisionPause(session));
     const providerUncertain = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !qualityRejection && jobStatus === "needs_recovery";
+    const polishedDraftReady = durablePolishedDraftAvailable(payload.chapter_recovery || session);
     launch.hidden = visible;
     sessionPanel.hidden = !visible;
     const statusLabel = provenanceFailure ? (provenanceReady ? "等待作者确认" : provenanceFailure.verified ? "等待系统修复" : "安全核对中") : contextBudget ? (contextBudgetReady ? "等待作者确认" : contextBudget.verified ? "等待系统修复" : "安全核对中") : repairConvergence ? (repairConvergence.verified ? "等待无模型恢复" : "安全核对中") : repairAuthority ? "等待安全恢复" : qualityRevision ? "质量审核需修订" : paused ? (providerUncertain ? "需要安全恢复" : "等待作者处理") : session?.status_label;
@@ -1770,9 +1797,9 @@
     const attentionPanel = one("[data-production-attention]");
     if (safetyPanel) safetyPanel.hidden = paused;
     if (attentionPanel) attentionPanel.hidden = !paused;
-    setText("[data-production-attention-eyebrow]", provenanceFailure ? "本机运行环境错误" : contextBudget ? "本地上下文超限" : repairConvergence ? "自动修订未收敛" : repairAuthority ? "修订上下文装配错误" : qualityRevision ? "质量审核需修订" : "已安全暂停");
-    setText("[data-production-attention-title]", provenanceFailure ? (provenanceReady ? "Git 环境已修复，等待确认" : provenanceFailure.verified ? "Git 来源记录环境异常" : "疑似 Git 环境错误，安全核对中") : contextBudget ? (contextBudgetReady ? "上下文修复已完成" : contextBudget.verified ? "模型请求尚未发出" : "上下文错误正在安全核对") : repairConvergence ? (repairConvergence.verified ? "修订稿引入了更严重的连续性问题" : "修订故障正在安全核对") : repairAuthority ? "质量修订请求在本地预算检查中停止" : qualityRejection ? "质量门发现阻断逻辑问题" : qualityRevision ? "Provider 已成功结束" : "不要重复启动或紧急停止");
-    setText("[data-production-attention-detail]", provenanceFailure ? (provenanceReady ? `${preProviderProvenanceStopDetail(provenanceFailure)} 系统已修复 Git 环境；前往待处理由你确认后才会重新执行。` : `${preProviderProvenanceSummary(provenanceFailure)} ${preProviderProvenanceStopDetail(provenanceFailure)}`) : contextBudget ? (contextBudgetReady ? `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)} 系统已完成降载修复，前往待处理由你确认后才会重新执行。` : `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)}`) : repairConvergence ? (repairConvergence.verified ? `${repairConvergence.settledProviderCalls}/${repairConvergence.providerCalls} 次模型调用已结算，${repairConvergence.candidateChars} 字原候选已保留；${repairNotConvergingSummary(repairConvergence)} 正式正文未提交。前往待处理先做无模型恢复分类。` : `${repairNotConvergingSummary(repairConvergence)} 系统不会盲目重试，安全核对完成前不能继续。`) : repairAuthority ? `生成与审核的 ${repairAuthority.providerCalls} 次模型调用均已结算，${repairAuthority.chapterChars} 字候选正文保存在隔离运行区。修订器需要 ${repairAuthority.requiredChars} 字符的权威记录，旧预算只有 ${repairAuthority.budgetChars}；修订模型请求尚未发出，正式正文未提交。前往待处理先做无模型恢复分类。` : qualityRejection ? `${qualityRejection.providerCalls} 次模型调用均已结算，${qualityRejection.chapterChars} 字候选已保留，正式正文未提交。阻断原因：${qualityProblemSummary(qualityRejection)} 前往待处理编辑恢复草稿并重新验证。` : qualityRevision ? "完整候选草稿已保留，正式正文未提交。前往待处理可启动自动修复并重新校验。" : "正式正文尚未提交。先到待处理识别最新可信恢复点，再决定是否重新校验。");
+    setText("[data-production-attention-eyebrow]", polishedDraftReady ? "已有完整润色稿" : provenanceFailure ? "本机运行环境错误" : contextBudget ? "本地上下文超限" : repairConvergence ? "自动修订未收敛" : repairAuthority ? "修订上下文装配错误" : qualityRevision ? "质量审核需修订" : "已安全暂停");
+    setText("[data-production-attention-title]", polishedDraftReady ? (session?.resume_ready === true ? "润色稿已验证，请确认提交" : "请验证已有润色稿") : provenanceFailure ? (provenanceReady ? "Git 环境已修复，等待确认" : provenanceFailure.verified ? "Git 来源记录环境异常" : "疑似 Git 环境错误，安全核对中") : contextBudget ? (contextBudgetReady ? "上下文修复已完成" : contextBudget.verified ? "模型请求尚未发出" : "上下文错误正在安全核对") : repairConvergence ? (repairConvergence.verified ? "修订稿引入了更严重的连续性问题" : "修订故障正在安全核对") : repairAuthority ? "质量修订请求在本地预算检查中停止" : qualityRejection ? "质量门发现阻断逻辑问题" : qualityRevision ? "Provider 已成功结束" : "不要重复启动或紧急停止");
+    setText("[data-production-attention-detail]", polishedDraftReady ? polishedDraftGuidance(Object.assign({}, session, payload.chapter_recovery || {})) : provenanceFailure ? (provenanceReady ? `${preProviderProvenanceStopDetail(provenanceFailure)} 系统已修复 Git 环境；前往待处理由你确认后才会重新执行。` : `${preProviderProvenanceSummary(provenanceFailure)} ${preProviderProvenanceStopDetail(provenanceFailure)}`) : contextBudget ? (contextBudgetReady ? `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)} 系统已完成降载修复，前往待处理由你确认后才会重新执行。` : `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)}`) : repairConvergence ? (repairConvergence.verified ? `${repairConvergence.settledProviderCalls}/${repairConvergence.providerCalls} 次模型调用已结算，${repairConvergence.candidateChars} 字原候选已保留；${repairNotConvergingSummary(repairConvergence)} 正式正文未提交。前往待处理先做无模型恢复分类。` : `${repairNotConvergingSummary(repairConvergence)} 系统不会盲目重试，安全核对完成前不能继续。`) : repairAuthority ? `生成与审核的 ${repairAuthority.providerCalls} 次模型调用均已结算，${repairAuthority.chapterChars} 字候选正文保存在隔离运行区。修订器需要 ${repairAuthority.requiredChars} 字符的权威记录，旧预算只有 ${repairAuthority.budgetChars}；修订模型请求尚未发出，正式正文未提交。前往待处理先做无模型恢复分类。` : qualityRejection ? `${qualityRejection.providerCalls} 次模型调用均已结算，${qualityRejection.chapterChars} 字候选已保留，正式正文未提交。阻断原因：${qualityProblemSummary(qualityRejection)} 前往待处理编辑恢复草稿并重新验证。` : qualityRevision ? "完整候选草稿已保留，正式正文未提交。前往待处理可启动自动修复并重新校验。" : "正式正文尚未提交。先到待处理识别最新可信恢复点，再决定是否重新校验。");
     const attentionLink = one("[data-production-attention-link]");
     if (attentionLink) attentionLink.href = projectHash("pending");
     const progress = one(".scene-progress .progress", sessionPanel);
@@ -2177,6 +2204,7 @@
       && pausedParent?.execution_compatible !== false
       && !provenanceFailure
       && !contextBudget
+      && !durablePolishedDraftAvailable(issue)
     );
     if (forceResetPanel) {
       forceResetPanel.hidden = !forceResetAllowed;
@@ -2218,7 +2246,7 @@
         job_id: job.job_id || job.id,
         chapter: job.chapter || job.next_chapter,
         title: job.execution_compatible === false ? `第 ${job.next_chapter || "—"} 章旧任务版本不兼容` : job.title || `第 ${job.next_chapter || "—"} 章需要作者决定`,
-        reason: job.execution_compatible === false ? incompatibleJobMessage : job.reason || job.error?.message || (job.state === "needs_recovery" ? "Provider 状态不确定，不会自动重试" : "生产已暂停")
+        reason: job.execution_compatible === false ? incompatibleJobMessage : providerUncertainCopy(job) || job.reason || job.error?.message || (job.state === "needs_recovery" ? "Provider 状态不确定，不会自动重试" : "生产已暂停")
       };
       const repairNotConverging = repairNotConvergingDetailsOf(normalized);
       return {
@@ -2389,7 +2417,7 @@
     state.pending = [...provenanceIssues, ...contextBudgetIssues, ...qualityRevisionIssues, ...(recoveryIssue ? [recoveryIssue] : []), ...remainingPaused];
     updatePendingCount(state.pending.length);
     setText("[data-pending-heading-count]", state.pending.length);
-    setText("[data-pending-lede]", provenanceIssues.length ? (provenanceUnverified ? "检测到疑似 Git 来源记录环境异常；调用、费用与产物证据正在安全核对，完成前不能重新执行。" : provenanceReady ? "Git 环境已修复；重新执行需要你的明确确认，点击前不会新增模型调用或费用。" : "Git 来源记录环境异常；本次失败证据已核对，系统修复前不能重新执行。") : contextBudgetIssues.length ? (contextBudgetUnverified ? "本地输入超过安全上限；调用、费用与产物证据正在安全核对，完成前不能重新执行。" : contextBudgetReady ? "上下文修复已完成；重新执行需要你的明确确认，点击前不会新增模型调用或费用。" : "本地输入在调用模型前超过安全上限；系统修复前不能重新执行。") : recoveryIssue?.repair_not_converging ? (recoveryIssue.repair_not_converging.verified ? "自动修订引入了更严重问题，系统已保留原候选并停止；下一步先做无模型恢复分类，不会盲目重试。" : "修订故障的调用、候选正文与提交证据正在安全核对；完成前不能恢复或重试。") : qualityRevisionIssues.length || recoveryIssue?.quality_revision ? "质量门要求修订候选草稿；正式正文在重新验证通过前不会提交。" : "自动生产在不确定处停下，这里只展示必须由作者决定的内容。");
+    setText("[data-pending-lede]", provenanceIssues.length ? (provenanceUnverified ? "检测到疑似 Git 来源记录环境异常；调用、费用与产物证据正在安全核对，完成前不能重新执行。" : provenanceReady ? "Git 环境已修复；重新执行需要你的明确确认，点击前不会新增模型调用或费用。" : "Git 来源记录环境异常；本次失败证据已核对，系统修复前不能重新执行。") : contextBudgetIssues.length ? (contextBudgetUnverified ? "本地输入超过安全上限；调用、费用与产物证据正在安全核对，完成前不能重新执行。" : contextBudgetReady ? "上下文修复已完成；重新执行需要你的明确确认，点击前不会新增模型调用或费用。" : "本地输入在调用模型前超过安全上限；系统修复前不能重新执行。") : recoveryIssue?.repair_not_converging ? (recoveryIssue.repair_not_converging.verified ? "自动修订引入了更严重问题，系统已保留原候选并停止；下一步先做无模型恢复分类，不会盲目重试。" : "修订故障的调用、候选正文与提交证据正在安全核对；完成前不能恢复或重试。") : qualityRevisionIssues.length || recoveryIssue?.quality_revision ? "质量门要求修订候选草稿；正式正文在重新验证通过前不会提交。" : durablePolishedDraftAvailable(recoveryIssue) ? polishedDraftGuidance(recoveryIssue) : "自动生产在不确定处停下，这里只展示必须由作者决定的内容。");
     const pill = one("[data-active-job-pill]");
     if (pill) {
       pill.hidden = pausedJobs.length === 0;

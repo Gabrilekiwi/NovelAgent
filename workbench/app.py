@@ -75,6 +75,8 @@ from workbench.database import (
     WorkbenchDatabase, WorkbenchDatabaseError, WorkbenchDatabaseInitializationPending,
 )
 from workbench.instance import InstanceLease
+from workbench.recovery_guidance import attention_label_for_project, durable_polished_draft_available
+from workbench.review_status import resolve_review_status
 from workbench.jobs import (
     JobError,
     JobStore,
@@ -1542,6 +1544,14 @@ def _project_summary(record: ProjectRecord, jobs: JobStore) -> dict[str, Any]:
     )
     pending_count = len(paused_chapters) + int(recovery_attention)
     metadata = record.metadata
+    attention_recovery = recovery
+    draft_state = None
+    if active is not None:
+        chapter = int(active.next_chapter)
+        if chapter != int(record.next_chapter):
+            attention_recovery = _chapter_recovery_summary(record.root, chapter)
+        draft = jobs.get_project_chapter_draft(record.id, chapter)
+        draft_state = draft.state if draft is not None else None
     return {
         **record.to_dict(),
         "title": record.name,
@@ -1557,7 +1567,11 @@ def _project_summary(record: ProjectRecord, jobs: JobStore) -> dict[str, Any]:
         "active_job": active.to_dict() if active else None,
         "pending_count": pending_count,
         "has_attention": pending_count > 0,
-        "attention_label": _attention_label(active.state) if active else None,
+        "attention_label": attention_label_for_project(
+            active.state if active else None,
+            recovery=attention_recovery,
+            draft_state=draft_state,
+        ) if active else None,
     }
 
 
@@ -2073,7 +2087,7 @@ def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "repair_attempts": run.get("repair_attempts"),
-        "review_status": review.get("status") if isinstance(review, Mapping) else None,
+        "review_status": resolve_review_status(payload),
         "persistence_state": persistence.get("state") if isinstance(persistence, Mapping) else None,
         "publication": persistence.get("publication") if isinstance(persistence, Mapping) else None,
         "error_type": error.get("type"),
@@ -2169,7 +2183,7 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
             and latest_checkpoint.get("complete_draft_sha256")
             == verified_source_sha256
         )
-    return {
+    summary = {
         "chapter": chapter,
         "formal_prose_exists": bool(resolve_prose(root, chapter).path),
         "latest_run": _compact_run(run),
@@ -2179,6 +2193,8 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
         "verified_final_sha256": verified_source_sha256,
         "needs_reclassification": bool(recoverable and not checkpoint_matches_latest_run),
     }
+    summary["durable_polished_draft_available"] = durable_polished_draft_available(summary)
+    return summary
 
 
 def _recovery_draft_source_conflict(
