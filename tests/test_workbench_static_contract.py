@@ -1639,3 +1639,113 @@ def test_chapter_page_does_not_treat_written_or_later_chapters_as_health_failure
     load_chapter = spa.split("const loadChapter =", 1)[1]
     assert "if (hasFormalProse)" in load_chapter
     assert "/chapters/${chapterNumber}/card`" in load_chapter
+
+
+
+def test_settled_context_budget_after_provider_failure_explains_next_step() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    assert "const contextBudgetAfterProviderDetailsOfRun = (run) =>" in spa
+    assert "const contextBudgetAfterProviderDetailsOf = (job) =>" in spa
+    assert 'value.code === "context_budget_after_provider"' in spa
+    assert "context_budget_after_provider: contextBudgetAfterProvider" in spa
+    assert "已付费后上下文预算中断" in spa
+    assert "调用已结算，已付费内容已保留" in spa
+    assert "不是调用前的预算拒绝" in spa
+    assert 'form.dataset.recoveryMode = "context-budget-after-provider-classify"' in spa
+    assert "尚未调用模型" not in spa.split("contextBudgetAfterProviderFailure ?")[1].split(";")[0]
+
+    assert stream.count('"chapter.context_budget_after_provider"') >= 3
+    assert '"chapter.context_budget_after_provider": "已付费调用后上下文预算中断，已保留已付费内容，任务已安全暂停"' in stream
+    assert '"chapter.context_budget_after_provider": "awaiting_input"' in stream
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_context_budget_after_provider_browser_classifier_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { contextBudgetAfterProviderDetailsOf, contextBudgetAfterProviderDetailsOfRun, contextBudgetDetailsOf };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const completeRun = {
+  error_type: "ContextBudgetError",
+  error_message: "story_project_context_budget_exceeded: repair input requires 39267 tokens; hard limit is 32000",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 6,
+  chapter_chars: 4398
+};
+const completeDetails = {
+  failure_origin: "context_budget_after_provider",
+  input_stage: "repair",
+  limit_kind: "hard_limit",
+  stage: "repair_hard_limit",
+  required_tokens: 39267,
+  hard_limit_tokens: 32000,
+  overage_tokens: 7267,
+  provider_calls: 6,
+  settled_provider_calls: 6,
+  succeeded_provider_calls: 6,
+  unsettled_attempt_count: 0,
+  candidate_chars: 4398,
+  provider_reached: true,
+  formal_prose_exists: false,
+  accepted: false,
+  committed: false,
+  writeback_attempted: false,
+  writeback_applied: false,
+  automatic_retry: false,
+  safe_to_retry: false,
+  recovery_required: true,
+  source_error_type: "ContextBudgetError",
+  source_error_message: "story_project_context_budget_exceeded: repair input requires 39267 tokens; hard limit is 32000"
+};
+const output = {
+  fromRun: sandbox.__evidence.contextBudgetAfterProviderDetailsOfRun(completeRun),
+  zeroCalls: sandbox.__evidence.contextBudgetAfterProviderDetailsOfRun({ ...completeRun, provider_calls: 0 }),
+  obsoleteRun: sandbox.__evidence.contextBudgetAfterProviderDetailsOfRun({ ...completeRun, error_type: "ModelCallError", error_message: "OpenAI chat completion failed (provider_error; ContextBudgetError)." }),
+  wrapRun: sandbox.__evidence.contextBudgetAfterProviderDetailsOfRun({ ...completeRun, error_type: "ModelCallError", error_message: "OpenAI chat completion failed (local_budget; story_project_context_budget_exceeded: scene input requires 32830 tokens; hard limit is 32000)." }),
+  unreadableJob: sandbox.__evidence.contextBudgetAfterProviderDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "ContextBudgetError: story_project_context_budget_exceeded: repair input requires 39267 tokens; hard limit is 32000" } }),
+  incompleteJob: sandbox.__evidence.contextBudgetAfterProviderDetailsOf({ error: { code: "context_budget_after_provider", details: { ...completeDetails, writeback_applied: undefined } } }),
+  verifiedJob: sandbox.__evidence.contextBudgetAfterProviderDetailsOf({ error: { code: "context_budget_after_provider", details: completeDetails } }),
+  legacyViaRun: sandbox.__evidence.contextBudgetAfterProviderDetailsOf({ error: { code: "engine_result_unreadable" }, latest_run: completeRun }),
+  preProviderNotStolen: sandbox.__evidence.contextBudgetDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "story_project_context_budget_exceeded: scene input requires 32830 tokens; hard limit is 32000" }, latest_run: { error_type: "ContextBudgetError", provider_calls: 9, error_message: "story_project_context_budget_exceeded: scene input requires 32830 tokens; hard limit is 32000" } })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["fromRun"]["verified"] is True
+    assert result["fromRun"]["providerCalls"] == 6
+    assert result["fromRun"]["chapterChars"] == 4398
+    assert result["fromRun"]["inputStage"] == "repair"
+    assert result["fromRun"]["limitKind"] == "hard_limit"
+    assert result["zeroCalls"] is None
+    assert result["obsoleteRun"] is None
+    assert result["wrapRun"] is None
+    assert result["unreadableJob"] is None
+    assert result["incompleteJob"] is None
+    assert result["verifiedJob"]["verified"] is True
+    assert result["verifiedJob"]["chapterChars"] == 4398
+    assert result["legacyViaRun"]["verified"] is True
+    assert result["preProviderNotStolen"] is None

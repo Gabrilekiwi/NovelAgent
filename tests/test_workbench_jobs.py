@@ -24,6 +24,7 @@ from workbench.jobs import (
     BRIDGE_PREVALIDATION_ERROR,
     PROVIDER_PARTIAL_RESPONSE_ERROR,
     LOCAL_BUDGET_AFTER_PROVIDER_ERROR,
+    CONTEXT_BUDGET_AFTER_PROVIDER_ERROR,
     _classify_repair_not_converging_failure,
     _classify_stale_scene_evidence_failure,
     _classify_scene_boundary_validation_failure,
@@ -31,6 +32,7 @@ from workbench.jobs import (
     _classify_bridge_prevalidation_failure,
     _classify_provider_partial_response_failure,
     _classify_local_budget_after_provider_failure,
+    _classify_context_budget_after_provider_failure,
     _classify_pre_provider_context_failure,
     _classify_pre_provider_provenance_failure,
     _git_provenance_preflight,
@@ -4022,5 +4024,464 @@ def test_lbp_legacy_pause_reconciles_without_requeue(
     assert store.claim_next() is None
     assert store.resume_ready(parent.id) is False
     assert store.events_after(parent.id)[-1]["event"] == "chapter.local_budget_after_provider"
+    with pytest.raises(JobError, match="completed, receipt-backed recovery"):
+        store.resume(parent.id, confirmed=True)
+
+
+def _write_context_budget_after_provider_run(
+    project_root: Path,
+    *,
+    chapter: int = 18,
+    run_id: str = "run-cbap",
+    succeeded_calls: int = 6,
+    unsettled_attempt_count: int = 0,
+    candidate: str = "",
+    action: str = "repair_if_needed",
+    error_message: str | None = None,
+    write_artifact: bool = False,
+    omit_one_receipt: bool = False,
+    extra_rejected: bool = False,
+    error_type: str = "ContextBudgetError",
+) -> tuple[dict, Path, str]:
+    if error_message is None:
+        error_message = (
+            "story_project_context_budget_exceeded: repair input requires 39267 tokens; hard limit is 32000"
+        )
+    execution_id = f"execution_{run_id}"
+    model_calls_root = (
+        project_root
+        / ".novelagent"
+        / "runtime"
+        / "runs"
+        / "executions"
+        / execution_id
+        / "model_calls"
+    )
+    from core.model_calls import build_model_call_intent, build_model_call_receipt
+
+    (model_calls_root / "intents").mkdir(parents=True, exist_ok=True)
+    (model_calls_root / "receipts").mkdir(parents=True, exist_ok=True)
+    (model_calls_root / "responses").mkdir(parents=True, exist_ok=True)
+    request_digest = hashlib.sha256(b"context-budget-after-provider-fixture-request").hexdigest()
+    reservation = {
+        "reserved_input_tokens": 16,
+        "reserved_output_tokens": 8,
+        "reserved_total_tokens": 24,
+    }
+
+    def _write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _write_call(attempt_id: str, *, status: str, body: bytes, skip_receipt: bool = False) -> None:
+        intent = build_model_call_intent(
+            call_id=attempt_id.rsplit("-", 1)[0],
+            attempt_id=attempt_id,
+            provider="openai",
+            model="gpt-test",
+            stage="chapter_generation",
+            budget_reservation=reservation,
+            request_digest=request_digest,
+        )
+        _write_json(model_calls_root / "intents" / f"{attempt_id}.json", intent)
+        response_path = model_calls_root / "responses" / f"{attempt_id}.txt"
+        response_path.write_bytes(body)
+        if skip_receipt:
+            return
+        receipt = build_model_call_receipt(
+            intent,
+            response_artifact_hash=hashlib.sha256(body).hexdigest(),
+            response_artifact_ref=f"responses/{attempt_id}.txt",
+            status=status,
+            usage={"input_tokens": 1, "output_tokens": 1},
+        )
+        _write_json(model_calls_root / "receipts" / f"{attempt_id}.json", receipt)
+
+    for index in range(succeeded_calls):
+        attempt_id = f"ok{index + 1}-a1"
+        skip = omit_one_receipt and index == succeeded_calls - 1
+        _write_call(attempt_id, status="succeeded", body=f"ok-scene-{index + 1}".encode("utf-8"), skip_receipt=skip)
+    if extra_rejected:
+        _write_call("rj-a1", status="budget_rejected", body=b"")
+    provider_calls = succeeded_calls + (1 if extra_rejected else 0)
+
+    chapter_payload: dict = {"chars": len(candidate)}
+    if write_artifact and candidate:
+        artifact_path = (
+            project_root
+            / ".novelagent"
+            / "runtime"
+            / "chapters"
+            / f"chapter_{chapter:04d}_failed_{run_id}.md"
+        )
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_raw = ("failed candidate\n" + candidate + "\n").encode("utf-8")
+        artifact_path.write_bytes(artifact_raw)
+        chapter_payload["artifact"] = {
+            "chars": len(candidate),
+            "format": "markdown",
+            "path": artifact_path.relative_to(project_root).as_posix(),
+            "sha256": hashlib.sha256(artifact_raw).hexdigest(),
+        }
+
+    result = {
+        "chapter": candidate,
+        "accepted": False,
+        "committed": False,
+        "run": {
+            "id": run_id,
+            "chapter_index": chapter,
+            "status": "failed",
+            "accepted": False,
+            "committed": False,
+            "chapter": chapter_payload,
+            "error": {"type": error_type, "message": error_message},
+            "execution_evidence": {
+                "budget": {
+                    "provider_calls": provider_calls,
+                    "unsettled_attempt_count": unsettled_attempt_count,
+                },
+                "model_calls_ref": f"executions/{execution_id}/model_calls",
+            },
+            "persistence": None,
+            "story_project": {
+                "writeback": {"attempted": False, "applied": False}
+            },
+            "trace": [
+                {
+                    "action": "build_snapshot",
+                    "status": "completed",
+                },
+                {
+                    "action": action,
+                    "status": "failed",
+                    "error_type": error_type,
+                    "error_message": error_message,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ],
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_path = run_dir / f"chapter_{chapter}_{run_id}.json"
+    run_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    stderr = (
+        "Traceback (most recent call last):\n"
+        f"core.context_budget.ContextBudgetError: {error_message}"
+    )
+    return result, run_path, stderr
+
+
+def test_cbap_binds_repair_hard_limit_retained_candidate(
+    tmp_path: Path,
+) -> None:
+    _, _, project_id = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    candidate = "修订前已保留正文"
+    _, run_path, stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=18,
+        run_id="run-repair-hard",
+        action="repair_if_needed",
+        candidate=candidate,
+        write_artifact=True,
+    )
+    classified = _classify_context_budget_after_provider_failure(
+        project_root,
+        18,
+        exit_code=1,
+        stderr_tail=stderr,
+    )
+    assert classified is not None
+    error = classified["error"]
+    details = error["details"]
+    assert error["code"] == CONTEXT_BUDGET_AFTER_PROVIDER_ERROR
+    assert error["automatic_retry"] is False
+    assert error["safe_to_retry"] is False
+    assert error["recovery_required"] is True
+    assert details["failure_origin"] == "context_budget_after_provider"
+    assert details["stage"] == "repair_hard_limit"
+    assert details["input_stage"] == "repair"
+    assert details["limit_kind"] == "hard_limit"
+    assert details["provider_calls"] == 6
+    assert details["succeeded_provider_calls"] == 6
+    assert details["unsettled_attempt_count"] == 0
+    assert details["candidate_chars"] == len(candidate)
+    assert details["required_tokens"] == 39267
+    assert details["hard_limit_tokens"] == 32000
+    assert "不是调用前的预算拒绝" in error["message"]
+    assert "4398" not in error["message"] or details["candidate_chars"] == len(candidate)
+    assert f"{len(candidate)} 字候选正文已保留" in error["message"]
+    assert run_path.exists()
+
+
+def test_cbap_binds_scene_hard_limit_and_scene_headroom(
+    tmp_path: Path,
+) -> None:
+    _, _, project_id = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    _, _, hard_stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=11,
+        run_id="run-scene-hard",
+        succeeded_calls=9,
+        candidate="",
+        action="generate_chapter",
+        error_message="story_project_context_budget_exceeded: scene input requires 32830 tokens; hard limit is 32000",
+    )
+    hard = _classify_context_budget_after_provider_failure(
+        project_root,
+        11,
+        exit_code=1,
+        stderr_tail=hard_stderr,
+    )
+    assert hard is not None
+    assert hard["error"]["details"]["stage"] == "scene_hard_limit"
+    assert hard["error"]["details"]["provider_calls"] == 9
+    assert hard["error"]["details"]["candidate_chars"] == 0
+    assert "尚无完整候选正文，但已保留已付费调用回执" in hard["error"]["message"]
+    assert "下一场景输入超过硬上限" in hard["error"]["message"]
+
+    _, _, headroom_stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=18,
+        run_id="run-scene-headroom",
+        succeeded_calls=2,
+        candidate="",
+        action="generate_chapter",
+        error_message="story_project_context_headroom_exceeded: scene input requires 30902 tokens; safe target is 30000; hard limit is 32000",
+    )
+    headroom = _classify_context_budget_after_provider_failure(
+        project_root,
+        18,
+        exit_code=1,
+        stderr_tail=headroom_stderr,
+    )
+    assert headroom is not None
+    assert headroom["error"]["details"]["stage"] == "scene_headroom"
+    assert headroom["error"]["details"]["safe_target_tokens"] == 30000
+    assert "下一场景输入超过安全目标" in headroom["error"]["message"]
+
+
+def test_cbap_binds_repair_headroom(
+    tmp_path: Path,
+) -> None:
+    _, _, project_id = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    candidate = "已保留的修订前候选" * 20
+    _, _, stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=26,
+        run_id="run-repair-headroom",
+        succeeded_calls=7,
+        action="repair_if_needed",
+        candidate=candidate,
+        write_artifact=True,
+        error_message="story_project_repair_context_headroom_exceeded: repair input requires 32761 tokens; safe target is 30000; hard limit is 32000",
+    )
+    classified = _classify_context_budget_after_provider_failure(
+        project_root,
+        26,
+        exit_code=1,
+        stderr_tail=stderr,
+    )
+    assert classified is not None
+    details = classified["error"]["details"]
+    assert details["stage"] == "repair_headroom"
+    assert details["provider_calls"] == 7
+    assert details["candidate_chars"] == len(candidate)
+    assert details["safe_target_tokens"] == 30000
+    assert f"{len(candidate)} 字候选正文已保留" in classified["error"]["message"]
+
+
+def test_cbap_does_not_absorb_other_failures(
+    tmp_path: Path,
+) -> None:
+    _, _, project_id = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    _, _, zero_stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=21,
+        run_id="run-zero",
+        succeeded_calls=0,
+        action="generate_chapter",
+        error_message="story_project_context_budget_exceeded: scene input requires 33212 tokens; hard limit is 32000",
+    )
+    # Fixture with 0 succeeded calls cannot write matching receipts for provider_calls=0;
+    # force the run budget to 0 after write.
+    run_path = project_root / ".novelagent" / "runtime" / "runs" / "chapter_21_run-zero.json"
+    payload = json.loads(run_path.read_text(encoding="utf-8"))
+    payload["run"]["execution_evidence"]["budget"]["provider_calls"] = 0
+    run_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    assert _classify_context_budget_after_provider_failure(
+        project_root, 21, exit_code=1, stderr_tail=zero_stderr
+    ) is None
+    pre = _classify_pre_provider_context_failure(
+        project_root, 21, exit_code=1, stderr_tail=zero_stderr
+    )
+    assert pre is not None
+    assert pre["error"]["code"] == "pre_provider_context_budget_exceeded"
+
+    wrap_message = (
+        "OpenAI chat completion failed "
+        "(local_budget; story_project_context_budget_exceeded: scene input requires 32830 tokens; hard limit is 32000)."
+    )
+    _, _, wrap_stderr = _write_local_budget_after_provider_run(
+        project_root,
+        chapter=12,
+        run_id="run-wrap",
+        error_message=wrap_message,
+    )
+    assert _classify_context_budget_after_provider_failure(
+        project_root, 12, exit_code=1, stderr_tail=wrap_stderr
+    ) is None
+
+    obsolete = (
+        "OpenAI chat completion failed (provider_error; ContextBudgetError)."
+    )
+    _, _, obsolete_stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=13,
+        run_id="run-obsolete",
+        succeeded_calls=3,
+        action="generate_chapter",
+        error_message=obsolete,
+        error_type="ModelCallError",
+    )
+    assert _classify_context_budget_after_provider_failure(
+        project_root, 13, exit_code=1, stderr_tail=obsolete_stderr
+    ) is None
+
+
+def test_cbap_fails_closed_on_incomplete_evidence(
+    tmp_path: Path,
+) -> None:
+    _, _, project_id = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    message = "story_project_context_budget_exceeded: repair input requires 39267 tokens; hard limit is 32000"
+
+    _, _, stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=18,
+        run_id="run-exit0",
+        action="repair_if_needed",
+        candidate="候选",
+        write_artifact=True,
+        error_message=message,
+    )
+    assert _classify_context_budget_after_provider_failure(
+        project_root, 18, exit_code=0, stderr_tail=stderr
+    ) is None
+
+    _, _, stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=19,
+        run_id="run-unsettled",
+        unsettled_attempt_count=1,
+        action="repair_if_needed",
+        candidate="候选",
+        write_artifact=True,
+        error_message=message,
+    )
+    assert _classify_context_budget_after_provider_failure(
+        project_root, 19, exit_code=1, stderr_tail=stderr
+    ) is None
+
+    _, _, stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=20,
+        run_id="run-missing-receipt",
+        omit_one_receipt=True,
+        action="repair_if_needed",
+        candidate="候选",
+        write_artifact=True,
+        error_message=message,
+    )
+    assert _classify_context_budget_after_provider_failure(
+        project_root, 20, exit_code=1, stderr_tail=stderr
+    ) is None
+
+    _, _, stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=22,
+        run_id="run-rejected",
+        extra_rejected=True,
+        action="repair_if_needed",
+        candidate="候选",
+        write_artifact=True,
+        error_message=message,
+    )
+    assert _classify_context_budget_after_provider_failure(
+        project_root, 22, exit_code=1, stderr_tail=stderr
+    ) is None
+
+    _, _, stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=23,
+        run_id="run-formal",
+        action="repair_if_needed",
+        candidate="候选",
+        write_artifact=True,
+        error_message=message,
+    )
+    prose = canonical_prose_path(project_root, 23)
+    prose.parent.mkdir(parents=True, exist_ok=True)
+    prose.write_text("正式正文不应被这次分类改写。\n", encoding="utf-8")
+    assert _classify_context_budget_after_provider_failure(
+        project_root, 23, exit_code=1, stderr_tail=stderr
+    ) is None
+
+
+def test_cbap_legacy_pause_reconciles_without_requeue(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id, end_chapter=3)
+    project_root = tmp_path / "books" / "test-book"
+    candidate = "修订前已保留正文"
+    _, _, stderr = _write_context_budget_after_provider_run(
+        project_root,
+        chapter=1,
+        run_id="run-legacy-cbap",
+        action="repair_if_needed",
+        candidate=candidate,
+        write_artifact=True,
+    )
+    legacy = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={
+            "code": "engine_result_unreadable",
+            "exit_code": 1,
+            "stderr_tail": stderr,
+        },
+        uncertain=False,
+    )
+    assert legacy.result is None
+    assert legacy.error["code"] == "engine_result_unreadable"
+
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    supervisor._reconcile_context_budget_after_provider_failures()
+
+    reconciled = store.get(parent.id)
+    assert reconciled.state == "awaiting_input"
+    assert reconciled.manual_confirmation_required is True
+    assert reconciled.error is not None
+    assert reconciled.error["code"] == CONTEXT_BUDGET_AFTER_PROVIDER_ERROR
+    assert reconciled.error["automatic_retry"] is False
+    assert reconciled.error["safe_to_retry"] is False
+    assert reconciled.result is not None
+    assert store.claim_next() is None
+    assert store.resume_ready(parent.id) is False
+    assert store.events_after(parent.id)[-1]["event"] == "chapter.context_budget_after_provider"
     with pytest.raises(JobError, match="completed, receipt-backed recovery"):
         store.resume(parent.id, confirmed=True)
