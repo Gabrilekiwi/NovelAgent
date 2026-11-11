@@ -206,7 +206,27 @@ def recover_locked_chapter(
                 expected_chapter_index=chapter_index,
                 expected_book_id=expected_book_id,
             )
-        if recovered_scenes:
+        if (
+            not force_reset
+            and _repair_did_not_converge(source_payload)
+            and _remaining_problems_require_author_review(source_payload)
+        ):
+            # Receipt-backed Scenes remain the default after a non-converging
+            # repair.  That automatic resume is the wrong next step when every
+            # leftover blocking problem already asks for manual review: the
+            # author needs the complete candidate, not another unattended
+            # revalidation that hides the paid prose.
+            if complete_draft is None:
+                complete_draft = _usable_complete_draft(
+                    source_payload,
+                    language=language,
+                    run_dir=runtime_root,
+                )
+            if complete_draft is not None:
+                recovered_scenes = []
+            elif recovered_scenes:
+                complete_draft = None
+        elif recovered_scenes:
             complete_draft = None
         elif not force_reset:
             # The RunRecord's final artifact is newer than any individual
@@ -2286,6 +2306,43 @@ def _latest_usable_complete_transform(
             "source_attempt_id": str(intent["attempt_id"]),
         }
     return None
+
+
+def _remaining_problems_require_author_review(payload: dict[str, Any]) -> bool:
+    """Return True when leftover blocking problems are assigned to the author."""
+
+    run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+    validations: list[dict[str, Any]] = []
+    for candidate in (
+        payload.get("validation"),
+        run.get("validation") if isinstance(run, dict) else None,
+    ):
+        if isinstance(candidate, dict):
+            validations.append(candidate)
+
+    problems: list[dict[str, Any]] = []
+    for validation in validations:
+        items = validation.get("problems")
+        if isinstance(items, list):
+            problems.extend(item for item in items if isinstance(item, dict))
+        checks = validation.get("checks")
+        if isinstance(checks, list):
+            for check in checks:
+                if not isinstance(check, dict):
+                    continue
+                nested = check.get("problems")
+                if isinstance(nested, list):
+                    problems.extend(item for item in nested if isinstance(item, dict))
+
+    def _is_blocking(item: dict[str, Any]) -> bool:
+        if item.get("blocking") is True or item.get("category") == "blocking":
+            return True
+        return str(item.get("severity") or "").lower() in {"critical", "high"}
+
+    blocking = [item for item in problems if _is_blocking(item)]
+    return bool(blocking) and all(
+        str(item.get("repair_action") or "") == "manual_review" for item in blocking
+    )
 
 
 def _repair_did_not_converge(payload: dict[str, Any]) -> bool:

@@ -622,6 +622,98 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             [scene["source_attempt_id"] for scene in checkpoint["scenes"]],
         )
 
+    def test_nonconverging_manual_review_keeps_complete_candidate_for_author(
+        self,
+    ) -> None:
+        execution_id = "execution_nonconverging_manual_review"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            f"林夏保留第{index}场的原始行动证据，医院组不参与消防站侧复核。" * 24
+            for index in range(1, 5)
+        ]
+        call_ids = [build_scene_generation_call_id(index) for index in range(1, 5)]
+        responses = [
+            json.dumps(
+                {
+                    "prose": text,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["林夏"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"scene {index} complete",
+                },
+                ensure_ascii=False,
+            )
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+            call_ids=call_ids,
+        )
+        candidate = "林夏批准只到第一回撤点的本地复核，医院组不参与；自愿复核人员找到伤者后按点撤回。" * 45
+        self._write_complete_transform(
+            execution_id,
+            stage="claude_polish",
+            text=candidate,
+            offset_seconds=10,
+        )
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=candidate,
+            scene_count=4,
+        )
+        self._mark_repair_not_converging()
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        validation = {
+            "ok": False,
+            "blocking_problem_count": 1,
+            "manual_review_count": 1,
+            "problems": [
+                {
+                    "code": "llm_participant_assignment_inconsistent",
+                    "message": "医院组不参与，却被写成复核人员。",
+                    "severity": "critical",
+                    "blocking": True,
+                    "repair_action": "manual_review",
+                }
+            ],
+        }
+        payload["validation"] = validation
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        self.assertEqual("complete_failed_draft_available", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(candidate, checkpoint["complete_draft"]["text"])
+
     def test_nonconverging_repair_rejects_tampered_scene_and_regressed_transform(
         self,
     ) -> None:
