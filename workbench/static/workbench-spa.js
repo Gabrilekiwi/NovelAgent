@@ -1834,7 +1834,8 @@
     const activePanel = one("[data-cohort-active]");
     const createForm = one("[data-cohort-create-form]");
     createForm.action = `/api/projects/${encodeURIComponent(state.projectId)}/cohorts`;
-    one('input[name="start_chapter"]', createForm).value = payload.project?.next_chapter || state.project?.next_chapter || 1;
+    // Optional historical experiment only: never prefill the official next chapter,
+    // so this form cannot be mistaken for continuing the book.
     createPanel.hidden = Boolean(active);
     activePanel.hidden = !latest;
     if (latest) await loadCohort(latest.id);

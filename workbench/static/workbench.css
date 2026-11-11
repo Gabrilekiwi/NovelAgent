@@ -410,11 +410,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .cost-panel dt, .version-facts dt { color: var(--muted); }
 .cost-panel dd, .version-facts dd { font-weight: 700; }
 
-/* Honest ten-chapter product validation */
-.cohort-panel { margin-top: 22px; border-top: 3px solid var(--jade); }
+/* Optional historical ten-chapter experiment; not the official writing path */
+.cohort-panel { margin-top: 22px; border-top: 1px solid var(--line); }
 .cohort-heading { align-items: center; }
 .cohort-heading h2 { margin-bottom: 5px; }
 .cohort-heading p:not(.eyebrow) { margin: 0; color: var(--muted); font-size: 10px; }
+.cohort-create-details { margin-top: 12px; }
+.cohort-create-details > summary { cursor: pointer; color: var(--ink-soft); font-size: 12px; font-weight: 700; }
+.cohort-create-details > .muted-copy { margin: 10px 0 14px; }
+.cohort-create-details[open] > summary { margin-bottom: 8px; }
 .cohort-gates { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 20px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
 .cohort-gates span { padding: 5px 8px; border: 1px solid #c9d9d2; border-radius: 999px; color: var(--jade); background: #f5faf7; font-size: 8px; font-weight: 700; }
 .cohort-create-form { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 14px; }

@@ -18,6 +18,13 @@ OPTIONAL_GATES = "\u53ef\u9009\u8bd5\u9a8c\u95e8\u69db"
 OLD_BADGE = "\u81ea\u7528\u751f\u4ea7\u7248\u5df2\u8fbe\u6807"
 OLD_COUNT_BADGE = "/ 2 \u8f6e\u901a\u8fc7"
 
+NOT_OFFICIAL_CONTINUE = "这不会续写正式正文"
+USE_SESSION_PATH = "要继续当前作品，请使用上方的「预检并开始」"
+SESSION_CTA = "预检并开始"
+OLD_COHORT_PRIMARY_CTA = "冻结基线并开始 Cohort"
+COHORT_SECONDARY_CTA = "冻结基线并开始可选试验"
+OPTIONAL_TRIAL_SUMMARY = "可选：开始一轮十章试验记录"
+
 
 def test_official_launch_declaration_does_not_use_or_fake_the_two_cohort_gate() -> None:
     not_ready = build_official_launch_declaration(
@@ -84,3 +91,37 @@ def test_production_page_does_not_present_two_cohort_gate_as_official_launch() -
     assert 'payload.self_use_production_ready ? "strict" : "experimental"' not in spa
     assert f'officialLaunch.badge_label || "{BADGE}"' in spa
     assert "payload.official_launch" in spa
+
+
+def test_production_page_keeps_chapter_writing_as_primary_and_demotes_cohort_create() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    css = (STATIC / "workbench.css").read_text(encoding="utf-8")
+
+    session_button = f'button class="button button-primary button-wide" type="submit">{SESSION_CTA}</button>'
+    assert session_button in html
+    assert "data-session-form" in html
+
+    details_token = '<details class="cohort-create-details" data-cohort-create-details>'
+    details_open = html.find(details_token)
+    assert details_open != -1
+    details_tag = html[details_open:html.find(">", details_open) + 1]
+    assert "open" not in details_tag
+    assert OPTIONAL_TRIAL_SUMMARY in html
+    assert NOT_OFFICIAL_CONTINUE in html
+    assert USE_SESSION_PATH in html
+    assert f'button class="button button-secondary" type="submit">{COHORT_SECONDARY_CTA}</button>' in html
+    assert OLD_COHORT_PRIMARY_CTA not in html
+    assert 'button class="button button-primary" type="submit">冻结基线并开始' not in html
+
+    create_form_idx = html.find("data-cohort-create-form")
+    start_input_idx = html.find('name="start_chapter"', create_form_idx)
+    start_input_tag = html[start_input_idx:html.find(">", start_input_idx) + 1]
+    assert "value=" not in start_input_tag
+
+    assert "createForm).value = payload.project?.next_chapter" not in spa
+    assert "never prefill the official next chapter" in spa
+
+    assert ".cohort-panel { margin-top: 22px; border-top: 1px solid var(--line); }" in css
+    assert ".cohort-panel { margin-top: 22px; border-top: 3px solid var(--jade); }" not in css
+    assert ".cohort-create-details" in css
