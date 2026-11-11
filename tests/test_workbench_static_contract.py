@@ -2003,3 +2003,98 @@ process.stdout.write(JSON.stringify(output));
     assert result["committed"] is None
     assert result["ppr"] is None
     assert result["tooShort"] is None
+
+
+
+def test_retained_paid_draft_inspect_is_view_only_and_does_not_open_confirm() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+
+    assert "const retainedPaidDraftPreview = (issue) =>" in spa
+    assert "const renderRetainedPaidDraftInspect = (issue, mount) =>" in spa
+    assert "已付费正文（只读）" in spa
+    assert "不能当作已验证候选，也不能确认提交" in spa
+    assert "textarea.readOnly = true" in spa
+    assert "retained_paid_draft_preview: recovery.retained_paid_draft_preview || null" in spa
+    assert "renderRetainedPaidDraftInspect(issue, one(\"[data-pending-detail]\"))" in spa or 'renderRetainedPaidDraftInspect(issue, one("[data-pending-detail]"))' in spa
+    # Confirm-submit remains on the existing recovery-draft path only.
+    assert 'form.matches("[data-draft-validate-form], [data-draft-confirm-form]")' in spa
+    assert "preview.confirm_submit_allowed === true" in spa
+    assert "preview.verified_candidate === true" in spa
+    # Inspect copy must not tell the author to confirm-submit the unsettled draft.
+    inspect_start = spa.find("const renderRetainedPaidDraftInspect")
+    inspect_end = spa.find("  const api = async (path, options = {}) => {", inspect_start)
+    inspect = spa[inspect_start:inspect_end]
+    assert "确认提交" in inspect
+    assert "data-draft-confirm-form" not in inspect
+    assert "data-draft-validate-form" not in inspect
+    assert "force_reset" not in inspect
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_retained_paid_draft_preview_helper_fails_closed_for_verified_or_short_drafts() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const api = async (path, options = {}) => {";
+if (!source.includes(marker)) throw new Error("inspect export marker is missing");
+source = source.replace(
+  marker,
+  "  globalThis.__evidence = { retainedPaidDraftPreview };\n  return;\n" + marker
+);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const text = "候选正文".repeat(900).slice(0, 3500);
+const base = {
+  text,
+  chars: 3500,
+  failed_action: "validate",
+  unsettled_attempt_count: 1,
+  committed: false,
+  verified_candidate: false,
+  confirm_submit_allowed: false
+};
+const ev = sandbox.__evidence;
+const output = {
+  officialShaped: ev.retainedPaidDraftPreview({ retained_paid_draft_preview: base }),
+  tooShort: ev.retainedPaidDraftPreview({ retained_paid_draft_preview: { ...base, text: text.slice(0, 499), chars: 499 } }),
+  verified: ev.retainedPaidDraftPreview({ retained_paid_draft_preview: { ...base, verified_candidate: true } }),
+  confirmable: ev.retainedPaidDraftPreview({ retained_paid_draft_preview: { ...base, confirm_submit_allowed: true } }),
+  committed: ev.retainedPaidDraftPreview({ retained_paid_draft_preview: { ...base, committed: true } }),
+  missing: ev.retainedPaidDraftPreview({ latest_run: { chapter_chars: 3500 } })
+};
+process.stdout.write(JSON.stringify({
+  officialChars: output.officialShaped && output.officialShaped.chars,
+  officialTextLen: output.officialShaped && output.officialShaped.text.length,
+  tooShort: output.tooShort,
+  verified: output.verified,
+  confirmable: output.confirmable,
+  committed: output.committed,
+  missing: output.missing
+}));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+    assert result["officialChars"] == 3500
+    assert result["officialTextLen"] == 3500
+    assert result["tooShort"] is None
+    assert result["verified"] is None
+    assert result["confirmable"] is None
+    assert result["committed"] is None
+    assert result["missing"] is None

@@ -1102,6 +1102,74 @@
     return null;
   };
 
+
+  const retainedPaidDraftPreview = (issue) => {
+    const preview = issue?.retained_paid_draft_preview;
+    if (!preview || typeof preview !== "object") return null;
+    if (typeof preview.text !== "string" || preview.text.length < 500) return null;
+    if (preview.committed === true || preview.verified_candidate === true || preview.confirm_submit_allowed === true) return null;
+    return preview;
+  };
+
+  const renderRetainedPaidDraftInspect = (issue, mount) => {
+    if (!mount) return;
+    let panel = one("[data-retained-paid-draft-panel]", mount);
+    const preview = retainedPaidDraftPreview(issue);
+    const chapter = Number(issue?.chapter || issue?.next_chapter || issue?.latest_run?.chapter_index || 0);
+    const actionableDraft = Array.isArray(state.drafts)
+      ? state.drafts.find((item) => Number(item.chapter) === chapter)
+      : null;
+    const show = Boolean(preview && !actionableDraft);
+    if (!panel && show) {
+      panel = el("section", "panel recovery-draft-panel");
+      panel.dataset.retainedPaidDraftPanel = "";
+      const heading = el("div", "section-heading compact");
+      const headingCopy = el("div");
+      headingCopy.append(el("p", "eyebrow", "已付费正文（只读）"));
+      headingCopy.append(el("h2", "", ""));
+      heading.append(headingCopy);
+      panel.append(heading);
+      panel.append(el("p", "muted-copy", ""));
+      const meta = el("p", "");
+      meta.dataset.retainedPaidDraftMeta = "";
+      panel.append(meta);
+      const label = el("label", "field");
+      label.append(el("span", "", "保留的已付费正文"));
+      const textarea = el("textarea");
+      textarea.className = "prose-editor";
+      textarea.rows = 18;
+      textarea.readOnly = true;
+      textarea.dataset.retainedPaidDraftText = "";
+      label.append(textarea);
+      panel.append(label);
+      const draftPanel = one("[data-recovery-draft-panel]", mount);
+      const retainedAuthor = one("[data-retained-author-draft-panel]", mount);
+      const tabShell = one("[data-tabs]", mount);
+      if (draftPanel) mount.insertBefore(panel, draftPanel);
+      else if (retainedAuthor) retainedAuthor.insertAdjacentElement("afterend", panel);
+      else if (tabShell) mount.insertBefore(panel, tabShell);
+      else mount.append(panel);
+    }
+    if (!panel) return;
+    panel.hidden = !show;
+    if (!show) return;
+    const title = one("h2", panel);
+    if (title) title.textContent = chapter ? `第 ${chapter} 章保留的已付费候选` : "保留的已付费候选";
+    const help = one(".muted-copy", panel);
+    if (help) help.textContent = "这是隔离运行区里保留的已付费正文，只供阅读核对，不能当作已验证候选，也不能确认提交。请先做无模型恢复分类；不要盲目重试，也不要把强制结束失败尝试当作查看正文的方式。";
+    const stage = uncertainFailedStageLabel(preview.failedAction || preview.failed_action);
+    const chars = Number(preview.chars || preview.text.length) || preview.text.length;
+    const unsettled = Number(preview.unsettled_attempt_count);
+    const parts = [`${chars} 字`];
+    if (stage) parts.push(`${stage}阶段中断`);
+    if (preview.source_run_id) parts.push(`运行 ${(String(preview.source_run_id).slice(0, 28))}`);
+    if (unsettled === 1) parts.push("最后一次调用尚未结算");
+    const meta = one("[data-retained-paid-draft-meta]", panel);
+    if (meta) meta.textContent = parts.join(" · ");
+    const textarea = one("[data-retained-paid-draft-text]", panel);
+    if (textarea) textarea.value = preview.text;
+  };
+
   const api = async (path, options = {}) => {
     const headers = UI.requestHeaders(options.headers || {});
     if (options.json !== undefined) {
@@ -2343,6 +2411,11 @@
     if (retainedText) retainedText.value = retainedDraft?.text || '';
     setText('[data-retained-author-draft-meta]', retainedDraft ?
       `作者草稿第 ${number} 章 · r${retainedDraft.revision} · SHA ${retainedDraft.sha256}` : '');
+    const chapterInspectHost = one("[data-spa-view='chapter']") || one('[data-spa-view="chapter"]');
+    renderRetainedPaidDraftInspect({
+      chapter: number,
+      retained_paid_draft_preview: hasProse ? null : chapter.retained_paid_draft_preview,
+    }, chapterInspectHost);
     setText("[data-chapter-revision]", `r${chapter.revision || 1}`);
     setText("[data-chapter-sha]", chapter.sha || chapter.sha256 || chapter.current_sha256 || "—");
     UI.updateStatusBadge(one("[data-chapter-status]"), chapter.status || (hasProse ? "committed" : "draft"), chapter.status_label || (hasProse ? "已提交" : "待生成"));
@@ -3514,6 +3587,7 @@
       }
     }
     renderRecoveryDraft(issue);
+    renderRetainedPaidDraftInspect(issue, one("[data-pending-detail]"));
     if (issue.execution_compatible === false || pausedParent?.execution_compatible === false) {
       UI.updateStatusBadge(one(".recovery-hero .status-badge"), "blocked", "旧任务版本不兼容");
       setText("[data-pending-detail-eyebrow]", "版本兼容检查");
@@ -3682,6 +3756,7 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
+        retained_paid_draft_preview: recovery.retained_paid_draft_preview || null,
         title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，等待无模型恢复分类` : providerPartialResponseFailure ? `第 ${recoveryChapter} 章因模型部分响应中断而停止，已保留已付费内容，等待无模型恢复分类` : contextBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因上下文预算中断，已保留已付费内容，等待无模型恢复分类` : structuredContextAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因结构化上下文装配中断，已保留已付费内容，等待无模型恢复分类` : localBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已产生已付费调用后因本地预算停止，已保留已付费内容，等待无模型恢复分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，等待无模型恢复分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，等待无模型恢复分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }) ? `第 ${recoveryChapter} 章上次调用结果不确定，已保留 ${retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }).chapterChars} 字候选，等待无模型恢复分类` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章已安全暂停`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
@@ -3770,6 +3845,7 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
+        retained_paid_draft_preview: recovery.retained_paid_draft_preview || null,
         title: retainedCompleteDraftAvailable(recovery) ? (durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : `第 ${recoveryChapter} 章已保留完整候选稿，请验证后继续`) : repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，已安全分类` : providerPartialResponseFailure ? `第 ${recoveryChapter} 章因模型部分响应中断而停止，已保留已付费内容，已安全分类` : contextBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因上下文预算中断，已保留已付费内容，已安全分类` : structuredContextAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因结构化上下文装配中断，已保留已付费内容，已安全分类` : localBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已产生已付费调用后因本地预算停止，已保留已付费内容，已安全分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，已安全分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }) ? `第 ${recoveryChapter} 章上次调用结果不确定，已保留 ${retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }).chapterChars} 字候选，等待无模型恢复分类` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章可安全恢复`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
@@ -3880,7 +3956,11 @@
       button.addEventListener("click", () => renderPendingDetail(issue)); list.append(button);
     });
     if (state.pending.length) renderPendingDetail(state.pending[0]);
-    else one("[data-recovery-draft-panel]").hidden = true;
+    else {
+      one("[data-recovery-draft-panel]").hidden = true;
+      const inspectPanel = one("[data-pending-detail] [data-retained-paid-draft-panel]");
+      if (inspectPanel) inspectPanel.hidden = true;
+    }
   };
 
   const loadPending = async () => {
@@ -3979,6 +4059,35 @@
       if (run.error_message) evidence.append(el("p", "", `失败信息：${run.error_message}`));
     }
     panel.append(evidence);
+    const preview = retainedPaidDraftPreview(payload);
+    if (preview) {
+      const inspect = el("section", "panel recovery-draft-panel");
+      inspect.dataset.historyRetainedPaidDraft = "";
+      const heading = el("div", "section-heading compact");
+      const headingCopy = el("div");
+      headingCopy.append(el("p", "eyebrow", "已付费正文（只读）"));
+      headingCopy.append(el("h2", "", run?.chapter_index ? `第 ${run.chapter_index} 章保留的已付费候选` : "保留的已付费候选"));
+      heading.append(headingCopy);
+      inspect.append(heading);
+      inspect.append(el("p", "muted-copy", "这是该次运行隔离区里保留的已付费正文，只供阅读核对，不能当作已验证候选，也不能确认提交。这不是后来提交的正式正文。"));
+      const stage = uncertainFailedStageLabel(preview.failedAction || preview.failed_action);
+      const chars = Number(preview.chars || preview.text.length) || preview.text.length;
+      const parts = [`${chars} 字`];
+      if (stage) parts.push(`${stage}阶段中断`);
+      if (preview.source_run_id) parts.push(`运行 ${String(preview.source_run_id).slice(0, 28)}`);
+      if (Number(preview.unsettled_attempt_count) === 1) parts.push("最后一次调用尚未结算");
+      inspect.append(el("p", "", parts.join(" · ")));
+      const label = el("label", "field");
+      label.append(el("span", "", "保留的已付费正文"));
+      const textarea = el("textarea");
+      textarea.className = "prose-editor";
+      textarea.rows = 18;
+      textarea.readOnly = true;
+      textarea.value = preview.text;
+      label.append(textarea);
+      inspect.append(label);
+      panel.append(inspect);
+    }
   };
 
   const loadHistoryDetail = async (entryId, source) => {

@@ -1002,6 +1002,7 @@ def _create_app_owned(
             "job": job_summary,
             "run": run,
             "verification": verification,
+            "retained_paid_draft_preview": _retained_paid_draft_preview(payload),
         }
 
     @app.get("/api/projects/{project_id}/production")
@@ -1834,6 +1835,7 @@ def _chapter_detail(
         "review": _review_from_run(run),
         "run": _compact_run(run),
         "versions": [item.to_dict() for item in versions],
+        "retained_paid_draft_preview": None if has_prose else _retained_paid_draft_preview(run),
     }
 
 
@@ -2317,6 +2319,50 @@ def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+
+def _retained_paid_draft_preview(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Return a view-only preview of retained paid chapter text.
+
+    This is not a verified candidate and must not be used to open confirm-submit.
+    """
+
+    if not isinstance(payload, Mapping):
+        return None
+    run = payload.get("run") if isinstance(payload.get("run"), Mapping) else payload
+    if not isinstance(run, Mapping):
+        return None
+    if run.get("committed") is True or payload.get("committed") is True:
+        return None
+    if run.get("accepted") is True or payload.get("accepted") is True:
+        return None
+    text = payload.get("chapter")
+    if not isinstance(text, str):
+        maybe = run.get("chapter")
+        text = maybe if isinstance(maybe, str) else None
+    if not isinstance(text, str) or len(text) < 500:
+        return None
+    chapter_meta = run.get("chapter") if isinstance(run.get("chapter"), Mapping) else {}
+    reported_chars = chapter_meta.get("chars") if isinstance(chapter_meta, Mapping) else None
+    if reported_chars is not None:
+        try:
+            if int(reported_chars) != len(text):
+                return None
+        except (TypeError, ValueError):
+            return None
+    compact = _compact_run(payload) or {}
+    return {
+        "text": text,
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "source_run_id": run.get("id"),
+        "failed_action": compact.get("failed_action"),
+        "unsettled_attempt_count": compact.get("unsettled_attempt_count"),
+        "committed": False,
+        "verified_candidate": False,
+        "confirm_submit_allowed": False,
+    }
+
+
 def _review_from_run(payload: Mapping[str, Any] | None) -> Any:
     if not isinstance(payload, Mapping):
         return None
@@ -2471,6 +2517,11 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
     }
     summary["durable_polished_draft_available"] = durable_polished_draft_available(summary)
     summary["retained_complete_draft_available"] = retained_complete_draft_available(summary)
+    summary["retained_paid_draft_preview"] = (
+        None
+        if formal_prose_exists
+        else _retained_paid_draft_preview(run)
+    )
     return summary
 
 
