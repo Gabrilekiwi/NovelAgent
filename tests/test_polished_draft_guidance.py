@@ -13,9 +13,13 @@ from workbench.recovery_guidance import (
     ATTENTION_NEEDS_RECOVERY,
     ATTENTION_VALIDATE_DRAFT,
     GUIDANCE_CONFIRM_DRAFT,
+    GUIDANCE_CONFIRM_RETAINED_DRAFT,
     GUIDANCE_VALIDATE_DRAFT,
+    GUIDANCE_VALIDATE_RETAINED_DRAFT,
     attention_label_for_project,
     durable_polished_draft_available,
+    retained_complete_draft_available,
+    retained_draft_guidance,
 )
 
 
@@ -159,3 +163,61 @@ def test_pending_ui_contract_guides_confirming_existing_draft_not_starting_over(
     chunk = spa[start:start + 1200]
     assert "durablePolishedDraftAvailable(issue)" in chunk
     assert "polishedDraftGuidance(issue)" in chunk
+
+
+def _failed_draft_recovery(**overrides) -> dict:
+    payload = {
+        "formal_prose_exists": False,
+        "uncertain_without_run": False,
+        "needs_reclassification": False,
+        "checkpoint": {
+            "action": "repair_draft",
+            "reason": "complete_failed_draft_available",
+            "has_complete_draft": True,
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_retained_complete_draft_available_requires_classified_complete_candidate() -> None:
+    assert retained_complete_draft_available(_failed_draft_recovery()) is True
+    assert retained_complete_draft_available(_polished_recovery()) is True
+    assert retained_complete_draft_available(_failed_draft_recovery(needs_reclassification=True)) is False
+    assert retained_complete_draft_available(_failed_draft_recovery(uncertain_without_run=True)) is False
+    assert retained_complete_draft_available(_failed_draft_recovery(formal_prose_exists=True)) is False
+    assert retained_complete_draft_available(
+        _failed_draft_recovery(checkpoint={"action": "reset", "reason": "complete_failed_draft_available", "has_complete_draft": True})
+    ) is False
+    assert retained_complete_draft_available(
+        _failed_draft_recovery(checkpoint={"action": "resume_scenes", "reason": "contiguous_scene_prefix_available", "has_complete_draft": False})
+    ) is False
+    assert retained_complete_draft_available(None) is False
+    assert "不要盲目重试这次失败的修订或上下文装配" in GUIDANCE_VALIDATE_RETAINED_DRAFT
+    assert "确认提交已有草稿继续本章" in GUIDANCE_CONFIRM_RETAINED_DRAFT
+    assert "润色稿" not in retained_draft_guidance()
+    assert "润色稿" in retained_draft_guidance(polished=True)
+
+
+def test_attention_label_guides_validation_when_retained_candidate_is_ready() -> None:
+    recovery = _failed_draft_recovery()
+    assert attention_label_for_project("needs_recovery", recovery=recovery) == "已保留完整候选稿，请验证后继续"
+    assert attention_label_for_project("needs_recovery", recovery=recovery, draft_state="validated") == "候选稿已验证，请确认提交"
+
+
+def test_pending_ui_contract_guides_confirming_retained_candidate_not_reclassifying() -> None:
+    static = Path(__file__).resolve().parents[1] / "workbench" / "static"
+    spa = (static / "workbench-spa.js").read_text(encoding="utf-8")
+    assert "retainedCompleteDraftAvailable" in spa
+    assert "retainedDraftGuidance" in spa
+    assert 'form.dataset.recoveryMode = "retained-complete-draft"' in spa
+    assert 'form.dataset.recoveryMode = "retained-complete-draft-capture"' in spa
+    assert "请使用下方确认提交" in spa
+    assert "请先编辑并重新验证下方草稿" in spa
+    assert "请验证或确认提交已保留的完整候选稿" in spa
+    assert "!retainedCompleteDraftAvailable(issue)" in spa
+    assert "&& !retainedCompleteDraftAvailable(issue)" in spa
+    start = spa.index("const forceResetAllowed")
+    chunk = spa[start:start + 900]
+    assert "!retainedCompleteDraftAvailable(issue)" in chunk
+    assert "先做无模型恢复分类" in spa

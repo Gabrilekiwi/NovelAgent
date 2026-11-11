@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from core.config import get_config
-from core.engine.locked_chapter import list_unbound_uncertain_executions, verified_final_recovery_draft
+from core.engine.locked_chapter import list_unbound_uncertain_executions, verified_candidate_recovery_draft, verified_final_recovery_draft
 from core.engine.persistence import atomic_write_text
 from core.engine.persistence import atomic_create_json
 from core.runtime_paths import RuntimePaths
@@ -76,7 +76,7 @@ from workbench.database import (
     WorkbenchDatabase, WorkbenchDatabaseError, WorkbenchDatabaseInitializationPending,
 )
 from workbench.instance import InstanceLease
-from workbench.recovery_guidance import attention_label_for_project, durable_polished_draft_available
+from workbench.recovery_guidance import attention_label_for_project, durable_polished_draft_available, retained_complete_draft_available
 from workbench.review_status import resolve_review_status
 from workbench.jobs import (
     JobError,
@@ -2384,11 +2384,25 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
         if latest_run_id is not None
         else None
     )
-    verified_source_sha256 = (
+    verified_final_sha256 = (
         str(verified_source.get("sha256") or "").strip() or None
         if isinstance(verified_source, Mapping)
         else None
     )
+    verified_candidate = (
+        verified_candidate_recovery_draft(
+            run_dir=runtime.run_dir,
+            run_id=latest_run_id,
+        )
+        if latest_run_id is not None and verified_source is None
+        else None
+    )
+    verified_candidate_sha256 = (
+        str(verified_candidate.get("sha256") or "").strip() or None
+        if isinstance(verified_candidate, Mapping)
+        else None
+    )
+    verified_source_sha256 = verified_final_sha256 or verified_candidate_sha256
     reset_discards_latest_run = bool(
         latest_checkpoint
         and latest_checkpoint.get("action") == "reset"
@@ -2429,7 +2443,8 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
         "recoverable": recoverable,
         "checkpoint": latest_checkpoint,
         "checkpoint_matches_latest_run": checkpoint_matches_latest_run,
-        "verified_final_sha256": verified_source_sha256,
+        "verified_final_sha256": verified_final_sha256,
+        "verified_candidate_sha256": verified_candidate_sha256,
         "needs_reclassification": bool(recoverable and not checkpoint_matches_latest_run),
         "uncertain_without_run": bool(unbound_uncertain and not run),
         "uncertain_call": uncertain_call,
@@ -2441,6 +2456,7 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
         ),
     }
     summary["durable_polished_draft_available"] = durable_polished_draft_available(summary)
+    summary["retained_complete_draft_available"] = retained_complete_draft_available(summary)
     return summary
 
 

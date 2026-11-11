@@ -714,6 +714,171 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertEqual([], checkpoint["scenes"])
         self.assertEqual(candidate, checkpoint["complete_draft"]["text"])
 
+    def test_repair_budget_block_keeps_complete_candidate_instead_of_scene_resume(
+        self,
+    ) -> None:
+        execution_id = "execution_repair_authority_budget"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            f"林夏保留第{index}场的原始行动证据，医院组不参与消防站侧复核。" * 24
+            for index in range(1, 5)
+        ]
+        call_ids = [build_scene_generation_call_id(index) for index in range(1, 5)]
+        responses = [
+            json.dumps(
+                {
+                    "prose": text,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["林夏"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"scene {index} complete",
+                },
+                ensure_ascii=False,
+            )
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+            call_ids=call_ids,
+        )
+        candidate = "林夏批准只到第一回撤点的本地复核，医院组不参与；自愿复核人员找到伤者后按点撤回。" * 45
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=candidate,
+            scene_count=4,
+        )
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["run"]["error"] = {
+            "type": "StructuredContextError",
+            "message": (
+                "required_authoritative_records_exceed_budget: required records "
+                "need 6425 characters including audit metadata, exceeding the "
+                "5978 character authority budget: characters/LinXia"
+            ),
+        }
+        def _trace(action, status, chars=0):
+            stamp = self.now.isoformat()
+            return {
+                "action": action,
+                "status": status,
+                "started_at": stamp,
+                "finished_at": stamp,
+                "chapter_chars": chars,
+                "repair_attempts": 0,
+            }
+        payload["run"]["trace"] = [
+            _trace("build_snapshot", "completed", 0),
+            _trace("generate_chapter", "completed", len(candidate)),
+            _trace("validate", "completed", len(candidate)),
+            _trace("repair_if_needed", "failed", len(candidate)),
+        ]
+        payload["run"]["execution_evidence"]["budget"] = {
+            "provider_calls": 2,
+            "unsettled_attempt_count": 0,
+        }
+        payload["validation"] = {
+            "ok": False,
+            "blocking_problem_count": 2,
+            "manual_review_count": 1,
+            "problems": [
+                {
+                    "code": "character_location_not_mentioned",
+                    "message": "Character 林夏 appears without current location.",
+                    "severity": "medium",
+                    "blocking": True,
+                    "repair_action": "add_character_location",
+                },
+                {
+                    "code": "llm_spatial_continuity_inconsistent",
+                    "message": "观察区与隔离黄线被写成同一个空间。",
+                    "severity": "high",
+                    "blocking": True,
+                    "repair_action": "manual_review",
+                },
+            ],
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        self.assertEqual("complete_failed_draft_available", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(candidate, checkpoint["complete_draft"]["text"])
+
+    def test_repair_budget_block_fails_closed_when_generate_stage_failed(
+        self,
+    ) -> None:
+        execution_id = "execution_generate_json_budget"
+        self._write_execution(
+            execution_id,
+            successful=["陆沉先观察外围一圈，并记下机械计时片上的间隔。" * 20],
+            missing_stage=None,
+            call_ids=[build_scene_generation_call_id(1)],
+        )
+        self._write_failed_run(execution_id=execution_id, chapter="", scene_count=3)
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["run"]["error"] = {
+            "type": "StructuredContextError",
+            "message": "required_json_item_exceeds_budget: required entries exceed 1472 characters",
+        }
+        def _trace(action, status, chars=0):
+            stamp = self.now.isoformat()
+            return {
+                "action": action,
+                "status": status,
+                "started_at": stamp,
+                "finished_at": stamp,
+                "chapter_chars": chars,
+                "repair_attempts": 0,
+            }
+        payload["run"]["trace"] = [
+            _trace("build_snapshot", "completed", 0),
+            _trace("generate_chapter", "failed", 0),
+        ]
+        payload["run"]["execution_evidence"]["budget"] = {
+            "provider_calls": 1,
+            "unsettled_attempt_count": 0,
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertNotEqual("repair_draft", result["action"])
+        self.assertNotEqual("complete_failed_draft_available", result.get("reason"))
+
     def test_resume_scenes_checkpoint_upgrades_to_author_draft_when_manual_review_remains(
         self,
     ) -> None:

@@ -208,23 +208,34 @@ def recover_locked_chapter(
             )
         if (
             not force_reset
+            and complete_draft is None
+        ):
+            complete_draft = _usable_complete_draft(
+                source_payload,
+                language=language,
+                run_dir=runtime_root,
+            )
+        prefer_author_draft = bool(
+            not force_reset
+            and complete_draft is not None
+            and (
+                (
+                    _repair_did_not_converge(source_payload)
+                    and _remaining_problems_require_author_review(source_payload)
+                )
+                or _repair_assembly_blocked_after_paid_calls(source_payload)
+            )
+        )
+        if prefer_author_draft:
+            # Resume-scenes would only re-enter a blocked repair or another
+            # unattended revalidation, hiding the already paid complete draft.
+            recovered_scenes = []
+        elif (
+            not force_reset
             and _repair_did_not_converge(source_payload)
             and _remaining_problems_require_author_review(source_payload)
         ):
-            # Receipt-backed Scenes remain the default after a non-converging
-            # repair.  That automatic resume is the wrong next step when every
-            # leftover blocking problem already asks for manual review: the
-            # author needs the complete candidate, not another unattended
-            # revalidation that hides the paid prose.
-            if complete_draft is None:
-                complete_draft = _usable_complete_draft(
-                    source_payload,
-                    language=language,
-                    run_dir=runtime_root,
-                )
-            if complete_draft is not None:
-                recovered_scenes = []
-            elif recovered_scenes:
+            if recovered_scenes:
                 complete_draft = None
         elif recovered_scenes:
             complete_draft = None
@@ -1068,6 +1079,47 @@ def verified_final_recovery_draft(
         payload,
         draft,
         run_dir=runtime_root,
+    ):
+        return None
+    return json.loads(json.dumps(draft, ensure_ascii=False))
+
+
+def verified_candidate_recovery_draft(
+    *,
+    run_dir: str | Path,
+    run_id: str,
+    language: str | None = None,
+) -> dict[str, Any] | None:
+    """Return a receipt-backed failed complete candidate for recovery coordination.
+
+    This is not a final-gate artifact.  It is the settled chapter text a run
+    already paid for before repair or quality stopped, and it is the correct
+    source for an author draft instead of another unattended revalidation.
+    """
+
+    runtime_root = Path(run_dir).resolve(strict=True)
+    candidate_id = str(run_id or "").strip()
+    if not candidate_id or Path(candidate_id).name != candidate_id:
+        return None
+    path = runtime_root / f"{candidate_id}.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        validate_run_result(payload)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    run = payload.get("run")
+    if not isinstance(run, dict) or str(run.get("id") or "") != candidate_id:
+        return None
+    draft = _usable_complete_draft(
+        payload,
+        language=language,
+        run_dir=runtime_root,
+    )
+    if not _complete_draft_matches_verified_candidate_artifact(
+        payload,
+        draft,
+        run_dir=runtime_root,
+        language=language,
     ):
         return None
     return json.loads(json.dumps(draft, ensure_ascii=False))
@@ -2480,6 +2532,79 @@ def _latest_usable_complete_transform(
             "source_attempt_id": str(intent["attempt_id"]),
         }
     return None
+
+
+def _repair_assembly_blocked_after_paid_calls(payload: dict[str, Any]) -> bool:
+    """True when repair stopped after paid calls and retrying it would hit the same wall.
+
+    Official evidence: a settled generate+validate run retains a complete
+    candidate, then repair_if_needed raises a character/token budget or
+    structured-context error.  Scene resume would only re-enter that blocked
+    repair.  Fail closed on mixed or incomplete evidence.
+    """
+
+    run = payload.get("run")
+    if not isinstance(run, dict):
+        return False
+    if run.get("status") not in {"failed", "rejected"}:
+        return False
+    if run.get("committed") is True or run.get("accepted") is True:
+        return False
+    error = run.get("error") if isinstance(run.get("error"), dict) else {}
+    error_type = str(error.get("type") or "")
+    message = str(error.get("message") or "")
+    budget_markers = (
+        "required_authoritative_records_exceed_budget",
+        "required_authoritative_record_exceeds_budget",
+        "required_authoritative_context_metadata_exceeds_budget",
+        "required_json_item_exceeds_budget",
+        "required_markdown_context_exceeds_budget",
+        "required_structured_entry_exceeds_budget",
+        "required_structured_manifest_exceeds_budget",
+        "story_project_context_budget",
+        "context_budget_exceeded",
+        "local_budget",
+        "headroom",
+    )
+    type_ok = error_type in {"StructuredContextError", "ContextBudgetError"} or (
+        error_type == "ModelCallError"
+        and any(marker in message for marker in ("local_budget", "context_budget"))
+    )
+    marker_ok = any(marker in message for marker in budget_markers)
+    if not type_ok or not marker_ok:
+        return False
+    trace = run.get("trace")
+    if not isinstance(trace, list) or not trace:
+        return False
+    failed = [
+        item
+        for item in trace
+        if isinstance(item, dict)
+        and str(item.get("status") or item.get("state") or "") == "failed"
+    ]
+    if len(failed) != 1:
+        return False
+    failed_action = str(failed[0].get("action") or failed[0].get("name") or failed[0].get("step") or "")
+    if failed_action not in {"repair_if_needed", "repair"}:
+        return False
+    evidence = run.get("execution_evidence") if isinstance(run.get("execution_evidence"), dict) else {}
+    budget = evidence.get("budget") if isinstance(evidence.get("budget"), dict) else {}
+    try:
+        provider_calls = int(budget.get("provider_calls") or run.get("provider_calls") or 0)
+        unsettled = int(budget.get("unsettled_attempt_count") or run.get("unsettled_attempt_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if provider_calls < 1 or unsettled != 0:
+        return False
+    writeback = None
+    story_project = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+    if isinstance(story_project.get("writeback"), dict):
+        writeback = story_project.get("writeback")
+    elif isinstance(run.get("writeback"), dict):
+        writeback = run.get("writeback")
+    if isinstance(writeback, dict) and writeback.get("applied") is True:
+        return False
+    return True
 
 
 def _remaining_problems_require_author_review(payload: dict[str, Any]) -> bool:
