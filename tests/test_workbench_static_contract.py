@@ -588,8 +588,8 @@ def test_context_budget_pause_is_explained_before_provider_or_quality_branches()
     assert "本地输入上下文为 ${budget.requiredTokens} tokens，上限 ${budget.hardLimit} tokens，超出 ${budget.overageTokens} tokens。" in spa
     assert "本次尝试在请求发出前停止：新增模型调用 0 次、新增费用 0" in spa
     assert "安全核对完成前不能重新执行" in spa
-    assert "const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && (Boolean(qualityRejection) || isQualityRevisionPause(session));" in spa
-    assert "const qualityRevision = !provenanceFailure && !contextBudget && !repairConvergence && (Boolean(qualityRejection) || issue.quality_revision === true || isQualityRevisionPause(issue));" in spa
+    assert "const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && (Boolean(qualityRejection) || isQualityRevisionPause(session));" in spa
+    assert "const qualityRevision = !provenanceFailure && !contextBudget && !repairConvergence && !staleSceneEvidenceFailure && (Boolean(qualityRejection) || issue.quality_revision === true || isQualityRevisionPause(issue));" in spa
     assert 'form.dataset.recoveryMode = "context-budget"' in spa
     assert 'setText("[data-recover-button]", `确认重新执行第 ${chapter} 章`)' in spa
     assert 'contextBudget.verified ? "等待系统修复" : "等待安全核对"' in spa
@@ -649,6 +649,115 @@ def test_settled_repair_authority_failure_explains_the_real_stopping_stage() -> 
     assert "修订模型请求尚未发出" in spa
     assert "Promise.all([" in spa
     assert "/pending`)" in spa
+
+
+
+
+def test_settled_stale_scene_evidence_failure_explains_retained_candidate() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    assert "const staleSceneEvidenceDetailsOfRun = (run) =>" in spa
+    assert 'run?.error_type !== "SceneEvidenceAlignmentError"' in spa
+    assert 'message.startsWith("stale_scene_evidence:")' in spa
+    assert "const staleSceneEvidenceDetailsOf = (job) =>" in spa
+    assert 'value.code === "stale_scene_evidence"' in spa
+    assert "stale_scene_evidence_failure: staleSceneEvidenceFailure" in spa
+    assert "自动修订因场景证据对不齐而停止" in spa
+    assert "修订跨越场景边界" in spa
+    assert "候选正文已保留，越界修订已被拒绝" in spa
+    assert "次模型调用都有完整回执且已经结算" in spa
+    assert "字候选正文保存在隔离运行区，正式正文尚未提交" in spa
+    assert "系统已拒绝采用这次修订" in spa
+    assert "先做无模型恢复分类" in spa
+    assert "不会直接重试这次失败的修订" in spa
+    assert "不要盲目重试这次失败修订" in spa
+    assert 'form.dataset.recoveryMode = "stale-scene-evidence-classify"' in spa
+    assert "!staleSceneEvidence && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
+
+    assert stream.count('"chapter.stale_scene_evidence"') >= 3
+    assert '"chapter.stale_scene_evidence": "自动修订与场景证据对不齐，任务已安全暂停"' in stream
+    assert '"chapter.stale_scene_evidence": "awaiting_input"' in stream
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_stale_scene_evidence_browser_classifier_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { staleSceneEvidenceDetailsOf, staleSceneEvidenceDetailsOfRun };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const completeRun = {
+  error_type: "SceneEvidenceAlignmentError",
+  error_message: "stale_scene_evidence: repair operation crosses a Scene boundary or separator",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 6,
+  chapter_chars: 3423
+};
+const completeDetails = {
+  failure_origin: "stale_scene_evidence",
+  provider_calls: 6,
+  settled_provider_calls: 6,
+  unsettled_attempt_count: 0,
+  candidate_chars: 3423,
+  formal_prose_exists: false,
+  accepted: false,
+  committed: false,
+  writeback_attempted: false,
+  writeback_applied: false,
+  automatic_retry: false,
+  safe_to_retry: false,
+  recovery_required: true,
+  source_error_type: "SceneEvidenceAlignmentError",
+  alignment_reason: "repair operation crosses a Scene boundary or separator"
+};
+const output = {
+  fromRun: sandbox.__evidence.staleSceneEvidenceDetailsOfRun(completeRun),
+  unsettled: sandbox.__evidence.staleSceneEvidenceDetailsOfRun({ ...completeRun, unsettled_attempt_count: 1 }),
+  noCandidate: sandbox.__evidence.staleSceneEvidenceDetailsOfRun({ ...completeRun, chapter_chars: 0 }),
+  unreadableJob: sandbox.__evidence.staleSceneEvidenceDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "SceneEvidenceAlignmentError: stale_scene_evidence: repair operation crosses a Scene boundary or separator" } }),
+  incompleteJob: sandbox.__evidence.staleSceneEvidenceDetailsOf({ error: { code: "stale_scene_evidence", details: { ...completeDetails, writeback_applied: undefined } } }),
+  verifiedJob: sandbox.__evidence.staleSceneEvidenceDetailsOf({ error: { code: "stale_scene_evidence", details: completeDetails } }),
+  legacyViaRun: sandbox.__evidence.staleSceneEvidenceDetailsOf({ error: { code: "engine_result_unreadable" }, latest_run: completeRun })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["fromRun"]["providerCalls"] == 6
+    assert result["fromRun"]["chapterChars"] == 3423
+    assert result["fromRun"]["reason"] == "repair operation crosses a Scene boundary or separator"
+    assert result["unsettled"] is None
+    assert result["noCandidate"] is None
+    assert result["unreadableJob"] is None
+    assert result["incompleteJob"] is None
+    assert result["verifiedJob"]["verified"] is True
+    assert result["verifiedJob"]["providerCalls"] == 6
+    assert result["verifiedJob"]["chapterChars"] == 3423
+    assert result["legacyViaRun"]["chapterChars"] == 3423
+    assert result["legacyViaRun"]["providerCalls"] == 6
 
 
 def test_repair_not_converging_uses_only_verified_structured_evidence_and_no_blind_retry() -> None:
@@ -788,7 +897,7 @@ def test_pre_provider_provenance_git_failure_is_system_blocked_not_recovery() ->
     assert "const provenanceFailure = paused ? preProviderProvenanceDetailsOf(session) : null;" in spa
     assert "provenanceFailure?.verified && session?.resume_ready === true" in spa
     assert "const contextBudget = paused && !provenanceFailure ? contextBudgetDetailsOf(session) : null;" in spa
-    assert "const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && (Boolean(qualityRejection) || isQualityRevisionPause(session));" in spa
+    assert "const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && (Boolean(qualityRejection) || isQualityRevisionPause(session));" in spa
     assert "const providerUncertain = paused && !provenanceFailure && !contextBudget" in spa
 
     assert "检测到疑似 Git 来源记录环境异常，正在进行安全核对。" in spa

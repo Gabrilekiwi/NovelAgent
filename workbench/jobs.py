@@ -47,6 +47,7 @@ CURRENT_JOB_EXECUTION_CONTRACT = "workbench_execution_v1"
 PRE_PROVIDER_CONTEXT_BUDGET_ERROR = "pre_provider_context_budget_exceeded"
 PRE_PROVIDER_PROVENANCE_ERROR = "pre_provider_provenance_unavailable"
 REPAIR_NOT_CONVERGING_ERROR = "chapter_repair_not_converging"
+STALE_SCENE_EVIDENCE_ERROR = "stale_scene_evidence"
 _CONTEXT_BUDGET_PATTERN = re.compile(
     r"(?P<stage>[A-Za-z][A-Za-z0-9_-]*) input requires "
     r"(?P<required>[0-9]+) tokens; hard limit is (?P<hard>[0-9]+)"
@@ -914,6 +915,68 @@ class JobStore:
             )
         return self.get(job_id)
 
+    def reconcile_stale_scene_evidence_failure(
+        self,
+        job_id: str,
+        *,
+        result: Mapping[str, Any],
+        error: Mapping[str, Any],
+        expected_legacy_error_sha256: str,
+    ) -> JobRecord:
+        """Upgrade one unchanged generic pause into a durable recovery lane.
+
+        This transition deliberately leaves the session paused.  It records
+        what happened, but cannot authorize another Provider call; resuming is
+        still guarded by a completed recovery bound to this failure revision.
+        """
+
+        if not _is_stale_scene_evidence_error(error):
+            raise JobError("stale scene evidence reconciliation requires structured evidence")
+        timestamp = _utc_now()
+        with self.database.transaction() as connection:
+            row = _require_job_row(connection, job_id)
+            current_error = _stored_job_error(row)
+            current_error_sha256 = _sha256_text(_canonical_json(current_error))
+            if (
+                row["kind"] != "generation_session"
+                or row["state"] != "awaiting_input"
+                or row["result_json"] is not None
+                or current_error.get("code") != "engine_result_unreadable"
+                or current_error_sha256 != expected_legacy_error_sha256
+            ):
+                raise JobError("job is not the unchanged legacy stale-scene-evidence pause")
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET result_json = ?, error_json = ?,
+                    manual_confirmation_required = 1, updated_at = ?, revision = revision + 1
+                WHERE id = ? AND state = 'awaiting_input' AND revision = ?
+                    AND result_json IS NULL AND error_json = ?
+                """,
+                (
+                    _canonical_json(_compact_result(result)),
+                    _canonical_json(_safe_event_payload(error)),
+                    timestamp,
+                    str(job_id),
+                    int(row["revision"]),
+                    str(row["error_json"]),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise JobError("legacy stale-scene-evidence reconciliation CAS failed")
+            self._append_event_in_transaction(
+                connection,
+                str(job_id),
+                "chapter.stale_scene_evidence",
+                {
+                    "chapter": int(row["next_chapter"]),
+                    "automatic_retry": False,
+                    "reconciled_from": "engine_result_unreadable",
+                    "error": _safe_event_payload(error),
+                },
+                timestamp=timestamp,
+            )
+        return self.get(job_id)
+
     def reconcile_review_pause(
         self,
         job_id: str,
@@ -1124,6 +1187,8 @@ class JobStore:
                 if _is_pre_provider_provenance_error(error)
                 else "chapter.repair_not_converging"
                 if _is_repair_not_converging_error(error)
+                else "chapter.stale_scene_evidence"
+                if _is_stale_scene_evidence_error(error)
                 else "chapter.needs_recovery" if uncertain else "chapter.needs_revision"
             )
             self._append_event_in_transaction(
@@ -1648,6 +1713,7 @@ class JobSupervisor:
         self._reconcile_pre_provider_context_failures()
         self._reconcile_pre_provider_provenance_failures()
         self._reconcile_repair_not_converging_failures()
+        self._reconcile_stale_scene_evidence_failures()
         self._startup_recovery_pending=False
 
     def notify(self) -> None:
@@ -1879,6 +1945,41 @@ class JobSupervisor:
                 # Any tamper, ambiguity, or unsettled call retains the generic pause.
                 continue
 
+    def _reconcile_stale_scene_evidence_failures(self) -> None:
+        """Explain proven legacy scene-alignment failures without requeueing them."""
+
+        for job in self.store.list_jobs(states=("awaiting_input",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
+            if job.kind != "generation_session" or not isinstance(job.error, Mapping):
+                continue
+            if job.error.get("code") != "engine_result_unreadable" or job.result is not None:
+                continue
+            try:
+                project = self.project_lookup(job.project_id)
+                project_root = Path(project.root).resolve(strict=True)
+                legacy_error_sha256 = _sha256_text(_canonical_json(job.error))
+                classification = _classify_stale_scene_evidence_failure(
+                    project_root,
+                    job.next_chapter,
+                    exit_code=job.error.get("exit_code"),
+                    stderr_tail=job.error.get("stderr_tail"),
+                    started_at=job.started_at,
+                    finished_at=job.updated_at,
+                )
+                if classification is None:
+                    continue
+                self.store.reconcile_stale_scene_evidence_failure(
+                    job.id,
+                    result=classification["result"],
+                    error=classification["error"],
+                    expected_legacy_error_sha256=legacy_error_sha256,
+                )
+            except Exception:
+                # Any tamper, ambiguity, or unsettled call retains the generic pause.
+                continue
+
+
     def _run_generation_session(self, initial_job: JobRecord) -> None:
         _require_job_execution_contract(initial_job.to_dict())
         job = initial_job
@@ -2039,6 +2140,22 @@ class JobSupervisor:
                         uncertain=False,
                     )
                     return
+                stale_scene_classification = _classify_stale_scene_evidence_failure(
+                    project_root,
+                    chapter,
+                    exit_code=execution.get("exit_code"),
+                    stderr_tail=execution.get("stderr_tail"),
+                    prior_fingerprints=run_records_before,
+                )
+                if stale_scene_classification is not None:
+                    self.store.chapter_failed(
+                        job.id,
+                        chapter=chapter,
+                        result=stale_scene_classification["result"],
+                        error=stale_scene_classification["error"],
+                        uncertain=False,
+                    )
+                    return
                 self.store.chapter_failed(
                     job.id,
                     chapter=chapter,
@@ -2080,6 +2197,22 @@ class JobSupervisor:
                 if job.state != "starting":
                     return
                 continue
+            stale_scene_classification = _classify_stale_scene_evidence_failure(
+                project_root,
+                chapter,
+                exit_code=execution.get("exit_code"),
+                stderr_tail=execution.get("stderr_tail"),
+                prior_fingerprints=run_records_before,
+            )
+            if stale_scene_classification is not None:
+                self.store.chapter_failed(
+                    job.id,
+                    chapter=chapter,
+                    result=stale_scene_classification["result"],
+                    error=stale_scene_classification["error"],
+                    uncertain=False,
+                )
+                return
             uncertain = _result_is_uncertain(result) or _contains_uncertainty(execution.get("stderr_tail"))
             self.store.chapter_failed(
                 job.id,
@@ -2985,6 +3118,10 @@ def _is_repair_not_converging_error(value: Mapping[str, Any] | None) -> bool:
     return isinstance(value, Mapping) and value.get("code") == REPAIR_NOT_CONVERGING_ERROR
 
 
+def _is_stale_scene_evidence_error(value: Mapping[str, Any] | None) -> bool:
+    return isinstance(value, Mapping) and value.get("code") == STALE_SCENE_EVIDENCE_ERROR
+
+
 def _chapter_run_record_fingerprints(project_root: Path, chapter: int) -> dict[str, str]:
     root = Path(project_root).resolve(strict=True)
     run_dir = root / ".novelagent" / "runtime" / "runs"
@@ -3613,6 +3750,252 @@ def _classify_repair_not_converging_failure(
                             f"第 {chapter} 章已生成候选正文，但自动修订未收敛："
                             f"问题从 {details['original_problem_count']} 项变为 "
                             f"{details['final_problem_count']} 项；正式正文尚未提交。"
+                        ),
+                        "details": details,
+                        "exit_code": exit_code,
+                        "automatic_retry": False,
+                        "safe_to_retry": False,
+                        "recovery_required": True,
+                    },
+                }
+            )
+        except (OSError, UnicodeError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+    return matches[0] if len(matches) == 1 else None
+
+
+def _stale_scene_evidence_evidence(
+    project_root: Path,
+    value: Mapping[str, Any],
+    *,
+    chapter: int,
+    stderr_text: str,
+) -> dict[str, Any] | None:
+    """Validate one failed run down to its retained candidate and settled receipts."""
+
+    run = value.get("run")
+    if not isinstance(run, Mapping) or int(run.get("chapter_index") or 0) != int(chapter):
+        return None
+    run_error = run.get("error")
+    if not isinstance(run_error, Mapping) or run_error.get("type") != "SceneEvidenceAlignmentError":
+        return None
+    error_message = run_error.get("message")
+    if not isinstance(error_message, str) or not error_message.startswith("stale_scene_evidence:"):
+        return None
+    alignment_reason = error_message[len("stale_scene_evidence:"):].strip()
+    if not alignment_reason or f"SceneEvidenceAlignmentError: {error_message}" not in stderr_text:
+        return None
+    if (
+        run.get("status") != "failed"
+        or run.get("accepted") is not False
+        or run.get("committed") is not False
+        or value.get("accepted") is not False
+        or value.get("committed") is not False
+    ):
+        return None
+
+    execution_evidence = run.get("execution_evidence")
+    budget = (
+        execution_evidence.get("budget")
+        if isinstance(execution_evidence, Mapping)
+        else None
+    )
+    if not isinstance(budget, Mapping):
+        return None
+    provider_calls = budget.get("provider_calls")
+    unsettled = budget.get("unsettled_attempt_count")
+    if (
+        not isinstance(provider_calls, int)
+        or isinstance(provider_calls, bool)
+        or provider_calls < 1
+        or not isinstance(unsettled, int)
+        or isinstance(unsettled, bool)
+        or unsettled != 0
+        or _result_is_uncertain(value)
+    ):
+        return None
+    settled_provider_calls = _settled_provider_calls_from_trace(run)
+    if settled_provider_calls != provider_calls:
+        return None
+    if not _provider_call_artifacts_are_settled(
+        project_root,
+        run,
+        expected_calls=provider_calls,
+    ):
+        return None
+
+    persistence = run.get("persistence")
+    if persistence not in (None, {}):
+        return None
+    story_project = run.get("story_project")
+    writeback = story_project.get("writeback") if isinstance(story_project, Mapping) else None
+    if (
+        not isinstance(writeback, Mapping)
+        or writeback.get("attempted") is not False
+        or writeback.get("applied") is not False
+    ):
+        return None
+    try:
+        if resolve_prose(project_root, chapter).candidates:
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    candidate = value.get("chapter")
+    run_chapter = run.get("chapter")
+    if not isinstance(candidate, str) or not isinstance(run_chapter, Mapping):
+        return None
+    candidate_chars = run_chapter.get("chars")
+    artifact = run_chapter.get("artifact")
+    integrity_audit = run_chapter.get("integrity_audit")
+    if (
+        not isinstance(candidate_chars, int)
+        or isinstance(candidate_chars, bool)
+        or candidate_chars < 1
+        or len(candidate) != candidate_chars
+        or not isinstance(artifact, Mapping)
+        or artifact.get("chars") != candidate_chars
+        or not isinstance(integrity_audit, Mapping)
+    ):
+        return None
+    candidate_sha256 = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+    if integrity_audit.get("final_chapter_sha256") != candidate_sha256:
+        return None
+    artifact_path_value = artifact.get("path")
+    artifact_sha256 = artifact.get("sha256")
+    if not isinstance(artifact_path_value, str) or not isinstance(artifact_sha256, str):
+        return None
+    try:
+        artifact_path = _safe_project_file(project_root, artifact_path_value)
+        artifact_path.relative_to(
+            project_root / ".novelagent" / "runtime" / "chapters"
+        )
+        artifact_raw = artifact_path.read_bytes()
+        artifact_text = artifact_raw.decode("utf-8")
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if (
+        hashlib.sha256(artifact_raw).hexdigest() != artifact_sha256
+        or artifact_text.count(candidate) != 1
+        or not artifact_text.endswith((candidate + "\n", candidate + "\r\n"))
+    ):
+        return None
+
+    trace = run.get("trace")
+    if not isinstance(trace, (list, tuple)):
+        return None
+    failures = [
+        event
+        for event in trace
+        if isinstance(event, Mapping)
+        and event.get("action") == "repair_if_needed"
+        and event.get("status") == "failed"
+        and event.get("error_type") == "SceneEvidenceAlignmentError"
+        and event.get("error_message") == error_message
+    ]
+    if len(failures) != 1:
+        return None
+    run_id = run.get("id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return None
+    return {
+        "failure_origin": "stale_scene_evidence",
+        "run_id": run_id,
+        "provider_calls": provider_calls,
+        "settled_provider_calls": settled_provider_calls,
+        "unsettled_attempt_count": 0,
+        "candidate_chars": candidate_chars,
+        "candidate_sha256": candidate_sha256,
+        "candidate_artifact_path": artifact_path.relative_to(project_root).as_posix(),
+        "candidate_artifact_sha256": artifact_sha256,
+        "candidate_artifact_bytes": len(artifact_raw),
+        "formal_prose_exists": False,
+        "accepted": False,
+        "committed": False,
+        "persistence_committed": False,
+        "writeback_attempted": False,
+        "writeback_applied": False,
+        "alignment_reason": alignment_reason,
+        "source_error_type": "SceneEvidenceAlignmentError",
+        "source_error_message": error_message,
+        "automatic_retry": False,
+        "safe_to_retry": False,
+        "recovery_required": True,
+    }
+
+
+def _classify_stale_scene_evidence_failure(
+    project_root: str | Path,
+    chapter: int,
+    *,
+    exit_code: Any,
+    stderr_tail: Any,
+    prior_fingerprints: Mapping[str, str] | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> dict[str, Any] | None:
+    """Classify one uniquely evidenced, fully settled scene-alignment failure."""
+
+    if (
+        not isinstance(exit_code, int)
+        or isinstance(exit_code, bool)
+        or exit_code == 0
+    ):
+        return None
+    stderr_text = str(stderr_tail or "")
+    if "SceneEvidenceAlignmentError: stale_scene_evidence:" not in stderr_text:
+        return None
+    root = Path(project_root).resolve(strict=True)
+    fingerprints = _strict_chapter_run_artifact_fingerprints(root, chapter)
+    if fingerprints is None:
+        return None
+    window_start = _parse_timestamp(started_at)
+    window_end = _parse_timestamp(finished_at)
+    matches: list[dict[str, Any]] = []
+    for relative, digest in fingerprints.items():
+        if prior_fingerprints is not None and prior_fingerprints.get(relative) == digest:
+            continue
+        try:
+            path = _safe_project_file(root, relative)
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest:
+                continue
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, Mapping):
+                continue
+            run = value.get("run")
+            run_finished = _parse_timestamp(
+                run.get("finished_at") if isinstance(run, Mapping) else None
+            )
+            if window_start is not None or window_end is not None:
+                if run_finished is None:
+                    continue
+                finished_epoch = run_finished.timestamp()
+                if window_start is not None and finished_epoch < window_start.timestamp() - 2.0:
+                    continue
+                if window_end is not None and finished_epoch > window_end.timestamp() + 2.0:
+                    continue
+            evidence = _stale_scene_evidence_evidence(
+                root,
+                value,
+                chapter=chapter,
+                stderr_text=stderr_text,
+            )
+            if evidence is None:
+                continue
+            details = {
+                **evidence,
+                "run_record_path": relative,
+                "run_record_sha256": digest,
+            }
+            matches.append(
+                {
+                    "result": dict(value),
+                    "error": {
+                        "code": STALE_SCENE_EVIDENCE_ERROR,
+                        "message": (
+                            f"第 {chapter} 章已生成 {details['candidate_chars']} 字候选正文，"
+                            "但自动修订与场景证据对不齐；正式正文尚未提交。"
                         ),
                         "details": details,
                         "exit_code": exit_code,
@@ -4866,6 +5249,7 @@ __all__ = [
     "PRE_PROVIDER_CONTEXT_BUDGET_ERROR",
     "PRE_PROVIDER_PROVENANCE_ERROR",
     "REPAIR_NOT_CONVERGING_ERROR",
+    "STALE_SCENE_EVIDENCE_ERROR",
     "DraftRecord",
     "DraftSourceConflict",
     "JobError",

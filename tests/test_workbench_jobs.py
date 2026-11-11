@@ -17,7 +17,9 @@ from workbench.jobs import (
     PRE_PROVIDER_CONTEXT_BUDGET_ERROR,
     PRE_PROVIDER_PROVENANCE_ERROR,
     REPAIR_NOT_CONVERGING_ERROR,
+    STALE_SCENE_EVIDENCE_ERROR,
     _classify_repair_not_converging_failure,
+    _classify_stale_scene_evidence_failure,
     _classify_pre_provider_context_failure,
     _classify_pre_provider_provenance_failure,
     _git_provenance_preflight,
@@ -677,6 +679,238 @@ def test_legacy_repair_not_converging_pause_reconciles_without_requeue(
     assert store.events_after(parent.id)[-1]["event"] == "chapter.repair_not_converging"
     with pytest.raises(JobError, match="completed, receipt-backed recovery"):
         store.resume(parent.id, confirmed=True)
+
+
+def _write_stale_scene_evidence_run(
+    project_root: Path,
+    *,
+    chapter: int = 1,
+    run_id: str = "run-stale-scene-evidence",
+    provider_calls: int = 6,
+    unsettled_attempt_count: int = 0,
+) -> tuple[dict, Path, Path, str]:
+    candidate = "雨水沿着物流园围墙流下。陆沉确认路线后，带队进入泵房检修门。"
+    candidate_sha256 = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+    artifact_dir = project_root / ".novelagent" / "runtime" / "chapters"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / f"chapter_{chapter:04d}_failed_{run_id}.md"
+    artifact_path.write_text(
+        f"# Chapter {chapter}\n\n- Run: `{run_id}`\n- Status: `failed`\n\n---\n\n{candidate}\n",
+        encoding="utf-8",
+    )
+    artifact_sha256 = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    error_message = "stale_scene_evidence: repair operation crosses a Scene boundary or separator"
+    provider_attempts = [
+        {
+            "attempts": 1,
+            "completed": True,
+            "stop_reason": "succeeded",
+            "history": [
+                {
+                    "attempt": 1,
+                    "outcome": "succeeded",
+                    "failure_category": None,
+                    "partial_content_received": False,
+                }
+            ],
+        }
+        for _ in range(provider_calls)
+    ]
+    result = {
+        "chapter": candidate,
+        "accepted": False,
+        "committed": False,
+        "run": {
+            "id": run_id,
+            "chapter_index": chapter,
+            "status": "failed",
+            "accepted": False,
+            "committed": False,
+            "chapter": {
+                "chars": len(candidate),
+                "artifact": {
+                    "chars": len(candidate),
+                    "format": "markdown",
+                    "path": str(artifact_path),
+                    "sha256": artifact_sha256,
+                },
+                "integrity_audit": {"final_chapter_sha256": candidate_sha256},
+            },
+            "error": {"type": "SceneEvidenceAlignmentError", "message": error_message},
+            "execution_evidence": {
+                "budget": {
+                    "provider_calls": provider_calls,
+                    "unsettled_attempt_count": unsettled_attempt_count,
+                }
+            },
+            "persistence": None,
+            "story_project": {
+                "writeback": {"attempted": False, "applied": False}
+            },
+            "trace": [
+                {
+                    "action": "generate_chapter",
+                    "status": "completed",
+                    "provider_attempts": provider_attempts[: max(provider_calls - 1, 0)],
+                },
+                {
+                    "action": "repair_if_needed",
+                    "status": "failed",
+                    "error_type": "SceneEvidenceAlignmentError",
+                    "error_message": error_message,
+                    "provider_attempts": provider_attempts[max(provider_calls - 1, 0):],
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ],
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_path = run_dir / f"chapter_{chapter}_{run_id}.json"
+    run_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    stderr = (
+        "core.quality.scene_evidence.SceneEvidenceAlignmentError: "
+        f"{error_message}"
+    )
+    return result, run_path, artifact_path, stderr
+
+
+def test_stale_scene_evidence_classifier_binds_settled_run_and_candidate(
+    tmp_path: Path,
+) -> None:
+    _, _, _ = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    _, _, _, stderr = _write_stale_scene_evidence_run(project_root)
+
+    classified = _classify_stale_scene_evidence_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=stderr,
+        prior_fingerprints={},
+    )
+
+    assert classified is not None
+    error = classified["error"]
+    assert error["code"] == STALE_SCENE_EVIDENCE_ERROR
+    assert error["automatic_retry"] is False
+    assert error["safe_to_retry"] is False
+    assert error["recovery_required"] is True
+    details = error["details"]
+    assert details["failure_origin"] == "stale_scene_evidence"
+    assert details["provider_calls"] == details["settled_provider_calls"] == 6
+    assert details["unsettled_attempt_count"] == 0
+    assert details["candidate_chars"] > 0
+    assert details["formal_prose_exists"] is False
+    assert details["accepted"] is details["committed"] is False
+    assert details["writeback_attempted"] is details["writeback_applied"] is False
+    assert details["source_error_type"] == "SceneEvidenceAlignmentError"
+    assert details["alignment_reason"] == "repair operation crosses a Scene boundary or separator"
+    assert "引擎不可读" not in error["message"]
+    assert "不确定" not in error["message"]
+
+    _write_stale_scene_evidence_run(
+        project_root,
+        run_id="second-ambiguous-alignment-run",
+    )
+    assert _classify_stale_scene_evidence_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=stderr,
+        prior_fingerprints={},
+    ) is None
+
+
+def test_stale_scene_evidence_classifier_fails_closed_on_tamper_unsettled_or_prose(
+    tmp_path: Path,
+) -> None:
+    _, _, _ = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    result, run_path, artifact_path, stderr = _write_stale_scene_evidence_run(
+        project_root
+    )
+
+    artifact_path.write_text("tampered retained candidate", encoding="utf-8")
+    assert _classify_stale_scene_evidence_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=stderr,
+        prior_fingerprints={},
+    ) is None
+
+    _, run_path, _, stderr = _write_stale_scene_evidence_run(project_root)
+    result = json.loads(run_path.read_text(encoding="utf-8"))
+    result["run"]["execution_evidence"]["budget"]["unsettled_attempt_count"] = 1
+    run_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    assert _classify_stale_scene_evidence_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=stderr,
+        prior_fingerprints={},
+    ) is None
+
+    _, _, _, stderr = _write_stale_scene_evidence_run(project_root)
+    prose_path = canonical_prose_path(project_root, 1, "正式正文")
+    prose_path.parent.mkdir(parents=True, exist_ok=True)
+    prose_path.write_text("不应存在的正式正文", encoding="utf-8")
+    assert _classify_stale_scene_evidence_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=stderr,
+        prior_fingerprints={},
+    ) is None
+
+
+def test_legacy_stale_scene_evidence_pause_reconciles_without_requeue(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id, end_chapter=3)
+    project_root = tmp_path / "books" / "test-book"
+    _, _, _, stderr = _write_stale_scene_evidence_run(project_root)
+    legacy = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={
+            "code": "engine_result_unreadable",
+            "exit_code": 1,
+            "stderr_tail": stderr,
+        },
+        uncertain=False,
+    )
+    assert legacy.result is None
+    assert legacy.error["code"] == "engine_result_unreadable"
+
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    supervisor._reconcile_stale_scene_evidence_failures()
+
+    reconciled = store.get(parent.id)
+    assert reconciled.state == "awaiting_input"
+    assert reconciled.manual_confirmation_required is True
+    assert reconciled.error is not None
+    assert reconciled.error["code"] == STALE_SCENE_EVIDENCE_ERROR
+    assert reconciled.result is not None
+    assert reconciled.result["run_id"] == "run-stale-scene-evidence"
+    assert reconciled.result["provider_calls"] == 6
+    assert reconciled.result["chapter_chars"] > 0
+    assert store.claim_next() is None
+    assert store.resume_ready(parent.id) is False
+    assert store.events_after(parent.id)[-1]["event"] == "chapter.stale_scene_evidence"
+    with pytest.raises(JobError, match="completed, receipt-backed recovery"):
+        store.resume(parent.id, confirmed=True)
+
 
 
 def test_provenance_classifier_rejects_malformed_run_record(tmp_path: Path) -> None:
