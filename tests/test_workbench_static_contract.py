@@ -2098,3 +2098,9 @@ process.stdout.write(JSON.stringify({
     assert result["confirmable"] is None
     assert result["committed"] is None
     assert result["missing"] is None
+
+
+def test_archived_retained_author_draft_is_not_shown_as_current_work() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    assert "chapter.retained_author_draft.state !== \"archived\"" in spa
+    assert "data-retained-author-draft-panel" in spa

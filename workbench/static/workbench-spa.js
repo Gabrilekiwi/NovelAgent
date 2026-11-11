@@ -2404,7 +2404,9 @@
         ? `尚未生成正文。请先到生产页续写第 ${state.project.next_chapter} 章。`
         : "尚未生成正文。请到生产页使用「预检并开始」续写。");
     setText("[data-chapter-content]", currentProse || (chapter.outline ? `${chapter.outline}\n\n——\n${emptyProseCopy}` : emptyProseCopy));
-    const retainedDraft = chapter.retained_author_draft;
+    const retainedDraft = chapter.retained_author_draft && chapter.retained_author_draft.state !== "archived"
+      ? chapter.retained_author_draft
+      : null;
     const retainedPanel = one('[data-retained-author-draft-panel]');
     if (retainedPanel) retainedPanel.hidden = !retainedDraft;
     const retainedText = one('[data-retained-author-draft-text]');

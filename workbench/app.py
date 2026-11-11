@@ -530,8 +530,11 @@ def _create_app_owned(
             if (draft.project_id != record.id or draft.chapter != chapter or draft.revision < 1
                     or hashlib.sha256(draft.text.encode('utf-8')).hexdigest() != draft.sha256):
                 raise JobError('保留的作者草稿内容或修订无法核验，请保留数据并核对。')
-            detail['retained_author_draft'] = {name:getattr(draft,name)
-                for name in ('id','project_id','chapter','revision','sha256','text','state')}
+            # Archived recovery drafts are kept as evidence after formal commit,
+            # but must not be presented as current author work.
+            if str(getattr(draft, "state", "") or "") != "archived":
+                detail['retained_author_draft'] = {name:getattr(draft,name)
+                    for name in ('id','project_id','chapter','revision','sha256','text','state')}
         return detail
 
     @app.get("/api/projects/{project_id}/chapters/{chapter}/card")

@@ -105,6 +105,10 @@ def test_formal_commit_archives_recovery_draft_and_drops_it_from_pending(tmp_pat
     pending_before = client.get(f"/api/projects/{project['id']}/pending")
     assert pending_before.status_code == 200, pending_before.text
     assert [item["id"] for item in pending_before.json()["drafts"]] == [draft.id]
+    chapter_before = client.get(f"/api/projects/{project['id']}/chapters/1")
+    assert chapter_before.status_code == 200, chapter_before.text
+    assert chapter_before.json()["retained_author_draft"]["id"] == draft.id
+    assert chapter_before.json()["retained_author_draft"]["state"] == "validated"
 
     running = _running_job(store, project["id"])
     _write_formal_prose(Path(project["root"]), 1, "第一章已经正式落盘。\n")
@@ -132,6 +136,10 @@ def test_formal_commit_archives_recovery_draft_and_drops_it_from_pending(tmp_pat
     pending_after = client.get(f"/api/projects/{project['id']}/pending")
     assert pending_after.status_code == 200, pending_after.text
     assert pending_after.json()["drafts"] == []
+    chapter_after = client.get(f"/api/projects/{project['id']}/chapters/1")
+    assert chapter_after.status_code == 200, chapter_after.text
+    assert chapter_after.json().get("has_prose") is True
+    assert "retained_author_draft" not in chapter_after.json()
 
 
 def test_uncommitted_chapter_draft_is_not_archived(tmp_path: Path) -> None:
@@ -179,6 +187,10 @@ def test_pending_reconciles_historical_validated_draft_after_formal_prose_exists
     archived = store.get_draft(draft.id)
     assert archived.state == "archived"
     assert archived.text == kept_text
+    chapter = client.get(f"/api/projects/{project['id']}/chapters/60")
+    assert chapter.status_code == 200, chapter.text
+    assert chapter.json().get("has_prose") is True
+    assert "retained_author_draft" not in chapter.json()
 
 
 def test_draft_actions_fail_closed_after_formal_commit(tmp_path: Path) -> None:
