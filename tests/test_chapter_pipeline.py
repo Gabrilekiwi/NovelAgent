@@ -2942,5 +2942,34 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(1, calls)
 
 
+    def test_fallback_scene_context_uses_eight_section_budget(self) -> None:
+        # The fallback retrieval path used to cap required complete entries at
+        # max_section_chars * 7 (10500). Later chapters leave almost no
+        # headroom, so a slightly larger required block raises
+        # required_markdown_context_exceeds_budget and stops generation.
+        # Keep this path aligned with the generation-state-view budget (* 8).
+        seen: dict[str, int] = {}
+        real = pipeline_module.compact_markdown_context
+
+        def wrapper(*args, **kwargs):
+            seen["max_chars"] = int(kwargs["max_chars"])
+            return real(*args, **kwargs)
+
+        pack = "\n\n".join(
+            [
+                "# Project Profile\nA short project profile.",
+                "# Director Decision\nContinue the current plan.",
+                "# Spatial State\nStay on this side of the line.",
+                "# Requirements\nKeep the required facts.",
+            ]
+        )
+        with patch.object(pipeline_module, "compact_markdown_context", side_effect=wrapper):
+            pipeline_module._compact_scene_context(pack, max_section_chars=1_500)
+
+        self.assertEqual(1_500 * 8, seen.get("max_chars"))
+
+
+
+
 if __name__ == "__main__":
     unittest.main()

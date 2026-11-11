@@ -1597,7 +1597,10 @@ def _compact_scene_context(
         required_sections.discard("Authoritative State")
     selection = compact_markdown_context(
         projected_text,
-        max_chars=max_section_chars * 7,
+        # Match the generation-state-view path (* 8). The previous * 7 cap
+        # (10500 at the default 1500 section budget) left later chapters
+        # with almost no headroom for required complete entries.
+        max_chars=max_section_chars * 8,
         per_section_max_chars=max_section_chars,
         query=query,
         required_sections=required_sections,
