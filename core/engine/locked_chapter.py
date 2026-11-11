@@ -1249,11 +1249,25 @@ def _verified_rejected_chapter_artifact(
     )
 
 
+# Stages that inspect a finished chapter but do not produce or mutate Scene
+# or chapter artifacts.  An uncertain call at these stages has no receipt by
+# definition and must not disqualify already receipt-backed prose.
+_NON_ARTIFACT_MODEL_STAGES = frozenset({"llm_validation"})
+
+
 def _source_execution_is_settled(
     payload: dict[str, Any],
     *,
     run_dir: Path,
 ) -> bool:
+    """Return whether artifact-producing model calls have settled receipts.
+
+    Settlement is about the prose we intend to bind: every Scene, polish, or
+    repair intent must have a receipt.  A later llm_validation attempt can
+    end as provider_call_uncertain with no receipt and no partial content.
+    That incomplete audit must not make the already settled chapter unusable.
+    """
+
     execution_dir = _source_execution_dir(run_dir, {"payload": payload})
     if execution_dir is None:
         return False
@@ -1266,9 +1280,13 @@ def _source_execution_is_settled(
     try:
         for path in intent_paths:
             intent = store.load_intent(path.stem)
-            if not store.has_receipt(str(intent["attempt_id"])):
-                return False
-            store.load_receipt(str(intent["attempt_id"]))
+            attempt_id = str(intent["attempt_id"])
+            if store.has_receipt(attempt_id):
+                store.load_receipt(attempt_id)
+                continue
+            if str(intent.get("stage") or "") in _NON_ARTIFACT_MODEL_STAGES:
+                continue
+            return False
     except (OSError, ValueError, KeyError):
         return False
     return True

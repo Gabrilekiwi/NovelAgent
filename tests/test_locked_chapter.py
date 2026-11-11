@@ -1342,10 +1342,12 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             "missing_fields": [],
         }
         expected_plan = build_blueprint_plan(chapter_blueprint)
+        # Production gap: an uncertain llm_validation intent has no receipt.
+        # Already settled Scene/prose receipts must still bind.
         call_id = self._write_valid_single_scene_execution(
             execution_id,
             scene_text=generated,
-            missing_stage=None,
+            missing_stage="llm_validation",
         )
         self._write_rejected_single_scene_artifact_run(
             execution_id=execution_id,
