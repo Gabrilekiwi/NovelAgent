@@ -502,6 +502,25 @@ def test_recovery_confirmation_resumes_the_paused_parent_and_toast_keeps_three_i
     assert 'toast.append(doc.createElement("span"), copy, close);' not in ui
 
 
+def test_pending_page_does_not_flash_chapter_20_placeholder() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+
+    pending_start = html.find('data-spa-view="pending"')
+    pending_end = html.find('data-spa-view="history"')
+    assert pending_start != -1 and pending_end > pending_start
+    pending = html[pending_start:pending_end]
+
+    assert 'class="pending-layout" hidden>' in pending
+    assert 'data-pending-empty>' in pending
+    assert 'data-pending-empty hidden' not in pending
+    assert "第 20 章" not in pending
+    assert "场景 3" not in pending
+    assert 'value="20"' not in pending
+    assert "chapter 20 recovery" not in pending.lower()
+    assert 'layout.hidden = state.pending.length === 0; empty.hidden = state.pending.length > 0;' in spa
+
+
 def test_quality_revision_pause_uses_parent_resume_without_recovery_classification() -> None:
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
