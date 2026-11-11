@@ -88,6 +88,7 @@ from workbench.jobs import (
     verify_committed_chapter,
 )
 from workbench.outlines import OutlineBatchConflict, OutlineBatchError, OutlineBatchService
+from workbench.project_catalog import annotate_project_catalog, resolve_active_book, select_author_bookshelf, should_auto_import_book
 from workbench.planning import OutlinePlanner, OutlinePlanningError
 from workbench.projects import ProjectRecord, ProjectRegistry, ProjectRegistryError
 from workbench.chapter_publication_api import install_chapter_publication_routes
@@ -414,9 +415,21 @@ def _create_app_owned(
         }
 
     @app.get("/api/projects")
-    async def list_projects() -> dict[str, Any]:
-        return {"items": [reviewed_views.summary(record) if app.state.reviewed_workflow.is_reviewed(record.id)
-            else _project_summary(record, jobs) for record in display_projects.list_projects()]}
+    async def list_projects(include_fixtures: bool = Query(False)) -> dict[str, Any]:
+        records = select_author_bookshelf(
+            display_projects.list_projects(),
+            repository=repository,
+            include_fixtures=include_fixtures or restore_scope is not None,
+        )
+        return {"items": [
+            _catalog_project_item(
+                record,
+                jobs,
+                reviewed_views,
+                reviewed=app.state.reviewed_workflow.is_reviewed(record.id),
+            )
+            for record in records
+        ]}
 
     @app.post("/api/projects", status_code=201)
     async def create_project(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -436,7 +449,7 @@ def _create_app_owned(
             synopsis=str(payload.get("synopsis") or payload.get("summary") or ""),
             language=str(payload.get("language") or "zh-CN"),
         )
-        return {"project": _project_summary(record, jobs)}
+        return {"project": _catalog_project_item(record, jobs, reviewed_views)}
 
     @app.post("/api/projects/import", status_code=201)
     async def import_project(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -447,15 +460,19 @@ def _create_app_owned(
             str(root),
             name=str(payload.get("name") or "").strip() or None,
         )
-        return {"project": _project_summary(record, jobs)}
+        return {"project": _catalog_project_item(record, jobs, reviewed_views)}
 
     @app.get("/api/projects/{project_id}")
     async def project_detail(project_id: str) -> dict[str, Any]:
         record = display_projects.get(project_id)
         if app.state.reviewed_workflow.is_reviewed(project_id):
-            return await asyncio.to_thread(reviewed_views.detail, record)
+            detail = await asyncio.to_thread(reviewed_views.detail, record)
+            project = detail.get("project")
+            if isinstance(project, dict):
+                detail = {**detail, "project": annotate_project_catalog(project, record)}
+            return detail
         return {
-            "project": _project_summary(record, jobs),
+            "project": _catalog_project_item(record, jobs, reviewed_views),
             "overview": _project_overview(record, outlines, jobs),
         }
 
@@ -2387,23 +2404,36 @@ def _provider_status() -> dict[str, Any]:
     }
 
 
+def _catalog_project_item(
+    record: ProjectRecord,
+    jobs: JobStore,
+    reviewed_views: ReviewedProjectViews,
+    *,
+    reviewed: bool = False,
+) -> dict[str, Any]:
+    item = reviewed_views.summary(record) if reviewed else _project_summary(record, jobs)
+    return annotate_project_catalog(item, record)
+
+
 def _import_active_project(repository: Path, projects: ProjectRegistry) -> None:
-    marker = repository / ".active-book"
     candidates: list[Path] = []
-    if marker.is_file():
-        value = marker.read_text(encoding="utf-8-sig").strip()
-        if value:
-            candidate = Path(value)
-            candidates.append(candidate if candidate.is_absolute() else repository / candidate)
+    active = resolve_active_book(repository)
+    if active is not None:
+        candidates.append(active)
     books_root = repository / "books"
     if books_root.is_dir():
         candidates.extend(path for path in books_root.iterdir() if path.is_dir())
     seen: set[Path] = set()
     for candidate in candidates:
-        canonical = candidate.resolve()
+        try:
+            canonical = candidate.resolve()
+        except (OSError, RuntimeError):
+            continue
         if canonical in seen:
             continue
         seen.add(canonical)
+        if not should_auto_import_book(canonical, active_book=active):
+            continue
         if all((canonical / name).is_dir() for name in ("设定", "大纲", "正文", "追踪")):
             projects.import_project(canonical)
 
