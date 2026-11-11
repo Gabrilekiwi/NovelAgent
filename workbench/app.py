@@ -427,6 +427,7 @@ def _create_app_owned(
                 sibling,
                 jobs,
                 reviewed_views,
+                outlines,
                 reviewed=app.state.reviewed_workflow.is_reviewed(sibling.id),
             )
             for sibling in select_author_bookshelf(
@@ -456,6 +457,7 @@ def _create_app_owned(
                     record,
                     jobs,
                     reviewed_views,
+                    outlines,
                     reviewed=app.state.reviewed_workflow.is_reviewed(record.id),
                 )
                 for record in records
@@ -481,7 +483,7 @@ def _create_app_owned(
             synopsis=str(payload.get("synopsis") or payload.get("summary") or ""),
             language=str(payload.get("language") or "zh-CN"),
         )
-        return {"project": _catalog_project_item(record, jobs, reviewed_views)}
+        return {"project": _catalog_project_item(record, jobs, reviewed_views, outlines)}
 
     @app.post("/api/projects/import", status_code=201)
     async def import_project(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -492,7 +494,7 @@ def _create_app_owned(
             str(root),
             name=str(payload.get("name") or "").strip() or None,
         )
-        return {"project": _catalog_project_item(record, jobs, reviewed_views)}
+        return {"project": _catalog_project_item(record, jobs, reviewed_views, outlines)}
 
     @app.get("/api/projects/{project_id}")
     async def project_detail(project_id: str) -> dict[str, Any]:
@@ -505,7 +507,7 @@ def _create_app_owned(
                 detail = {**detail, "project": _with_related_editions(project)}
             return detail
         return {
-            "project": _with_related_editions(_catalog_project_item(record, jobs, reviewed_views)),
+            "project": _with_related_editions(_catalog_project_item(record, jobs, reviewed_views, outlines)),
             "overview": _project_overview(record, outlines, jobs),
         }
 
@@ -1016,7 +1018,7 @@ def _create_app_owned(
                 item["resume_ready"] = jobs.resume_ready(job.id)
             job_payload.append(item)
         return {
-            "project": _project_summary(record, jobs),
+            "project": _project_summary(record, jobs, outlines),
             "jobs": job_payload,
             "approved_batches": [item.to_dict() for item in batches if item.status == "approved"],
             "draft_batches": [item.to_dict() for item in batches if item.status == "draft"],
@@ -1590,33 +1592,108 @@ def _create_app_owned(
     return app
 
 
-def _project_summary(record: ProjectRecord, jobs: JobStore) -> dict[str, Any]:
-    identity = load_project_identity(record.root)
-    prose = scan_prose_chapters(record.root)
+
+def _author_pending_attention(
+    record: ProjectRecord,
+    outlines: OutlineBatchService,
+    jobs: JobStore,
+) -> dict[str, Any]:
+    """Author-visible pending/attention derived from real project state.
+
+    Counts paused jobs, draft outline batches, standalone actionable drafts,
+    and genuinely recoverable locked-chapter work for the actual chapter
+    involved — never a hardcoded chapter 20 field.
+    """
+    paused_jobs = jobs.list_jobs(
+        project_id=record.id,
+        states=tuple(PAUSED_JOB_STATES),
+        limit=200,
+    )
     unfinished = jobs.list_jobs(
         project_id=record.id,
-        states=("queued", "starting", "running", "pause_requested", "awaiting_input", "needs_recovery"),
-        limit=10,
+        states=(
+            "queued",
+            "starting",
+            "running",
+            "pause_requested",
+            "awaiting_input",
+            "needs_recovery",
+        ),
+        limit=200,
     )
-    active = unfinished[0] if unfinished else None
-    paused_chapters = {
-        job.next_chapter for job in unfinished if job.state in PAUSED_JOB_STATES
-    }
+    active_generation = next(
+        (
+            job
+            for job in unfinished
+            if job.kind == "generation_session"
+            and job.state not in TERMINAL_JOB_STATES | PAUSED_JOB_STATES
+        ),
+        None,
+    )
+    recovery_chapter = (
+        paused_jobs[0].next_chapter
+        if paused_jobs
+        else active_generation.next_chapter
+        if active_generation is not None
+        else record.next_chapter
+    )
+    chapter_recovery = _chapter_recovery_summary(record.root, recovery_chapter)
     inflight_generation_chapters = {
-        job.next_chapter for job in unfinished if job.kind == "generation_session"
+        job.next_chapter
+        for job in unfinished
+        if job.kind == "generation_session"
+        and job.state not in TERMINAL_JOB_STATES | PAUSED_JOB_STATES
     }
-    recovery = _chapter_recovery_summary(record.root, record.next_chapter)
+    paused_chapters = {job.next_chapter for job in paused_jobs}
     recovery_attention = bool(
-        recovery["recoverable"]
-        and record.next_chapter not in inflight_generation_chapters
+        chapter_recovery["recoverable"]
+        and recovery_chapter not in inflight_generation_chapters
+        and recovery_chapter not in paused_chapters
     )
-    pending_count = len(paused_chapters) + int(recovery_attention)
+    draft_batches = tuple(
+        batch for batch in outlines.list_batches(record.id) if batch.status == "draft"
+    )
+    attention_chapters = set(paused_chapters)
+    if recovery_attention:
+        attention_chapters.add(recovery_chapter)
+    drafts = jobs.list_actionable_drafts(record.id)
+    extra_drafts = tuple(
+        draft for draft in drafts if int(draft.chapter) not in attention_chapters
+    )
+    pending_count = (
+        len(paused_jobs)
+        + len(draft_batches)
+        + int(recovery_attention)
+        + len(extra_drafts)
+    )
+    return {
+        "pending_count": pending_count,
+        "has_attention": pending_count > 0,
+        "paused_jobs": paused_jobs,
+        "unfinished": unfinished,
+        "chapter_recovery": chapter_recovery,
+        "draft_batches": draft_batches,
+        "actionable_drafts": drafts,
+    }
+
+
+def _project_summary(
+    record: ProjectRecord,
+    jobs: JobStore,
+    outlines: OutlineBatchService,
+) -> dict[str, Any]:
+    identity = load_project_identity(record.root)
+    prose = scan_prose_chapters(record.root)
+    attention = _author_pending_attention(record, outlines, jobs)
+    unfinished = attention["unfinished"]
+    active = unfinished[0] if unfinished else None
+    pending_count = attention["pending_count"]
     metadata = record.metadata
-    attention_recovery = recovery
+    attention_recovery = attention["chapter_recovery"]
     draft_state = None
     if active is not None:
         chapter = int(active.next_chapter)
-        if chapter != int(record.next_chapter):
+        if chapter != int(attention_recovery.get("chapter") or record.next_chapter):
             attention_recovery = _chapter_recovery_summary(record.root, chapter)
         draft = jobs.get_project_chapter_draft(record.id, chapter)
         draft_state = draft.state if draft is not None else None
@@ -1649,8 +1726,8 @@ def _project_overview(
     jobs: JobStore,
 ) -> dict[str, Any]:
     batches = outlines.list_batches(record.id)
+    attention = _author_pending_attention(record, outlines, jobs)
     recent_jobs = jobs.list_jobs(project_id=record.id, limit=8)
-    pending = [job for job in recent_jobs if job.state in PAUSED_JOB_STATES]
     prose = scan_prose_chapters(record.root)
     word_count = 0
     for chapter, candidates in prose.items():
@@ -1669,12 +1746,13 @@ def _project_overview(
         "next_chapter": record.next_chapter,
         "next_outline_title": _next_outline_title(record),
         "current_tasks": [job.to_dict() for job in recent_jobs if job.state not in TERMINAL_JOB_STATES],
-        "pending_count": len(pending) + sum(1 for batch in batches if batch.status == "draft"),
+        "pending_count": attention["pending_count"],
+        "has_attention": attention["has_attention"],
         "recent_history": [job.to_dict() for job in recent_jobs],
         "latest_outline_batch": batches[0].to_dict() if batches else None,
         "outline_remaining": window,
         "outline_ready_count": int(window["chapter_count"] or 0) if window["covered"] else 0,
-        "chapter_20_recovery": _chapter_recovery_summary(record.root, 20),
+        "chapter_recovery": attention["chapter_recovery"],
     }
 
 
@@ -2445,10 +2523,11 @@ def _catalog_project_item(
     record: ProjectRecord,
     jobs: JobStore,
     reviewed_views: ReviewedProjectViews,
+    outlines: OutlineBatchService,
     *,
     reviewed: bool = False,
 ) -> dict[str, Any]:
-    item = reviewed_views.summary(record) if reviewed else _project_summary(record, jobs)
+    item = reviewed_views.summary(record) if reviewed else _project_summary(record, jobs, outlines)
     return annotate_project_catalog(item, record)
 
 

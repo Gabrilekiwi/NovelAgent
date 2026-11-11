@@ -1191,3 +1191,120 @@ def test_health_accepts_browser_selected_report_and_keeps_strict_gate_fail_close
     assert payload["health"]["production_eligible"] is True
     assert payload["health"]["score"] == 100, payload["health"]["shadow_error"]
     assert all(item["state"] == "pass" for item in payload["health"]["checks"])
+
+
+def _write_chapter_run(project_root: Path, chapter: int, *, committed: bool, run_id: str | None = None) -> None:
+    run_dir = Path(project_root) / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run": {
+            "id": run_id or f"chapter-{chapter}-{'committed' if committed else 'failed'}",
+            "chapter_index": chapter,
+            "committed": committed,
+            "status": "completed" if committed else "failed",
+            "error": None if committed else {"type": "ValueError", "message": "test failure"},
+        }
+    }
+    (run_dir / f"chapter_{chapter}_{'committed' if committed else 'failed'}.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
+def _attention_payloads(client: TestClient, project_id: str) -> tuple[dict, dict]:
+    detail = client.get(f"/api/projects/{project_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    pending = client.get(f"/api/projects/{project_id}/pending")
+    assert pending.status_code == 200, pending.text
+    return body, pending.json()
+
+
+def test_overview_pending_count_is_zero_when_author_has_nothing_to_do(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="empty-attention")
+    _write_chapter_run(Path(project["root"]), 20, committed=False)
+
+    body, pending = _attention_payloads(client, project["id"])
+    overview = body["overview"]
+    summary = body["project"]
+
+    assert pending["jobs"] == []
+    assert pending["drafts"] == []
+    assert pending["outline_batches"] == []
+    assert pending["chapter_recovery"]["chapter"] == project["next_chapter"]
+    assert pending["chapter_recovery"]["recoverable"] is False
+    assert overview["pending_count"] == 0
+    assert overview["has_attention"] is False
+    assert summary["pending_count"] == 0
+    assert summary["has_attention"] is False
+    assert overview["chapter_recovery"]["chapter"] == project["next_chapter"]
+    assert "chapter_20_recovery" not in overview
+    # A leftover recoverable chapter 20 run must not bump the official count
+    # when it is not the chapter the author is actually on.
+    assert pending["chapter_20_recovery"]["chapter"] == 20
+    assert pending["chapter_20_recovery"]["recoverable"] is True
+
+
+def test_overview_pending_count_includes_non_chapter_20_recovery(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="next-chapter-recovery")
+    root = Path(project["root"])
+    _write_chapter_run(root, int(project["next_chapter"]), committed=False)
+    _write_chapter_run(root, 20, committed=True)
+
+    body, pending = _attention_payloads(client, project["id"])
+    overview = body["overview"]
+    summary = body["project"]
+    current = int(project["next_chapter"])
+
+    assert pending["jobs"] == []
+    assert pending["chapter_recovery"]["chapter"] == current
+    assert pending["chapter_recovery"]["recoverable"] is True
+    assert pending["chapter_20_recovery"]["chapter"] == 20
+    assert pending["chapter_20_recovery"]["recoverable"] is False
+    assert overview["pending_count"] == 1
+    assert overview["has_attention"] is True
+    assert summary["pending_count"] == 1
+    assert summary["has_attention"] is True
+    assert overview["chapter_recovery"]["chapter"] == current
+    assert overview["chapter_recovery"]["recoverable"] is True
+    assert "chapter_20_recovery" not in overview
+
+
+def test_overview_pending_count_includes_non_chapter_20_paused_job(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="paused-chapter-21")
+    jobs = client.app.state.jobs
+    parent = jobs.create_job(
+        project_id=project["id"],
+        kind="generation_session",
+        start_chapter=21,
+        end_chapter=30,
+        config={},
+    )
+    assert jobs.claim_next().id == parent.id
+    jobs.mark_running(parent.id, chapter=21, command=["python", "main.py"])
+    jobs.chapter_failed(
+        parent.id,
+        chapter=21,
+        error={"code": "engine_result_unreadable"},
+        uncertain=False,
+    )
+    _write_chapter_run(Path(project["root"]), 20, committed=False)
+
+    body, pending = _attention_payloads(client, project["id"])
+    overview = body["overview"]
+    summary = body["project"]
+
+    assert len(pending["jobs"]) == 1
+    assert pending["jobs"][0]["next_chapter"] == 21
+    assert pending["chapter_recovery"]["chapter"] == 21
+    assert pending["chapter_20_recovery"]["recoverable"] is True
+    assert overview["pending_count"] == 1
+    assert summary["pending_count"] == 1
+    assert overview["chapter_recovery"]["chapter"] == 21
+    assert "chapter_20_recovery" not in overview

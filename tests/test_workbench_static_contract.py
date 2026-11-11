@@ -787,7 +787,9 @@ def test_pre_provider_provenance_git_failure_is_system_blocked_not_recovery() ->
     assert "!job.pre_provider_provenance && !job.context_budget && isQualityRevisionPause(job)" in spa
     assert "!provenanceAtRecoveryChapter && !contextBudgetAtRecoveryChapter" in spa
     assert "state.pending = [...provenanceIssues, ...contextBudgetIssues" in spa
-    assert "payload.chapter_recovery || payload.chapter_20_recovery" in spa
+    assert "payload.chapter_recovery || payload.chapter_20_recovery" not in spa
+    assert "pendingResponse.payload?.chapter_recovery || null" in spa
+    assert "const recovery = payload.chapter_recovery;" in spa
     assert 'issue.scene_schema_failure === true' in spa
     assert 'Scene response was not valid structured JSON' in spa
     assert '场景响应格式错误，已安全分类' in spa
@@ -863,3 +865,17 @@ process.stdout.write(JSON.stringify(output));
     assert result["legacyBudget"]["verified"] is False
     assert result["legacyBudget"]["requiredTokens"] == 33212
     assert result["verifiedBudget"]["verified"] is True
+
+
+def test_overview_pending_count_does_not_special_case_chapter_20() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+
+    assert "overview.chapter_20_recovery?.recoverable" not in spa
+    assert "const recoveryAttention" not in spa
+    assert "issue.chapter || 20" not in spa
+    assert "recovery?.chapter || 20" not in spa
+    assert "overview.pending_count ?? project.pending_count" in spa
+    assert 'setText("[data-overview-pending]", numberLabel(pendingTotal));' in spa
+    assert "const pendingChapterNumber" in spa
+    assert "const pendingChapterLabel" in spa
+    assert "${pendingChapterLabel(issue)}" in spa
