@@ -89,3 +89,50 @@ def test_resolve_review_status_unknown_without_review_or_quality_decision() -> N
     assert resolve_review_status(payload) == "unknown"
     assert _compact_result(payload)["review_status"] == "unknown"
     assert _compact_run(payload)["review_status"] == "unknown"
+
+
+
+def test_compact_run_exposes_unique_failed_action() -> None:
+    payload = {
+        "accepted": False,
+        "committed": False,
+        "run": {
+            "id": "chapter_60_20261111T043633369941Z",
+            "chapter_index": 60,
+            "status": "failed",
+            "committed": False,
+            "error": {
+                "type": "ModelCallError",
+                "message": "OpenAI chat completion failed (provider_call_uncertain; ProviderCallUncertainError).",
+            },
+            "chapter": {"chars": 3500},
+            "execution_evidence": {"budget": {"provider_calls": 6, "unsettled_attempt_count": 1}},
+            "trace": [
+                {"action": "generate_chapter", "status": "completed"},
+                {"action": "polish", "status": "completed"},
+                {"action": "validate", "status": "failed"},
+            ],
+        },
+    }
+    compact = _compact_run(payload)
+    assert compact["failed_action"] == "validate"
+    assert compact["chapter_chars"] == 3500
+    assert compact["provider_calls"] == 6
+    assert compact["unsettled_attempt_count"] == 1
+    assert compact["committed"] is False
+
+    mixed = {
+        "run": {
+            "id": "mixed",
+            "status": "failed",
+            "committed": False,
+            "chapter": {"chars": 2000},
+            "execution_evidence": {"budget": {"provider_calls": 2, "unsettled_attempt_count": 1}},
+            "error": {"type": "ModelCallError", "message": "failed"},
+            "trace": [
+                {"action": "validate", "status": "failed"},
+                {"action": "repair_if_needed", "status": "failed"},
+            ],
+        }
+    }
+    assert _compact_run(mixed)["failed_action"] is None

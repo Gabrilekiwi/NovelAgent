@@ -1899,3 +1899,107 @@ process.stdout.write(JSON.stringify(output));
     assert result["verifiedJob"]["chapterChars"] == 3400
     assert result["legacyViaRun"]["verified"] is True
     assert result["cbapNotStolen"] is None
+
+
+def test_unsettled_paid_draft_uncertain_copy_discloses_chars_and_keeps_classify_primary() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+
+    assert "const retainedUnsettledPaidDraft = (issue) =>" in spa
+    assert "const providerUncertainPaidDraftCopy = (issue) =>" in spa
+    assert "已付费的 ${paidDraft.chapterChars} 字候选正文仍保留在隔离运行区" in spa
+    assert "但不能当作已验证候选" in spa
+    assert "也不要先结束失败尝试来隐藏已付费正文。请先做无模型恢复分类。" in spa
+    assert "上次调用结果不确定，已保留 ${retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }).chapterChars} 字候选，等待无模型恢复分类" in spa
+    # The no-run wording must remain, and must not be used as the paid-draft next step.
+    assert "上次模型调用结果不确定，没有完整回执。不要盲目重试；请先结束本章失败尝试，再开始新的一次写作。" in spa
+    assert "没有完整回执和章节运行记录。不要盲目重试。" in spa
+    assert 'forceResetForm.dataset.recoveryMode = uncertainWithoutRun ? "force-reset-without-run" : "force-reset"' in spa
+    assert spa.count("请先做无模型恢复分类") >= 1
+    # PPR disclosure stays truthful and distinct from uncertain copy.
+    assert "字候选正文已保留，" in spa
+    assert "不要当成无回执的不确定调用" in spa
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_provider_uncertain_copy_discloses_official_paid_draft_and_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const api = async (path, options = {}) => {";
+if (!source.includes(marker)) throw new Error("uncertain copy export marker is missing");
+source = source.replace(
+  marker,
+  "  globalThis.__evidence = { retainedUnsettledPaidDraft, providerUncertainCopy, providerUncertainPaidDraftCopy };\n  return;\n" + marker
+);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const officialCh60 = {
+  error_type: "ModelCallError",
+  error_message: "OpenAI chat completion failed (provider_call_uncertain; ProviderCallUncertainError).",
+  unsettled_attempt_count: 1,
+  committed: false,
+  provider_calls: 6,
+  chapter_chars: 3500,
+  failed_action: "validate"
+};
+const ev = sandbox.__evidence;
+const output = {
+  officialPaid: ev.providerUncertainCopy({ latest_run: officialCh60 }),
+  officialDraft: ev.retainedUnsettledPaidDraft({ latest_run: officialCh60 }),
+  withoutRun: ev.providerUncertainCopy({
+    uncertain_without_run: true,
+    error: { message: "ProviderCallUncertainError: provider_call_uncertain" }
+  }),
+  noChars: ev.retainedUnsettledPaidDraft({ latest_run: { ...officialCh60, chapter_chars: 0 } }),
+  settled: ev.retainedUnsettledPaidDraft({ latest_run: { ...officialCh60, unsettled_attempt_count: 0 } }),
+  committed: ev.retainedUnsettledPaidDraft({ latest_run: { ...officialCh60, committed: true } }),
+  ppr: ev.retainedUnsettledPaidDraft({
+    latest_run: {
+      ...officialCh60,
+      error_message: "OpenAI chat completion failed (provider_partial_response; ProviderPartialResponseError).",
+      error_type: "ModelCallError",
+      chapter_chars: 6318,
+      failed_action: "repair_if_needed"
+    }
+  }),
+  tooShort: ev.retainedUnsettledPaidDraft({ latest_run: { ...officialCh60, chapter_chars: 499 } })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["officialDraft"]["chapterChars"] == 3500
+    assert result["officialDraft"]["failedAction"] == "validate"
+    paid = result["officialPaid"]
+    assert "3500 字候选正文仍保留在隔离运行区" in paid
+    assert "语义审核阶段中断" in paid
+    assert "不能当作已验证候选" in paid
+    assert "请先做无模型恢复分类" in paid
+    assert "请先结束本章失败尝试" not in paid
+    assert "没有完整回执" not in paid
+    without_run = result["withoutRun"]
+    assert "没有完整回执" in without_run
+    assert "请先结束本章失败尝试" in without_run
+    assert result["noChars"] is None
+    assert result["settled"] is None
+    assert result["committed"] is None
+    assert result["ppr"] is None
+    assert result["tooShort"] is None

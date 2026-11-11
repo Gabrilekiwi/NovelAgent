@@ -1045,7 +1045,54 @@
     }
     return "已保留完整候选稿。请先验证或编辑后再验证；不要盲目重试这次失败的修订或上下文装配，也不要结束失败尝试来隐藏已付费正文。";
   };
+  const uncertainFailedStageLabel = (action) => ({
+    validate: "语义审核",
+    polish: "润色",
+    repair_if_needed: "修订",
+    repair: "修订",
+    generate_chapter: "生成",
+  }[String(action || "")] || "");
+
+  const retainedUnsettledPaidDraft = (issue) => {
+    const run = issue?.latest_run && typeof issue.latest_run === "object" ? issue.latest_run : null;
+    const chars = Number(run?.chapter_chars);
+    if (!Number.isFinite(chars) || chars < 500) return null;
+    if (Number(run?.unsettled_attempt_count) !== 1) return null;
+    if (run?.committed === true) return null;
+    const details = issue?.error?.details && typeof issue.error.details === "object" ? issue.error.details : {};
+    const message = [
+      run?.error_message,
+      issue?.error?.user_message,
+      issue?.error?.message,
+      issue?.error?.reason,
+      issue?.reason,
+    ].filter(Boolean).join("\n");
+    const looksUncertain = issue?.uncertain_without_run !== true
+      && (
+        /ProviderCallUncertainError|provider_call_uncertain|without a durable receipt|没有耐久回执/.test(message)
+        || run?.error_type === "ProviderCallUncertainError"
+        || issue?.error?.error_type === "ProviderCallUncertainError"
+        || issue?.error?.code === "provider_call_uncertain"
+      );
+    if (!looksUncertain) return null;
+    if (/provider_partial_response|ProviderPartialResponseError/.test(message)) return null;
+    return {
+      chapterChars: chars,
+      failedAction: run?.failed_action || details.failed_action || "",
+    };
+  };
+
+  const providerUncertainPaidDraftCopy = (issue) => {
+    const paidDraft = retainedUnsettledPaidDraft(issue);
+    if (!paidDraft) return null;
+    const stage = uncertainFailedStageLabel(paidDraft.failedAction);
+    const stageClause = stage ? `（${stage}阶段中断）` : "";
+    return `上次模型调用结果不确定，最后一次调用尚未结算。已付费的 ${paidDraft.chapterChars} 字候选正文仍保留在隔离运行区${stageClause}，但不能当作已验证候选。不要盲目重试，也不要先结束失败尝试来隐藏已付费正文。请先做无模型恢复分类。`;
+  };
+
   const providerUncertainCopy = (issue) => {
+    const paidDraftCopy = providerUncertainPaidDraftCopy(issue);
+    if (paidDraftCopy) return paidDraftCopy;
     if (durablePolishedDraftAvailable(issue)) return polishedDraftGuidance(issue);
     const error = issue?.error || {};
     const pieces = [error.user_message, error.message, error.reason, error.stderr_tail, issue?.reason, issue?.summary].filter(Boolean).join("\n");
@@ -3492,7 +3539,18 @@
         job_id: job.job_id || job.id,
         chapter: job.chapter || job.next_chapter,
         title: job.execution_compatible === false ? `第 ${job.next_chapter || "—"} 章旧任务版本不兼容` : job.title || `第 ${job.next_chapter || "—"} 章需要作者决定`,
-        reason: job.execution_compatible === false ? incompatibleJobMessage : providerUncertainCopy(job) || job.reason || job.error?.message || (job.state === "needs_recovery" ? "Provider 状态不确定，不会自动重试" : "生产已暂停")
+        reason: job.execution_compatible === false ? incompatibleJobMessage : providerUncertainCopy({
+          ...job,
+          latest_run: job.latest_run || (
+            Number(payload.chapter_recovery?.latest_run?.chapter_index || payload.chapter_recovery?.chapter) === Number(job.next_chapter || job.chapter)
+              ? payload.chapter_recovery?.latest_run
+              : null
+          ),
+          uncertain_without_run: job.uncertain_without_run === true || (
+            payload.chapter_recovery?.uncertain_without_run === true
+            && Number(payload.chapter_recovery?.chapter) === Number(job.next_chapter || job.chapter)
+          ),
+        }) || job.reason || job.error?.message || (job.state === "needs_recovery" ? "Provider 状态不确定，不会自动重试" : "生产已暂停")
       };
       const repairNotConverging = repairNotConvergingDetailsOf(normalized);
       return {
@@ -3624,7 +3682,7 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
-        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，等待无模型恢复分类` : providerPartialResponseFailure ? `第 ${recoveryChapter} 章因模型部分响应中断而停止，已保留已付费内容，等待无模型恢复分类` : contextBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因上下文预算中断，已保留已付费内容，等待无模型恢复分类` : structuredContextAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因结构化上下文装配中断，已保留已付费内容，等待无模型恢复分类` : localBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已产生已付费调用后因本地预算停止，已保留已付费内容，等待无模型恢复分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，等待无模型恢复分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，等待无模型恢复分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章已安全暂停`,
+        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，等待无模型恢复分类` : providerPartialResponseFailure ? `第 ${recoveryChapter} 章因模型部分响应中断而停止，已保留已付费内容，等待无模型恢复分类` : contextBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因上下文预算中断，已保留已付费内容，等待无模型恢复分类` : structuredContextAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因结构化上下文装配中断，已保留已付费内容，等待无模型恢复分类` : localBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已产生已付费调用后因本地预算停止，已保留已付费内容，等待无模型恢复分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，等待无模型恢复分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，等待无模型恢复分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }) ? `第 ${recoveryChapter} 章上次调用结果不确定，已保留 ${retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }).chapterChars} 字候选，等待无模型恢复分类` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章已安全暂停`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
           : sceneSchemaFailure
@@ -3651,6 +3709,8 @@
           ? sceneBoundaryValidationSummary(sceneBoundaryValidation)
           : qualityRejectionFailure
           ? `本次 ${qualityRejection.providerCalls} 次模型调用均已结算；${qualityRejection.chapterChars} 字候选已保留。阻断原因：${qualityProblemSummary(qualityRejection)}`
+          : providerUncertainPaidDraftCopy({ latest_run: latestRecoveryRun })
+          ? providerUncertainPaidDraftCopy({ latest_run: latestRecoveryRun })
           : recovery.uncertain_without_run
           ? "上次模型调用结果不确定，没有完整回执和章节运行记录。不要盲目重试。"
           : "最新完整输出尚未重新识别恢复边界",
@@ -3672,6 +3732,8 @@
           ? "正式正文没有提交；本地预算在已有已付费调用后拒绝继续。先执行无模型恢复分类，核对应保留的已付费内容，不要当成调用前的预算拒绝，也不要盲目重试。"
           : sceneSchemaFailure || contextHeadroomFailure || repairAuthorityFailure || qualityRejectionFailure
           ? "正式正文没有提交；先执行无模型恢复分类，核对候选正文、回执与最新运行后再继续。"
+          : providerUncertainPaidDraftCopy({ latest_run: latestRecoveryRun })
+          ? "正式正文没有提交。先执行无模型恢复分类，核对应保留的已付费正文与回执；不要先结束失败尝试来隐藏已付费正文，也不要盲目重试这次不确定调用。"
           : recovery.uncertain_without_run
           ? "电脑中断时模型调用没有留下完整回执。请先做无模型安全分类；分类会结束这次失败尝试，也可以直接结束本章并允许新尝试。正式正文与快照不会被改写。"
           : "场景和合并草稿已保存在隔离运行区。先执行无模型分类，系统不会重写正文、调用模型或提交章节。",
@@ -3708,7 +3770,7 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
-        title: retainedCompleteDraftAvailable(recovery) ? (durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : `第 ${recoveryChapter} 章已保留完整候选稿，请验证后继续`) : repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，已安全分类` : providerPartialResponseFailure ? `第 ${recoveryChapter} 章因模型部分响应中断而停止，已保留已付费内容，已安全分类` : contextBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因上下文预算中断，已保留已付费内容，已安全分类` : structuredContextAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因结构化上下文装配中断，已保留已付费内容，已安全分类` : localBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已产生已付费调用后因本地预算停止，已保留已付费内容，已安全分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，已安全分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章可安全恢复`,
+        title: retainedCompleteDraftAvailable(recovery) ? (durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : `第 ${recoveryChapter} 章已保留完整候选稿，请验证后继续`) : repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，已安全分类` : providerPartialResponseFailure ? `第 ${recoveryChapter} 章因模型部分响应中断而停止，已保留已付费内容，已安全分类` : contextBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因上下文预算中断，已保留已付费内容，已安全分类` : structuredContextAfterProviderFailure ? `第 ${recoveryChapter} 章在已付费调用后因结构化上下文装配中断，已保留已付费内容，已安全分类` : localBudgetAfterProviderFailure ? `第 ${recoveryChapter} 章在已产生已付费调用后因本地预算停止，已保留已付费内容，已安全分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，已安全分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }) ? `第 ${recoveryChapter} 章上次调用结果不确定，已保留 ${retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }).chapterChars} 字候选，等待无模型恢复分类` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章可安全恢复`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
           : sceneSchemaFailure
@@ -3737,6 +3799,8 @@
           ? `本次 ${qualityRejection.providerCalls} 次模型调用均已结算；${qualityRejection.chapterChars} 字候选已保留。阻断原因：${qualityProblemSummary(qualityRejection)}`
           : durablePolishedDraftAvailable(recovery)
           ? polishedDraftGuidance(recovery)
+          : providerUncertainPaidDraftCopy({ latest_run: latestRecoveryRun })
+          ? providerUncertainPaidDraftCopy({ latest_run: latestRecoveryRun })
           : recovery.uncertain_without_run
           ? "上次模型调用结果不确定，没有完整回执和章节运行记录。不要盲目重试。"
           : recovery.checkpoint ? `已分类 ${recovery.checkpoint.reusable_scene_count || 0} 个回执完整场景候选` : "生成未提交，先执行无模型恢复分类",
@@ -3752,6 +3816,8 @@
           ? `正式正文没有提交；${Number(recovery.checkpoint?.reusable_scene_count || 0)} 个有回执的场景候选已完成恢复核对，继续时会重新验证后再进入修订与提交。`
           : durablePolishedDraftAvailable(recovery)
           ? polishedDraftGuidance(recovery)
+          : providerUncertainPaidDraftCopy({ latest_run: latestRecoveryRun })
+          ? "正式正文没有提交。已付费候选仍保留在隔离运行区，但不能当作已验证候选。先执行无模型恢复分类，不要先结束失败尝试来隐藏已付费正文，也不要盲目重试这次不确定调用。"
           : recovery.uncertain_without_run
           ? "电脑中断时模型调用没有留下完整回执。请先做无模型安全分类；分类会结束这次失败尝试，也可以直接结束本章并允许新尝试。正式正文与快照不会被改写。"
           : recovery.checkpoint ? "恢复检查点已建立；候选会先重跑当前状态边界，通过后才会复用。" : "工作台将先在不调用模型的情况下分类现有回执，不会改写正文。",

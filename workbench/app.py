@@ -2280,6 +2280,19 @@ def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
             "manual_review_count": validation.get("manual_review_count"),
             "problems": problems,
         }
+    failed_action = None
+    trace = run.get("trace")
+    if isinstance(trace, list):
+        failed = [
+            item
+            for item in trace
+            if isinstance(item, Mapping)
+            and str(item.get("status") or item.get("state") or "") == "failed"
+        ]
+        if len(failed) == 1:
+            failed_action = str(
+                failed[0].get("action") or failed[0].get("name") or failed[0].get("step") or ""
+            ).strip() or None
     return {
         "id": run.get("id"),
         "chapter_index": run.get("chapter_index"),
@@ -2293,6 +2306,7 @@ def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "publication": persistence.get("publication") if isinstance(persistence, Mapping) else None,
         "error_type": error.get("type"),
         "error_message": error.get("message"),
+        "failed_action": failed_action,
         "provider_calls": budget.get("provider_calls"),
         "unsettled_attempt_count": budget.get("unsettled_attempt_count"),
         "total_input_tokens": budget.get("total_input_tokens"),
