@@ -10,6 +10,7 @@ from typing import Any, Callable
 from api.contracts import REPAIR_CONTRACT, validate_text_output
 from api.openai_client import chat_completion
 from core.config import get_config
+import core.context_budget as context_budget
 from core.context_budget import (
     ContextBudgetError,
     conservative_calibrated_token_estimate,
@@ -36,8 +37,10 @@ from core.structured_context import (
 from modules.scene_repair.envelope import (
     build_repair_envelope,
     generation_state_view_sha256,
+    project_repair_envelope_for_budget,
     repair_validation_sha256,
 )
+from modules.scene_repair.ledger import project_canonical_repair_ledger
 from modules.scene_repair.plan import build_repair_plan
 
 
@@ -79,6 +82,17 @@ Each item in `repair_plan.steps` references exactly one canonical item in
 `problems` by `problem_id`. Read the problem message, repair hint, and evidence
 from that canonical problem; do not expect them to be duplicated in the step.
 Use the single top-level `recovery_context` for prior-attempt evidence.
+""".rstrip()
+_REPAIR_LEDGER_PROMPT_SUFFIX = """
+
+## Projected Problem Ledger
+
+When `problem_types` is present, each problem's `type_id` points at one shared
+type. Read `code`, `message`, `validator`, `severity`, `blocking`, `category`,
+`repair_hint`, `action`, and `strategy` from that type. If the type has
+`shared_evidence` or `parameters`, combine them with the problem's own
+`evidence` and any step-level `parameters`. Missing type-level fields on the
+problem or step object are inherited from the type, not absent facts.
 """.rstrip()
 RepairStrategy = Callable[[str, dict[str, Any], list[dict[str, Any]]], str]
 
@@ -222,18 +236,34 @@ def build_repair_messages(
         expected_generation_state_view_sha256=bound_view_sha256,
     )
     prompt = _explicit_repair_prompt(repair_context)
-    return [
-        {"role": "system", "content": prompt},
-        {
-            "role": "user",
-            "content": json.dumps(
-                envelope,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-        },
-    ]
+    messages = _repair_messages(
+        prompt,
+        json.dumps(
+            envelope,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+    if _repair_messages_fit_safe_target(messages):
+        return messages
+    projected = project_repair_envelope_for_budget(envelope)
+    projected_prompt = _explicit_repair_prompt(
+        repair_context,
+        include_ledger_projection=True,
+    )
+    projected_messages = _repair_messages(
+        projected_prompt,
+        json.dumps(
+            projected,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+    if _repair_messages_fit_safe_target(projected_messages):
+        return projected_messages
+    _raise_repair_context_headroom_exceeded(projected_messages)
 
 
 def _build_legacy_repair_messages(
@@ -326,6 +356,22 @@ def _build_legacy_repair_messages(
         if measured_tokens <= safe_target:
             return _repair_messages(prompt, payload)
 
+    projected_messages = _legacy_projected_repair_messages(
+        chapter_text,
+        validation,
+        repair_plan,
+        recovery_context,
+        repair_context,
+        compiled_context,
+        authoritative_state_source,
+        repair_query,
+        prompt,
+        budget,
+        safe_target,
+        last_context_error,
+    )
+    if projected_messages is not None:
+        return projected_messages
     if measured_candidates:
         required_tokens, _payload = min(measured_candidates, key=lambda item: item[0])
         raise ContextBudgetError(
@@ -345,6 +391,122 @@ def _build_legacy_repair_messages(
     )
 
 
+def _repair_messages_fit_safe_target(messages: list[dict[str, str]]) -> bool:
+    budget = context_budget.default_context_budget()
+    safe_target = max(1, budget.hard_input_limit - _REPAIR_INPUT_HEADROOM_TOKENS)
+    report = budget.measure(
+        messages[-1]["content"],
+        stage="repair",
+        protocol_texts=(messages[0]["content"],),
+    )
+    return int(report["budgeted_input_tokens"]) <= safe_target
+
+
+def _raise_repair_context_headroom_exceeded(
+    messages: list[dict[str, str]],
+) -> None:
+    budget = context_budget.default_context_budget()
+    safe_target = max(1, budget.hard_input_limit - _REPAIR_INPUT_HEADROOM_TOKENS)
+    report = budget.measure(
+        messages[-1]["content"],
+        stage="repair",
+        protocol_texts=(messages[0]["content"],),
+    )
+    raise ContextBudgetError(
+        "story_project_repair_context_headroom_exceeded",
+        "repair input requires "
+        f"{int(report['budgeted_input_tokens'])} tokens; safe target is "
+        f"{safe_target}; hard limit is {budget.hard_input_limit}",
+    )
+
+
+def _legacy_projected_repair_messages(
+    chapter_text: str,
+    validation: dict[str, Any],
+    repair_plan: dict[str, Any],
+    recovery_context: dict[str, Any] | None,
+    repair_context: RepairContext,
+    compiled_context: str,
+    authoritative_state_source: dict[str, Any] | None,
+    repair_query: str,
+    prompt: str,
+    budget: Any,
+    safe_target: int,
+    last_context_error: StructuredContextError | None,
+) -> list[dict[str, str]] | None:
+    from modules.scene_repair.envelope import _canonical_problem_contract
+
+    try:
+        canonical_problems, compact_plan = _canonical_problem_contract(
+            validation,
+            repair_plan,
+        )
+        problem_types, problems, projected_plan = project_canonical_repair_ledger(
+            canonical_problems,
+            compact_plan,
+        )
+    except (TypeError, ValueError):
+        return None
+
+    prompt_with_ledger = (
+        prompt + "\n\n" + _REPAIR_LEDGER_PROMPT_SUFFIX
+        if _REPAIR_LEDGER_PROMPT_SUFFIX not in prompt
+        else prompt
+    )
+    lean_validation = _legacy_validation_summary(validation)
+    policies: list[dict[str, int] | None] = [None, *_LEGACY_REPAIR_CONTEXT_POLICIES]
+    best_tokens: int | None = None
+    best_messages: list[dict[str, str]] | None = None
+    for policy in policies:
+        try:
+            if policy is None:
+                compact_context = _compact_repair_context(
+                    compiled_context,
+                    query=repair_query,
+                    authoritative_state_source=authoritative_state_source,
+                )
+            else:
+                compact_context = _compact_repair_context(
+                    compiled_context,
+                    query=repair_query,
+                    authoritative_state_source=authoritative_state_source,
+                    authority_section_chars=policy["authority_section_chars"],
+                    context_chars=policy["context_chars"],
+                    per_section_chars=policy["per_section_chars"],
+                    authority_selection_mode="required_only",
+                    policy="repair_markdown_json_retrieval_required_only_v2",
+                )
+        except StructuredContextError:
+            continue
+        payload = _legacy_repair_payload(
+            chapter_text,
+            validation,
+            projected_plan,
+            recovery_context,
+            repair_context,
+            compact_context,
+            validation_projection=lean_validation,
+            compact_json=True,
+            problem_types=problem_types,
+            problems=problems,
+        )
+        report = budget.measure(
+            payload,
+            stage="repair",
+            protocol_texts=(prompt_with_ledger,),
+        )
+        measured_tokens = int(report["budgeted_input_tokens"])
+        messages = _repair_messages(prompt_with_ledger, payload)
+        if measured_tokens <= safe_target:
+            return messages
+        if best_tokens is None or measured_tokens < best_tokens:
+            best_tokens = measured_tokens
+            best_messages = messages
+    if best_messages is not None:
+        _raise_repair_context_headroom_exceeded(best_messages)
+    return None
+
+
 def _repair_messages(prompt: str, payload: str) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": prompt},
@@ -362,6 +524,8 @@ def _legacy_repair_payload(
     *,
     validation_projection: dict[str, Any] | None = None,
     compact_json: bool = False,
+    problem_types: list[dict[str, Any]] | None = None,
+    problems: list[dict[str, Any]] | None = None,
 ) -> str:
     payload = {
         "chapter": chapter_text,
@@ -394,6 +558,10 @@ def _legacy_repair_payload(
             "fallback": "complete replacement chapter prose",
         },
     }
+    if problem_types is not None:
+        payload["problem_types"] = problem_types
+    if problems is not None:
+        payload["problems"] = problems
     if compact_json:
         return json.dumps(
             payload,
@@ -467,16 +635,23 @@ def _repair_chapter_contract(
     return contract
 
 
-def _explicit_repair_prompt(repair_context: RepairContext) -> str:
+def _explicit_repair_prompt(
+    repair_context: RepairContext,
+    *,
+    include_ledger_projection: bool = False,
+) -> str:
     directives = {
         "language": _normalized_language(repair_context.language),
         "allow_new_facts": bool(repair_context.allow_new_facts),
         "known_conflict_hint": repair_context.known_conflict_hint,
     }
+    suffix = _EXPLICIT_REPAIR_PROMPT_SUFFIX
+    if include_ledger_projection:
+        suffix += "\n\n" + _REPAIR_LEDGER_PROMPT_SUFFIX
     return (
         _load_prompt()
         + "\n\n"
-        + _EXPLICIT_REPAIR_PROMPT_SUFFIX
+        + suffix
         + "\n\nRepair directives:\n"
         + json.dumps(
             directives,

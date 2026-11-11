@@ -12,6 +12,10 @@ from core.state.generation_state_view import (
     build_plan_generation_state_projection,
     validate_plan_generation_state_projection,
 )
+from modules.scene_repair.ledger import (
+    pack_generation_state_projection,
+    project_canonical_repair_ledger,
+)
 
 
 REPAIR_ENVELOPE_SCHEMA_VERSION = "1.0"
@@ -22,6 +26,7 @@ _CATEGORIES = frozenset({"blocking", "warning"})
 _RISK_LEVELS = frozenset({*_SEVERITIES, "none"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PROBLEM_ID = re.compile(r"^p[0-9]{3,}$")
+_TYPE_ID = re.compile(r"^t[0-9]{3,}$")
 
 
 class RepairEnvelopeError(ValueError):
@@ -156,6 +161,34 @@ def build_repair_envelope(
     return validate_repair_envelope(envelope)
 
 
+def project_repair_envelope_for_budget(
+    envelope: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project an already-valid envelope onto a compact repair working set."""
+
+    source = _mapping(envelope, "repair envelope")
+    problem_types, problems, plan = project_canonical_repair_ledger(
+        list(source["problems"]),
+        dict(source["repair_plan"]),
+    )
+    packed_projection = pack_generation_state_projection(
+        source["generation_state_projection"]
+    )
+    projected = copy.deepcopy(source)
+    projected["problem_types"] = problem_types
+    projected["problems"] = problems
+    projected["repair_plan"] = plan
+    projected["problem_set_sha256"] = _canonical_sha256(problems)
+    projected["repair_plan_sha256"] = _canonical_sha256(plan)
+    projected["generation_state_projection"] = packed_projection
+    projected["generation_state_projection_sha256"] = packed_projection[
+        "projection_sha256"
+    ]
+    projected.pop("envelope_sha256", None)
+    projected["envelope_sha256"] = _canonical_sha256(projected)
+    return validate_repair_envelope(projected)
+
+
 def validate_repair_envelope(value: Mapping[str, Any]) -> dict[str, Any]:
     envelope = _mapping(value, "repair envelope")
     try:
@@ -172,6 +205,7 @@ def validate_repair_envelope(value: Mapping[str, Any]) -> dict[str, Any]:
             "repair_envelope_schema_invalid",
             "unsupported envelope_kind",
         )
+    _validate_problem_ledger(envelope)
     if envelope["base_chapter_sha256"] != _text_sha256(envelope["chapter"]):
         raise _error(
             "base_chapter_digest_mismatch",
@@ -272,6 +306,120 @@ def validate_repair_envelope(value: Mapping[str, Any]) -> dict[str, Any]:
             "envelope digest does not match canonical payload",
         )
     return envelope
+
+
+def _validate_problem_ledger(envelope: dict[str, Any]) -> None:
+    problems = envelope["problems"]
+    steps = envelope["repair_plan"]["steps"]
+    types = envelope.get("problem_types")
+    if types is None:
+        for problem in problems:
+            _require_complete_problem(problem)
+        for step in steps:
+            _require_complete_step(step)
+        return
+    if not isinstance(types, list) or any(
+        not isinstance(item, Mapping) for item in types
+    ):
+        raise _error(
+            "problem_types_invalid",
+            "problem_types must contain only objects",
+        )
+    type_ids = [str(item.get("type_id") or "") for item in types]
+    if any(_TYPE_ID.fullmatch(item) is None for item in type_ids):
+        raise _error("problem_type_id_invalid", "problem type IDs must be t001...")
+    if len(type_ids) != len(set(type_ids)):
+        raise _error("problem_type_id_duplicated", "problem type IDs must be unique")
+    types_by_id = {item["type_id"]: item for item in types}
+    referenced: set[str] = set()
+    for problem in problems:
+        type_id = problem.get("type_id")
+        if type_id is None:
+            _require_complete_problem(problem)
+            continue
+        if type_id not in types_by_id:
+            raise _error(
+                "problem_type_reference_invalid",
+                f"problem {problem.get('problem_id')} references unknown type {type_id}",
+            )
+        unexpected = set(problem) - {"problem_id", "type_id", "evidence"}
+        if unexpected:
+            raise _error(
+                "validation_problem_invalid",
+                "projected problems may only add type_id and evidence beside problem_id",
+            )
+        typ = types_by_id[type_id]
+        evidence = list(problem.get("evidence") or []) + list(
+            typ.get("shared_evidence") or []
+        )
+        if not evidence:
+            raise _error(
+                "repair_problem_evidence_missing",
+                f"problem {problem.get('problem_id')} dropped all required evidence",
+            )
+        referenced.add(str(type_id))
+    unused = sorted(set(types_by_id) - referenced)
+    if unused:
+        raise _error(
+            "problem_type_unreferenced",
+            f"problem types {unused} are not referenced by any problem",
+        )
+    problems_by_id = {item["problem_id"]: item for item in problems}
+    for step in steps:
+        problem = problems_by_id.get(step.get("problem_id"))
+        if problem is None:
+            continue
+        type_id = problem.get("type_id")
+        if type_id is None:
+            _require_complete_step(step)
+            continue
+        typ = types_by_id[type_id]
+        if typ.get("action") is None or typ.get("strategy") is None:
+            raise _error(
+                "repair_plan_step_invalid",
+                f"problem type {type_id} must provide action and strategy",
+            )
+        unexpected = set(step) - {"problem_id", "priority", "parameters"}
+        if unexpected:
+            raise _error(
+                "repair_plan_step_invalid",
+                "projected repair steps may only add parameters beside problem_id and priority",
+            )
+
+
+def _require_complete_problem(problem: Mapping[str, Any]) -> None:
+    missing = [
+        field
+        for field in (
+            "code",
+            "message",
+            "validator",
+            "severity",
+            "blocking",
+            "category",
+            "repair_hint",
+            "evidence",
+        )
+        if field not in problem
+    ]
+    if missing:
+        raise _error(
+            "validation_problem_invalid",
+            "complete problem is missing " + ", ".join(missing),
+        )
+
+
+def _require_complete_step(step: Mapping[str, Any]) -> None:
+    missing = [
+        field
+        for field in ("action", "priority", "strategy", "parameters")
+        if field not in step
+    ]
+    if missing:
+        raise _error(
+            "repair_plan_step_invalid",
+            "complete repair plan step is missing " + ", ".join(missing),
+        )
 
 
 def _canonical_problem_contract(
@@ -804,6 +952,7 @@ __all__ = [
     "RepairEnvelopeError",
     "build_repair_envelope",
     "generation_state_view_sha256",
+    "project_repair_envelope_for_budget",
     "repair_validation_sha256",
     "validate_repair_envelope",
 ]
