@@ -224,3 +224,15 @@ def test_author_bookshelf_marks_similarly_named_previous_edition(tmp_path: Path)
     assert official_project["edition_role"] == "current"
     assert official_project["edition_label"] == "当前作品"
     assert official_project["is_active_book"] is True
+
+
+def test_previous_edition_card_uses_edition_warning_not_empty_summary_placeholder() -> None:
+    spa = Path(__file__).resolve().parents[1] / "workbench" / "static" / "workbench-spa.js"
+    source = spa.read_text(encoding="utf-8")
+    assert "这是上一版，不是正在续写的那一本。" in source
+    assert '当前作品是「${project.current_edition_title}」。这是上一版，不是正在续写的那一本。' in source
+    # projectSummaryOf() always returns a truthy placeholder such as
+    # "还没有作品简介。", so "summary || warning" would hide the edition warning
+    # on the official previous-edition card.
+    assert "projectSummaryOf(project) || fallback" not in source
+    assert 'fragment.querySelector(".book-summary").textContent = fallback;' in source

@@ -463,7 +463,7 @@
       const fallback = project.current_edition_title
         ? `当前作品是「${project.current_edition_title}」。这是上一版，不是正在续写的那一本。`
         : "这是上一版，不是正在续写的那一本。";
-      fragment.querySelector(".book-summary").textContent = projectSummaryOf(project) || fallback;
+      fragment.querySelector(".book-summary").textContent = fallback;
     } else if (project.edition_role === "current") {
       fragment.querySelector(".book-title-row p").textContent = `当前作品 · ${countLabel}`;
       fragment.querySelector(".book-summary").textContent = projectSummaryOf(project);
