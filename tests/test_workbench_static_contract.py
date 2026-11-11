@@ -778,7 +778,7 @@ def test_settled_stale_scene_evidence_failure_explains_retained_candidate() -> N
     assert "不会直接重试这次失败的修订" in spa
     assert "不要盲目重试这次失败修订" in spa
     assert 'form.dataset.recoveryMode = "stale-scene-evidence-classify"' in spa
-    assert "!staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
+    assert "!staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation && !providerPartialResponse && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
 
     assert stream.count('"chapter.stale_scene_evidence"') >= 3
     assert '"chapter.stale_scene_evidence": "自动修订与场景证据对不齐，任务已安全暂停"' in stream
@@ -1071,6 +1071,107 @@ process.stdout.write(JSON.stringify(output));
     assert result["incompleteJob"] is None
     assert result["verifiedJob"]["verified"] is True
     assert result["verifiedJob"]["providerCalls"] == 0
+    assert result["legacyViaRun"]["verified"] is True
+
+
+
+
+def test_settled_provider_partial_response_failure_explains_next_step() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    assert "const providerPartialResponseDetailsOfRun = (run) =>" in spa
+    assert "const providerPartialResponseDetailsOf = (job) =>" in spa
+    assert 'value.code === "provider_partial_response"' in spa
+    assert "provider_partial_response: providerPartialResponse" in spa
+    assert "模型部分响应中断" in spa
+    assert "调用已有终态回执，部分响应已保留" in spa
+    assert "不是结果不确定" in spa
+    assert "先做无模型恢复分类" in spa
+    assert 'form.dataset.recoveryMode = "provider-partial-response-classify"' in spa
+    assert "边界重生" not in spa.split("providerPartialResponseFailure ?")[1].split(";")[0]
+
+    assert stream.count('"chapter.provider_partial_response"') >= 3
+    assert '"chapter.provider_partial_response": "模型部分响应中断，已保留已付费内容，任务已安全暂停"' in stream
+    assert '"chapter.provider_partial_response": "awaiting_input"' in stream
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_provider_partial_response_browser_classifier_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { providerPartialResponseDetailsOf, providerPartialResponseDetailsOfRun };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const completeRun = {
+  error_type: "ModelCallError",
+  error_message: "OpenAI chat completion failed (provider_partial_response; ProviderPartialResponseError).",
+  unsettled_attempt_count: 1,
+  committed: false,
+  provider_calls: 4,
+  chapter_chars: 12
+};
+const completeDetails = {
+  failure_origin: "provider_partial_response",
+  provider_calls: 4,
+  settled_provider_calls: 4,
+  unsettled_attempt_count: 1,
+  candidate_chars: 12,
+  provider_reached: true,
+  formal_prose_exists: false,
+  accepted: false,
+  committed: false,
+  writeback_attempted: false,
+  writeback_applied: false,
+  automatic_retry: false,
+  safe_to_retry: false,
+  recovery_required: true,
+  partial_receipt_status: "partial_response_failed",
+  source_error_type: "ModelCallError",
+  source_error_message: "OpenAI chat completion failed (provider_partial_response; ProviderPartialResponseError)."
+};
+const output = {
+  fromRun: sandbox.__evidence.providerPartialResponseDetailsOfRun(completeRun),
+  zeroCalls: sandbox.__evidence.providerPartialResponseDetailsOfRun({ ...completeRun, provider_calls: 0 }),
+  uncertainRun: sandbox.__evidence.providerPartialResponseDetailsOfRun({ ...completeRun, error_message: "OpenAI chat completion failed (provider_call_uncertain; ProviderCallUncertainError)." }),
+  unreadableJob: sandbox.__evidence.providerPartialResponseDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "ModelCallError: OpenAI chat completion failed (provider_partial_response; ProviderPartialResponseError)." } }),
+  incompleteJob: sandbox.__evidence.providerPartialResponseDetailsOf({ error: { code: "provider_partial_response", details: { ...completeDetails, writeback_applied: undefined } } }),
+  verifiedJob: sandbox.__evidence.providerPartialResponseDetailsOf({ error: { code: "provider_partial_response", details: completeDetails } }),
+  legacyViaRun: sandbox.__evidence.providerPartialResponseDetailsOf({ error: { code: "engine_result_unreadable" }, latest_run: completeRun })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["fromRun"]["providerCalls"] == 4
+    assert result["fromRun"]["chapterChars"] == 12
+    assert result["zeroCalls"] is None
+    assert result["uncertainRun"] is None
+    assert result["unreadableJob"] is None
+    assert result["incompleteJob"] is None
+    assert result["verifiedJob"]["verified"] is True
+    assert result["verifiedJob"]["providerCalls"] == 4
     assert result["legacyViaRun"]["verified"] is True
 
 

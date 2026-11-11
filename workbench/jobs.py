@@ -20,7 +20,11 @@ from core.story_project.format_compatibility import assert_project_execution_com
 from core.engine.locked_chapter import verified_final_recovery_draft
 from core.engine.persistence_v2 import verify_publication_receipt
 from core.engine.root_registry import RootRegistryService
-from core.model_calls import load_model_call_intent, load_model_call_receipt
+from core.model_calls import (
+    PROVIDER_PARTIAL_RESPONSE_FAILED,
+    load_model_call_intent,
+    load_model_call_receipt,
+)
 from core.runtime_paths import RuntimePaths
 from workbench.database import WorkbenchDatabase
 from workbench.instance import InstanceLease
@@ -51,6 +55,7 @@ STALE_SCENE_EVIDENCE_ERROR = "stale_scene_evidence"
 SCENE_BOUNDARY_VALIDATION_ERROR = "scene_boundary_validation"
 SCENE_SCHEMA_VALIDATION_ERROR = "scene_schema_validation"
 BRIDGE_PREVALIDATION_ERROR = "bridge_prevalidation"
+PROVIDER_PARTIAL_RESPONSE_ERROR = "provider_partial_response"
 _CONTEXT_BUDGET_PATTERN = re.compile(
     r"(?P<stage>[A-Za-z][A-Za-z0-9_-]*) input requires "
     r"(?P<required>[0-9]+) tokens; hard limit is (?P<hard>[0-9]+)"
@@ -1151,6 +1156,63 @@ class JobStore:
             )
         return self.get(job_id)
 
+    def reconcile_provider_partial_response_failure(
+        self,
+        job_id: str,
+        *,
+        result: Mapping[str, Any],
+        error: Mapping[str, Any],
+        expected_legacy_error_sha256: str,
+    ) -> JobRecord:
+        """Upgrade one proven partial-response failure without requeueing it."""
+
+        if not _is_provider_partial_response_error(error):
+            raise JobError("provider partial-response reconciliation requires structured evidence")
+        timestamp = _utc_now()
+        with self.database.transaction() as connection:
+            row = _require_job_row(connection, job_id)
+            current_error = _stored_job_error(row)
+            current_error_sha256 = _sha256_text(_canonical_json(current_error))
+            if (
+                row["kind"] != "generation_session"
+                or row["state"] != "awaiting_input"
+                or row["result_json"] is not None
+                or current_error.get("code") != "engine_result_unreadable"
+                or current_error_sha256 != expected_legacy_error_sha256
+            ):
+                raise JobError("job is not the unchanged legacy provider partial-response pause")
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET result_json = ?, error_json = ?,
+                    manual_confirmation_required = 1, updated_at = ?, revision = revision + 1
+                WHERE id = ? AND state = 'awaiting_input' AND revision = ?
+                    AND result_json IS NULL AND error_json = ?
+                """,
+                (
+                    _canonical_json(_compact_result(result)),
+                    _canonical_json(_safe_event_payload(error)),
+                    timestamp,
+                    str(job_id),
+                    int(row["revision"]),
+                    str(row["error_json"]),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise JobError("legacy provider partial-response reconciliation CAS failed")
+            self._append_event_in_transaction(
+                connection,
+                str(job_id),
+                "chapter.provider_partial_response",
+                {
+                    "chapter": int(row["next_chapter"]),
+                    "automatic_retry": False,
+                    "reconciled_from": "engine_result_unreadable",
+                    "error": _safe_event_payload(error),
+                },
+                timestamp=timestamp,
+            )
+        return self.get(job_id)
+
     def reconcile_review_pause(
         self,
         job_id: str,
@@ -1369,6 +1431,8 @@ class JobStore:
                 if _is_scene_schema_validation_error(error)
                 else "chapter.bridge_prevalidation"
                 if _is_bridge_prevalidation_error(error)
+                else "chapter.provider_partial_response"
+                if _is_provider_partial_response_error(error)
                 else "chapter.needs_recovery" if uncertain else "chapter.needs_revision"
             )
             self._append_event_in_transaction(
@@ -1897,6 +1961,7 @@ class JobSupervisor:
         self._reconcile_scene_boundary_validation_failures()
         self._reconcile_scene_schema_validation_failures()
         self._reconcile_bridge_prevalidation_failures()
+        self._reconcile_provider_partial_response_failures()
         self._startup_recovery_pending=False
 
     def notify(self) -> None:
@@ -2266,6 +2331,41 @@ class JobSupervisor:
                 # Any tamper, ambiguity, or unsettled call retains the generic pause.
                 continue
 
+
+    def _reconcile_provider_partial_response_failures(self) -> None:
+        """Explain proven legacy partial-response failures without requeueing them."""
+
+        for job in self.store.list_jobs(states=("awaiting_input",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
+            if job.kind != "generation_session" or not isinstance(job.error, Mapping):
+                continue
+            if job.error.get("code") != "engine_result_unreadable" or job.result is not None:
+                continue
+            try:
+                project = self.project_lookup(job.project_id)
+                project_root = Path(project.root).resolve(strict=True)
+                legacy_error_sha256 = _sha256_text(_canonical_json(job.error))
+                classification = _classify_provider_partial_response_failure(
+                    project_root,
+                    job.next_chapter,
+                    exit_code=job.error.get("exit_code"),
+                    stderr_tail=job.error.get("stderr_tail"),
+                    started_at=job.started_at,
+                    finished_at=job.updated_at,
+                )
+                if classification is None:
+                    continue
+                self.store.reconcile_provider_partial_response_failure(
+                    job.id,
+                    result=classification["result"],
+                    error=classification["error"],
+                    expected_legacy_error_sha256=legacy_error_sha256,
+                )
+            except Exception:
+                # Any tamper, ambiguity, or incomplete receipt retains the generic pause.
+                continue
+
     def _run_generation_session(self, initial_job: JobRecord) -> None:
         _require_job_execution_contract(initial_job.to_dict())
         job = initial_job
@@ -2490,6 +2590,22 @@ class JobSupervisor:
                         uncertain=False,
                     )
                     return
+                partial_response_classification = _classify_provider_partial_response_failure(
+                    project_root,
+                    chapter,
+                    exit_code=execution.get("exit_code"),
+                    stderr_tail=execution.get("stderr_tail"),
+                    prior_fingerprints=run_records_before,
+                )
+                if partial_response_classification is not None:
+                    self.store.chapter_failed(
+                        job.id,
+                        chapter=chapter,
+                        result=partial_response_classification["result"],
+                        error=partial_response_classification["error"],
+                        uncertain=False,
+                    )
+                    return
                 self.store.chapter_failed(
                     job.id,
                     chapter=chapter,
@@ -2592,6 +2708,22 @@ class JobSupervisor:
                     chapter=chapter,
                     result=bridge_prevalidation_classification["result"],
                     error=bridge_prevalidation_classification["error"],
+                    uncertain=False,
+                )
+                return
+            partial_response_classification = _classify_provider_partial_response_failure(
+                project_root,
+                chapter,
+                exit_code=execution.get("exit_code"),
+                stderr_tail=execution.get("stderr_tail"),
+                prior_fingerprints=run_records_before,
+            )
+            if partial_response_classification is not None:
+                self.store.chapter_failed(
+                    job.id,
+                    chapter=chapter,
+                    result=partial_response_classification["result"],
+                    error=partial_response_classification["error"],
                     uncertain=False,
                 )
                 return
@@ -3514,6 +3646,10 @@ def _is_scene_schema_validation_error(value: Mapping[str, Any] | None) -> bool:
 
 def _is_bridge_prevalidation_error(value: Mapping[str, Any] | None) -> bool:
     return isinstance(value, Mapping) and value.get("code") == BRIDGE_PREVALIDATION_ERROR
+
+
+def _is_provider_partial_response_error(value: Mapping[str, Any] | None) -> bool:
+    return isinstance(value, Mapping) and value.get("code") == PROVIDER_PARTIAL_RESPONSE_ERROR
 
 
 def _chapter_run_record_fingerprints(project_root: Path, chapter: int) -> dict[str, str]:
@@ -5162,6 +5298,433 @@ def _classify_bridge_prevalidation_failure(
     return matches[0] if len(matches) == 1 else None
 
 
+_PROVIDER_PARTIAL_RESPONSE_TYPES = frozenset({"ModelCallError", "ProviderPartialResponseError"})
+_PROVIDER_PARTIAL_MIXED_MARKERS = (
+    "SceneBoundaryValidationError",
+    "SceneEvidenceAlignmentError",
+    "stale_scene_evidence:",
+    "Scene response was not valid structured JSON",
+    "bridge pre-validation failed:",
+    "ContextBudgetError",
+    "StructuredContextError",
+    "ProviderCallUncertainError",
+    "provider_call_uncertain",
+)
+
+
+def _provider_partial_response_message(message: str) -> str | None:
+    if not isinstance(message, str) or not message.strip():
+        return None
+    if "provider_partial_response" not in message:
+        return None
+    if "ProviderCallUncertainError" in message or "provider_call_uncertain" in message:
+        return None
+    if "ProviderPartialResponseError" not in message and not message.startswith(
+        "provider_partial_response:"
+    ):
+        return None
+    return message
+
+
+def _provider_partial_response_artifacts(
+    project_root: Path,
+    run: Mapping[str, Any],
+    *,
+    expected_calls: int,
+) -> dict[str, Any] | None:
+    """Require one terminal partial-response receipt and otherwise succeeded receipts."""
+
+    execution_evidence = run.get("execution_evidence")
+    if not isinstance(execution_evidence, Mapping):
+        return None
+    reference = execution_evidence.get("model_calls_ref")
+    if not isinstance(reference, str) or not reference.strip():
+        return None
+    runs_root = project_root / ".novelagent" / "runtime" / "runs"
+    try:
+        model_calls_root = (runs_root / reference).resolve(strict=True)
+        model_calls_root.relative_to(runs_root / "executions")
+    except (OSError, ValueError):
+        return None
+    if not model_calls_root.is_dir() or _is_reparse_or_link(model_calls_root):
+        return None
+    intents_dir = model_calls_root / "intents"
+    receipts_dir = model_calls_root / "receipts"
+    responses_dir = model_calls_root / "responses"
+    for directory in (intents_dir, receipts_dir, responses_dir):
+        if not directory.is_dir() or _is_reparse_or_link(directory):
+            return None
+    try:
+        intents = tuple(sorted(intents_dir.glob("*.json")))
+        receipts = tuple(sorted(receipts_dir.glob("*.json")))
+        responses = tuple(sorted(responses_dir.glob("*.txt")))
+    except OSError:
+        return None
+    if not (
+        len(intents) == len(receipts) == len(responses) == expected_calls
+        and {path.name for path in intents} == {path.name for path in receipts}
+    ):
+        return None
+    response_names: set[str] = set()
+    partials: list[dict[str, Any]] = []
+    try:
+        for intent_path in intents:
+            if _is_reparse_or_link(intent_path):
+                return None
+            intent = load_model_call_intent(intent_path)
+            receipt_path = receipts_dir / intent_path.name
+            if _is_reparse_or_link(receipt_path):
+                return None
+            receipt = load_model_call_receipt(receipt_path)
+            status = receipt.get("status")
+            if status not in {"succeeded", PROVIDER_PARTIAL_RESPONSE_FAILED}:
+                return None
+            if (
+                receipt.get("attempt_id") != intent.get("attempt_id")
+                or receipt.get("intent_hash") != intent.get("intent_hash")
+            ):
+                return None
+            response_ref = receipt.get("response_artifact_ref")
+            if not isinstance(response_ref, str):
+                return None
+            response_path = (model_calls_root / response_ref).resolve(strict=True)
+            response_path.relative_to(responses_dir.resolve(strict=True))
+            if _is_reparse_or_link(response_path) or not response_path.is_file():
+                return None
+            response_raw = response_path.read_bytes()
+            if hashlib.sha256(response_raw).hexdigest() != receipt.get("response_artifact_hash"):
+                return None
+            response_names.add(response_path.name)
+            if status == PROVIDER_PARTIAL_RESPONSE_FAILED:
+                partials.append(
+                    {
+                        "partial_attempt_id": receipt.get("attempt_id"),
+                        "partial_call_id": receipt.get("call_id"),
+                        "partial_stage": intent.get("stage"),
+                        "partial_receipt_status": status,
+                        "partial_receipt_hash": receipt.get("receipt_hash"),
+                        "partial_response_artifact_ref": response_ref,
+                        "partial_response_bytes": len(response_raw),
+                    }
+                )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    if response_names != {path.name for path in responses} or len(partials) != 1:
+        return None
+    partial = partials[0]
+    if not all(
+        isinstance(partial.get(key), str) and str(partial.get(key)).strip()
+        for key in (
+            "partial_attempt_id",
+            "partial_call_id",
+            "partial_stage",
+            "partial_receipt_status",
+            "partial_receipt_hash",
+            "partial_response_artifact_ref",
+        )
+    ):
+        return None
+    if (
+        not isinstance(partial["partial_response_bytes"], int)
+        or isinstance(partial["partial_response_bytes"], bool)
+        or partial["partial_response_bytes"] < 0
+    ):
+        return None
+    return {
+        "settled_provider_calls": expected_calls,
+        **partial,
+    }
+
+
+def _provider_partial_response_evidence(
+    project_root: Path,
+    value: Mapping[str, Any],
+    *,
+    chapter: int,
+    stderr_text: str,
+) -> dict[str, Any] | None:
+    """Validate one uniquely evidenced provider partial-response failure."""
+
+    run = value.get("run")
+    if not isinstance(run, Mapping) or int(run.get("chapter_index") or 0) != int(chapter):
+        return None
+    run_error = run.get("error")
+    if not isinstance(run_error, Mapping) or run_error.get("type") not in _PROVIDER_PARTIAL_RESPONSE_TYPES:
+        return None
+    error_message = _provider_partial_response_message(run_error.get("message") or "")
+    if error_message is None or error_message not in stderr_text:
+        return None
+    if (
+        run.get("status") != "failed"
+        or run.get("accepted") is not False
+        or run.get("committed") is not False
+        or value.get("accepted") is not False
+        or value.get("committed") is not False
+    ):
+        return None
+    # Official partial-response runs may record unsettled_attempt_count=1 even
+    # though a durable partial_response_failed receipt exists. Do not treat that
+    # budget flag as provider_call_uncertain; receipt completeness is checked below.
+
+    execution_evidence = run.get("execution_evidence")
+    budget = (
+        execution_evidence.get("budget")
+        if isinstance(execution_evidence, Mapping)
+        else None
+    )
+    if not isinstance(budget, Mapping):
+        return None
+    provider_calls = budget.get("provider_calls")
+    unsettled = budget.get("unsettled_attempt_count")
+    if (
+        not isinstance(provider_calls, int)
+        or isinstance(provider_calls, bool)
+        or provider_calls < 1
+        or not isinstance(unsettled, int)
+        or isinstance(unsettled, bool)
+        or unsettled not in {0, 1}
+    ):
+        return None
+    artifacts = _provider_partial_response_artifacts(
+        project_root,
+        run,
+        expected_calls=provider_calls,
+    )
+    if artifacts is None:
+        return None
+
+    persistence = run.get("persistence")
+    if persistence not in (None, {}):
+        return None
+    story_project = run.get("story_project")
+    writeback = story_project.get("writeback") if isinstance(story_project, Mapping) else None
+    if (
+        not isinstance(writeback, Mapping)
+        or writeback.get("attempted") is not False
+        or writeback.get("applied") is not False
+    ):
+        return None
+    try:
+        if resolve_prose(project_root, chapter).candidates:
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    chapter_payload = run.get("chapter")
+    if not isinstance(chapter_payload, Mapping):
+        return None
+    candidate_chars = chapter_payload.get("chars")
+    if (
+        not isinstance(candidate_chars, int)
+        or isinstance(candidate_chars, bool)
+        or candidate_chars < 0
+    ):
+        return None
+    candidate = value.get("chapter")
+    if candidate_chars == 0:
+        if candidate not in (None, ""):
+            return None
+        if chapter_payload.get("artifact") not in (None, {}):
+            return None
+        candidate_sha256 = None
+        candidate_artifact_path = None
+        candidate_artifact_sha256 = None
+    else:
+        if not isinstance(candidate, str) or len(candidate) != candidate_chars:
+            return None
+        candidate_sha256 = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+        artifact = chapter_payload.get("artifact")
+        if artifact in (None, {}):
+            candidate_artifact_path = None
+            candidate_artifact_sha256 = None
+        elif not isinstance(artifact, Mapping):
+            return None
+        else:
+            artifact_path_value = artifact.get("path")
+            artifact_sha256 = artifact.get("sha256")
+            artifact_chars = artifact.get("chars")
+            if (
+                not isinstance(artifact_path_value, str)
+                or not isinstance(artifact_sha256, str)
+                or artifact_chars != candidate_chars
+            ):
+                return None
+            try:
+                artifact_path = _safe_project_file(project_root, artifact_path_value)
+                artifact_path.relative_to(
+                    project_root / ".novelagent" / "runtime" / "chapters"
+                )
+                artifact_raw = artifact_path.read_bytes()
+                artifact_text = artifact_raw.decode("utf-8")
+            except (OSError, UnicodeError, ValueError):
+                return None
+            if (
+                hashlib.sha256(artifact_raw).hexdigest() != artifact_sha256
+                or artifact_text.count(candidate) != 1
+                or not artifact_text.endswith((candidate + "\n", candidate + "\r\n"))
+            ):
+                return None
+            candidate_artifact_path = artifact_path.relative_to(project_root).as_posix()
+            candidate_artifact_sha256 = artifact_sha256
+
+    trace = run.get("trace")
+    if not isinstance(trace, (list, tuple)):
+        return None
+    failures = [
+        event
+        for event in trace
+        if isinstance(event, Mapping) and event.get("status") == "failed"
+    ]
+    if len(failures) != 1:
+        return None
+    failure = failures[0]
+    model_call = failure.get("model_call")
+    if not isinstance(model_call, Mapping):
+        return None
+    if (
+        failure.get("error_type") not in _PROVIDER_PARTIAL_RESPONSE_TYPES
+        or failure.get("error_message") != error_message
+        or model_call.get("failure_category") != "provider_partial_response"
+        or model_call.get("partial_content_received") is not True
+        or model_call.get("message") != error_message
+    ):
+        return None
+    if artifacts["partial_stage"] and model_call.get("stage") not in (
+        None,
+        artifacts["partial_stage"],
+    ):
+        return None
+    run_id = run.get("id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return None
+    evidence = {
+        "failure_origin": "provider_partial_response",
+        "run_id": run_id,
+        "provider_calls": provider_calls,
+        "settled_provider_calls": artifacts["settled_provider_calls"],
+        "unsettled_attempt_count": unsettled,
+        "candidate_chars": candidate_chars,
+        "formal_prose_exists": False,
+        "accepted": False,
+        "committed": False,
+        "persistence_committed": False,
+        "writeback_attempted": False,
+        "writeback_applied": False,
+        "provider_reached": True,
+        "partial_attempt_id": artifacts["partial_attempt_id"],
+        "partial_call_id": artifacts["partial_call_id"],
+        "partial_stage": artifacts["partial_stage"],
+        "partial_receipt_status": artifacts["partial_receipt_status"],
+        "partial_receipt_hash": artifacts["partial_receipt_hash"],
+        "partial_response_artifact_ref": artifacts["partial_response_artifact_ref"],
+        "partial_response_bytes": artifacts["partial_response_bytes"],
+        "source_error_type": run_error.get("type"),
+        "source_error_message": error_message,
+        "automatic_retry": False,
+        "safe_to_retry": False,
+        "recovery_required": True,
+    }
+    if candidate_sha256 is not None:
+        evidence["candidate_sha256"] = candidate_sha256
+    if candidate_artifact_path is not None:
+        evidence["candidate_artifact_path"] = candidate_artifact_path
+        evidence["candidate_artifact_sha256"] = candidate_artifact_sha256
+    return evidence
+
+
+def _classify_provider_partial_response_failure(
+    project_root: str | Path,
+    chapter: int,
+    *,
+    exit_code: Any,
+    stderr_tail: Any,
+    prior_fingerprints: Mapping[str, str] | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> dict[str, Any] | None:
+    """Classify one uniquely evidenced provider partial-response failure."""
+
+    if (
+        not isinstance(exit_code, int)
+        or isinstance(exit_code, bool)
+        or exit_code == 0
+    ):
+        return None
+    stderr_text = str(stderr_tail or "")
+    if "provider_partial_response" not in stderr_text or "ProviderPartialResponseError" not in stderr_text:
+        return None
+    if any(marker in stderr_text for marker in _PROVIDER_PARTIAL_MIXED_MARKERS):
+        return None
+    root = Path(project_root).resolve(strict=True)
+    fingerprints = _strict_chapter_run_artifact_fingerprints(root, chapter)
+    if fingerprints is None:
+        return None
+    window_start = _parse_timestamp(started_at)
+    window_end = _parse_timestamp(finished_at)
+    matches: list[dict[str, Any]] = []
+    for relative, digest in fingerprints.items():
+        if prior_fingerprints is not None and prior_fingerprints.get(relative) == digest:
+            continue
+        try:
+            path = _safe_project_file(root, relative)
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest:
+                continue
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, Mapping):
+                continue
+            run = value.get("run")
+            run_finished = _parse_timestamp(
+                run.get("finished_at") if isinstance(run, Mapping) else None
+            )
+            if window_start is not None or window_end is not None:
+                if run_finished is None:
+                    continue
+                finished_epoch = run_finished.timestamp()
+                if window_start is not None and finished_epoch < window_start.timestamp() - 2.0:
+                    continue
+                if window_end is not None and finished_epoch > window_end.timestamp() + 2.0:
+                    continue
+            evidence = _provider_partial_response_evidence(
+                root,
+                value,
+                chapter=chapter,
+                stderr_text=stderr_text,
+            )
+            if evidence is None:
+                continue
+            details = {
+                **evidence,
+                "run_record_path": relative,
+                "run_record_sha256": digest,
+            }
+            if details["candidate_chars"]:
+                candidate_clause = f"{details['candidate_chars']} 字候选正文已保留，"
+            else:
+                candidate_clause = "本章尚无完整候选正文，但已保留部分响应回执，"
+            matches.append(
+                {
+                    "result": dict(value),
+                    "error": {
+                        "code": PROVIDER_PARTIAL_RESPONSE_ERROR,
+                        "message": (
+                            f"第 {chapter} 章模型调用在返回部分内容后中断，已留下失败回执，不是结果不确定；"
+                            f"本次 {details['provider_calls']} 次调用均有终态回执，"
+                            f"{candidate_clause}正式正文尚未提交。"
+                        ),
+                        "details": details,
+                        "exit_code": exit_code,
+                        "automatic_retry": False,
+                        "safe_to_retry": False,
+                        "recovery_required": True,
+                    },
+                }
+            )
+        except (OSError, UnicodeError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+    return matches[0] if len(matches) == 1 else None
+
+
 _STRUCTURED_CHARACTER_BUDGET_CODES = (
     "required_json_item_exceeds_budget",
     "required_markdown_context_exceeds_budget",
@@ -6405,6 +6968,7 @@ __all__ = [
     "SCENE_BOUNDARY_VALIDATION_ERROR",
     "SCENE_SCHEMA_VALIDATION_ERROR",
     "BRIDGE_PREVALIDATION_ERROR",
+    "PROVIDER_PARTIAL_RESPONSE_ERROR",
     "DraftRecord",
     "DraftSourceConflict",
     "JobError",

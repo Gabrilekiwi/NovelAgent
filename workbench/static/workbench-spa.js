@@ -475,6 +475,76 @@
     return `开写前衔接预检未通过${codes}；没有模型调用，没有候选正文，正式正文未提交。`;
   };
 
+  const providerPartialResponseDetailsOfRun = (run) => {
+    if (run?.committed !== false) return null;
+    const message = String(run?.error_message || "");
+    if (!message.includes("provider_partial_response")) return null;
+    if (message.includes("provider_call_uncertain") || message.includes("ProviderCallUncertainError")) return null;
+    if (!message.includes("ProviderPartialResponseError") && !message.startsWith("provider_partial_response:")) return null;
+    const errorType = String(run?.error_type || "");
+    if (errorType && errorType !== "ModelCallError" && errorType !== "ProviderPartialResponseError") return null;
+    const providerCalls = Number(run?.provider_calls);
+    const chapterChars = Number(run?.chapter_chars);
+    const unsettled = Number(run?.unsettled_attempt_count);
+    if (!Number.isFinite(providerCalls) || providerCalls < 1 || !Number.isFinite(chapterChars) || chapterChars < 0) return null;
+    if (!Number.isInteger(unsettled) || (unsettled !== 0 && unsettled !== 1)) return null;
+    return {
+      providerCalls,
+      chapterChars,
+      unsettledAttemptCount: unsettled,
+      verified: true
+    };
+  };
+  const providerPartialResponseDetailsOf = (job) => {
+    if (!job || typeof job !== "object") return null;
+    const structuredError = errorCandidatesOf(job).find((value) => value.code === "provider_partial_response");
+    const details = structuredError?.details && typeof structuredError.details === "object"
+      ? structuredError.details
+      : null;
+    const integer = (name) => Number.isInteger(details?.[name]) && details[name] >= 0 ? details[name] : null;
+    const providerCalls = integer("provider_calls");
+    const settledProviderCalls = integer("settled_provider_calls");
+    const candidateChars = integer("candidate_chars");
+    const unsettled = details?.unsettled_attempt_count;
+    if (
+      !structuredError
+      || details?.failure_origin !== "provider_partial_response"
+      || providerCalls == null
+      || providerCalls < 1
+      || settledProviderCalls !== providerCalls
+      || (unsettled !== 0 && unsettled !== 1)
+      || candidateChars == null
+      || details?.formal_prose_exists !== false
+      || details?.accepted !== false
+      || details?.committed !== false
+      || details?.writeback_attempted !== false
+      || details?.writeback_applied !== false
+      || details?.provider_reached !== true
+      || details?.partial_receipt_status !== "partial_response_failed"
+      || details?.automatic_retry !== false
+      || details?.safe_to_retry !== false
+      || details?.recovery_required !== true
+      || (details?.source_error_type !== "ModelCallError" && details?.source_error_type !== "ProviderPartialResponseError")
+    ) {
+      return providerPartialResponseDetailsOfRun(job.latest_run);
+    }
+    return {
+      providerCalls,
+      settledProviderCalls,
+      chapterChars: candidateChars,
+      unsettledAttemptCount: unsettled,
+      partialStage: details.partial_stage,
+      verified: true
+    };
+  };
+  const providerPartialResponseSummary = (failure) => {
+    if (!failure) return "模型调用在返回部分内容后中断，已留下失败回执。";
+    const candidate = failure.chapterChars > 0
+      ? `${failure.chapterChars} 字候选正文已保留，`
+      : "本章尚无完整候选正文，但已保留部分响应回执，";
+    return `模型调用在返回部分内容后中断，已留下失败回执，不是结果不确定；${failure.providerCalls} 次调用均有终态回执，${candidate}正式正文未提交。`;
+  };
+
 
   const qualityRejectionDetailsOfRun = (run) => {
     if (run?.status !== "rejected" || run?.committed !== false || Number(run?.unsettled_attempt_count) !== 0) return null;
@@ -2345,7 +2415,16 @@
       ? qualityRejectionDetailsOfRun(payload.chapter_recovery?.latest_run)
       : null;
     const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && (Boolean(qualityRejection) || isQualityRevisionPause(session));
-    const providerUncertain = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation && !qualityRejection && jobStatus === "needs_recovery";
+    const sceneSchemaValidation = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation
+      ? (sceneSchemaValidationDetailsOf(session) || sceneSchemaValidationDetailsOfRun(payload.chapter_recovery?.latest_run))
+      : null;
+    const bridgePrevalidation = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation
+      ? (bridgePrevalidationDetailsOf(session) || bridgePrevalidationDetailsOfRun(payload.chapter_recovery?.latest_run))
+      : null;
+    const providerPartialResponse = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation
+      ? (providerPartialResponseDetailsOf(session) || providerPartialResponseDetailsOfRun(payload.chapter_recovery?.latest_run))
+      : null;
+    const providerUncertain = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation && !providerPartialResponse && !qualityRejection && jobStatus === "needs_recovery";
     const polishedDraftReady = durablePolishedDraftAvailable(payload.chapter_recovery || session);
     const resetCleared = (payload.chapter_recovery?.reset_cleared === true || payload.chapter_recovery?.checkpoint?.action === "reset")
       && payload.chapter_recovery?.formal_prose_exists !== true
@@ -2556,6 +2635,10 @@
       ? (issue.bridge_prevalidation || bridgePrevalidationDetailsOf(issue) || bridgePrevalidationDetailsOfRun(issue.latest_run))
       : null;
     const bridgePrevalidationFailure = Boolean(bridgePrevalidation) || (!provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision && !sceneSchemaFailure && issue.bridge_prevalidation_failure === true);
+    const providerPartialResponse = !provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision && !sceneSchemaFailure && !bridgePrevalidationFailure
+      ? (issue.provider_partial_response || providerPartialResponseDetailsOf(issue) || providerPartialResponseDetailsOfRun(issue.latest_run))
+      : null;
+    const providerPartialResponseFailure = Boolean(providerPartialResponse) || (!provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision && !sceneSchemaFailure && !bridgePrevalidationFailure && issue.provider_partial_response_failure === true);
     const contextHeadroom = !provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision
       ? (issue.context_headroom || contextHeadroomDetailsOfRun(issue.latest_run))
       : null;
@@ -2564,12 +2647,12 @@
     const repairAuthorityFailure = !provenanceFailure && !contextBudget && !repairConvergence && !qualityRevision && issue.repair_authority_failure === true;
     const repairAuthority = repairAuthorityFailure ? issue.repair_authority : null;
     const settledGenerationFailure = sceneSchemaFailure || (contextHeadroomFailure && !repairContextHeadroomFailure) || repairAuthorityFailure || staleSceneEvidenceFailure || sceneBoundaryValidationFailure || Boolean(repairConvergence?.verified);
-    setText("[data-pending-detail-eyebrow]", provenanceFailure ? "本机运行环境错误" : contextBudget ? "本地上下文超限" : repairConvergence ? "自动修订未收敛" : qualityRevision ? "质量审核需修订" : sceneSchemaFailure ? "模型响应格式错误" : bridgePrevalidationFailure ? "开写前衔接预检未通过" : contextHeadroomFailure ? "本地安全余量不足" : repairAuthorityFailure ? "修订上下文装配错误" : staleSceneEvidenceFailure ? "修订跨越场景边界" : sceneBoundaryValidationFailure ? "场景边界校验未通过" : "可恢复生成");
+    setText("[data-pending-detail-eyebrow]", provenanceFailure ? "本机运行环境错误" : contextBudget ? "本地上下文超限" : repairConvergence ? "自动修订未收敛" : qualityRevision ? "质量审核需修订" : sceneSchemaFailure ? "模型响应格式错误" : bridgePrevalidationFailure ? "开写前衔接预检未通过" : providerPartialResponseFailure ? "模型部分响应中断" : contextHeadroomFailure ? "本地安全余量不足" : repairAuthorityFailure ? "修订上下文装配错误" : staleSceneEvidenceFailure ? "修订跨越场景边界" : sceneBoundaryValidationFailure ? "场景边界校验未通过" : "可恢复生成");
     UI.updateStatusBadge(one(".recovery-hero .status-badge"), provenanceFailure ? (provenanceReady ? "paused_recoverable" : "needs_revision") : contextBudget ? (contextBudgetReady ? "paused_recoverable" : "needs_revision") : repairConvergence ? (repairConvergence.verified ? "paused_recoverable" : "needs_revision") : qualityRevision ? "needs_revision" : "paused_recoverable", provenanceFailure ? (provenanceReady ? "可重新执行" : provenanceFailure.verified ? "等待系统修复" : "安全核对中") : contextBudget ? (contextBudgetReady ? "可重新执行" : contextBudget.verified ? "等待系统修复" : "安全核对中") : repairConvergence ? (repairConvergence.verified ? "等待恢复分类" : "安全核对中") : qualityRevision ? "待修订" : "可恢复");
     setText("[data-pending-title]", issue.title || (provenanceFailure ? (provenanceFailure.verified ? `第 ${pendingChapterLabel(issue)} 章在模型请求前停止` : `第 ${pendingChapterLabel(issue)} 章正在安全核对`) : contextBudget ? `第 ${pendingChapterLabel(issue)} 章输入上下文超出安全上限` : repairConvergence ? (repairConvergence.verified ? `第 ${pendingChapterLabel(issue)} 章自动修订未收敛` : `第 ${pendingChapterLabel(issue)} 章修订故障正在安全核对`) : repairContextHeadroomFailure ? `第 ${pendingChapterLabel(issue)} 章修订输入超过安全余量而停止` : contextHeadroomFailure ? `第 ${pendingChapterLabel(issue)} 章边界重生输入超过安全余量而停止` : repairAuthorityFailure ? `第 ${pendingChapterLabel(issue)} 章修订上下文装配失败` : staleSceneEvidenceFailure ? `第 ${pendingChapterLabel(issue)} 章自动修订因场景证据对不齐而停止` : sceneBoundaryValidationFailure ? `第 ${pendingChapterLabel(issue)} 章因场景边界校验失败而停止` : qualityRevision ? `第 ${pendingChapterLabel(issue)} 章质量审核需修订` : `第 ${pendingChapterLabel(issue)} 章生成中断`));
     setText("[data-pending-summary]", provenanceFailure ? `${preProviderProvenanceSummary(provenanceFailure)} ${preProviderProvenanceStopDetail(provenanceFailure)}` : contextBudget ? `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)}` : repairConvergence ? repairNotConvergingSummary(repairConvergence) : staleSceneEvidenceFailure ? staleSceneEvidenceSummary(staleSceneEvidence) : sceneBoundaryValidationFailure ? sceneBoundaryValidationSummary(sceneBoundaryValidation) : issue.summary || issue.reason || (qualityRevision ? "Provider 已成功结束，完整候选草稿已保留，正式正文未提交。" : "回执完整的场景候选会先重跑当前状态边界；通过后才会复用。"));
     setText("[data-pending-chapter]", pendingChapterLabel(issue));
-    setText("[data-pending-section-title]", provenanceFailure ? (provenanceFailure.verified ? "模型请求前停止" : "安全状态仍在核对") : contextBudget ? (contextBudget.verified ? "请求在发送给模型前已停止" : "安全状态仍在核对") : repairConvergence ? (repairConvergence.verified ? "原候选已保留，失败修订稿已拒绝" : "安全状态仍在核对") : qualityRevision ? "本章已经完成生成，但尚未通过质量门" : sceneSchemaFailure ? "调用已结算，格式错误没有进入正文" : bridgePrevalidationFailure ? "模型请求尚未发出，衔接预检未通过" : repairContextHeadroomFailure ? "候选正文已保留，修订请求尚未发出" : contextHeadroomFailure ? "调用已结算，边界重生请求被本地预算门拦下" : repairAuthorityFailure ? "候选正文已保留，修订请求尚未发出" : staleSceneEvidenceFailure ? "候选正文已保留，越界修订已被拒绝" : sceneBoundaryValidationFailure ? "调用已结算，场景边界未通过，正文未提交" : "已完成内容不会重写");
+    setText("[data-pending-section-title]", provenanceFailure ? (provenanceFailure.verified ? "模型请求前停止" : "安全状态仍在核对") : contextBudget ? (contextBudget.verified ? "请求在发送给模型前已停止" : "安全状态仍在核对") : repairConvergence ? (repairConvergence.verified ? "原候选已保留，失败修订稿已拒绝" : "安全状态仍在核对") : qualityRevision ? "本章已经完成生成，但尚未通过质量门" : sceneSchemaFailure ? "调用已结算，格式错误没有进入正文" : bridgePrevalidationFailure ? "模型请求尚未发出，衔接预检未通过" : providerPartialResponseFailure ? "调用已有终态回执，部分响应已保留" : repairContextHeadroomFailure ? "候选正文已保留，修订请求尚未发出" : contextHeadroomFailure ? "调用已结算，边界重生请求被本地预算门拦下" : repairAuthorityFailure ? "候选正文已保留，修订请求尚未发出" : staleSceneEvidenceFailure ? "候选正文已保留，越界修订已被拒绝" : sceneBoundaryValidationFailure ? "调用已结算，场景边界未通过，正文未提交" : "已完成内容不会重写");
     setText("[data-pending-safe-chip]", provenanceFailure ? (provenanceFailure.verified ? "✓ 本次新增调用 0 · 新增费用 0 · 无草稿正文" : "! 调用、费用与产物尚未完全确认") : contextBudget ? (contextBudget.verified ? "✓ 本次新增调用与新增费用均为 0" : "! 调用、费用与产物尚未完全确认") : repairConvergence ? (repairConvergence.verified ? `✓ ${repairConvergence.settledProviderCalls}/${repairConvergence.providerCalls} 次调用已结算 · ${repairConvergence.candidateChars} 字原候选已保留 · 正式正文未提交` : "! 调用、候选正文与提交状态尚未完全确认") : qualityRejection ? `✓ ${qualityRejection.providerCalls} 次调用已结算 · ${qualityRejection.chapterChars} 字候选已保留` : qualityRevision ? "✓ 草稿已保留" : repairContextHeadroomFailure ? `✓ ${contextHeadroom.providerCalls} 次调用已结算 · ${contextHeadroom.chapterChars} 字候选已保留` : repairAuthorityFailure ? `✓ ${repairAuthority.providerCalls} 次调用已结算 · ${repairAuthority.chapterChars} 字候选已保留` : staleSceneEvidenceFailure ? `✓ ${staleSceneEvidence.providerCalls} 次调用已结算 · ${staleSceneEvidence.chapterChars} 字候选已保留 · 正式正文未提交` : sceneBoundaryValidationFailure ? `✓ ${sceneBoundaryValidation.providerCalls} 次调用已结算 · 正式正文未提交` : settledGenerationFailure ? `✓ ${Number(issue.latest_run?.provider_calls) || 0} 次调用已结算 · ${Number(issue.reusable_scene_count) || 0} 个场景可复用` : "✓ 哈希绑定");
     const scenes = one("[data-recovery-scenes]"); clear(scenes);
     let sceneItems = arrayFrom(issue.scenes || issue.recoverable_scenes, "items");
@@ -2801,6 +2884,12 @@
       form.dataset.confirm = "先执行无模型恢复分类，核对接续问题。这一步不会调用模型、提交正文或写回状态，也不会盲目重试这次失败的衔接预检，确认吗？";
       form.dataset.successMessage = "无模型恢复分类任务已启动。";
       setText("[data-recover-button]", "先做无模型恢复分类");
+    } else if (providerPartialResponseFailure && !checkpointReady) {
+      form.action = `/api/jobs/${encodeURIComponent(pausedParent?.job_id || pausedParent?.id || exactParentId)}/recover`;
+      form.dataset.recoveryMode = "provider-partial-response-classify";
+      form.dataset.confirm = "先执行无模型恢复分类，核对已付费的部分响应和已保留候选。这一步不会调用模型、提交正文或写回状态，也不会把这次失败当成无回执的不确定调用或盲目重试，确认吗？";
+      form.dataset.successMessage = "无模型恢复分类任务已启动。";
+      setText("[data-recover-button]", "先做无模型恢复分类");
     } else if (qualityRejection) {
       if (!checkpointReady) {
         form.action = `/api/jobs/${encodeURIComponent(pausedParent?.job_id || pausedParent?.id || exactParentId)}/recover`;
@@ -2893,6 +2982,7 @@
       && !provenanceFailure
       && !contextBudget
       && !durablePolishedDraftAvailable(issue)
+      && !providerPartialResponseFailure
       && !resetCleared
     );
     const closeStalledSession = Boolean(
@@ -3041,6 +3131,8 @@
     const sceneSchemaFailure = Boolean(sceneSchemaValidation);
     const bridgePrevalidation = bridgePrevalidationDetailsOf(pausedRecoveryJob) || bridgePrevalidationDetailsOfRun(latestRecoveryRun);
     const bridgePrevalidationFailure = Boolean(bridgePrevalidation);
+    const providerPartialResponse = providerPartialResponseDetailsOf(pausedRecoveryJob) || providerPartialResponseDetailsOfRun(latestRecoveryRun);
+    const providerPartialResponseFailure = Boolean(providerPartialResponse);
     const contextHeadroom = contextHeadroomDetailsOfRun(latestRecoveryRun);
     const contextHeadroomFailure = Boolean(contextHeadroom);
     const repairContextHeadroomFailure = contextHeadroomFailure && contextHeadroomIsRepair(contextHeadroom);
@@ -3068,6 +3160,8 @@
         scene_schema_validation: sceneSchemaValidation,
         bridge_prevalidation: bridgePrevalidation,
         bridge_prevalidation_failure: bridgePrevalidationFailure,
+        provider_partial_response: providerPartialResponse,
+        provider_partial_response_failure: providerPartialResponseFailure,
         context_headroom_failure: contextHeadroomFailure,
         context_headroom: contextHeadroom,
         repair_authority_failure: repairAuthorityFailure,
@@ -3080,13 +3174,15 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
-        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，等待无模型恢复分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，等待无模型恢复分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，等待无模型恢复分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章已安全暂停`,
+        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，等待无模型恢复分类` : providerPartialResponseFailure ? `第 ${recoveryChapter} 章因模型部分响应中断而停止，已保留已付费内容，等待无模型恢复分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，等待无模型恢复分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，等待无模型恢复分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章已安全暂停`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
           : sceneSchemaFailure
           ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；场景响应的 JSON 格式错误。`
           : bridgePrevalidationFailure
           ? bridgePrevalidationSummary(bridgePrevalidation)
+          : providerPartialResponseFailure
+          ? providerPartialResponseSummary(providerPartialResponse)
           : repairContextHeadroomFailure
           ? `本次 ${contextHeadroom.providerCalls} 次模型调用均已结算；修订输入为 ${contextHeadroom.requiredTokens} tokens，超过 ${contextHeadroom.safeTarget} 安全目标 ${contextHeadroom.overageTokens} tokens。`
           : contextHeadroomFailure
@@ -3110,6 +3206,8 @@
           ? "正式正文没有提交，场景边界校验未通过。先执行无模型恢复分类，不要盲目重试这次失败的场景生成。"
           : bridgePrevalidationFailure
           ? "正式正文没有提交，也没有模型调用。先执行无模型恢复分类，核对接续问题，不要盲目重试这次失败的衔接预检。"
+          : providerPartialResponseFailure
+          ? "正式正文没有提交；已留下部分响应失败回执。先执行无模型恢复分类，核对应保留的已付费内容，不要当成无回执的不确定调用，也不要盲目重试。"
           : sceneSchemaFailure || contextHeadroomFailure || repairAuthorityFailure || qualityRejectionFailure
           ? "正式正文没有提交；先执行无模型恢复分类，核对候选正文、回执与最新运行后再继续。"
           : recovery.uncertain_without_run
@@ -3128,6 +3226,8 @@
         scene_schema_validation: sceneSchemaValidation,
         bridge_prevalidation: bridgePrevalidation,
         bridge_prevalidation_failure: bridgePrevalidationFailure,
+        provider_partial_response: providerPartialResponse,
+        provider_partial_response_failure: providerPartialResponseFailure,
         context_headroom_failure: contextHeadroomFailure,
         context_headroom: contextHeadroom,
         repair_authority_failure: repairAuthorityFailure,
@@ -3140,13 +3240,15 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
-        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，已安全分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，已安全分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章可安全恢复`,
+        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : bridgePrevalidationFailure ? `第 ${recoveryChapter} 章因衔接预检失败而停止，已安全分类` : providerPartialResponseFailure ? `第 ${recoveryChapter} 章因模型部分响应中断而停止，已保留已付费内容，已安全分类` : repairContextHeadroomFailure ? `第 ${recoveryChapter} 章修订输入超过安全余量，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : staleSceneEvidenceFailure ? `第 ${recoveryChapter} 章自动修订因场景证据对不齐，已安全分类` : sceneBoundaryValidationFailure ? `第 ${recoveryChapter} 章因场景边界校验失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章可安全恢复`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
           : sceneSchemaFailure
           ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；场景响应的 JSON 格式错误。`
           : bridgePrevalidationFailure
           ? bridgePrevalidationSummary(bridgePrevalidation)
+          : providerPartialResponseFailure
+          ? providerPartialResponseSummary(providerPartialResponse)
           : repairContextHeadroomFailure
           ? `本次 ${contextHeadroom.providerCalls} 次模型调用均已结算；修订输入超过 ${contextHeadroom.safeTarget} 安全目标 ${contextHeadroom.overageTokens} tokens。`
           : contextHeadroomFailure
@@ -3172,7 +3274,7 @@
           ? `正式正文没有提交；${staleSceneEvidence.chapterChars} 字候选已保留并完成恢复核对。继续时会重新校验，不会直接重试这次失败修订。`
           : sceneBoundaryValidationFailure
           ? "正式正文没有提交，场景边界校验未通过并已完成恢复核对。继续时会重新校验，不会盲目重试这次失败的场景生成。"
-          : sceneSchemaFailure || contextHeadroomFailure || repairAuthorityFailure
+          : sceneSchemaFailure || contextHeadroomFailure || repairAuthorityFailure || providerPartialResponseFailure
           ? `正式正文没有提交；${Number(recovery.checkpoint?.reusable_scene_count || 0)} 个有回执的场景候选已完成恢复核对，继续时会重新验证后再进入修订与提交。`
           : durablePolishedDraftAvailable(recovery)
           ? polishedDraftGuidance(recovery)

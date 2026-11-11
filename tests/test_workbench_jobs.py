@@ -9,6 +9,7 @@ import pytest
 
 from workbench.database import WorkbenchDatabase
 from core.story_project.paths import canonical_prose_path
+from core.model_calls import PROVIDER_PARTIAL_RESPONSE_FAILED
 from workbench.jobs import (
     DraftSourceConflict,
     JobError,
@@ -21,11 +22,13 @@ from workbench.jobs import (
     SCENE_BOUNDARY_VALIDATION_ERROR,
     SCENE_SCHEMA_VALIDATION_ERROR,
     BRIDGE_PREVALIDATION_ERROR,
+    PROVIDER_PARTIAL_RESPONSE_ERROR,
     _classify_repair_not_converging_failure,
     _classify_stale_scene_evidence_failure,
     _classify_scene_boundary_validation_failure,
     _classify_scene_schema_validation_failure,
     _classify_bridge_prevalidation_failure,
+    _classify_provider_partial_response_failure,
     _classify_pre_provider_context_failure,
     _classify_pre_provider_provenance_failure,
     _git_provenance_preflight,
@@ -3261,5 +3264,394 @@ def test_legacy_bridge_prevalidation_pause_reconciles_without_requeue(
     assert store.claim_next() is None
     assert store.resume_ready(parent.id) is False
     assert store.events_after(parent.id)[-1]["event"] == "chapter.bridge_prevalidation"
+    with pytest.raises(JobError, match="completed, receipt-backed recovery"):
+        store.resume(parent.id, confirmed=True)
+
+
+def _write_provider_partial_response_run(
+    project_root: Path,
+    *,
+    chapter: int = 14,
+    run_id: str = "run-ppr",
+    succeeded_calls: int = 3,
+    unsettled_attempt_count: int = 1,
+    candidate: str = "",
+    action: str = "generate_chapter",
+    stage: str = "chapter_generation",
+    write_artifact: bool = False,
+    omit_partial_receipt: bool = False,
+    extra_partial: bool = False,
+    error_message: str | None = None,
+) -> tuple[dict, Path, str]:
+    if error_message is None:
+        error_message = (
+            "OpenAI chat completion failed "
+            "(provider_partial_response; ProviderPartialResponseError)."
+        )
+    execution_id = f"execution_{run_id}"
+    model_calls_root = (
+        project_root
+        / ".novelagent"
+        / "runtime"
+        / "runs"
+        / "executions"
+        / execution_id
+        / "model_calls"
+    )
+    from core.model_calls import build_model_call_intent, build_model_call_receipt
+
+    (model_calls_root / "intents").mkdir(parents=True, exist_ok=True)
+    (model_calls_root / "receipts").mkdir(parents=True, exist_ok=True)
+    (model_calls_root / "responses").mkdir(parents=True, exist_ok=True)
+    request_digest = hashlib.sha256(b"partial-response-fixture-request").hexdigest()
+    reservation = {
+        "reserved_input_tokens": 16,
+        "reserved_output_tokens": 8,
+        "reserved_total_tokens": 24,
+    }
+
+    def _write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _write_call(attempt_id: str, *, status: str, body: bytes) -> None:
+        intent = build_model_call_intent(
+            call_id=attempt_id.rsplit("-", 1)[0],
+            attempt_id=attempt_id,
+            provider="openai",
+            model="gpt-test",
+            stage=stage if status == PROVIDER_PARTIAL_RESPONSE_FAILED else "chapter_generation",
+            budget_reservation=reservation,
+            request_digest=request_digest,
+        )
+        _write_json(model_calls_root / "intents" / f"{attempt_id}.json", intent)
+        response_path = model_calls_root / "responses" / f"{attempt_id}.txt"
+        response_path.write_bytes(body)
+        if omit_partial_receipt and status == PROVIDER_PARTIAL_RESPONSE_FAILED:
+            return
+        receipt = build_model_call_receipt(
+            intent,
+            response_artifact_hash=hashlib.sha256(body).hexdigest(),
+            response_artifact_ref=f"responses/{attempt_id}.txt",
+            status=status,
+            usage={"input_tokens": 1, "output_tokens": 1},
+        )
+        _write_json(model_calls_root / "receipts" / f"{attempt_id}.json", receipt)
+
+    for index in range(succeeded_calls):
+        attempt_id = f"ok{index + 1}-a1"
+        _write_call(attempt_id, status="succeeded", body=f"ok-scene-{index + 1}".encode("utf-8"))
+
+    partial_attempt = "rp-a1" if action == "repair_if_needed" else f"p{succeeded_calls + 1}-a1"
+    _write_call(
+        partial_attempt,
+        status=PROVIDER_PARTIAL_RESPONSE_FAILED,
+        body=b"streamed partial content that stopped early",
+    )
+    if extra_partial:
+        extra_attempt = "rx-a1"
+        _write_call(
+            extra_attempt,
+            status=PROVIDER_PARTIAL_RESPONSE_FAILED,
+            body=b"second partial should fail closed",
+        )
+        succeeded_calls_for_budget = succeeded_calls + 2
+    else:
+        succeeded_calls_for_budget = succeeded_calls + (0 if omit_partial_receipt else 1)
+    provider_calls = succeeded_calls + 1 + (1 if extra_partial else 0)
+    if omit_partial_receipt:
+        # Intent exists without a receipt; budget still reports the attempted call.
+        provider_calls = succeeded_calls + 1
+
+    chapter_payload: dict = {"chars": len(candidate)}
+    if write_artifact and candidate:
+        artifact_path = (
+            project_root
+            / ".novelagent"
+            / "runtime"
+            / "chapters"
+            / f"chapter_{chapter:04d}_failed_{run_id}.md"
+        )
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_raw = ("failed candidate\n" + candidate + "\n").encode("utf-8")
+        artifact_path.write_bytes(artifact_raw)
+        chapter_payload["artifact"] = {
+            "chars": len(candidate),
+            "format": "markdown",
+            "path": artifact_path.relative_to(project_root).as_posix(),
+            "sha256": hashlib.sha256(artifact_raw).hexdigest(),
+        }
+
+    result = {
+        "chapter": candidate,
+        "accepted": False,
+        "committed": False,
+        "run": {
+            "id": run_id,
+            "chapter_index": chapter,
+            "status": "failed",
+            "accepted": False,
+            "committed": False,
+            "chapter": chapter_payload,
+            "error": {"type": "ModelCallError", "message": error_message},
+            "execution_evidence": {
+                "budget": {
+                    "provider_calls": provider_calls,
+                    "unsettled_attempt_count": unsettled_attempt_count,
+                },
+                "model_calls_ref": f"executions/{execution_id}/model_calls",
+            },
+            "persistence": None,
+            "story_project": {
+                "writeback": {"attempted": False, "applied": False}
+            },
+            "trace": [
+                {
+                    "action": "build_snapshot",
+                    "status": "completed",
+                },
+                {
+                    "action": action,
+                    "status": "failed",
+                    "error_type": "ModelCallError",
+                    "error_message": error_message,
+                    "model_call": {
+                        "attempts": 1,
+                        "failure_category": "provider_partial_response",
+                        "message": error_message,
+                        "partial_content_received": True,
+                        "provider": "openai",
+                        "stage": stage,
+                    },
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ],
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_path = run_dir / f"chapter_{chapter}_{run_id}.json"
+    run_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    stderr = f"ModelCallError: {error_message}"
+    return result, run_path, stderr
+
+
+def test_ppr_binds_retained_candidate(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    project_root = store.database.path.parent / "books" / "test-book"
+    candidate = "保留的已付费正文候选。"
+    _, run_path, stderr = _write_provider_partial_response_run(
+        project_root,
+        action="repair_if_needed",
+        stage="scene_repair",
+        candidate=candidate,
+        write_artifact=True,
+        unsettled_attempt_count=1,
+    )
+
+    classified = _classify_provider_partial_response_failure(
+        project_root,
+        14,
+        exit_code=1,
+        stderr_tail=stderr,
+    )
+
+    assert classified is not None
+    details = classified["error"]["details"]
+    assert classified["error"]["code"] == PROVIDER_PARTIAL_RESPONSE_ERROR
+    assert classified["error"]["automatic_retry"] is False
+    assert classified["error"]["safe_to_retry"] is False
+    assert details["failure_origin"] == "provider_partial_response"
+    assert details["provider_calls"] == 4
+    assert details["settled_provider_calls"] == 4
+    assert details["unsettled_attempt_count"] == 1
+    assert details["candidate_chars"] == len(candidate)
+    assert details["formal_prose_exists"] is False
+    assert details["provider_reached"] is True
+    assert details["partial_receipt_status"] == "partial_response_failed"
+    assert details["partial_stage"] == "scene_repair"
+    assert details["partial_response_bytes"] > 0
+    assert details["source_error_type"] == "ModelCallError"
+    assert "不是结果不确定" in classified["error"]["message"]
+    assert f"{len(candidate)} 字候选正文已保留" in classified["error"]["message"]
+    assert details["run_record_path"] == run_path.relative_to(project_root).as_posix()
+
+
+def test_ppr_binds_zero_chapter_chars(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    project_root = store.database.path.parent / "books" / "test-book"
+    _, _, stderr = _write_provider_partial_response_run(
+        project_root,
+        chapter=20,
+        run_id="run-ppr-zero",
+        succeeded_calls=2,
+        candidate="",
+        unsettled_attempt_count=1,
+    )
+
+    classified = _classify_provider_partial_response_failure(
+        project_root,
+        20,
+        exit_code=1,
+        stderr_tail=stderr,
+    )
+
+    assert classified is not None
+    details = classified["error"]["details"]
+    assert details["provider_calls"] == 3
+    assert details["candidate_chars"] == 0
+    assert details["partial_receipt_status"] == "partial_response_failed"
+    assert "尚无完整候选正文，但已保留部分响应回执" in classified["error"]["message"]
+    assert classified["error"]["automatic_retry"] is False
+
+
+def test_ppr_does_not_absorb_other_failures(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    project_root = store.database.path.parent / "books" / "test-book"
+    _, _, schema_stderr = _write_scene_schema_validation_run(project_root)
+    assert _classify_provider_partial_response_failure(
+        project_root,
+        41,
+        exit_code=1,
+        stderr_tail=schema_stderr,
+    ) is None
+    _, _, stderr = _write_provider_partial_response_run(project_root)
+    mixed = stderr + "\n" + "ProviderCallUncertainError: provider_call_uncertain"
+    assert _classify_provider_partial_response_failure(
+        project_root,
+        14,
+        exit_code=1,
+        stderr_tail=mixed,
+    ) is None
+    budget_mixed = stderr + "\n" + "ContextBudgetError: story_project_context_budget_exceeded"
+    assert _classify_provider_partial_response_failure(
+        project_root,
+        14,
+        exit_code=1,
+        stderr_tail=budget_mixed,
+    ) is None
+
+
+def test_ppr_fails_closed_on_incomplete_evidence(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    project_root = store.database.path.parent / "books" / "test-book"
+
+    _, _, stderr = _write_provider_partial_response_run(
+        project_root,
+        chapter=21,
+        run_id="run-ppr-zx",
+    )
+    assert _classify_provider_partial_response_failure(
+        project_root,
+        21,
+        exit_code=0,
+        stderr_tail=stderr,
+    ) is None
+
+    _, _, stderr = _write_provider_partial_response_run(
+        project_root,
+        chapter=22,
+        run_id="run-ppr-us",
+        unsettled_attempt_count=2,
+    )
+    assert _classify_provider_partial_response_failure(
+        project_root,
+        22,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+
+    _, _, stderr = _write_provider_partial_response_run(
+        project_root,
+        chapter=23,
+        run_id="run-ppr-nr",
+        omit_partial_receipt=True,
+    )
+    assert _classify_provider_partial_response_failure(
+        project_root,
+        23,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+
+    _, _, stderr = _write_provider_partial_response_run(
+        project_root,
+        chapter=24,
+        run_id="run-ppr-ex",
+        extra_partial=True,
+    )
+    assert _classify_provider_partial_response_failure(
+        project_root,
+        24,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+
+    _, _, stderr = _write_provider_partial_response_run(
+        project_root,
+        chapter=25,
+        run_id="run-ppr-pr",
+    )
+    prose = canonical_prose_path(project_root, 25)
+    prose.parent.mkdir(parents=True, exist_ok=True)
+    prose.write_text("formal prose must not be overwritten by this failure.", encoding="utf-8")
+    assert _classify_provider_partial_response_failure(
+        project_root,
+        25,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+
+
+def test_ppr_legacy_pause_reconciles_without_requeue(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id, end_chapter=3)
+    project_root = tmp_path / "books" / "test-book"
+    _, _, stderr = _write_provider_partial_response_run(project_root, chapter=1)
+    legacy = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={
+            "code": "engine_result_unreadable",
+            "exit_code": 1,
+            "stderr_tail": stderr,
+        },
+        uncertain=False,
+    )
+    assert legacy.result is None
+    assert legacy.error["code"] == "engine_result_unreadable"
+
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    supervisor._reconcile_provider_partial_response_failures()
+
+    reconciled = store.get(parent.id)
+    assert reconciled.state == "awaiting_input"
+    assert reconciled.manual_confirmation_required is True
+    assert reconciled.error is not None
+    assert reconciled.error["code"] == PROVIDER_PARTIAL_RESPONSE_ERROR
+    assert reconciled.error["automatic_retry"] is False
+    assert reconciled.error["safe_to_retry"] is False
+    assert reconciled.result is not None
+    assert store.claim_next() is None
+    assert store.resume_ready(parent.id) is False
+    assert store.events_after(parent.id)[-1]["event"] == "chapter.provider_partial_response"
     with pytest.raises(JobError, match="completed, receipt-backed recovery"):
         store.resume(parent.id, confirmed=True)
