@@ -8,6 +8,8 @@ import pytest
 
 from core.schema import validate_schema
 from core.state.chapter_read_set import (
+    CHAPTER_CONTEXT_READ_SET_DERIVED_MODE,
+    derive_chapter_context_read_set,
     normalize_chapter_context_read_set,
     parse_chapter_context_read_set,
     required_authority_item_ids,
@@ -312,3 +314,84 @@ def test_mapper_keeps_legacy_blueprint_compatible_without_contract() -> None:
 
     assert blueprint.chapter_context_read_set is None
     assert blueprint.to_dict()["chapter_context_read_set"] is None
+
+
+def test_derive_keeps_current_state_and_only_recent_or_open_events() -> None:
+    authority = {
+        "characters": {"hero": {"character_id": "hero"}, "ally": {"character_id": "ally"}},
+        "locations": {"hero": {"entity_id": "hero", "location_id": "old-cabinet"}},
+        "events": {
+            "chapter-0050-beat-001": {"event_id": "chapter-0050-beat-001", "status": "completed"},
+            "chapter-0057-beat-002": {"event_id": "chapter-0057-beat-002", "status": "completed"},
+            "chapter-0058-beat-003": {"event_id": "chapter-0058-beat-003", "status": "completed"},
+            "open-search": {"event_id": "open-search", "status": "ongoing", "chapter_index": 12},
+        },
+    }
+    snapshot = {
+        "story_state": {
+            "last_scene_location": "old-cabinet",
+            "last_scene_characters": ["hero"],
+            "required_opening_bridge": "Stay at the cabinet.",
+            "last_chapter_ending": "The other side started knocking.",
+        },
+        "spatial_state": {"character_positions": {"hero": "old-cabinet", "ally": "radio-room"}},
+        "constraints": [
+            {
+                "constraint_id": "no-chase",
+                "lifecycle_action": "enforce",
+                "instruction": "Do not expand the search past the withdrawal mark.",
+            }
+        ],
+    }
+    blueprint = {
+        "chapter_index": 59,
+        "title": "Only the withdrawal mark",
+        "core_event": "The search stops.",
+        "required_beats": [{"index": 1, "text": "Approve a local review only."}],
+        "ending_pressure": "The device turns away.",
+    }
+
+    read_set = derive_chapter_context_read_set(
+        authority,
+        chapter_index=59,
+        snapshot=snapshot,
+        blueprint=blueprint,
+    )
+
+    assert read_set["mode"] == CHAPTER_CONTEXT_READ_SET_DERIVED_MODE
+    assert "characters/hero" in read_set["required_state_item_ids"]
+    assert "characters/ally" in read_set["required_state_item_ids"]
+    assert "locations/hero" in read_set["required_state_item_ids"]
+    assert "events/chapter-0050-beat-001" not in read_set["required_event_item_ids"]
+    assert "events/chapter-0057-beat-002" in read_set["required_event_item_ids"]
+    assert "events/chapter-0058-beat-003" in read_set["required_event_item_ids"]
+    assert "events/open-search" in read_set["required_event_item_ids"]
+    assert read_set["continuity"]["last_scene_location"] == "old-cabinet"
+    assert set(read_set["continuity"]["last_scene_character_ids"]) == {"hero", "ally"}
+    assert read_set["continuity"]["required_opening_bridge"] == "Stay at the cabinet."
+    assert read_set["narrative_constraints"][0]["constraint_id"] == "no-chase"
+    validate_schema(read_set, "chapter_context_read_set.schema.json")
+
+
+def test_parse_rejects_derived_mode_in_outline_fence() -> None:
+    body = {
+        "schema_version": "1.0",
+        "mode": "derived",
+        "chapter_index": 59,
+        "required_state_item_ids": [],
+        "required_event_item_ids": [],
+        "continuity": {
+            "last_scene_location": "here",
+            "last_scene_character_ids": ["hero"],
+            "required_opening_bridge": "Continue.",
+        },
+        "narrative_constraints": [],
+        "expected_new_entities": [],
+    }
+    outline = "# Chapter 59\n\n```novelagent-chapter-context\n" + json.dumps(body, ensure_ascii=False) + "\n```\n"
+    with pytest.raises(ValueError, match="must use mode 'explicit'"):
+        parse_chapter_context_read_set(
+            outline,
+            chapter_index=59,
+            source_outline_sha256="a" * 64,
+        )

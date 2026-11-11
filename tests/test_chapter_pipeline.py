@@ -2942,12 +2942,12 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(1, calls)
 
 
-    def test_fallback_scene_context_uses_eight_section_budget(self) -> None:
-        # The fallback retrieval path used to cap required complete entries at
-        # max_section_chars * 7 (10500). Later chapters leave almost no
-        # headroom, so a slightly larger required block raises
-        # required_markdown_context_exceeds_budget and stops generation.
-        # Keep this path aligned with the generation-state-view budget (* 8).
+    def test_fallback_scene_context_keeps_seven_section_budget(self) -> None:
+        # The fallback path must keep the 10500-character cap (max_section_chars
+        # * 7). Raising that cap only hides the real bookkeeping problem: when
+        # no Generation State View exists, required complete sections grow with
+        # the book and eventually overflow. The derived working-set path is
+        # what should keep later chapters writable.
         seen: dict[str, int] = {}
         real = pipeline_module.compact_markdown_context
 
@@ -2966,8 +2966,90 @@ class ChapterPipelineTest(unittest.TestCase):
         with patch.object(pipeline_module, "compact_markdown_context", side_effect=wrapper):
             pipeline_module._compact_scene_context(pack, max_section_chars=1_500)
 
-        self.assertEqual(1_500 * 8, seen.get("max_chars"))
+        self.assertEqual(1_500 * 7, seen.get("max_chars"))
 
+    def test_fallback_required_sections_overflow_at_seven_section_budget(self) -> None:
+        # A late-book input pack without a Generation State View still treats
+        # large complete bookkeeping sections as required. After each section is
+        # compacted to its own cap, the sum must fail at 10500 rather than
+        # silently raising that total budget.
+        def section(name: str, payload: dict) -> str:
+            return f"# {name}\n" + pipeline_module.json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":")
+            )
+
+        def padded_section(name: str, target: int) -> str:
+            payload = {"title": name, "body": "x" * target}
+            text = section(name, payload)
+            overflow = len(text) - target
+            if overflow > 0:
+                payload["body"] = "x" * max(1, target - overflow - 1)
+                text = section(name, payload)
+            return text
+
+        beats = []
+        core = {
+            "chapter_index": 59,
+            "core_event": "Search stops.",
+            "ending_pressure": "Device turns.",
+            "required_beats": beats,
+        }
+        index = 1
+        while True:
+            beats.append({"index": index, "text": f"Beat {index} stays complete. " + ("fact " * 20)})
+            index += 1
+            blob = pipeline_module.json.dumps(
+                {"chapter_blueprint": core, "read_set_context_digest": "a" * 64},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if len(blob) > 3900:
+                beats.pop()
+                break
+        blueprint_payload = {
+            "chapter_blueprint": core,
+            "read_set_context_digest": "a" * 64,
+        }
+        large_events = {
+            f"chapter-{item:04d}-beat-001": {
+                "event_id": f"chapter-{item:04d}-beat-001",
+                "type": "checkpoint",
+                "subjects": ["hero"],
+                "status": "completed",
+                "summary": "Historical beat " + ("ledger " * 12),
+            }
+            for item in range(1, 80)
+        }
+        pack = "\n\n".join(
+            [
+                padded_section("Project Profile", 1450),
+                padded_section("Director Decision", 1450),
+                section(
+                    "Story State",
+                    {
+                        "last_scene_location": "old-cabinet",
+                        "last_scene_characters": ["hero"],
+                        "open_threads": [],
+                        "required_opening_bridge": "Stay.",
+                    },
+                ),
+                padded_section("Spatial State", 1450),
+                section(
+                    "Authoritative State",
+                    {
+                        "schema_version": "1.0",
+                        "events": large_events,
+                        "characters": {"hero": {"character_id": "hero"}},
+                    },
+                ),
+                section("StoryProject Chapter Blueprint", blueprint_payload),
+                padded_section("Requirements", 1450),
+            ]
+        )
+        with self.assertRaises(pipeline_module.StructuredContextError) as raised:
+            pipeline_module._compact_scene_context(pack, max_section_chars=1_500)
+        self.assertEqual(raised.exception.code, "required_markdown_context_exceeds_budget")
+        self.assertIn("10500", str(raised.exception))
 
 
 

@@ -152,6 +152,7 @@ from core.state.input_pack import (
     build_recovery_context,
     build_snapshot_input_pack,
 )
+from core.state.chapter_read_set import derive_chapter_context_read_set, source_outline_sha256_for_blueprint
 from core.state.generation_state_view import (
     apply_generation_state_view_to_snapshot,
     build_generation_state_view,
@@ -2337,14 +2338,25 @@ class AgentExecutor:
         snapshot: dict[str, Any],
     ) -> dict[str, Any] | None:
         blueprint = self._story_project_chapter_blueprint()
-        chapter_context_read_set = (
-            blueprint.get("chapter_context_read_set")
-            if isinstance(blueprint, dict)
-            else None
-        )
-        if not isinstance(chapter_context_read_set, dict):
+        if not isinstance(blueprint, dict):
             return None
+        chapter_context_read_set = blueprint.get("chapter_context_read_set")
         authority = seed_authoritative_state_from_snapshot(snapshot)
+        if not isinstance(chapter_context_read_set, dict):
+            context = self._story_project_context_dict() or {}
+            chapter_index = int(
+                blueprint.get("chapter_index")
+                or context.get("chapter_index")
+                or snapshot.get("chapter_index")
+                or 0
+            )
+            chapter_context_read_set = derive_chapter_context_read_set(
+                authority,
+                chapter_index=chapter_index,
+                source_outline_sha256=source_outline_sha256_for_blueprint(blueprint),
+                snapshot=snapshot,
+                blueprint=blueprint,
+            )
         return build_generation_state_view(
             authority,
             chapter_context_read_set,

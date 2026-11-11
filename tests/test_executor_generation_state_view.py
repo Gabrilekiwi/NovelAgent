@@ -9,7 +9,7 @@ import pytest
 from core.engine.executor import AgentExecutor
 from core.schema import validate_schema
 from core.state.authoritative import empty_authoritative_state
-from core.state.chapter_read_set import normalize_chapter_context_read_set
+from core.state.chapter_read_set import derive_chapter_context_read_set, normalize_chapter_context_read_set
 from core.structured_context import StructuredContextError
 
 
@@ -319,3 +319,65 @@ def test_missing_read_set_item_fails_before_director_or_generator() -> None:
         ).run_once(persist=False)
 
     assert calls == {"director": 0, "validator": 0}
+
+
+def test_missing_explicit_read_set_derives_bounded_generation_view() -> None:
+    root = _case_dir("derived")
+    snapshot = _snapshot()
+    snapshot["authoritative_state"]["events"]["chapter-0010-beat-001"] = {
+        "event_id": "chapter-0010-beat-001",
+        "type": "checkpoint",
+        "subjects": ["hero"],
+        "objects": [],
+        "location": "cold-room",
+        "status": "completed",
+    }
+    snapshot["authoritative_state"]["events"]["open-watch"] = {
+        "event_id": "open-watch",
+        "type": "watch",
+        "subjects": ["hero"],
+        "objects": [],
+        "location": "cold-room",
+        "status": "ongoing",
+    }
+    director_snapshots: list[dict] = []
+
+    def director(current: dict, _memory: dict) -> dict:
+        director_snapshots.append(current)
+        return _decision()
+
+    def validator(_snapshot: dict, _chapter: str, _decision_value: dict) -> dict:
+        return _ok_validation()
+
+    result = _executor(
+        root,
+        snapshot,
+        read_set=None,
+        director=director,
+        validator=validator,
+    ).run_once(persist=False)
+
+    assert result["validation"]["ok"] is True
+    assert director_snapshots
+    view = result["run"]["input_pack"]["metadata"]["generation_state_view"]
+    assert view["chapter_index"] == 18
+    assert director_snapshots[0]["generation_state_view"]["projection_sha256"] == view["projection_sha256"]
+    derived = derive_chapter_context_read_set(
+        snapshot["authoritative_state"],
+        chapter_index=18,
+        snapshot=snapshot,
+        blueprint={
+            "chapter_index": 18,
+            "title": "Working set",
+            "core_event": "The alarm forces a choice.",
+            "required_beats": [{"index": 1, "text": "Danger forces a choice and conflict."}],
+            "ending_pressure": "The alarm consequence remains concrete.",
+            "source_path": "outline-18.md",
+        },
+    )
+    assert "events/chapter-0017-beat-010" in derived["required_event_item_ids"]
+    assert "events/open-watch" in derived["required_event_item_ids"]
+    assert "events/chapter-0010-beat-001" not in derived["required_event_item_ids"]
+    assert "hero" in director_snapshots[0]["characters"]
+    assert "irrelevant" in director_snapshots[0]["characters"]
+    assert "RAW TIMELINE SENTINEL" not in json.dumps(director_snapshots[0], ensure_ascii=False)

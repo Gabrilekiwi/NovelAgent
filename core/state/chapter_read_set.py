@@ -4,13 +4,37 @@ import copy
 import hashlib
 import json
 import re
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Mapping
 
 from core.schema import validate_schema
 
 
 CHAPTER_CONTEXT_READ_SET_SCHEMA_VERSION = "1.0"
-CHAPTER_CONTEXT_READ_SET_MODE = "explicit"
+CHAPTER_CONTEXT_READ_SET_EXPLICIT_MODE = "explicit"
+CHAPTER_CONTEXT_READ_SET_DERIVED_MODE = "derived"
+CHAPTER_CONTEXT_READ_SET_MODE = CHAPTER_CONTEXT_READ_SET_EXPLICIT_MODE
+CHAPTER_CONTEXT_READ_SET_MODES = frozenset(
+    {
+        CHAPTER_CONTEXT_READ_SET_EXPLICIT_MODE,
+        CHAPTER_CONTEXT_READ_SET_DERIVED_MODE,
+    }
+)
+_STABLE_ITEM_ID_PATTERN = re.compile(r"^[^\s/]+$")
+_CHAPTER_ID_IN_EVENT = re.compile(r"chapter[-_](\d+)", re.IGNORECASE)
+_TERMINAL_EVENT_STATUSES = frozenset(
+    {
+        "completed",
+        "resolved",
+        "interrupted",
+        "cancelled",
+        "canceled",
+        "failed",
+        "abandoned",
+        "closed",
+        "expired",
+    }
+)
 
 _STATE_COLLECTIONS = frozenset(
     {
@@ -101,9 +125,10 @@ def normalize_chapter_context_read_set(
             f"{CHAPTER_CONTEXT_READ_SET_SCHEMA_VERSION!r}"
         )
     mode = _required_text(source, "mode")
-    if mode != CHAPTER_CONTEXT_READ_SET_MODE:
+    if mode not in CHAPTER_CONTEXT_READ_SET_MODES:
         raise ValueError(
-            f"chapter context read set mode must be {CHAPTER_CONTEXT_READ_SET_MODE!r}"
+            "chapter context read set mode must be one of "
+            + ", ".join(sorted(CHAPTER_CONTEXT_READ_SET_MODES))
         )
     declared_chapter_index = _positive_integer(
         _required(source, "chapter_index"),
@@ -127,7 +152,7 @@ def normalize_chapter_context_read_set(
 
     normalized: dict[str, Any] = {
         "schema_version": CHAPTER_CONTEXT_READ_SET_SCHEMA_VERSION,
-        "mode": CHAPTER_CONTEXT_READ_SET_MODE,
+        "mode": mode,
         "chapter_index": expected_chapter_index,
         "required_state_item_ids": _normalized_item_ids(
             _required(source, "required_state_item_ids"),
@@ -210,6 +235,10 @@ def parse_chapter_context_read_set(
         raise ValueError(
             "novelagent-chapter-context fenced block must contain one JSON object"
         ) from exc
+    if isinstance(value, dict) and value.get("mode") == CHAPTER_CONTEXT_READ_SET_DERIVED_MODE:
+        raise ValueError(
+            "novelagent-chapter-context fenced block must use mode 'explicit'"
+        )
     return normalize_chapter_context_read_set(
         value,
         chapter_index=chapter_index,
@@ -440,10 +469,245 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+
+
+def source_outline_sha256_for_blueprint(blueprint: Mapping[str, Any]) -> str:
+    """Hash the chapter outline file, or a stable blueprint body if the file is absent."""
+
+    source = _object(blueprint, "chapter blueprint")
+    for key in ("outline_path", "source_path"):
+        raw = source.get(key)
+        if not raw:
+            continue
+        path = Path(str(raw))
+        if path.is_file():
+            return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    return _canonical_sha256(
+        {
+            "chapter_index": source.get("chapter_index"),
+            "title": source.get("title"),
+            "core_event": source.get("core_event"),
+            "required_beats": source.get("required_beats"),
+            "ending_pressure": source.get("ending_pressure"),
+        }
+    )
+
+
+def derive_chapter_context_read_set(
+    authoritative_state: Mapping[str, Any],
+    *,
+    chapter_index: int,
+    source_outline_sha256: str | None = None,
+    snapshot: Mapping[str, Any] | None = None,
+    blueprint: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a bounded working set when the outline has no explicit read-set fence.
+
+    Current-state collections stay in the view because they remain small. Historical
+    events do not: only open events and events from the previous two chapters plus
+    the current chapter are selected, so a late-book ledger cannot overflow scene
+    context as required complete entries.
+    """
+
+    authority = _object(authoritative_state, "authoritative_state")
+    expected_chapter_index = _positive_integer(chapter_index, "chapter_index")
+    outline_hash = (
+        _sha256(source_outline_sha256, "source_outline_sha256")
+        if source_outline_sha256 is not None
+        else source_outline_sha256_for_blueprint(blueprint or {})
+    )
+    state_ids = _derived_state_item_ids(authority)
+    event_ids = _derived_event_item_ids(authority, chapter_index=expected_chapter_index)
+    return normalize_chapter_context_read_set(
+        {
+            "schema_version": CHAPTER_CONTEXT_READ_SET_SCHEMA_VERSION,
+            "mode": CHAPTER_CONTEXT_READ_SET_DERIVED_MODE,
+            "chapter_index": expected_chapter_index,
+            "required_state_item_ids": state_ids,
+            "required_event_item_ids": event_ids,
+            "continuity": _derived_continuity(snapshot, blueprint),
+            "narrative_constraints": _derived_narrative_constraints(snapshot),
+            "expected_new_entities": [],
+            "source_outline_sha256": outline_hash,
+        },
+        chapter_index=expected_chapter_index,
+        source_outline_sha256=outline_hash,
+    )
+
+
+def _derived_state_item_ids(authority: Mapping[str, Any]) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for collection in sorted(_STATE_COLLECTIONS):
+        records = authority.get(collection)
+        if not isinstance(records, dict):
+            continue
+        for raw_id in records:
+            record_id = str(raw_id).strip()
+            if _STABLE_ITEM_ID_PATTERN.fullmatch(record_id) is None:
+                continue
+            item_id = f"{collection}/{record_id}"
+            if item_id in seen:
+                continue
+            seen.add(item_id)
+            ids.append(item_id)
+    return ids
+
+
+def _derived_event_item_ids(
+    authority: Mapping[str, Any],
+    *,
+    chapter_index: int,
+) -> list[str]:
+    records = authority.get("events")
+    if not isinstance(records, dict):
+        return []
+    relevant_chapters = {
+        index
+        for index in (chapter_index - 2, chapter_index - 1, chapter_index)
+        if index >= 1
+    }
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw_id, record in records.items():
+        event_id = str(raw_id).strip()
+        if _STABLE_ITEM_ID_PATTERN.fullmatch(event_id) is None:
+            continue
+        item_id = f"events/{event_id}"
+        if item_id in seen:
+            continue
+        payload = record if isinstance(record, dict) else {}
+        if _event_is_open(payload) or _event_chapter(event_id, payload) in relevant_chapters:
+            seen.add(item_id)
+            ids.append(item_id)
+    return ids
+
+
+def _event_is_open(record: Mapping[str, Any]) -> bool:
+    status = str(record.get("status") or "").strip().lower()
+    return bool(status) and status not in _TERMINAL_EVENT_STATUSES
+
+
+def _event_chapter(event_id: str, record: Mapping[str, Any]) -> int | None:
+    raw = record.get("chapter_index")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
+        return raw
+    match = _CHAPTER_ID_IN_EVENT.search(event_id)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _derived_continuity(
+    snapshot: Mapping[str, Any] | None,
+    blueprint: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    story_state = {}
+    spatial_state = {}
+    if isinstance(snapshot, Mapping):
+        if isinstance(snapshot.get("story_state"), Mapping):
+            story_state = snapshot["story_state"]
+        if isinstance(snapshot.get("spatial_state"), Mapping):
+            spatial_state = snapshot["spatial_state"]
+    location = str(
+        story_state.get("last_scene_location")
+        or (spatial_state.get("last_transition") or {}).get("to")
+        or ""
+    ).strip()
+    characters = _continuity_character_ids(story_state, spatial_state)
+    bridge = str(
+        story_state.get("required_opening_bridge")
+        or story_state.get("last_chapter_ending")
+        or ""
+    ).strip()
+    if not bridge and isinstance(blueprint, Mapping):
+        core_event = str(blueprint.get("core_event") or "").strip()
+        if core_event:
+            bridge = core_event
+    if not location:
+        positions = spatial_state.get("character_positions")
+        if isinstance(positions, Mapping):
+            for value in positions.values():
+                text = str(value or "").strip()
+                if text:
+                    location = text
+                    break
+    return {
+        "last_scene_location": location or "unknown",
+        "last_scene_character_ids": characters,
+        "required_opening_bridge": bridge or location or "Continue from the previous chapter ending.",
+    }
+
+
+def _continuity_character_ids(
+    story_state: Mapping[str, Any],
+    spatial_state: Mapping[str, Any],
+) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    raw_values: list[Any] = []
+    last_scene = story_state.get("last_scene_characters")
+    if isinstance(last_scene, list):
+        raw_values.extend(last_scene)
+    positions = spatial_state.get("character_positions")
+    if isinstance(positions, Mapping):
+        raw_values.extend(positions.keys())
+    for raw in raw_values:
+        character_id = str(raw).strip()
+        if _STABLE_ITEM_ID_PATTERN.fullmatch(character_id) is None or character_id in seen:
+            continue
+        seen.add(character_id)
+        ids.append(character_id)
+    return ids
+
+
+def _derived_narrative_constraints(snapshot: Mapping[str, Any] | None) -> list[dict[str, str]]:
+    if not isinstance(snapshot, Mapping):
+        return []
+    raw = snapshot.get("constraints")
+    if not isinstance(raw, list):
+        return []
+    constraints: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw, start=1):
+        if isinstance(item, str):
+            instruction = item.strip()
+            constraint_id = f"constraint-{index}"
+            lifecycle = "preserve"
+        elif isinstance(item, Mapping):
+            instruction = str(
+                item.get("instruction") or item.get("text") or item.get("constraint") or ""
+            ).strip()
+            constraint_id = str(item.get("constraint_id") or item.get("id") or f"constraint-{index}").strip()
+            lifecycle = str(item.get("lifecycle_action") or item.get("lifecycle") or "preserve").strip()
+        else:
+            continue
+        if not instruction or _STABLE_ITEM_ID_PATTERN.fullmatch(constraint_id) is None:
+            continue
+        if _STABLE_ITEM_ID_PATTERN.fullmatch(lifecycle) is None:
+            lifecycle = "preserve"
+        if constraint_id in seen:
+            continue
+        seen.add(constraint_id)
+        constraints.append(
+            {
+                "constraint_id": constraint_id,
+                "lifecycle_action": lifecycle,
+                "instruction": instruction,
+            }
+        )
+    return constraints
+
+
 __all__ = [
+    "CHAPTER_CONTEXT_READ_SET_DERIVED_MODE",
+    "CHAPTER_CONTEXT_READ_SET_EXPLICIT_MODE",
     "CHAPTER_CONTEXT_READ_SET_MODE",
+    "CHAPTER_CONTEXT_READ_SET_MODES",
     "CHAPTER_CONTEXT_READ_SET_SCHEMA_VERSION",
+    "derive_chapter_context_read_set",
     "normalize_chapter_context_read_set",
     "parse_chapter_context_read_set",
     "required_authority_item_ids",
+    "source_outline_sha256_for_blueprint",
 ]

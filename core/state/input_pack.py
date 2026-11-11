@@ -165,7 +165,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
     )
     explicit_chapter_context = (
         isinstance(chapter_context_read_set, dict)
-        and chapter_context_read_set.get("mode") == "explicit"
+        and chapter_context_read_set.get("mode") in {"explicit", "derived"}
     )
     payload = {
         "chapter_blueprint": _prompt_chapter_blueprint(
