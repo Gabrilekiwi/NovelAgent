@@ -4115,6 +4115,7 @@ def _empty_pre_provider_context_failure(value: Mapping[str, Any], *, chapter: in
         return False
     markers = (
         "required_markdown_context_exceeds_budget",
+        "required_json_item_exceeds_budget",
         "story_project_context_budget_exceeded",
     )
     if not any(marker in error_message for marker in markers):

@@ -1613,9 +1613,17 @@ def test_validated_manual_draft_unblocks_recovery_when_checkpoint_strips_trailin
 
 
 
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        "required_markdown_context_exceeds_budget: required complete Markdown/JSON entries exceed 10500 characters",
+        "required_json_item_exceeds_budget: required entries exceed 1481 characters",
+    ],
+)
 def test_validated_manual_draft_unblocks_resume_after_empty_pre_provider_rerun(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    error_message: str,
 ) -> None:
     """A paid draft from an earlier run can confirm after a 0-call context-budget rerun."""
 
@@ -1667,7 +1675,7 @@ def test_validated_manual_draft_unblocks_resume_after_empty_pre_provider_rerun(
                     "finished_at": "2026-11-11T01:03:15+00:00",
                     "error": {
                         "type": "StructuredContextError",
-                        "message": "required_markdown_context_exceeds_budget: required complete Markdown/JSON entries exceed 10500 characters",
+                        "message": error_message,
                     },
                     "chapter": {"chars": 0},
                     "execution_evidence": {
