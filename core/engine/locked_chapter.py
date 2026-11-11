@@ -941,6 +941,65 @@ def _complete_draft_matches_accepted_final_artifact(
     )
 
 
+def _complete_draft_matches_verified_candidate_artifact(
+    payload: dict[str, Any],
+    complete_draft: dict[str, Any] | None,
+    *,
+    run_dir: Path,
+    language: str | None = None,
+) -> bool:
+    """Return whether a failed complete draft is receipt-backed without final_gate.
+
+    A run can stop at quality or repair convergence after the chapter text and
+    Scene receipts already exist.  That candidate is not a final-gate artifact,
+    but it is still the correct source for confirmed recovery: bind the settled
+    Scene evidence and continue validation instead of paying to rewrite it.
+    """
+
+    if not isinstance(complete_draft, dict):
+        return False
+    sha256 = complete_draft.get("sha256")
+    if not isinstance(sha256, str):
+        return False
+    raw = payload.get("chapter")
+    if not isinstance(raw, str):
+        return False
+    try:
+        normalized = validate_language_output(raw, CHAPTER_CONTRACT)
+    except ModelOutputError:
+        return False
+    if normalized != complete_draft.get("text") or _content_sha256(normalized) != sha256:
+        return False
+    run = payload.get("run")
+    run_chapter = run.get("chapter") if isinstance(run, dict) else None
+    pipeline = (
+        run_chapter.get("pipeline")
+        if isinstance(run_chapter, dict)
+        else None
+    )
+    if (
+        not isinstance(run, dict)
+        or run.get("status") not in {"failed", "rejected"}
+        or run.get("accepted") is not False
+        or run.get("committed") is not False
+        or not isinstance(run_chapter, dict)
+        or not isinstance(pipeline, dict)
+        or int(run_chapter.get("chars") or -1) != len(raw)
+        or not _verified_rejected_chapter_artifact(payload, run_dir=run_dir)
+        or not _source_execution_is_settled(payload, run_dir=run_dir)
+    ):
+        return False
+    return (
+        _verified_final_scene_evidence(
+            payload,
+            run_dir=run_dir,
+            language=language,
+            require_final_gate=False,
+        )
+        is not None
+    )
+
+
 def verified_final_recovery_draft(
     *,
     run_dir: str | Path,
@@ -1108,15 +1167,24 @@ def _integrity_audit_matches_records(
     records: list[Any],
     *,
     chapter_sha256: str,
+    require_final_gate: bool = True,
 ) -> bool:
     if (
         not isinstance(audit, dict)
-        or audit.get("final_hash_matches_gate") is not True
         or audit.get("final_chapter_sha256") != chapter_sha256
-        or audit.get("final_gate_sha256") != chapter_sha256
         or int(audit.get("record_count") or -1) != len(records)
     ):
         return False
+    gate_recorded = (
+        audit.get("final_hash_matches_gate") is not None
+        or audit.get("final_gate_sha256") is not None
+    )
+    if require_final_gate or gate_recorded:
+        if (
+            audit.get("final_hash_matches_gate") is not True
+            or audit.get("final_gate_sha256") != chapter_sha256
+        ):
+            return False
     stage_hashes = audit.get("stage_hashes")
     if not isinstance(stage_hashes, list) or len(stage_hashes) != len(records):
         return False
@@ -1211,6 +1279,7 @@ def _verified_final_scene_evidence(
     *,
     run_dir: Path,
     language: str | None,
+    require_final_gate: bool = True,
 ) -> dict[str, Any] | None:
     """Prove final Scene text and authority data back to settled responses.
 
@@ -1458,6 +1527,7 @@ def _verified_final_scene_evidence(
         pipeline,
         source_merge_sha256=_content_sha256(source_merge),
         final_sha256=_content_sha256(raw_chapter),
+        require_final_gate=require_final_gate,
     ):
         return None
     if continuity.get("evidence_history") != pipeline.get("scene_evidence_history"):
@@ -1477,20 +1547,23 @@ def _verified_final_transform_chain(
     *,
     source_merge_sha256: str,
     final_sha256: str,
+    require_final_gate: bool = True,
 ) -> bool:
     records = run_chapter.get("integrity_records")
     pipeline_records = pipeline.get("integrity_records")
     audit = run_chapter.get("integrity_audit")
     integrity = pipeline.get("integrity")
+    minimum_records = 2 if require_final_gate else 1
     if (
         not isinstance(records, list)
-        or len(records) < 2
+        or len(records) < minimum_records
         or records != pipeline_records
         or not isinstance(integrity, dict)
         or not _integrity_audit_matches_records(
             audit,
             records,
             chapter_sha256=final_sha256,
+            require_final_gate=require_final_gate,
         )
     ):
         return False
@@ -1504,21 +1577,35 @@ def _verified_final_transform_chain(
         or first.get("output_sha256") != source_merge_sha256
         or first.get("artifact_sha256") != source_merge_sha256
         or not isinstance(last, dict)
-        or last.get("stage") != "final_gate"
         or last.get("accepted") is not True
-        or last.get("input_sha256") is not None
         or last.get("output_sha256") != final_sha256
         or last.get("artifact_sha256") != final_sha256
     ):
         return False
     merge_report = integrity.get("merge")
-    final_report = integrity.get("final_gate")
+    if last.get("stage") == "final_gate":
+        if last.get("input_sha256") is not None:
+            return False
+        transforms = records[1:-1]
+        last_report = integrity.get("final_gate")
+    elif require_final_gate:
+        return False
+    elif last.get("stage") == "merge":
+        if source_merge_sha256 != final_sha256 or len(records) != 1:
+            return False
+        transforms = []
+        last_report = merge_report
+    elif last.get("stage") in {"polish", "repair", "writeback_canonicalization"}:
+        transforms = records[1:]
+        last_report = integrity.get(str(last.get("stage")))
+    else:
+        return False
     if not _accepted_integrity_candidate(
         merge_report,
         chapter_sha256=source_merge_sha256,
         required_hash_field="artifact_sha256",
     ) or not _accepted_integrity_candidate(
-        final_report,
+        last_report,
         chapter_sha256=final_sha256,
         required_hash_field="artifact_sha256",
     ):
@@ -1529,7 +1616,6 @@ def _verified_final_transform_chain(
         "repair": 2,
         "writeback_canonicalization": 3,
     }
-    transforms = records[1:-1]
     previous_sha256 = source_merge_sha256
     previous_order = 0
     for record in transforms:
@@ -1723,10 +1809,18 @@ def load_verified_locked_chapter_pipeline(
         language=language,
         run_dir=runtime_root,
     )
-    if not _complete_draft_matches_accepted_final_artifact(
-        payload,
-        source_draft,
-        run_dir=runtime_root,
+    if not (
+        _complete_draft_matches_accepted_final_artifact(
+            payload,
+            source_draft,
+            run_dir=runtime_root,
+        )
+        or _complete_draft_matches_verified_candidate_artifact(
+            payload,
+            source_draft,
+            run_dir=runtime_root,
+            language=language,
+        )
     ):
         raise LockedChapterRecoveryError(
             "complete-draft source has no verified accepted final artifact"
@@ -1764,7 +1858,15 @@ def load_verified_locked_chapter_pipeline(
         payload,
         run_dir=runtime_root,
         language=language,
+        require_final_gate=True,
     )
+    if not isinstance(verified, dict):
+        verified = _verified_final_scene_evidence(
+            payload,
+            run_dir=runtime_root,
+            language=language,
+            require_final_gate=False,
+        )
     if not isinstance(verified, dict):
         raise LockedChapterRecoveryError(
             "complete-draft source Scene evidence does not match its provider receipts and final artifact"

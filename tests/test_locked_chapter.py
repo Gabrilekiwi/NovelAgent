@@ -1326,6 +1326,218 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             )
         receipt_path.write_bytes(receipt_bytes)
 
+    def test_confirmed_manual_draft_binds_pre_final_gate_candidate_without_regenerating(self) -> None:
+        execution_id = "execution_manual_draft_before_final_gate"
+        generated = "陆沉检查通勤车的触发线路，并记录车辆尚未移动。" * 45
+        repaired = "陆沉检查通勤车的触发线路，赵铁确认车门移动才会触发。" * 45
+        revised = "领头的人检查通勤车的触发线路，赵铁确认车门移动才会触发。" * 45
+        chapter_blueprint = {
+            "chapter_index": 1,
+            "title": "Verified recovery",
+            "core_event": "verify persisted Scene provenance",
+            "required_beats": [
+                {"index": 1, "text": "verify persisted Scene provenance"},
+            ],
+            "ending_pressure": "the verified alarm remains active",
+            "missing_fields": [],
+        }
+        expected_plan = build_blueprint_plan(chapter_blueprint)
+        call_id = self._write_valid_single_scene_execution(
+            execution_id,
+            scene_text=generated,
+            missing_stage=None,
+        )
+        self._write_rejected_single_scene_artifact_run(
+            execution_id=execution_id,
+            source_attempt_id="attempt-1",
+            source_call_id=call_id,
+            scene_text=generated,
+        )
+        run_path = next(self.run_dir.glob("chapter_1_*.json"))
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        repaired_sha256 = hashlib.sha256(repaired.encode("utf-8")).hexdigest()
+        payload["chapter"] = repaired
+        payload["run"]["chapter"]["chars"] = len(repaired)
+        pipeline = payload["run"]["chapter"]["pipeline"]
+        original_continuity_path = Path(pipeline["artifacts"]["scene_continuity"]["path"])
+        original_continuity = json.loads(original_continuity_path.read_text(encoding="utf-8"))
+        source_evidence = original_continuity["scenes"][0]
+        gate = FinalArtifactIntegrityGate()
+        merge_report = gate.evaluate(artifact_text=generated, stage="merge")
+        repair_report = gate.evaluate(
+            artifact_text=repaired,
+            stage="repair",
+            source_text=generated,
+        )
+        records = [
+            build_integrity_stage_record(
+                stage="merge",
+                input_text=None,
+                output_text=generated,
+                report=merge_report,
+            ),
+            build_integrity_stage_record(
+                stage="repair",
+                input_text=generated,
+                output_text=repaired,
+                report=repair_report,
+            ),
+        ]
+        evidence_history = [
+            {
+                "stage": "repair",
+                "before_sha256": hashlib.sha256(generated.encode("utf-8")).hexdigest(),
+                "after_sha256": repaired_sha256,
+                "modified_scene_indexes": [1],
+                "operation_count": 1,
+                "patch_sha256": hashlib.sha256(
+                    f"repair:{generated}:{repaired}".encode("utf-8")
+                ).hexdigest(),
+            }
+        ]
+        pipeline["integrity"] = {"merge": merge_report, "repair": repair_report}
+        pipeline["integrity_records"] = records
+        pipeline.pop("final_artifact", None)
+        pipeline["scene_spans"] = [
+            {
+                "index": 1,
+                "start_char": 0,
+                "end_char": len(repaired),
+                "chars": len(repaired),
+            }
+        ]
+        pipeline["scene_sources"][0]["text_sha256"] = repaired_sha256
+        pipeline["scene_evidence_history"] = evidence_history
+        final_scene = {
+            "index": 1,
+            "goal": expected_plan["scenes"][0]["goal"],
+            "text": repaired,
+            "source_attempt_id": "attempt-1",
+            "source_call_id": call_id,
+            "events": source_evidence["events"],
+            "deltas": source_evidence["deltas"],
+            "continuity_note": source_evidence["continuity_note"],
+            "covered_beat_indexes": [1],
+        }
+        artifact_pipeline = {
+            **pipeline,
+            "plan": expected_plan,
+            "scene_drafts": [final_scene],
+            "merged_chapter": repaired,
+        }
+        pipeline["artifacts"] = save_chapter_pipeline_artifacts(
+            pipeline=artifact_pipeline,
+            validation=None,
+            repair_deltas=[],
+            run=payload["run"],
+            output_dir=self.run_dir / "chapter_pipeline",
+        )
+        story_metadata = payload["run"]["input_pack"]["metadata"]["story_project"]
+        story_metadata.update(
+            {
+                "planned_scene_count": 1,
+                "planned_scene_scopes": [
+                    {"index": 1, "required_beat_indexes": [1]},
+                ],
+                "required_beat_count": 1,
+                "scene_plan_hash": canonical_json_hash(
+                    expected_plan,
+                    exclude_environment_fields=False,
+                ),
+            }
+        )
+        payload["run"]["story_project"]["chapter_blueprint"] = chapter_blueprint
+        run_chapter = payload["run"]["chapter"]
+        run_chapter.pop("final_artifact", None)
+        run_chapter["integrity_records"] = records
+        run_chapter["integrity_audit"] = {
+            "record_count": len(records),
+            "earliest_blocking_stage": None,
+            "earliest_blocking_problem_codes": [],
+            "stage_hashes": [
+                {
+                    "stage": record["stage"],
+                    "input_sha256": record["input_sha256"],
+                    "output_sha256": record["output_sha256"],
+                    "accepted": record["accepted"],
+                    "timestamp": record["timestamp"],
+                    "blocking_problem_codes": [],
+                    "record_sha256": canonical_json_hash(
+                        record,
+                        exclude_environment_fields=False,
+                    ),
+                }
+                for record in records
+            ],
+            "final_chapter_sha256": repaired_sha256,
+        }
+        payload["run"]["repair_attempts"] = 1
+        payload["accepted"] = False
+        payload["committed"] = False
+        payload["repair_attempts"] = 1
+        payload["run"]["chapter"]["artifact"] = save_chapter_artifact(
+            chapter_text=repaired,
+            run=payload["run"],
+            output_dir=self.run_dir.parent / "chapters",
+        )
+        validate_run_result(payload)
+        run_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        draft_path = self.story_root / ".novelagent" / "workbench" / "drafts" / "manual.md"
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
+        draft_path.write_text(revised, encoding="utf-8")
+        result = recover_locked_chapter(
+            story_project_root=self.story_root,
+            run_dir=self.run_dir,
+            snapshot_path=self.snapshot_path,
+            expected_book_id=self.book_id,
+            language="zh-CN",
+            manual_draft_path=draft_path,
+            clock=lambda: self.now + timedelta(minutes=5),
+            id_factory=lambda: "manualprefinalgate",
+        )
+        self.assertEqual("manual_repaired_draft_provided", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        rehydrated = load_verified_locked_chapter_pipeline(
+            run_dir=self.run_dir,
+            checkpoint=checkpoint,
+            chapter_blueprint=chapter_blueprint,
+            language="zh-CN",
+        )
+        self.assertEqual(repaired, rehydrated["merged_chapter"])
+
+        generator_calls: list[str] = []
+        executor = AgentExecutor(
+            run_dir=self.run_dir,
+            generator=lambda input_pack: generator_calls.append(input_pack) or "REGENERATED",
+            story_project_context={"chapter_blueprint": chapter_blueprint},
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            enable_execution_provenance=False,
+        )
+        realigned = executor._locked_complete_draft_pipeline(
+            checkpoint,
+            checkpoint["complete_draft"],
+            snapshot={"language": "zh-CN"},
+        )
+        self.assertEqual(revised, realigned["merged_chapter"])
+        self.assertEqual(revised, "\n\n".join(item["text"] for item in realigned["scene_drafts"]))
+
+        state = {
+            "chapter": checkpoint["complete_draft"]["text"],
+            "chapter_pipeline": realigned,
+            "locked_chapter_action": "repair_draft",
+            "validation": {"stale": True},
+        }
+        executor._handle_generate(state, "fresh-input", {"language": "zh-CN"})
+        self.assertEqual([], generator_calls)
+        self.assertEqual(revised, state["chapter"])
+        self.assertIs(realigned, state["chapter_pipeline"])
+        self.assertIsNone(state["validation"])
+
     def test_newer_terminal_budget_failure_supersedes_partial_checkpoint_with_complete_draft(self) -> None:
         execution_id = "execution_partial_before_terminal_failure"
         scene_one = "陆沉贴着冷库墙壁移动，远处的金属门正被感染者撞得变形。" * 12

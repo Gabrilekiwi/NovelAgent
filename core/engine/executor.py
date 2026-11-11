@@ -1689,25 +1689,16 @@ class AgentExecutor:
             if isinstance(locked_checkpoint, dict)
             else None
         )
-        try:
-            locked_chapter_pipeline = self._locked_complete_draft_pipeline(
-                locked_checkpoint,
-                complete_draft,
-                snapshot=snapshot,
-            )
-        except LockedChapterRecoveryError as exc:
-            if not _must_regenerate_unverified_complete_draft(
-                locked_checkpoint,
-                exc,
-            ):
-                raise
-            # A recovered draft is useful author evidence, but it must never
-            # be reused for strict StoryProject writeback without the
-            # receipt-backed final Scene artifact. Keep its append-only
-            # checkpoint intact and generate a new candidate instead.
-            locked_checkpoint = None
-            complete_draft = None
-            locked_chapter_pipeline = None
+        # A confirmed, validated complete draft is the chapter candidate.
+        # Bind receipt-backed Scene evidence from the source run (including
+        # failed runs that never reached final_gate) and realign that
+        # evidence to the confirmed text.  Do not discard the draft and pay
+        # to regenerate it.  If the source cannot be bound, fail closed.
+        locked_chapter_pipeline = self._locked_complete_draft_pipeline(
+            locked_checkpoint,
+            complete_draft,
+            snapshot=snapshot,
+        )
         state: dict[str, Any] = {
             "chapter": (
                 str(complete_draft["text"])
@@ -5085,35 +5076,6 @@ def _model_trace(
         "model_name": model,
         "model_invocation": invocation,
     }
-
-
-def _must_regenerate_unverified_complete_draft(
-    checkpoint: dict[str, Any] | None,
-    error: LockedChapterRecoveryError,
-) -> bool:
-    """Keep narrowly identified, unverifiable recovery drafts out of reuse.
-
-    A manual recovery draft deliberately has no fabricated Scene receipt chain.
-    A ``scene_repair`` draft from a failed run may likewise be complete but
-    lacks the accepted final artifact required for strict writeback.  Preserve
-    either checkpoint and regenerate instead.  Other integrity failures stay
-    fail-closed rather than being silently treated as regeneration requests.
-    """
-
-    if (
-        not isinstance(checkpoint, dict)
-        or checkpoint.get("action") != "repair_draft"
-        or "no verified accepted final artifact" not in str(error)
-    ):
-        return False
-    if checkpoint.get("reason") == "manual_repaired_draft_provided":
-        return True
-    complete_draft = checkpoint.get("complete_draft")
-    return (
-        checkpoint.get("reason") == "durable_repaired_draft_available"
-        and isinstance(complete_draft, dict)
-        and complete_draft.get("source_stage") == "scene_repair"
-    )
 
 
 def _workflow_steps_by_action(workflow_plan: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -17,7 +17,6 @@ from core.engine.artifacts import save_chapter_artifact
 from core.engine.executor import (
     AgentExecutor,
     LoopExecutionError,
-    _must_regenerate_unverified_complete_draft,
 )
 from core.engine.locked_chapter import LockedChapterRecoveryError
 from core.engine.repair_convergence import RepairNotConvergingError
@@ -135,20 +134,75 @@ class AgentExecutorTest(unittest.TestCase):
             context["revalidation"]["prior_problems"],
         )
 
-    def test_unverified_manual_complete_draft_regenerates_instead_of_reusing_it(
-        self,
-    ) -> None:
+    def test_unverified_manual_complete_draft_is_not_regenerated(self) -> None:
         generator_calls: list[str] = []
-        regenerated = "A fresh chapter is generated after the evidence gate rejects the old draft."
         executor = AgentExecutor(
-            generator=lambda input_pack: generator_calls.append(input_pack) or regenerated,
+            generator=lambda input_pack: generator_calls.append(input_pack) or "REGENERATED",
             validator=self._ok_validation,
             analyzer=self._analysis,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
         )
         checkpoint = {
             "action": "repair_draft",
             "reason": "manual_repaired_draft_provided",
-            "complete_draft": {"text": "old draft"},
+            "complete_draft": {"text": "author revised draft"},
+        }
+
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "no verified accepted final artifact",
+        ):
+            with (
+                patch.object(
+                    executor,
+                    "_locked_chapter_checkpoint",
+                    return_value=checkpoint,
+                ),
+                patch.object(
+                    executor,
+                    "_locked_complete_draft_pipeline",
+                    side_effect=LockedChapterRecoveryError(
+                        "complete-draft source has no verified accepted final artifact"
+                    ),
+                ),
+            ):
+                executor._execute_workflow(
+                    workflow=["generate_chapter"],
+                    workflow_plan={},
+                    snapshot={"language": "en"},
+                    decision={"chapter_index": 2},
+                    input_pack="fresh-input",
+                    recovery_context={},
+                )
+
+        self.assertEqual([], generator_calls)
+
+    def test_validated_manual_revised_draft_is_kept_without_regeneration(self) -> None:
+        generator_calls: list[str] = []
+        revised = (
+            "The author revised the recovered chapter to fix the remaining "
+            "character-route review item, and then revalidated the draft."
+        )
+        pipeline = {
+            "merged_chapter": revised,
+            "scene_drafts": [{"index": 1, "text": revised}],
+        }
+        executor = AgentExecutor(
+            generator=lambda input_pack: generator_calls.append(input_pack) or "REGENERATED",
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        )
+        checkpoint = {
+            "action": "repair_draft",
+            "reason": "manual_repaired_draft_provided",
+            "expected_scene_count": 1,
+            "complete_draft": {
+                "text": revised,
+                "sha256": hashlib.sha256(revised.encode("utf-8")).hexdigest(),
+                "source_stage": "scene_repair",
+                "problem_codes": [],
+            },
         }
 
         with (
@@ -160,9 +214,7 @@ class AgentExecutorTest(unittest.TestCase):
             patch.object(
                 executor,
                 "_locked_complete_draft_pipeline",
-                side_effect=LockedChapterRecoveryError(
-                    "complete-draft source has no verified accepted final artifact"
-                ),
+                return_value=pipeline,
             ),
         ):
             chapter, validation, *_ = executor._execute_workflow(
@@ -174,35 +226,9 @@ class AgentExecutorTest(unittest.TestCase):
                 recovery_context={},
             )
 
-        self.assertEqual(["fresh-input"], generator_calls)
-        self.assertEqual(regenerated, chapter)
+        self.assertEqual([], generator_calls)
+        self.assertEqual(revised, chapter)
         self.assertTrue(validation["ok"])
-
-    def test_unverified_durable_scene_repair_draft_is_regenerated(self) -> None:
-        error = LockedChapterRecoveryError(
-            "complete-draft source has no verified accepted final artifact"
-        )
-
-        self.assertTrue(
-            _must_regenerate_unverified_complete_draft(
-                {
-                    "action": "repair_draft",
-                    "reason": "durable_repaired_draft_available",
-                    "complete_draft": {"source_stage": "scene_repair"},
-                },
-                error,
-            )
-        )
-        self.assertFalse(
-            _must_regenerate_unverified_complete_draft(
-                {
-                    "action": "repair_draft",
-                    "reason": "durable_polished_draft_available",
-                    "complete_draft": {"source_stage": "claude_polish"},
-                },
-                error,
-            )
-        )
 
     def test_recovered_checkpoint_count_mismatch_is_allowed_for_scope_replay(self) -> None:
         executor = AgentExecutor(
