@@ -593,6 +593,22 @@ def _newer_recoverable_terminal_run(
                 else ""
             )
             if (
+                isinstance(active_checkpoint, dict)
+                and active_checkpoint.get("action") == "resume_scenes"
+                and not isinstance(active_checkpoint.get("complete_draft"), dict)
+                and _repair_did_not_converge(item["payload"])
+                and _remaining_problems_require_author_review(item["payload"])
+                and preferred is not None
+            ):
+                # A prior classify may have stored resume_scenes before this
+                # manual-review rule existed.  Re-running recovery must be
+                # able to upgrade that same failed run to an author draft.
+                return {
+                    **item,
+                    "complete_draft": preferred,
+                    "recovered_scenes": [],
+                }
+            if (
                 not _complete_draft_matches_accepted_final_artifact(
                     item["payload"],
                     preferred,
