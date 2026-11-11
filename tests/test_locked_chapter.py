@@ -2573,6 +2573,32 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         retry = self._recover()
         self.assertEqual("not_locked", retry["status"])
 
+    def test_list_unbound_uncertain_executions_matches_classifier_gate(self) -> None:
+        from core.engine.locked_chapter import list_unbound_uncertain_executions
+
+        execution_id = "execution_unbound_list"
+        self._write_execution(
+            execution_id,
+            successful=[],
+            missing_stage="chapter_generation",
+        )
+        unbound = list_unbound_uncertain_executions(
+            self.run_dir,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([execution_id], [item["execution_id"] for item in unbound])
+        self.assertTrue(unbound[0]["calls"])
+
+        self._recover()
+
+        self.assertEqual(
+            [],
+            list_unbound_uncertain_executions(
+                self.run_dir,
+                expected_book_id=self.book_id,
+            ),
+        )
+
     def test_unbound_uncertain_execution_force_reset_clears_lock(self) -> None:
         execution_id = "execution_unbound_force_reset"
         self._write_execution(

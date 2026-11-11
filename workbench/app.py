@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from core.config import get_config
-from core.engine.locked_chapter import verified_final_recovery_draft
+from core.engine.locked_chapter import list_unbound_uncertain_executions, verified_final_recovery_draft
 from core.engine.persistence import atomic_write_text
 from core.engine.persistence import atomic_create_json
 from core.runtime_paths import RuntimePaths
@@ -2341,6 +2341,41 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
                 break
     run_record = run.get("run") if isinstance(run, dict) and isinstance(run.get("run"), dict) else {}
     latest_run_id = str(run_record.get("id") or "").strip() or None
+    formal_prose_exists = bool(resolve_prose(root, chapter).path)
+    unbound_uncertain: list[dict[str, Any]] = []
+    if latest_run_id is None and not formal_prose_exists:
+        identity = load_project_identity(root)
+        book_id = str(getattr(identity, "book_id", "") or "")
+        snapshot_path = runtime.snapshot_path
+        snapshot_chapter = 0
+        if snapshot_path.is_file():
+            try:
+                snapshot_chapter = int(load_snapshot(snapshot_path).get("chapter_index") or 0)
+            except (OSError, ValueError, TypeError):
+                snapshot_chapter = 0
+        if book_id and (snapshot_chapter == chapter or snapshot_chapter == 0):
+            unbound_uncertain = list_unbound_uncertain_executions(
+                runtime.run_dir,
+                expected_book_id=book_id,
+            )
+    uncertain_call = None
+    if unbound_uncertain:
+        first_call = next(
+            (
+                call
+                for item in unbound_uncertain
+                for call in (item.get("calls") or [])
+                if isinstance(call, dict)
+            ),
+            None,
+        )
+        uncertain_call = {
+            "execution_id": unbound_uncertain[0]["execution_id"],
+            "call_id": first_call.get("call_id") if first_call else None,
+            "attempt_id": first_call.get("attempt_id") if first_call else None,
+            "stage": first_call.get("stage") if first_call else None,
+            "created_at": first_call.get("created_at") if first_call else None,
+        }
     verified_source = (
         verified_final_recovery_draft(
             run_dir=runtime.run_dir,
@@ -2364,9 +2399,12 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
     # abandoned.  Keep both records visible in history, but do not surface the
     # discarded run as a fresh recovery task after the workbench restarts.
     recoverable = bool(
-        run
-        and run_record.get("committed") is not True
-        and not reset_discards_latest_run
+        (
+            run
+            and run_record.get("committed") is not True
+            and not reset_discards_latest_run
+        )
+        or (not run and unbound_uncertain and not formal_prose_exists)
     )
     checkpoint_matches_latest_run = bool(
         latest_checkpoint
@@ -2386,13 +2424,21 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
         )
     summary = {
         "chapter": chapter,
-        "formal_prose_exists": bool(resolve_prose(root, chapter).path),
+        "formal_prose_exists": formal_prose_exists,
         "latest_run": _compact_run(run),
         "recoverable": recoverable,
         "checkpoint": latest_checkpoint,
         "checkpoint_matches_latest_run": checkpoint_matches_latest_run,
         "verified_final_sha256": verified_source_sha256,
         "needs_reclassification": bool(recoverable and not checkpoint_matches_latest_run),
+        "uncertain_without_run": bool(unbound_uncertain and not run),
+        "uncertain_call": uncertain_call,
+        "reset_cleared": bool(
+            latest_checkpoint
+            and latest_checkpoint.get("action") == "reset"
+            and not formal_prose_exists
+            and not unbound_uncertain
+        ),
     }
     summary["durable_polished_draft_available"] = durable_polished_draft_available(summary)
     return summary

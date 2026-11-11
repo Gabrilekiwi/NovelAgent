@@ -426,6 +426,44 @@ def _recover_unbound_uncertain_executions(
     return result
 
 
+
+def list_unbound_uncertain_executions(
+    run_dir: str | Path,
+    *,
+    expected_book_id: str,
+) -> list[dict[str, Any]]:
+    """List unresolved uncertain executions that have no durable chapter run.
+
+    A crash after writing an intent can leave the book locked for the next
+    production attempt even though there is no RunRecord to classify for
+    scene reuse.  The official workbench uses this to show a truthful next
+    step; safe classification still writes only an append-only reset marker.
+    """
+
+    runtime_root = Path(run_dir)
+    unresolved = _unresolved_executions(runtime_root)
+    if not unresolved:
+        return []
+    runs = _load_runs(runtime_root, expected_book_id=expected_book_id)
+    bound_execution_ids = {
+        str(item["payload"]["run"].get("execution_evidence", {}).get("execution_id") or "")
+        if isinstance(item["payload"]["run"].get("execution_evidence"), dict)
+        else ""
+        for item in runs
+    }
+    unbound = [
+        {
+            "execution_id": item["execution_id"],
+            "calls": item["calls"],
+        }
+        for item in unresolved
+        if item["execution_id"] not in bound_execution_ids
+    ]
+    if unbound and len(unbound) == len(unresolved):
+        return unbound
+    return []
+
+
 def _expected_scene_count_from_unbound_executions(unresolved: list[dict[str, Any]]) -> int:
     import re as _re
 

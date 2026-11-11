@@ -2040,6 +2040,10 @@
     const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && (Boolean(qualityRejection) || isQualityRevisionPause(session));
     const providerUncertain = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !qualityRejection && jobStatus === "needs_recovery";
     const polishedDraftReady = durablePolishedDraftAvailable(payload.chapter_recovery || session);
+    const resetCleared = (payload.chapter_recovery?.reset_cleared === true || payload.chapter_recovery?.checkpoint?.action === "reset")
+      && payload.chapter_recovery?.formal_prose_exists !== true
+      && !polishedDraftReady;
+    const stalledAfterReset = paused && resetCleared;
     launch.hidden = visible;
     sessionPanel.hidden = !visible;
     const statusLabel = provenanceFailure ? (provenanceReady ? "等待作者确认" : provenanceFailure.verified ? "等待系统修复" : "安全核对中") : contextBudget ? (contextBudgetReady ? "等待作者确认" : contextBudget.verified ? "等待系统修复" : "安全核对中") : repairConvergence ? (repairConvergence.verified ? "等待无模型恢复" : "安全核对中") : repairAuthority ? "等待安全恢复" : qualityRevision ? "质量审核需修订" : paused ? (providerUncertain ? "需要安全恢复" : "等待作者处理") : session?.status_label;
@@ -2073,16 +2077,31 @@
     });
     one("[data-pause-job-form]").action = `/api/jobs/${encodeURIComponent(jobId)}/pause`;
     one("[data-cancel-job-form]").action = `/api/jobs/${encodeURIComponent(jobId)}/cancel`;
-    one("[data-close-paused-job-form]").action = `/api/jobs/${encodeURIComponent(jobId)}/cancel`;
+    const closePausedForm = one("[data-close-paused-job-form]");
+    closePausedForm.action = `/api/jobs/${encodeURIComponent(jobId)}/cancel`;
+    closePausedForm.hidden = !stalledAfterReset;
+    const closePausedButton = one("button[type='submit']", closePausedForm);
+    if (closePausedButton) {
+      closePausedButton.classList.toggle("button-primary", stalledAfterReset);
+      closePausedButton.classList.toggle("button-secondary", !stalledAfterReset);
+      closePausedButton.textContent = "关闭这次停住的生产任务";
+    }
+    if (stalledAfterReset) {
+      closePausedForm.dataset.confirm = `第 ${currentChapter || "—"} 章失败尝试的锁已经解除。确认关闭这次已停住的生产任务，以便重新开写？不会删除失败证据，也不会改写正式正文。`;
+      closePausedForm.dataset.successMessage = "已关闭这次停住的生产任务；运行证据已保留，可以重新开写。";
+    }
     const safetyPanel = one("[data-production-controls]");
     const attentionPanel = one("[data-production-attention]");
     if (safetyPanel) safetyPanel.hidden = paused;
     if (attentionPanel) attentionPanel.hidden = !paused;
-    setText("[data-production-attention-eyebrow]", polishedDraftReady ? "已有完整润色稿" : provenanceFailure ? "本机运行环境错误" : contextBudget ? "本地上下文超限" : repairConvergence ? "自动修订未收敛" : repairAuthority ? "修订上下文装配错误" : qualityRevision ? "质量审核需修订" : "已安全暂停");
-    setText("[data-production-attention-title]", polishedDraftReady ? (session?.resume_ready === true ? "润色稿已验证，请确认提交" : "请验证已有润色稿") : provenanceFailure ? (provenanceReady ? "Git 环境已修复，等待确认" : provenanceFailure.verified ? "Git 来源记录环境异常" : "疑似 Git 环境错误，安全核对中") : contextBudget ? (contextBudgetReady ? "上下文修复已完成" : contextBudget.verified ? "模型请求尚未发出" : "上下文错误正在安全核对") : repairConvergence ? (repairConvergence.verified ? "修订稿引入了更严重的连续性问题" : "修订故障正在安全核对") : repairAuthority ? "质量修订请求在本地预算检查中停止" : qualityRejection ? "质量门发现阻断逻辑问题" : qualityRevision ? "Provider 已成功结束" : "不要重复启动或紧急停止");
-    setText("[data-production-attention-detail]", polishedDraftReady ? polishedDraftGuidance(Object.assign({}, session, payload.chapter_recovery || {})) : provenanceFailure ? (provenanceReady ? `${preProviderProvenanceStopDetail(provenanceFailure)} 系统已修复 Git 环境；前往待处理由你确认后才会重新执行。` : `${preProviderProvenanceSummary(provenanceFailure)} ${preProviderProvenanceStopDetail(provenanceFailure)}`) : contextBudget ? (contextBudgetReady ? `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)} 系统已完成降载修复，前往待处理由你确认后才会重新执行。` : `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)}`) : repairConvergence ? (repairConvergence.verified ? `${repairConvergence.settledProviderCalls}/${repairConvergence.providerCalls} 次模型调用已结算，${repairConvergence.candidateChars} 字原候选已保留；${repairNotConvergingSummary(repairConvergence)} 正式正文未提交。前往待处理先做无模型恢复分类。` : `${repairNotConvergingSummary(repairConvergence)} 系统不会盲目重试，安全核对完成前不能继续。`) : repairAuthority ? `生成与审核的 ${repairAuthority.providerCalls} 次模型调用均已结算，${repairAuthority.chapterChars} 字候选正文保存在隔离运行区。修订器需要 ${repairAuthority.requiredChars} 字符的权威记录，旧预算只有 ${repairAuthority.budgetChars}；修订模型请求尚未发出，正式正文未提交。前往待处理先做无模型恢复分类。` : qualityRejection ? `${qualityRejection.providerCalls} 次模型调用均已结算，${qualityRejection.chapterChars} 字候选已保留，正式正文未提交。阻断原因：${qualityProblemSummary(qualityRejection)} 前往待处理编辑恢复草稿并重新验证。` : qualityRevision ? "完整候选草稿已保留，正式正文未提交。前往待处理可启动自动修复并重新校验。" : "正式正文尚未提交。先到待处理识别最新可信恢复点，再决定是否重新校验。");
+    setText("[data-production-attention-eyebrow]", stalledAfterReset ? "失败锁已解除" : polishedDraftReady ? "已有完整润色稿" : provenanceFailure ? "本机运行环境错误" : contextBudget ? "本地上下文超限" : repairConvergence ? "自动修订未收敛" : repairAuthority ? "修订上下文装配错误" : qualityRevision ? "质量审核需修订" : "已安全暂停");
+    setText("[data-production-attention-title]", stalledAfterReset ? "关闭这次停住的生产任务后即可重新开写" : polishedDraftReady ? (session?.resume_ready === true ? "润色稿已验证，请确认提交" : "请验证已有润色稿") : provenanceFailure ? (provenanceReady ? "Git 环境已修复，等待确认" : provenanceFailure.verified ? "Git 来源记录环境异常" : "疑似 Git 环境错误，安全核对中") : contextBudget ? (contextBudgetReady ? "上下文修复已完成" : contextBudget.verified ? "模型请求尚未发出" : "上下文错误正在安全核对") : repairConvergence ? (repairConvergence.verified ? "修订稿引入了更严重的连续性问题" : "修订故障正在安全核对") : repairAuthority ? "质量修订请求在本地预算检查中停止" : qualityRejection ? "质量门发现阻断逻辑问题" : qualityRevision ? "Provider 已成功结束" : "不要重复启动或紧急停止");
+    setText("[data-production-attention-detail]", stalledAfterReset ? `第 ${currentChapter || "—"} 章失败尝试已经结束，没有可复用的完整章节记录。关闭这次停住的生产任务后，「预检并开始」会重新出现；证据保留可追溯，正式正文与快照不会被改写。不要盲目重试上次不确定的模型调用。` : polishedDraftReady ? polishedDraftGuidance(Object.assign({}, session, payload.chapter_recovery || {})) : provenanceFailure ? (provenanceReady ? `${preProviderProvenanceStopDetail(provenanceFailure)} 系统已修复 Git 环境；前往待处理由你确认后才会重新执行。` : `${preProviderProvenanceSummary(provenanceFailure)} ${preProviderProvenanceStopDetail(provenanceFailure)}`) : contextBudget ? (contextBudgetReady ? `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)} 系统已完成降载修复，前往待处理由你确认后才会重新执行。` : `${contextBudgetSummary(contextBudget)} ${contextBudgetStopDetail(contextBudget)}`) : repairConvergence ? (repairConvergence.verified ? `${repairConvergence.settledProviderCalls}/${repairConvergence.providerCalls} 次模型调用已结算，${repairConvergence.candidateChars} 字原候选已保留；${repairNotConvergingSummary(repairConvergence)} 正式正文未提交。前往待处理先做无模型恢复分类。` : `${repairNotConvergingSummary(repairConvergence)} 系统不会盲目重试，安全核对完成前不能继续。`) : repairAuthority ? `生成与审核的 ${repairAuthority.providerCalls} 次模型调用均已结算，${repairAuthority.chapterChars} 字候选正文保存在隔离运行区。修订器需要 ${repairAuthority.requiredChars} 字符的权威记录，旧预算只有 ${repairAuthority.budgetChars}；修订模型请求尚未发出，正式正文未提交。前往待处理先做无模型恢复分类。` : qualityRejection ? `${qualityRejection.providerCalls} 次模型调用均已结算，${qualityRejection.chapterChars} 字候选已保留，正式正文未提交。阻断原因：${qualityProblemSummary(qualityRejection)} 前往待处理编辑恢复草稿并重新验证。` : qualityRevision ? "完整候选草稿已保留，正式正文未提交。前往待处理可启动自动修复并重新校验。" : "正式正文尚未提交。先到待处理识别最新可信恢复点，再决定是否重新校验。");
     const attentionLink = one("[data-production-attention-link]");
-    if (attentionLink) attentionLink.href = projectHash("pending");
+    if (attentionLink) {
+      attentionLink.href = projectHash("pending");
+      attentionLink.hidden = stalledAfterReset;
+    }
     const progress = one(".scene-progress .progress", sessionPanel);
     progress?.classList.toggle("is-indeterminate", running);
     if (progress) {
@@ -2465,8 +2484,10 @@
       setText("[data-recover-button]", allScenesReusable ? `确认复用全部 ${reusableCount} 个场景并重新校验` : `确认复用 ${reusableCount} 个场景并继续提交`);
     } else {
       form.action = issue.recover_url || (issue.project_recovery ? `/api/projects/${encodeURIComponent(state.projectId)}/recovery` : `/api/jobs/${encodeURIComponent(issue.job_id || issue.id)}/recover`);
-      form.dataset.recoveryMode = "classify";
-      form.dataset.confirm = "先执行无模型恢复分类，确认可信场景边界。这一步不会调用模型，确认吗？";
+      form.dataset.recoveryMode = issue.uncertain_without_run ? "classify-without-run" : "classify";
+      form.dataset.confirm = issue.uncertain_without_run
+        ? `第 ${chapter} 章没有完整章节运行记录。无模型安全分类会结束这次失败尝试并允许新的写作；不会调用模型，也不会改写正式正文。确认吗？`
+        : "先执行无模型恢复分类，确认可信场景边界。这一步不会调用模型，确认吗？";
       form.dataset.successMessage = "恢复分类任务已启动。";
       setText("[data-recover-button]", "先做无模型恢复分类");
     }
@@ -2475,30 +2496,66 @@
     const forceResetChapter = one("[data-force-reset-chapter]", forceResetForm);
     const forceResetButton = one("[data-force-reset-button]", forceResetForm);
     const classifiedCheckpoint = Boolean(issue.checkpoint) && issue.checkpoint.action !== "reset";
+    const uncertainWithoutRun = issue.uncertain_without_run === true && issue.formal_prose_exists !== true;
+    const resetCleared = (issue.checkpoint?.action === "reset" || issue.reset_cleared === true)
+      && issue.formal_prose_exists !== true
+      && !durablePolishedDraftAvailable(issue);
+    const stalePausedSession = Boolean(pausedParent)
+      && ["awaiting_input", "needs_recovery"].includes(pausedParent.state);
     const forceResetAllowed = Boolean(
       forceResetPanel
       && forceResetForm
-      && classifiedCheckpoint
-      && issue.recoverable !== false
+      && (classifiedCheckpoint || uncertainWithoutRun)
+      && (issue.recoverable !== false || uncertainWithoutRun)
       && issue.formal_prose_exists !== true
       && issue.execution_compatible !== false
       && pausedParent?.execution_compatible !== false
       && !provenanceFailure
       && !contextBudget
       && !durablePolishedDraftAvailable(issue)
+      && !resetCleared
+    );
+    const closeStalledSession = Boolean(
+      forceResetPanel
+      && forceResetForm
+      && resetCleared
+      && stalePausedSession
+      && issue.execution_compatible !== false
+      && pausedParent?.execution_compatible !== false
+      && !provenanceFailure
+      && !contextBudget
     );
     if (forceResetPanel) {
-      forceResetPanel.hidden = !forceResetAllowed;
-      if (forceResetAllowed) {
+      forceResetPanel.hidden = !(forceResetAllowed || closeStalledSession);
+      if (closeStalledSession) {
+        forceResetChapter.value = String(chapter);
+        forceResetForm.action = `/api/jobs/${encodeURIComponent(pausedParent.job_id || pausedParent.id)}/cancel`;
+        const forceResetField = one('input[name="force_reset"]', forceResetForm);
+        if (forceResetField) forceResetField.disabled = true;
+        forceResetForm.dataset.recoveryMode = "close-stalled-session";
+        forceResetForm.dataset.confirm = `第 ${chapter} 章失败尝试的锁已经解除。确认关闭这次已停住的生产任务，以便重新开写第 ${chapter} 章？不会删除失败证据，也不会改写正式正文。`;
+        forceResetForm.dataset.successMessage = `第 ${chapter} 章失败尝试已结束，可以开始新的写作。`;
+        forceResetButton.disabled = false;
+        setText("[data-force-reset-heading]", "关闭这次停住的生产任务并重新开写");
+        setText("[data-force-reset-copy]", `本章没有可复用的完整章节记录，失败锁已解除。关闭这次停住的生产任务后，就可以重新开写第 ${chapter} 章；证据保留可追溯，正式正文与快照不会被改写。`);
+        setText("[data-force-reset-button]", "关闭这次停住的生产任务");
+      } else if (forceResetAllowed) {
         forceResetChapter.value = String(chapter);
         forceResetForm.action = issue.recover_url
           || (issue.project_recovery
             ? `/api/projects/${encodeURIComponent(state.projectId)}/recovery`
             : `/api/jobs/${encodeURIComponent(issue.job_id || issue.id || pausedParent?.job_id || pausedParent?.id)}/recover`);
+        const forceResetField = one('input[name="force_reset"]', forceResetForm);
+        if (forceResetField) forceResetField.disabled = false;
+        forceResetForm.dataset.recoveryMode = uncertainWithoutRun ? "force-reset-without-run" : "force-reset";
         forceResetForm.dataset.confirm = `确认结束第 ${chapter} 章失败尝试并允许新尝试？只会追加重置标记，不删除失败证据，也不改写正式正文。`;
         forceResetForm.dataset.successMessage = `第 ${chapter} 章强制重置任务已启动。`;
         forceResetButton.disabled = false;
-        setText("[data-force-reset-copy]", `安全分类已完成。若需要丢弃当前失败 run 的复用边界并重新开写第 ${chapter} 章，可结束本章并允许新尝试；证据保留可追溯，正式正文与快照不会被改写。`);
+        setText("[data-force-reset-heading]", "结束本章失败尝试并允许新尝试");
+        setText("[data-force-reset-copy]", uncertainWithoutRun
+          ? `上次模型调用结果不确定，且没有留下完整章节运行记录。不要盲目重试。可先做无模型安全分类，或结束第 ${chapter} 章失败尝试并允许新尝试；证据保留可追溯，正式正文与快照不会被改写。`
+          : `安全分类已完成。若需要丢弃当前失败 run 的复用边界并重新开写第 ${chapter} 章，可结束本章并允许新尝试；证据保留可追溯，正式正文与快照不会被改写。`);
+        setText("[data-force-reset-button]", "结束本章并允许新尝试");
       }
     }
     renderRecoveryDraft(issue);
@@ -2618,6 +2675,9 @@
         chapter: recoveryChapter,
         checkpoint: null,
         project_recovery: false,
+        uncertain_without_run: recovery.uncertain_without_run === true,
+        formal_prose_exists: recovery.formal_prose_exists === true,
+        reset_cleared: recovery.reset_cleared === true,
         scene_schema_failure: sceneSchemaFailure,
         context_headroom_failure: contextHeadroomFailure,
         context_headroom: contextHeadroom,
@@ -2627,22 +2687,26 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
-        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : `第 ${recoveryChapter} 章已安全暂停`,
+        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，等待无模型恢复分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，等待安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，等待安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，等待安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，等待生成编辑草稿` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章已安全暂停`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
           : sceneSchemaFailure
-          ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；第 2 个场景的 JSON 格式错误。`
+          ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；场景响应的 JSON 格式错误。`
           : contextHeadroomFailure
           ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；边界重生输入为 ${contextHeadroom.requiredTokens} tokens，超过 ${contextHeadroom.safeTarget} 安全目标 ${contextHeadroom.overageTokens} tokens。`
           : repairAuthorityFailure
           ? `本次 ${repairAuthority.providerCalls} 次模型调用均已结算；${repairAuthority.chapterChars} 字候选已保留，修订所需权威记录 ${repairAuthority.requiredChars} 字符超过旧预算 ${repairAuthority.budgetChars} 字符。`
           : qualityRejectionFailure
           ? `本次 ${qualityRejection.providerCalls} 次模型调用均已结算；${qualityRejection.chapterChars} 字候选已保留。阻断原因：${qualityProblemSummary(qualityRejection)}`
+          : recovery.uncertain_without_run
+          ? "上次模型调用结果不确定，没有完整回执和章节运行记录。不要盲目重试。"
           : "最新完整输出尚未重新识别恢复边界",
         summary: repairConvergenceFailure
           ? (repairConvergenceFailure.verified ? `${repairConvergenceFailure.providerCalls} 次模型调用全部结算，${repairConvergenceFailure.candidateChars} 字原候选已保留，正式正文未提交。先做无模型恢复分类，不直接重试失败修订稿。` : "调用、候选正文与提交状态正在安全核对；完成前不会恢复或重试。")
           : sceneSchemaFailure || contextHeadroomFailure || repairAuthorityFailure || qualityRejectionFailure
           ? "正式正文没有提交；先执行无模型恢复分类，核对候选正文、回执与最新运行后再继续。"
+          : recovery.uncertain_without_run
+          ? "电脑中断时模型调用没有留下完整回执。请先做无模型安全分类；分类会结束这次失败尝试，也可以直接结束本章并允许新尝试。正式正文与快照不会被改写。"
           : "场景和合并草稿已保存在隔离运行区。先执行无模型分类，系统不会重写正文、调用模型或提交章节。",
         reusable_scene_count: 0
       };
@@ -2662,17 +2726,21 @@
         quality_revision: qualityRejectionFailure,
         quality_rejection: qualityRejection,
         latest_run: latestRecoveryRun,
-        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : `第 ${recoveryChapter} 章可安全恢复`,
+        title: repairConvergenceFailure ? (repairConvergenceFailure.verified ? `第 ${recoveryChapter} 章自动修订未收敛，已安全分类` : `第 ${recoveryChapter} 章修订故障正在安全核对`) : sceneSchemaFailure ? `第 ${recoveryChapter} 章场景响应格式错误，已安全分类` : contextHeadroomFailure ? `第 ${recoveryChapter} 章边界重生输入超过安全余量，已安全分类` : repairAuthorityFailure ? `第 ${recoveryChapter} 章修订上下文装配失败，已安全分类` : qualityRejectionFailure ? `第 ${recoveryChapter} 章质量门发现阻断问题，候选草稿可编辑` : durablePolishedDraftAvailable(recovery) ? `第 ${recoveryChapter} 章已有完整润色稿，请验证后继续` : recovery.uncertain_without_run ? `第 ${recoveryChapter} 章上次模型调用结果不确定` : `第 ${recoveryChapter} 章可安全恢复`,
         reason: repairConvergenceFailure
           ? repairNotConvergingSummary(repairConvergenceFailure)
           : sceneSchemaFailure
-          ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；第 2 个场景的 JSON 格式错误。`
+          ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；场景响应的 JSON 格式错误。`
           : contextHeadroomFailure
           ? `本次 ${Number(latestRecoveryRun.provider_calls) || 0} 次模型调用均已结算；边界重生输入超过 ${contextHeadroom.safeTarget} 安全目标 ${contextHeadroom.overageTokens} tokens。`
           : repairAuthorityFailure
           ? `本次 ${repairAuthority.providerCalls} 次模型调用均已结算；${repairAuthority.chapterChars} 字候选已保留，修订所需权威记录超过旧预算 ${repairAuthority.overageChars} 字符。`
           : qualityRejectionFailure
           ? `本次 ${qualityRejection.providerCalls} 次模型调用均已结算；${qualityRejection.chapterChars} 字候选已保留。阻断原因：${qualityProblemSummary(qualityRejection)}`
+          : durablePolishedDraftAvailable(recovery)
+          ? polishedDraftGuidance(recovery)
+          : recovery.uncertain_without_run
+          ? "上次模型调用结果不确定，没有完整回执和章节运行记录。不要盲目重试。"
           : recovery.checkpoint ? `已分类 ${recovery.checkpoint.reusable_scene_count || 0} 个回执完整场景候选` : "生成未提交，先执行无模型恢复分类",
         summary: repairConvergenceFailure
           ? (repairConvergenceFailure.verified ? `${repairConvergenceFailure.providerCalls} 次模型调用全部结算，${repairConvergenceFailure.candidateChars} 字原候选已保留，正式正文未提交；不会采用失败修订稿。` : "调用、候选正文与提交状态正在安全核对；完成前不会恢复或重试。")
@@ -2680,9 +2748,31 @@
           ? "请在下方恢复草稿中修正阻断问题，保存并重新验证；正式正文在通过前不会提交。"
           : sceneSchemaFailure || contextHeadroomFailure || repairAuthorityFailure
           ? `正式正文没有提交；${Number(recovery.checkpoint?.reusable_scene_count || 0)} 个有回执的场景候选已完成恢复核对，继续时会重新验证后再进入修订与提交。`
+          : durablePolishedDraftAvailable(recovery)
+          ? polishedDraftGuidance(recovery)
+          : recovery.uncertain_without_run
+          ? "电脑中断时模型调用没有留下完整回执。请先做无模型安全分类；分类会结束这次失败尝试，也可以直接结束本章并允许新尝试。正式正文与快照不会被改写。"
           : recovery.checkpoint ? "恢复检查点已建立；候选会先重跑当前状态边界，通过后才会复用。" : "工作台将先在不调用模型的情况下分类现有回执，不会改写正文。",
         reusable_scene_count: recovery.checkpoint?.reusable_scene_count || 0,
         next_scene: (recovery.checkpoint?.reusable_scene_count || 0) + 1
+      };
+    } else if (!provenanceAtRecoveryChapter && !contextBudgetAtRecoveryChapter && !qualityRevisionAtRecoveryChapter && pausedRecoveryJob && (recovery?.reset_cleared === true || recovery?.checkpoint?.action === "reset") && recovery?.formal_prose_exists !== true && !durablePolishedDraftAvailable(recovery)) {
+      recoveryIssue = {
+        ...pausedRecoveryJob,
+        id: pausedRecoveryJob.id,
+        job_id: pausedRecoveryJob.job_id || pausedRecoveryJob.id,
+        chapter: recoveryChapter,
+        checkpoint: recovery.checkpoint,
+        project_recovery: false,
+        recoverable: false,
+        formal_prose_exists: recovery.formal_prose_exists,
+        reset_cleared: true,
+        uncertain_without_run: false,
+        latest_run: latestRecoveryRun,
+        title: `第 ${recoveryChapter} 章失败尝试已结束，可开始新尝试`,
+        reason: "失败锁已解除，没有可复用的完整章节记录。关闭这次停住的生产任务后即可重新开写。",
+        summary: "不要盲目重试上次不确定的模型调用。证据保留可追溯，正式正文与快照不会被改写。",
+        reusable_scene_count: 0
       };
     }
     const qualityRevisionIds = new Set(qualityRevisionJobs.map((job) => String(job.job_id || job.id)));
@@ -2698,7 +2788,7 @@
     state.pending = [...provenanceIssues, ...contextBudgetIssues, ...qualityRevisionIssues, ...(recoveryIssue ? [recoveryIssue] : []), ...remainingPaused];
     updatePendingCount(state.pending.length);
     setText("[data-pending-heading-count]", state.pending.length);
-    setText("[data-pending-lede]", provenanceIssues.length ? (provenanceUnverified ? "检测到疑似 Git 来源记录环境异常；调用、费用与产物证据正在安全核对，完成前不能重新执行。" : provenanceReady ? "Git 环境已修复；重新执行需要你的明确确认，点击前不会新增模型调用或费用。" : "Git 来源记录环境异常；本次失败证据已核对，系统修复前不能重新执行。") : contextBudgetIssues.length ? (contextBudgetUnverified ? "本地输入超过安全上限；调用、费用与产物证据正在安全核对，完成前不能重新执行。" : contextBudgetReady ? "上下文修复已完成；重新执行需要你的明确确认，点击前不会新增模型调用或费用。" : "本地输入在调用模型前超过安全上限；系统修复前不能重新执行。") : recoveryIssue?.repair_not_converging ? (recoveryIssue.repair_not_converging.verified ? "自动修订引入了更严重问题，系统已保留原候选并停止；下一步先做无模型恢复分类，不会盲目重试。" : "修订故障的调用、候选正文与提交证据正在安全核对；完成前不能恢复或重试。") : qualityRevisionIssues.length || recoveryIssue?.quality_revision ? "质量门要求修订候选草稿；正式正文在重新验证通过前不会提交。" : durablePolishedDraftAvailable(recoveryIssue) ? polishedDraftGuidance(recoveryIssue) : "自动生产在不确定处停下，这里只展示必须由作者决定的内容。");
+    setText("[data-pending-lede]", provenanceIssues.length ? (provenanceUnverified ? "检测到疑似 Git 来源记录环境异常；调用、费用与产物证据正在安全核对，完成前不能重新执行。" : provenanceReady ? "Git 环境已修复；重新执行需要你的明确确认，点击前不会新增模型调用或费用。" : "Git 来源记录环境异常；本次失败证据已核对，系统修复前不能重新执行。") : contextBudgetIssues.length ? (contextBudgetUnverified ? "本地输入超过安全上限；调用、费用与产物证据正在安全核对，完成前不能重新执行。" : contextBudgetReady ? "上下文修复已完成；重新执行需要你的明确确认，点击前不会新增模型调用或费用。" : "本地输入在调用模型前超过安全上限；系统修复前不能重新执行。") : recoveryIssue?.repair_not_converging ? (recoveryIssue.repair_not_converging.verified ? "自动修订引入了更严重问题，系统已保留原候选并停止；下一步先做无模型恢复分类，不会盲目重试。" : "修订故障的调用、候选正文与提交证据正在安全核对；完成前不能恢复或重试。") : qualityRevisionIssues.length || recoveryIssue?.quality_revision ? "质量门要求修订候选草稿；正式正文在重新验证通过前不会提交。" : durablePolishedDraftAvailable(recoveryIssue) ? polishedDraftGuidance(recoveryIssue) : recoveryIssue?.uncertain_without_run ? "上次模型调用结果不确定，没有完整回执。不要盲目重试；请先做无模型安全分类，或在此结束失败尝试并允许新的一次写作。" : recoveryIssue?.reset_cleared ? "失败锁已解除。关闭这次停住的生产任务后，就可以重新开写本章。" : "自动生产在不确定处停下，这里只展示必须由作者决定的内容。");
     const pill = one("[data-active-job-pill]");
     if (pill) {
       pill.hidden = pausedJobs.length === 0;
@@ -3711,6 +3801,7 @@
     else if (form.matches("[data-force-reset-form]")) {
       await loadPending();
       if (payload.job || payload.job_id) await loadProject(state.projectId, true);
+      if (form.dataset.recoveryMode === "close-stalled-session") window.location.hash = projectHash("production");
     }
     else if (form.matches("[data-draft-update-form]")) await loadPending();
     else if (form.matches("[data-draft-validate-form], [data-draft-confirm-form]")) { await loadPending(); if (payload.job) window.location.hash = projectHash("production"); }
