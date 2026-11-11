@@ -860,3 +860,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .chapter-budget-panel .form-grid { margin-block: 16px; }
 .chapter-budget-panel .check-field { margin-block: 16px; }
 .chapter-budget-panel [data-chapter-budget-status] { font-weight: 600; }
+
+.book-card-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.edition-badge { display: inline-flex; align-items: center; padding: 5px 8px; border-radius: 999px; font-size: 10px; font-weight: 750; white-space: nowrap; }
+.edition-badge-current { color: #1f5c45; background: #e6f4ee; }
+.edition-badge-previous { color: #6b5a2e; background: #f4eedc; }
+.book-card-previous { opacity: .96; }
+.book-card-previous .book-cover { filter: grayscale(.2); }
+[data-previous-edition-notice] { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+[data-previous-edition-notice] p { margin: 0; flex: 1 1 240px; }
+[data-previous-editions-lede] { margin: 0 0 12px; }

@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 from core.story_project.model import CORE_DIRECTORY_NAMES
 from workbench.app import create_app
 from workbench.project_catalog import (
+    annotate_related_editions,
+    edition_stem,
     is_engineering_fixture_root,
     resolve_active_book,
     select_author_bookshelf,
@@ -143,3 +145,82 @@ def test_explicit_fixture_import_stays_addressable_but_off_the_author_shelf(tmp_
     engineering_ids = [item["id"] for item in engineering.json()["items"]]
     assert official_id in engineering_ids
     assert fixture_id in engineering_ids
+
+
+def test_edition_stem_groups_rewrite_and_version_suffixes() -> None:
+    assert edition_stem("日常长篇") == "日常长篇"
+    assert edition_stem("日常长篇_重写V2") == "日常长篇"
+    assert edition_stem(Path("/tmp/日常长篇_V2")) == "日常长篇"
+    assert edition_stem("日常长篇_重写") == "日常长篇"
+    assert edition_stem("另一本作品") == "另一本作品"
+
+
+def test_related_editions_label_previous_book_without_hardcoded_title(tmp_path: Path) -> None:
+    official = tmp_path / "books" / "日常长篇_重写V2"
+    earlier = tmp_path / "books" / "日常长篇"
+    other = tmp_path / "books" / "另一本作品"
+    official.mkdir(parents=True)
+    earlier.mkdir()
+    other.mkdir()
+    (tmp_path / ".active-book").write_text("books/日常长篇_重写V2", encoding="utf-8")
+    items = annotate_related_editions(
+        [
+            {"id": "project_official", "root": str(official), "title": "日常长篇_重写V2"},
+            {"id": "project_earlier", "root": str(earlier), "title": "日常长篇"},
+            {"id": "project_other", "root": str(other), "title": "另一本作品"},
+        ],
+        repository=tmp_path,
+    )
+    by_id = {item["id"]: item for item in items}
+    assert by_id["project_official"]["is_active_book"] is True
+    assert by_id["project_official"]["edition_role"] == "current"
+    assert by_id["project_official"]["edition_label"] == "当前作品"
+    assert by_id["project_earlier"]["is_active_book"] is False
+    assert by_id["project_earlier"]["edition_role"] == "previous"
+    assert by_id["project_earlier"]["edition_label"] == "上一版"
+    assert by_id["project_earlier"]["current_edition_id"] == "project_official"
+    assert by_id["project_earlier"]["current_edition_title"] == "日常长篇_重写V2"
+    assert by_id["project_other"]["edition_role"] is None
+    assert by_id["project_other"]["edition_label"] is None
+    assert by_id["project_other"]["is_active_book"] is False
+
+
+def test_author_bookshelf_marks_similarly_named_previous_edition(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    books = repo / "books"
+    official = _story_project(books / "日常长篇_重写V2")
+    earlier = _story_project(books / "日常长篇")
+    fixture = _story_project(books / "_validation_chapter20_recovery")
+    (repo / ".active-book").write_text("books/日常长篇_重写V2", encoding="utf-8")
+    (repo / "data").mkdir()
+
+    client = _client(repo, auto_import_active=True)
+    listing = client.get("/api/projects")
+    assert listing.status_code == 200, listing.text
+    items = listing.json()["items"]
+    assert [Path(item["root"]).name for item in items] == ["日常长篇_重写V2", "日常长篇"]
+    official_item, earlier_item = items
+    assert official_item["is_active_book"] is True
+    assert official_item["edition_role"] == "current"
+    assert official_item["edition_label"] == "当前作品"
+    assert earlier_item["is_active_book"] is False
+    assert earlier_item["edition_role"] == "previous"
+    assert earlier_item["edition_label"] == "上一版"
+    assert earlier_item["current_edition_id"] == official_item["id"]
+    assert earlier_item["current_edition_title"] == official_item["title"]
+    assert official.is_dir() and earlier.is_dir() and fixture.is_dir()
+
+    earlier_detail = client.get(f"/api/projects/{earlier_item['id']}")
+    assert earlier_detail.status_code == 200, earlier_detail.text
+    earlier_project = earlier_detail.json()["project"]
+    assert earlier_project["edition_role"] == "previous"
+    assert earlier_project["edition_label"] == "上一版"
+    assert earlier_project["current_edition_id"] == official_item["id"]
+    assert earlier_project["current_edition_title"] == official_item["title"]
+
+    official_detail = client.get(f"/api/projects/{official_item['id']}")
+    assert official_detail.status_code == 200, official_detail.text
+    official_project = official_detail.json()["project"]
+    assert official_project["edition_role"] == "current"
+    assert official_project["edition_label"] == "当前作品"
+    assert official_project["is_active_book"] is True

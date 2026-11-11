@@ -422,37 +422,95 @@
     const exportLink = one("[data-project-export]");
     if (exportLink) exportLink.href = `/api/projects/${encodeURIComponent(state.projectId)}/export`;
     updatePendingCount(Number(state.project.pending_count || 0));
+
+    const editionNotice = one("[data-previous-edition-notice]");
+    if (editionNotice) {
+      const isPrevious = Boolean(hasProject && state.project?.edition_role === "previous");
+      editionNotice.hidden = !isPrevious;
+      if (isPrevious) {
+        const currentTitle = state.project.current_edition_title || "当前作品";
+        setText("[data-previous-edition-message]", `这是上一版，不是正在续写的那一本。当前作品是「${currentTitle}」。`);
+        const editionLink = one("[data-previous-edition-link]");
+        if (editionLink) {
+          if (state.project.current_edition_id) {
+            editionLink.hidden = false;
+            editionLink.href = `#/projects/${encodeURIComponent(state.project.current_edition_id)}/overview`;
+          } else {
+            editionLink.hidden = true;
+          }
+        }
+      }
+    }
+  };
+
+  const fillBookCard = (project, index, container) => {
+    if (!container) return;
+    const template = one("#book-card-template");
+    const fragment = template.content.cloneNode(true);
+    const card = fragment.querySelector(".book-card");
+    const link = fragment.querySelector(".book-card-main");
+    const id = projectIdOf(project);
+    link.href = `#/projects/${encodeURIComponent(id)}/overview`;
+    const cover = fragment.querySelector(".book-cover");
+    cover.style.setProperty("--cover-hue", String(project.cover_hue ?? ((index + 1) * 47) % 360));
+    fragment.querySelector(".cover-kicker").textContent = projectGenreOf(project);
+    fragment.querySelector(".book-cover strong").textContent = projectTitleOf(project);
+    fragment.querySelector("h3").textContent = projectTitleOf(project);
+    const countLabel = `${projectGenreOf(project)} · ${numberLabel(project.chapter_count)} 章`;
+    if (project.edition_role === "previous") {
+      fragment.querySelector(".book-title-row p").textContent = `上一版 · ${countLabel}`;
+      card.classList.add("book-card-previous");
+      const fallback = project.current_edition_title
+        ? `当前作品是「${project.current_edition_title}」。这是上一版，不是正在续写的那一本。`
+        : "这是上一版，不是正在续写的那一本。";
+      fragment.querySelector(".book-summary").textContent = projectSummaryOf(project) || fallback;
+    } else if (project.edition_role === "current") {
+      fragment.querySelector(".book-title-row p").textContent = `当前作品 · ${countLabel}`;
+      fragment.querySelector(".book-summary").textContent = projectSummaryOf(project);
+    } else {
+      fragment.querySelector(".book-title-row p").textContent = countLabel;
+      fragment.querySelector(".book-summary").textContent = projectSummaryOf(project);
+    }
+    const editionBadge = fragment.querySelector("[data-edition-badge]");
+    if (editionBadge && project.edition_label) {
+      editionBadge.hidden = false;
+      editionBadge.textContent = project.edition_label;
+      editionBadge.classList.toggle("edition-badge-current", project.edition_role === "current");
+      editionBadge.classList.toggle("edition-badge-previous", project.edition_role === "previous");
+    }
+    fragment.querySelector(".book-progress-copy strong").textContent = project.progress_label || (project.chapter_count ? `已写至第 ${project.chapter_count} 章` : "尚未开写");
+    const progress = Math.max(0, Math.min(100, Number(project.progress || 0)));
+    fragment.querySelector(".progress").setAttribute("aria-valuenow", String(progress));
+    fragment.querySelector(".progress span").style.setProperty("--progress", `${progress}%`);
+    fragment.querySelector("footer > span").textContent = project.updated_at_label || "本地作品";
+    UI.updateStatusBadge(fragment.querySelector(".status-badge"), project.status || "idle", project.active_job?.execution_compatible === false ? "旧任务版本不兼容" : project.status_label);
+    if (project.pending_count > 0) card.classList.add("needs-attention");
+    container.append(fragment);
   };
 
   const renderBookshelf = () => {
     const grid = one("[data-project-grid]");
+    const previousGrid = one("[data-previous-project-grid]");
+    const previousHeading = one("[data-previous-editions-heading]");
+    const previousLede = one("[data-previous-editions-lede]");
     const empty = one("[data-project-empty]");
     clear(grid);
+    if (previousGrid) clear(previousGrid);
     if (empty) empty.hidden = state.projects.length > 0;
-    const template = one("#book-card-template");
-    state.projects.forEach((raw, index) => {
+    const current = [];
+    const previous = [];
+    state.projects.forEach((raw) => {
       const project = raw.project || raw;
-      const id = projectIdOf(project);
-      const fragment = template.content.cloneNode(true);
-      const card = fragment.querySelector(".book-card");
-      const link = fragment.querySelector(".book-card-main");
-      link.href = `#/projects/${encodeURIComponent(id)}/overview`;
-      const cover = fragment.querySelector(".book-cover");
-      cover.style.setProperty("--cover-hue", String(project.cover_hue ?? ((index + 1) * 47) % 360));
-      fragment.querySelector(".cover-kicker").textContent = projectGenreOf(project);
-      fragment.querySelector(".book-cover strong").textContent = projectTitleOf(project);
-      fragment.querySelector("h3").textContent = projectTitleOf(project);
-      fragment.querySelector(".book-title-row p").textContent = `${projectGenreOf(project)} · ${numberLabel(project.chapter_count)} 章`;
-      fragment.querySelector(".book-summary").textContent = projectSummaryOf(project);
-      fragment.querySelector(".book-progress-copy strong").textContent = project.progress_label || (project.chapter_count ? `已写至第 ${project.chapter_count} 章` : "尚未开始");
-      const progress = Math.max(0, Math.min(100, Number(project.progress || 0)));
-      fragment.querySelector(".progress").setAttribute("aria-valuenow", String(progress));
-      fragment.querySelector(".progress span").style.setProperty("--progress", `${progress}%`);
-      fragment.querySelector("footer > span").textContent = project.updated_at_label || "本地作品";
-      UI.updateStatusBadge(fragment.querySelector(".status-badge"), project.status || "idle", project.active_job?.execution_compatible === false ? "旧任务版本不兼容" : project.status_label);
-      if (project.pending_count > 0) card.classList.add("needs-attention");
-      grid.append(fragment);
+      if (project.edition_role === "previous") previous.push(project);
+      else current.push(project);
     });
+    current.forEach((project, index) => fillBookCard(project, index, grid));
+    const previousTarget = previousGrid || grid;
+    previous.forEach((project, index) => fillBookCard(project, index, previousTarget));
+    const showPrevious = previous.length > 0 && previousGrid;
+    if (previousHeading) previousHeading.hidden = !showPrevious;
+    if (previousLede) previousLede.hidden = !showPrevious;
+    if (previousGrid) previousGrid.hidden = !showPrevious;
   };
 
   const loadProjects = async () => {

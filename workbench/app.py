@@ -88,7 +88,14 @@ from workbench.jobs import (
     verify_committed_chapter,
 )
 from workbench.outlines import OutlineBatchConflict, OutlineBatchError, OutlineBatchService
-from workbench.project_catalog import annotate_project_catalog, resolve_active_book, select_author_bookshelf, should_auto_import_book
+from workbench.project_catalog import (
+    annotate_project_catalog,
+    annotate_project_with_related_editions,
+    annotate_related_editions,
+    resolve_active_book,
+    select_author_bookshelf,
+    should_auto_import_book,
+)
 from workbench.planning import OutlinePlanner, OutlinePlanningError
 from workbench.projects import ProjectRecord, ProjectRegistry, ProjectRegistryError
 from workbench.chapter_publication_api import install_chapter_publication_routes
@@ -414,6 +421,28 @@ def _create_app_owned(
             "restore_scope": scope_view,
         }
 
+    def _sibling_catalog_items(*, include_fixtures: bool = False):
+        return [
+            _catalog_project_item(
+                sibling,
+                jobs,
+                reviewed_views,
+                reviewed=app.state.reviewed_workflow.is_reviewed(sibling.id),
+            )
+            for sibling in select_author_bookshelf(
+                display_projects.list_projects(),
+                repository=repository,
+                include_fixtures=include_fixtures or restore_scope is not None,
+            )
+        ]
+
+    def _with_related_editions(item, *, include_fixtures: bool = False):
+        return annotate_project_with_related_editions(
+            item,
+            _sibling_catalog_items(include_fixtures=include_fixtures),
+            repository=repository,
+        )
+
     @app.get("/api/projects")
     async def list_projects(include_fixtures: bool = Query(False)) -> dict[str, Any]:
         records = select_author_bookshelf(
@@ -421,15 +450,18 @@ def _create_app_owned(
             repository=repository,
             include_fixtures=include_fixtures or restore_scope is not None,
         )
-        return {"items": [
-            _catalog_project_item(
-                record,
-                jobs,
-                reviewed_views,
-                reviewed=app.state.reviewed_workflow.is_reviewed(record.id),
-            )
-            for record in records
-        ]}
+        return {"items": annotate_related_editions(
+            [
+                _catalog_project_item(
+                    record,
+                    jobs,
+                    reviewed_views,
+                    reviewed=app.state.reviewed_workflow.is_reviewed(record.id),
+                )
+                for record in records
+            ],
+            repository=repository,
+        )}
 
     @app.post("/api/projects", status_code=201)
     async def create_project(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -469,10 +501,11 @@ def _create_app_owned(
             detail = await asyncio.to_thread(reviewed_views.detail, record)
             project = detail.get("project")
             if isinstance(project, dict):
-                detail = {**detail, "project": annotate_project_catalog(project, record)}
+                project = annotate_project_catalog(project, record)
+                detail = {**detail, "project": _with_related_editions(project)}
             return detail
         return {
-            "project": _catalog_project_item(record, jobs, reviewed_views),
+            "project": _with_related_editions(_catalog_project_item(record, jobs, reviewed_views)),
             "overview": _project_overview(record, outlines, jobs),
         }
 

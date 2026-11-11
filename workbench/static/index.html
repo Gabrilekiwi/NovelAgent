@@ -136,6 +136,8 @@
         <div class="notice notice-warning" data-restore-scope-notice hidden role="status"></div>
         <div class="notice notice-warning" data-reviewed-project-notice hidden><strong>已审核事实模式</strong><p data-reviewed-project-message></p><button class="button button-secondary" type="button" data-reviewed-project-recover hidden>恢复原章节事务</button><p data-reviewed-project-error role="alert" hidden></p></div>
 
+        <div class="notice notice-warning" data-previous-edition-notice hidden role="status"><strong>这是上一版</strong><p data-previous-edition-message></p><a class="button button-primary" data-previous-edition-link href="#">打开当前作品</a></div>
+
         <!-- Bookshelf -->
         <section data-spa-view="bookshelf">
           <div class="page-heading home-heading">
@@ -144,6 +146,9 @@
           </div>
           <div class="section-heading"><div><p class="eyebrow">书架</p><h2>正在创作</h2></div><button class="button button-secondary" type="button" data-dialog-open="import-project-dialog">导入 StoryProject</button></div>
           <div class="book-grid" data-project-grid></div>
+          <div class="section-heading" data-previous-editions-heading hidden><div><p class="eyebrow">书架</p><h2>以往版本</h2></div></div>
+          <p class="muted-copy" data-previous-editions-lede hidden>这些是仍保留在本机的旧版作品，不是当前正在续写的那一本。</p>
+          <div class="book-grid" data-previous-project-grid hidden></div>
           <div class="empty-state" data-project-empty hidden><span class="empty-mark" aria-hidden="true">◇</span><h3>书架还是空的</h3><p>创建一本新作品，或导入现有 StoryProject 开始。</p></div>
         </section>
 
@@ -408,7 +413,7 @@
   <dialog class="confirm-dialog" id="confirm-dialog"><form method="dialog"><div class="dialog-mark">?</div><h2>确认操作</h2><p data-confirm-message></p><div class="dialog-actions"><button class="button button-ghost" value="cancel">取消</button><button class="button button-primary" value="confirm" data-confirm-button>确认</button></div></form></dialog>
   <div class="toast-region" data-toast-region aria-live="polite"></div><div class="sidebar-scrim" data-sidebar-scrim></div>
 
-  <template id="book-card-template"><article class="book-card"><a class="book-card-main"><div class="book-cover"><span class="cover-kicker"></span><strong></strong><small>本地作者</small></div><div class="book-card-copy"><div class="book-title-row"><div><h3></h3><p></p></div><span class="status-badge status-idle"><span class="status-dot"></span><span data-status-label>空闲</span></span></div><p class="book-summary"></p><div class="book-progress-copy"><span>最近进展</span><strong></strong></div><div class="progress"><span></span></div><footer><span></span><span class="card-link">进入作品 →</span></footer></div></a></article></template>
+  <template id="book-card-template"><article class="book-card"><a class="book-card-main"><div class="book-cover"><span class="cover-kicker"></span><strong></strong><small>本地作者</small></div><div class="book-card-copy"><div class="book-title-row"><div><h3></h3><p></p></div><div class="book-card-badges"><span class="edition-badge" data-edition-badge hidden></span><span class="status-badge status-idle"><span class="status-dot"></span><span data-status-label>空闲</span></span></div></div><p class="book-summary"></p><div class="book-progress-copy"><span>最近进展</span><strong></strong></div><div class="progress"><span></span></div><footer><span></span><span class="card-link">进入作品 →</span></footer></div></a></article></template>
   <template id="outline-card-template"><article class="outline-card"><header class="outline-card-header"><div class="outline-number"><span>第</span><strong></strong><span>章</span></div><label class="field title-field"><span class="sr-only">章节标题</span><input name="outline_title" required maxlength="120" placeholder="输入章节标题"></label><button class="icon-button outline-toggle" type="button" aria-expanded="true">⌃</button></header><div class="outline-card-body"><input type="hidden" name="chapter_index" data-field="chapter_index"><div class="outline-fields"><label class="field field-span-2"><span>核心事件 <em>必填</em></span><textarea name="core_event" data-field="core_event" required rows="3"></textarea></label><label class="field"><span>必写节拍 <em>每行一项</em></span><textarea name="required_beats" data-field="required_beats" required rows="5"></textarea></label><label class="field"><span>结尾压力 <em>必填</em></span><textarea name="ending_pressure" data-field="ending_pressure" required rows="5"></textarea></label></div></div></article></template>
   <script src="/static/workbench.js" defer></script>
   <script src="/static/maintenance.js" defer></script>
