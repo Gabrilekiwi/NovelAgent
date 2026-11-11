@@ -879,3 +879,24 @@ def test_overview_pending_count_does_not_special_case_chapter_20() -> None:
     assert "const pendingChapterNumber" in spa
     assert "const pendingChapterLabel" in spa
     assert "${pendingChapterLabel(issue)}" in spa
+
+
+def test_chapter_page_does_not_treat_written_or_later_chapters_as_health_failures() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+
+    assert "const hasFormalProse" in spa
+    assert 'chapter_card_error_code = "chapter_card_already_written"' in spa
+    assert "error?.payload?.error?.code" in spa
+    assert "本章已有正式正文，无需再确认生成输入。" in spa
+    assert "本章已提交正文" in spa
+    assert "还不能开始这一章" in spa
+    assert "请到生产页使用「预检并开始」续写。" in spa
+    assert "请先到生产页续写第 ${state.project.next_chapter} 章。" in spa
+    # The generic health fallback remains only for true context-not-ready failures.
+    render_card = spa.split("const renderChapterCard", 1)[1].split("const renderChapter =", 1)[0]
+    assert "请先检查项目健康状态与本章章纲。" in render_card
+    assert "alreadyWritten" in render_card
+    assert "previousMissing" in render_card
+    load_chapter = spa.split("const loadChapter =", 1)[1]
+    assert "if (hasFormalProse)" in load_chapter
+    assert "/chapters/${chapterNumber}/card`" in load_chapter

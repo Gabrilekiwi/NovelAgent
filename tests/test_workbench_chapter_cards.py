@@ -573,3 +573,64 @@ def test_chapter_detail_marks_outline_only_chapter_as_draft(tmp_path: Path) -> N
     assert payload["has_outline"] is True
     assert payload["has_prose"] is False
     assert payload["status"] == "draft"
+
+
+def test_written_chapter_card_explains_already_submitted_prose_not_health(tmp_path: Path) -> None:
+    root = _strict_book(tmp_path)
+    client, project = _client_for_book(tmp_path, root)
+
+    response = client.get(f"/api/projects/{project['id']}/chapters/1/card")
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "chapter_card_already_written"
+    assert "正式正文" in error["message"]
+    assert "健康" not in error["message"]
+    assert "章纲" not in error["message"]
+
+
+def test_later_outline_chapter_card_explains_previous_chapter_missing_not_health(
+    tmp_path: Path,
+) -> None:
+    root = _strict_book(tmp_path)
+    outline = root / "大纲" / "细纲_第003章.md"
+    outline.write_text(
+        "\n".join(
+            [
+                "title: 第三章",
+                "core_event: 主角沿信号继续向前。",
+                "required_beats:",
+                "- 确认上一章尚未完成的路线",
+                "- 不提前进入尚未开放的区域",
+                "",
+                "ending_pressure: 前方通路在看不见的地方被封上。",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    client, project = _client_for_book(tmp_path, root)
+
+    response = client.get(f"/api/projects/{project['id']}/chapters/3/card")
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "chapter_card_previous_chapter_missing"
+    assert "上一章正文还没有提交" in error["message"]
+    assert "生产页" in error["message"]
+    assert "第 2 章" in error["message"]
+    assert "健康" not in error["message"]
+
+
+def test_next_unwritten_chapter_card_still_builds_when_previous_prose_exists(
+    tmp_path: Path,
+) -> None:
+    root = _strict_book(tmp_path)
+    client, project = _client_for_book(tmp_path, root)
+
+    response = client.get(f"/api/projects/{project['id']}/chapters/2/card")
+
+    assert response.status_code == 200, response.text
+    card = response.json()["chapter_card"]
+    assert card["chapter_index"] == 2
+    assert card["readiness"]["can_generate"] is True

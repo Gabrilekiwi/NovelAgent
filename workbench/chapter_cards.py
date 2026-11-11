@@ -9,7 +9,6 @@ from core.director.director import validate_decision
 from core.engine.chapter_candidate_context import (
     CHAPTER_CANDIDATE_CONTEXT_VERSION,
     ChapterCandidateContextBuilder,
-    ChapterCandidateContextError,
 )
 from core.memory_v2.canonical import canonical_json_hash
 from core.project_profile import project_language
@@ -55,22 +54,8 @@ class ChapterCardService:
         project = self.projects.get(project_id)
         try:
             trusted = self.context_builder_factory(project.root).build(chapter_index)
-        except ChapterCandidateContextError as exc:
-            if exc.code == "chapter_candidate_context_not_strict":
-                message = "项目的可信状态尚未激活；请先在健康检查中完成校准并激活，再确认章节卡。"
-            elif "authority" in exc.code:
-                message = "事件权威状态无法安全读取；请先在健康检查中恢复或重新验证权威状态。"
-            else:
-                message = "无法构建可信章节输入；请先检查项目健康状态和本章章纲。"
-            raise ChapterCardError(
-                message,
-                code="chapter_card_context_not_ready",
-            ) from exc
         except ValueError as exc:
-            raise ChapterCardError(
-                "无法构建可信章节输入；请先检查项目健康状态和本章章纲。",
-                code="chapter_card_context_not_ready",
-            ) from exc
+            raise _chapter_card_context_failure(exc, chapter_index) from exc
         context = trusted.story_project_context
         blueprint = context.get("chapter_blueprint")
         read_set = context.get("read_set")
@@ -285,6 +270,44 @@ class ChapterCardService:
                 code="chapter_card_not_ready",
             )
         return payload
+
+
+def _chapter_card_context_failure(exc: BaseException, chapter_index: int) -> ChapterCardError:
+    """Map generation-context failures to author-visible chapter-card errors.
+
+    The context builder correctly refuses to prepare generation input when the
+    chapter already has formal prose, or when an earlier chapter is still
+    unwritten. Those are expected chapter states, not project-health failures.
+    """
+
+    code = str(getattr(exc, "code", "") or "")
+    text = str(exc)
+    if code == "previous_chapter_missing" or "previous_chapter_missing" in text:
+        previous = chapter_index - 1
+        return ChapterCardError(
+            f"上一章正文还没有提交，还不能为这一章构建生成输入。请先到生产页续写第 {previous} 章。",
+            code="chapter_card_previous_chapter_missing",
+        )
+    if "Target prose file already exists" in text:
+        return ChapterCardError(
+            "本章已有正式正文，无需再确认生成输入。",
+            code="chapter_card_already_written",
+        )
+    if code == "chapter_candidate_context_not_strict":
+        return ChapterCardError(
+            "项目的可信状态尚未激活；请先在健康检查中完成校准并激活，再确认章节卡。",
+            code="chapter_card_context_not_ready",
+        )
+    if "authority" in code:
+        return ChapterCardError(
+            "事件权威状态无法安全读取；请先在健康检查中恢复或重新验证权威状态。",
+            code="chapter_card_context_not_ready",
+        )
+    return ChapterCardError(
+        "无法构建可信章节输入；请先检查项目健康状态和本章章纲。",
+        code="chapter_card_context_not_ready",
+    )
+
 
 
 def _blueprint_payload(

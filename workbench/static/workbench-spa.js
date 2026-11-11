@@ -1437,13 +1437,27 @@
       renderChapterFacts(null, null, UI.errorMessage(error?.payload, error?.status));
     }
   };
-  const renderChapterCard = (card, errorMessage = "") => {
+  const renderChapterCard = (card, errorMessage = "", errorCode = "") => {
     state.chapterCard = card || null;
     const root = one("[data-chapter-card]");
     const unavailable = one("[data-card-unavailable]");
     if (!card) {
       if (root) root.hidden = true;
-      if (unavailable) unavailable.hidden = false;
+      if (unavailable) {
+        const alreadyWritten = errorCode === "chapter_card_already_written";
+        const previousMissing = errorCode === "chapter_card_previous_chapter_missing";
+        unavailable.hidden = false;
+        unavailable.classList.toggle("notice-danger", !alreadyWritten && !previousMissing);
+        unavailable.classList.toggle("notice-warning", previousMissing);
+        const heading = unavailable.querySelector("strong");
+        if (heading) {
+          heading.textContent = alreadyWritten
+            ? "本章已提交正文"
+            : previousMissing
+              ? "还不能开始这一章"
+              : "章节卡暂不可用";
+        }
+      }
       setText("[data-card-unavailable-message]", errorMessage || "无法读取可信章节输入。请先检查项目健康状态与本章章纲。", doc);
       state.chapterConfirmation = null;
       renderChapterConfirmationState(null);
@@ -1525,7 +1539,12 @@
     setText("[data-chapter-english-number]", `CHAPTER ${String(number).padStart(2, "0")}`);
     setText("[data-chapter-meta]", `${chapter.word_count_label || (chapter.word_count ? `${numberLabel(chapter.word_count)} 字` : "—")} · ${chapter.committed_at_label || chapter.updated_at_label || "—"}`);
     const currentProse = chapter.content || chapter.prose || chapter.current_prose || chapter.formal_prose || "";
-    setText("[data-chapter-content]", currentProse || "尚未生成正文。请先在“章节卡”中核对并确认本章意图。");
+    const emptyProseCopy = state.project?.reviewed_format
+      ? "尚未生成正文。请先在“章节卡”中核对并确认本章意图。"
+      : (Number(state.project?.next_chapter) > 0 && Number(state.project.next_chapter) < number
+        ? `尚未生成正文。请先到生产页续写第 ${state.project.next_chapter} 章。`
+        : "尚未生成正文。请到生产页使用「预检并开始」续写。");
+    setText("[data-chapter-content]", currentProse || (chapter.outline ? `${chapter.outline}\n\n——\n${emptyProseCopy}` : emptyProseCopy));
     const retainedDraft = chapter.retained_author_draft;
     const retainedPanel = one('[data-retained-author-draft-panel]');
     if (retainedPanel) retainedPanel.hidden = !retainedDraft;
@@ -1538,7 +1557,7 @@
     UI.updateStatusBadge(one("[data-chapter-status]"), chapter.status || (hasProse ? "committed" : "draft"), chapter.status_label || (hasProse ? "已提交" : "待生成"));
     const proseActions = one("[data-prose-actions]"); if (proseActions) proseActions.hidden = !hasProse;
     const amendmentPanel = one("[data-amendment-panel]"); if (amendmentPanel) amendmentPanel.hidden = !hasProse || chapter.reviewed_format === true;
-    renderChapterCard(chapter.chapter_card, chapter.chapter_card_error);
+    renderChapterCard(chapter.chapter_card, chapter.chapter_card_error, chapter.chapter_card_error_code);
     window.NovelAgentChapterBudget?.setContext(chapter.reviewed_format ? {
       projectId: state.projectId, bookId: state.project.book_id, chapter: number,
       contextSha: chapter.chapter_card?.binding?.context_sha256,
@@ -1624,12 +1643,25 @@
       }
       return;
     }
-    try {
-      const { payload } = await api(`/api/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/card`);
-      chapter.chapter_card = payload.chapter_card || payload;
-    } catch (error) {
+    const hasFormalProse = chapter.has_prose ?? Boolean(chapter.content || chapter.prose || chapter.current_prose || chapter.formal_prose);
+    if (hasFormalProse) {
+      // Generation cards are only for unwritten chapters. Asking the builder
+      // after formal prose exists always fails, and must not be shown as a
+      // project-health or outline problem.
       chapter.chapter_card = null;
-      chapter.chapter_card_error = UI.errorMessage(error?.payload, error?.status);
+      chapter.chapter_card_error = "本章已有正式正文，无需再确认生成输入。";
+      chapter.chapter_card_error_code = "chapter_card_already_written";
+    } else {
+      try {
+        const { payload } = await api(`/api/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/card`);
+        chapter.chapter_card = payload.chapter_card || payload;
+        chapter.chapter_card_error = "";
+        chapter.chapter_card_error_code = "";
+      } catch (error) {
+        chapter.chapter_card = null;
+        chapter.chapter_card_error = UI.errorMessage(error?.payload, error?.status);
+        chapter.chapter_card_error_code = error?.payload?.error?.code || "";
+      }
     }
     try {
       chapter.chapter_candidate = await loadChapterCandidate(projectId, chapterNumber);
