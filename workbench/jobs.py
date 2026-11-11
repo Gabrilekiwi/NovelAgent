@@ -49,6 +49,7 @@ PRE_PROVIDER_PROVENANCE_ERROR = "pre_provider_provenance_unavailable"
 REPAIR_NOT_CONVERGING_ERROR = "chapter_repair_not_converging"
 STALE_SCENE_EVIDENCE_ERROR = "stale_scene_evidence"
 SCENE_BOUNDARY_VALIDATION_ERROR = "scene_boundary_validation"
+SCENE_SCHEMA_VALIDATION_ERROR = "scene_schema_validation"
 _CONTEXT_BUDGET_PATTERN = re.compile(
     r"(?P<stage>[A-Za-z][A-Za-z0-9_-]*) input requires "
     r"(?P<required>[0-9]+) tokens; hard limit is (?P<hard>[0-9]+)"
@@ -1035,6 +1036,63 @@ class JobStore:
             )
         return self.get(job_id)
 
+    def reconcile_scene_schema_validation_failure(
+        self,
+        job_id: str,
+        *,
+        result: Mapping[str, Any],
+        error: Mapping[str, Any],
+        expected_legacy_error_sha256: str,
+    ) -> JobRecord:
+        """Upgrade one proven scene-schema validation failure without requeueing it."""
+
+        if not _is_scene_schema_validation_error(error):
+            raise JobError("scene-schema validation reconciliation requires structured evidence")
+        timestamp = _utc_now()
+        with self.database.transaction() as connection:
+            row = _require_job_row(connection, job_id)
+            current_error = _stored_job_error(row)
+            current_error_sha256 = _sha256_text(_canonical_json(current_error))
+            if (
+                row["kind"] != "generation_session"
+                or row["state"] != "awaiting_input"
+                or row["result_json"] is not None
+                or current_error.get("code") != "engine_result_unreadable"
+                or current_error_sha256 != expected_legacy_error_sha256
+            ):
+                raise JobError("job is not the unchanged legacy scene-schema pause")
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET result_json = ?, error_json = ?,
+                    manual_confirmation_required = 1, updated_at = ?, revision = revision + 1
+                WHERE id = ? AND state = 'awaiting_input' AND revision = ?
+                    AND result_json IS NULL AND error_json = ?
+                """,
+                (
+                    _canonical_json(_compact_result(result)),
+                    _canonical_json(_safe_event_payload(error)),
+                    timestamp,
+                    str(job_id),
+                    int(row["revision"]),
+                    str(row["error_json"]),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise JobError("legacy scene-schema validation reconciliation CAS failed")
+            self._append_event_in_transaction(
+                connection,
+                str(job_id),
+                "chapter.scene_schema_validation",
+                {
+                    "chapter": int(row["next_chapter"]),
+                    "automatic_retry": False,
+                    "reconciled_from": "engine_result_unreadable",
+                    "error": _safe_event_payload(error),
+                },
+                timestamp=timestamp,
+            )
+        return self.get(job_id)
+
     def reconcile_review_pause(
         self,
         job_id: str,
@@ -1249,6 +1307,8 @@ class JobStore:
                 if _is_stale_scene_evidence_error(error)
                 else "chapter.scene_boundary_validation"
                 if _is_scene_boundary_validation_error(error)
+                else "chapter.scene_schema_validation"
+                if _is_scene_schema_validation_error(error)
                 else "chapter.needs_recovery" if uncertain else "chapter.needs_revision"
             )
             self._append_event_in_transaction(
@@ -1775,6 +1835,7 @@ class JobSupervisor:
         self._reconcile_repair_not_converging_failures()
         self._reconcile_stale_scene_evidence_failures()
         self._reconcile_scene_boundary_validation_failures()
+        self._reconcile_scene_schema_validation_failures()
         self._startup_recovery_pending=False
 
     def notify(self) -> None:
@@ -2075,6 +2136,40 @@ class JobSupervisor:
                 continue
 
 
+    def _reconcile_scene_schema_validation_failures(self) -> None:
+        """Explain proven legacy scene-schema failures without requeueing them."""
+
+        for job in self.store.list_jobs(states=("awaiting_input",), limit=200):
+            if job.execution_contract != CURRENT_JOB_EXECUTION_CONTRACT:
+                continue
+            if job.kind != "generation_session" or not isinstance(job.error, Mapping):
+                continue
+            if job.error.get("code") != "engine_result_unreadable" or job.result is not None:
+                continue
+            try:
+                project = self.project_lookup(job.project_id)
+                project_root = Path(project.root).resolve(strict=True)
+                legacy_error_sha256 = _sha256_text(_canonical_json(job.error))
+                classification = _classify_scene_schema_validation_failure(
+                    project_root,
+                    job.next_chapter,
+                    exit_code=job.error.get("exit_code"),
+                    stderr_tail=job.error.get("stderr_tail"),
+                    started_at=job.started_at,
+                    finished_at=job.updated_at,
+                )
+                if classification is None:
+                    continue
+                self.store.reconcile_scene_schema_validation_failure(
+                    job.id,
+                    result=classification["result"],
+                    error=classification["error"],
+                    expected_legacy_error_sha256=legacy_error_sha256,
+                )
+            except Exception:
+                # Any tamper, ambiguity, or unsettled call retains the generic pause.
+                continue
+
     def _run_generation_session(self, initial_job: JobRecord) -> None:
         _require_job_execution_contract(initial_job.to_dict())
         job = initial_job
@@ -2267,6 +2362,22 @@ class JobSupervisor:
                         uncertain=False,
                     )
                     return
+                scene_schema_classification = _classify_scene_schema_validation_failure(
+                    project_root,
+                    chapter,
+                    exit_code=execution.get("exit_code"),
+                    stderr_tail=execution.get("stderr_tail"),
+                    prior_fingerprints=run_records_before,
+                )
+                if scene_schema_classification is not None:
+                    self.store.chapter_failed(
+                        job.id,
+                        chapter=chapter,
+                        result=scene_schema_classification["result"],
+                        error=scene_schema_classification["error"],
+                        uncertain=False,
+                    )
+                    return
                 self.store.chapter_failed(
                     job.id,
                     chapter=chapter,
@@ -2337,6 +2448,22 @@ class JobSupervisor:
                     chapter=chapter,
                     result=scene_boundary_classification["result"],
                     error=scene_boundary_classification["error"],
+                    uncertain=False,
+                )
+                return
+            scene_schema_classification = _classify_scene_schema_validation_failure(
+                project_root,
+                chapter,
+                exit_code=execution.get("exit_code"),
+                stderr_tail=execution.get("stderr_tail"),
+                prior_fingerprints=run_records_before,
+            )
+            if scene_schema_classification is not None:
+                self.store.chapter_failed(
+                    job.id,
+                    chapter=chapter,
+                    result=scene_schema_classification["result"],
+                    error=scene_schema_classification["error"],
                     uncertain=False,
                 )
                 return
@@ -3251,6 +3378,10 @@ def _is_stale_scene_evidence_error(value: Mapping[str, Any] | None) -> bool:
 
 def _is_scene_boundary_validation_error(value: Mapping[str, Any] | None) -> bool:
     return isinstance(value, Mapping) and value.get("code") == SCENE_BOUNDARY_VALIDATION_ERROR
+
+
+def _is_scene_schema_validation_error(value: Mapping[str, Any] | None) -> bool:
+    return isinstance(value, Mapping) and value.get("code") == SCENE_SCHEMA_VALIDATION_ERROR
 
 
 def _chapter_run_record_fingerprints(project_root: Path, chapter: int) -> dict[str, str]:
@@ -4402,6 +4533,249 @@ def _classify_scene_boundary_validation_failure(
                             f"第 {chapter} 章场景边界校验未通过（{finding_label}）；"
                             f"本次 {details['provider_calls']} 次模型调用均已结算，"
                             f"{candidate_clause}{scene_clause}正式正文尚未提交。"
+                        ),
+                        "details": details,
+                        "exit_code": exit_code,
+                        "automatic_retry": False,
+                        "safe_to_retry": False,
+                        "recovery_required": True,
+                    },
+                }
+            )
+        except (OSError, UnicodeError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+    return matches[0] if len(matches) == 1 else None
+
+
+_SCENE_SCHEMA_MESSAGE = "Scene response was not valid structured JSON"
+_SCENE_SCHEMA_STDERR_MARK = "ValueError: Scene response was not valid structured JSON"
+
+
+def _scene_schema_validation_evidence(
+    project_root: Path,
+    value: Mapping[str, Any],
+    *,
+    chapter: int,
+    stderr_text: str,
+) -> dict[str, Any] | None:
+    """Validate one settled generate-chapter invalid scene JSON failure."""
+
+    run = value.get("run")
+    if not isinstance(run, Mapping) or int(run.get("chapter_index") or 0) != int(chapter):
+        return None
+    run_error = run.get("error")
+    if not isinstance(run_error, Mapping) or run_error.get("type") != "ValueError":
+        return None
+    error_message = run_error.get("message")
+    if not isinstance(error_message, str) or error_message != _SCENE_SCHEMA_MESSAGE:
+        return None
+    if f"ValueError: {error_message}" not in stderr_text:
+        return None
+    if (
+        run.get("status") != "failed"
+        or run.get("accepted") is not False
+        or run.get("committed") is not False
+        or value.get("accepted") is not False
+        or value.get("committed") is not False
+        or _result_is_uncertain(value)
+    ):
+        return None
+
+    execution_evidence = run.get("execution_evidence")
+    budget = (
+        execution_evidence.get("budget")
+        if isinstance(execution_evidence, Mapping)
+        else None
+    )
+    if not isinstance(budget, Mapping):
+        return None
+    provider_calls = budget.get("provider_calls")
+    unsettled = budget.get("unsettled_attempt_count")
+    if (
+        not isinstance(provider_calls, int)
+        or isinstance(provider_calls, bool)
+        or provider_calls < 1
+        or not isinstance(unsettled, int)
+        or isinstance(unsettled, bool)
+        or unsettled != 0
+    ):
+        return None
+    settled_provider_calls = _settled_provider_calls_from_trace(run)
+    model_calls_ref = execution_evidence.get("model_calls_ref") if isinstance(execution_evidence, Mapping) else None
+    if model_calls_ref is None:
+        if settled_provider_calls != provider_calls:
+            return None
+    elif not isinstance(model_calls_ref, str) or not model_calls_ref.strip():
+        return None
+    elif settled_provider_calls is not None and settled_provider_calls != provider_calls:
+        return None
+    if not _provider_call_artifacts_are_settled(
+        project_root,
+        run,
+        expected_calls=provider_calls,
+    ):
+        return None
+    if settled_provider_calls is None:
+        settled_provider_calls = provider_calls
+
+    persistence = run.get("persistence")
+    if persistence not in (None, {}):
+        return None
+    story_project = run.get("story_project")
+    writeback = story_project.get("writeback") if isinstance(story_project, Mapping) else None
+    if (
+        not isinstance(writeback, Mapping)
+        or writeback.get("attempted") is not False
+        or writeback.get("applied") is not False
+    ):
+        return None
+    try:
+        if resolve_prose(project_root, chapter).candidates:
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    chapter_payload = run.get("chapter")
+    if not isinstance(chapter_payload, Mapping):
+        return None
+    candidate_chars = chapter_payload.get("chars")
+    if (
+        not isinstance(candidate_chars, int)
+        or isinstance(candidate_chars, bool)
+        or candidate_chars < 0
+    ):
+        return None
+    candidate = value.get("chapter")
+    if candidate_chars == 0:
+        if candidate not in (None, ""):
+            return None
+    elif not isinstance(candidate, str) or len(candidate) != candidate_chars:
+        return None
+
+    trace = run.get("trace")
+    if not isinstance(trace, (list, tuple)):
+        return None
+    failures = [
+        event
+        for event in trace
+        if isinstance(event, Mapping)
+        and event.get("action") == "generate_chapter"
+        and event.get("status") == "failed"
+        and event.get("error_type") == "ValueError"
+        and event.get("error_message") == error_message
+    ]
+    if len(failures) != 1:
+        return None
+    run_id = run.get("id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return None
+    return {
+        "failure_origin": "scene_schema_validation",
+        "run_id": run_id,
+        "provider_calls": provider_calls,
+        "settled_provider_calls": settled_provider_calls,
+        "unsettled_attempt_count": 0,
+        "candidate_chars": candidate_chars,
+        "formal_prose_exists": False,
+        "accepted": False,
+        "committed": False,
+        "persistence_committed": False,
+        "writeback_attempted": False,
+        "writeback_applied": False,
+        "source_error_type": "ValueError",
+        "source_error_message": error_message,
+        "automatic_retry": False,
+        "safe_to_retry": False,
+        "recovery_required": True,
+    }
+
+
+def _classify_scene_schema_validation_failure(
+    project_root: str | Path,
+    chapter: int,
+    *,
+    exit_code: Any,
+    stderr_tail: Any,
+    prior_fingerprints: Mapping[str, str] | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> dict[str, Any] | None:
+    """Classify one uniquely evidenced, fully settled invalid scene JSON failure."""
+
+    if (
+        not isinstance(exit_code, int)
+        or isinstance(exit_code, bool)
+        or exit_code == 0
+    ):
+        return None
+    stderr_text = str(stderr_tail or "")
+    if _SCENE_SCHEMA_STDERR_MARK not in stderr_text:
+        return None
+    if (
+        "SceneBoundaryValidationError" in stderr_text
+        or "SceneEvidenceAlignmentError" in stderr_text
+        or "stale_scene_evidence:" in stderr_text
+        or "bridge pre-validation failed:" in stderr_text
+        or "ContextBudgetError" in stderr_text
+        or "StructuredContextError" in stderr_text
+    ):
+        return None
+    root = Path(project_root).resolve(strict=True)
+    fingerprints = _strict_chapter_run_artifact_fingerprints(root, chapter)
+    if fingerprints is None:
+        return None
+    window_start = _parse_timestamp(started_at)
+    window_end = _parse_timestamp(finished_at)
+    matches: list[dict[str, Any]] = []
+    for relative, digest in fingerprints.items():
+        if prior_fingerprints is not None and prior_fingerprints.get(relative) == digest:
+            continue
+        try:
+            path = _safe_project_file(root, relative)
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest:
+                continue
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, Mapping):
+                continue
+            run = value.get("run")
+            run_finished = _parse_timestamp(
+                run.get("finished_at") if isinstance(run, Mapping) else None
+            )
+            if window_start is not None or window_end is not None:
+                if run_finished is None:
+                    continue
+                finished_epoch = run_finished.timestamp()
+                if window_start is not None and finished_epoch < window_start.timestamp() - 2.0:
+                    continue
+                if window_end is not None and finished_epoch > window_end.timestamp() + 2.0:
+                    continue
+            evidence = _scene_schema_validation_evidence(
+                root,
+                value,
+                chapter=chapter,
+                stderr_text=stderr_text,
+            )
+            if evidence is None:
+                continue
+            details = {
+                **evidence,
+                "run_record_path": relative,
+                "run_record_sha256": digest,
+            }
+            if details["candidate_chars"]:
+                candidate_clause = f"{details['candidate_chars']} 字候选已保留，"
+            else:
+                candidate_clause = "本章尚无完整候选正文，"
+            matches.append(
+                {
+                    "result": dict(value),
+                    "error": {
+                        "code": SCENE_SCHEMA_VALIDATION_ERROR,
+                        "message": (
+                            f"第 {chapter} 章场景响应不是合法 JSON；"
+                            f"本次 {details['provider_calls']} 次模型调用均已结算，"
+                            f"{candidate_clause}正式正文尚未提交。"
                         ),
                         "details": details,
                         "exit_code": exit_code,
@@ -5657,6 +6031,7 @@ __all__ = [
     "REPAIR_NOT_CONVERGING_ERROR",
     "STALE_SCENE_EVIDENCE_ERROR",
     "SCENE_BOUNDARY_VALIDATION_ERROR",
+    "SCENE_SCHEMA_VALIDATION_ERROR",
     "DraftRecord",
     "DraftSourceConflict",
     "JobError",

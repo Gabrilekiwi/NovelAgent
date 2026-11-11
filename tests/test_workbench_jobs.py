@@ -19,9 +19,11 @@ from workbench.jobs import (
     REPAIR_NOT_CONVERGING_ERROR,
     STALE_SCENE_EVIDENCE_ERROR,
     SCENE_BOUNDARY_VALIDATION_ERROR,
+    SCENE_SCHEMA_VALIDATION_ERROR,
     _classify_repair_not_converging_failure,
     _classify_stale_scene_evidence_failure,
     _classify_scene_boundary_validation_failure,
+    _classify_scene_schema_validation_failure,
     _classify_pre_provider_context_failure,
     _classify_pre_provider_provenance_failure,
     _git_provenance_preflight,
@@ -2802,5 +2804,228 @@ def test_legacy_scene_boundary_validation_pause_reconciles_without_requeue(
     assert store.claim_next() is None
     assert store.resume_ready(parent.id) is False
     assert store.events_after(parent.id)[-1]["event"] == "chapter.scene_boundary_validation"
+    with pytest.raises(JobError, match="completed, receipt-backed recovery"):
+        store.resume(parent.id, confirmed=True)
+
+
+def _write_scene_schema_validation_run(
+    project_root: Path,
+    *,
+    chapter: int = 41,
+    run_id: str = "run-scene-schema-validation",
+    provider_calls: int = 3,
+    unsettled_attempt_count: int = 0,
+    candidate: str = "",
+    error_message: str | None = None,
+) -> tuple[dict, Path, str]:
+    if error_message is None:
+        error_message = "Scene response was not valid structured JSON"
+    provider_attempts = [
+        {
+            "attempts": 1,
+            "completed": True,
+            "stop_reason": "succeeded",
+            "history": [
+                {
+                    "attempt": 1,
+                    "outcome": "succeeded",
+                    "failure_category": None,
+                    "partial_content_received": False,
+                }
+            ],
+        }
+        for _ in range(provider_calls)
+    ]
+    result = {
+        "chapter": candidate,
+        "accepted": False,
+        "committed": False,
+        "run": {
+            "id": run_id,
+            "chapter_index": chapter,
+            "status": "failed",
+            "accepted": False,
+            "committed": False,
+            "chapter": {"chars": len(candidate)},
+            "error": {"type": "ValueError", "message": error_message},
+            "execution_evidence": {
+                "budget": {
+                    "provider_calls": provider_calls,
+                    "unsettled_attempt_count": unsettled_attempt_count,
+                }
+            },
+            "persistence": None,
+            "story_project": {
+                "writeback": {"attempted": False, "applied": False}
+            },
+            "trace": [
+                {
+                    "action": "build_snapshot",
+                    "status": "completed",
+                },
+                {
+                    "action": "generate_chapter",
+                    "status": "failed",
+                    "error_type": "ValueError",
+                    "error_message": error_message,
+                    "provider_attempts": provider_attempts,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ],
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_path = run_dir / f"chapter_{chapter}_{run_id}.json"
+    run_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    stderr = f"ValueError: {error_message}"
+    return result, run_path, stderr
+
+
+def test_scene_schema_validation_classifier_binds_settled_run(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    project_root = store.database.path.parent / "books" / "test-book"
+    _, run_path, stderr = _write_scene_schema_validation_run(project_root)
+
+    classified = _classify_scene_schema_validation_failure(
+        project_root,
+        41,
+        exit_code=1,
+        stderr_tail=stderr,
+    )
+
+    assert classified is not None
+    details = classified["error"]["details"]
+    assert classified["error"]["code"] == SCENE_SCHEMA_VALIDATION_ERROR
+    assert classified["error"]["automatic_retry"] is False
+    assert classified["error"]["safe_to_retry"] is False
+    assert details["failure_origin"] == "scene_schema_validation"
+    assert details["provider_calls"] == 3
+    assert details["settled_provider_calls"] == 3
+    assert details["unsettled_attempt_count"] == 0
+    assert details["candidate_chars"] == 0
+    assert details["formal_prose_exists"] is False
+    assert details["source_error_type"] == "ValueError"
+    assert details["run_record_path"] == run_path.relative_to(project_root).as_posix()
+    assert "尚无完整候选正文" in classified["error"]["message"]
+    assert "不是合法 JSON" in classified["error"]["message"]
+
+
+def test_scene_schema_validation_classifier_does_not_absorb_other_failures(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    project_root = store.database.path.parent / "books" / "test-book"
+    _, _, _, stderr = _write_stale_scene_evidence_run(project_root)
+    assert _classify_scene_schema_validation_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+    _, _, boundary_stderr = _write_scene_boundary_validation_run(project_root)
+    assert _classify_scene_schema_validation_failure(
+        project_root,
+        26,
+        exit_code=1,
+        stderr_tail=boundary_stderr,
+    ) is None
+    _, _, schema_stderr = _write_scene_schema_validation_run(project_root)
+    mixed = schema_stderr + "\n" + "bridge pre-validation failed: missing_last_scene_continuity"
+    assert _classify_scene_schema_validation_failure(
+        project_root,
+        41,
+        exit_code=1,
+        stderr_tail=mixed,
+    ) is None
+
+
+def test_scene_schema_validation_classifier_fails_closed_on_tamper_unsettled_or_prose(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    project_root = store.database.path.parent / "books" / "test-book"
+
+    _, run_path, stderr = _write_scene_schema_validation_run(
+        project_root,
+        unsettled_attempt_count=1,
+    )
+    assert _classify_scene_schema_validation_failure(
+        project_root,
+        41,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+
+    _, run_path, stderr = _write_scene_schema_validation_run(
+        project_root,
+        run_id="run-scene-schema-zero-exit",
+    )
+    assert _classify_scene_schema_validation_failure(
+        project_root,
+        41,
+        exit_code=0,
+        stderr_tail=stderr,
+    ) is None
+
+    _, run_path, stderr = _write_scene_schema_validation_run(
+        project_root,
+        run_id="run-scene-schema-prose",
+    )
+    prose = canonical_prose_path(project_root, 41)
+    prose.parent.mkdir(parents=True, exist_ok=True)
+    prose.write_text("formal prose must not be overwritten by this failure.", encoding="utf-8")
+    assert _classify_scene_schema_validation_failure(
+        project_root,
+        41,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+
+
+def test_legacy_scene_schema_validation_pause_reconciles_without_requeue(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id, end_chapter=3)
+    project_root = tmp_path / "books" / "test-book"
+    _, _, stderr = _write_scene_schema_validation_run(project_root, chapter=1)
+    legacy = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={
+            "code": "engine_result_unreadable",
+            "exit_code": 1,
+            "stderr_tail": stderr,
+        },
+        uncertain=False,
+    )
+    assert legacy.result is None
+    assert legacy.error["code"] == "engine_result_unreadable"
+
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    supervisor._reconcile_scene_schema_validation_failures()
+
+    reconciled = store.get(parent.id)
+    assert reconciled.state == "awaiting_input"
+    assert reconciled.manual_confirmation_required is True
+    assert reconciled.error is not None
+    assert reconciled.error["code"] == SCENE_SCHEMA_VALIDATION_ERROR
+    assert reconciled.error["automatic_retry"] is False
+    assert reconciled.error["safe_to_retry"] is False
+    assert reconciled.result is not None
+    assert store.claim_next() is None
+    assert store.resume_ready(parent.id) is False
+    assert store.events_after(parent.id)[-1]["event"] == "chapter.scene_schema_validation"
     with pytest.raises(JobError, match="completed, receipt-backed recovery"):
         store.resume(parent.id, confirmed=True)

@@ -778,7 +778,7 @@ def test_settled_stale_scene_evidence_failure_explains_retained_candidate() -> N
     assert "不会直接重试这次失败的修订" in spa
     assert "不要盲目重试这次失败修订" in spa
     assert 'form.dataset.recoveryMode = "stale-scene-evidence-classify"' in spa
-    assert "!staleSceneEvidence && !sceneBoundaryValidation && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
+    assert "!staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
 
     assert stream.count('"chapter.stale_scene_evidence"') >= 3
     assert '"chapter.stale_scene_evidence": "自动修订与场景证据对不齐，任务已安全暂停"' in stream
@@ -971,6 +971,105 @@ process.stdout.write(JSON.stringify(output));
     assert result["verifiedJob"]["providerCalls"] == 2
     assert result["legacyViaRun"]["verified"] is True
 
+
+
+def test_settled_scene_schema_validation_failure_explains_next_step() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    assert "const sceneSchemaValidationDetailsOfRun = (run) =>" in spa
+    assert 'run?.error_type !== "ValueError"' in spa
+    assert 'message !== "Scene response was not valid structured JSON"' in spa
+    assert "const sceneSchemaValidationDetailsOf = (job) =>" in spa
+    assert 'value.code === "scene_schema_validation"' in spa
+    assert "scene_schema_validation: sceneSchemaValidation" in spa
+    assert "场景响应格式错误" in spa
+    assert "调用已结算，格式错误没有进入正文" in spa
+    assert "先做无模型恢复分类" in spa
+    assert "不会盲目重试这次格式错误的场景生成" in spa
+    assert 'form.dataset.recoveryMode = "scene-schema-validation-classify"' in spa
+    assert "边界重生" not in spa.split("sceneSchemaFailure ?")[1].split(";")[0]
+
+    assert stream.count('"chapter.scene_schema_validation"') >= 3
+    assert '"chapter.scene_schema_validation": "场景响应格式错误，任务已安全暂停"' in stream
+    assert '"chapter.scene_schema_validation": "awaiting_input"' in stream
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_scene_schema_validation_browser_classifier_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { sceneSchemaValidationDetailsOf, sceneSchemaValidationDetailsOfRun };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const completeRun = {
+  error_type: "ValueError",
+  error_message: "Scene response was not valid structured JSON",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 3,
+  chapter_chars: 0
+};
+const completeDetails = {
+  failure_origin: "scene_schema_validation",
+  provider_calls: 3,
+  settled_provider_calls: 3,
+  unsettled_attempt_count: 0,
+  candidate_chars: 0,
+  formal_prose_exists: false,
+  accepted: false,
+  committed: false,
+  writeback_attempted: false,
+  writeback_applied: false,
+  automatic_retry: false,
+  safe_to_retry: false,
+  recovery_required: true,
+  source_error_type: "ValueError",
+  source_error_message: "Scene response was not valid structured JSON"
+};
+const output = {
+  fromRun: sandbox.__evidence.sceneSchemaValidationDetailsOfRun(completeRun),
+  unsettled: sandbox.__evidence.sceneSchemaValidationDetailsOfRun({ ...completeRun, unsettled_attempt_count: 1 }),
+  bridgeRun: sandbox.__evidence.sceneSchemaValidationDetailsOfRun({ ...completeRun, error_message: "bridge pre-validation failed: missing_last_scene_continuity" }),
+  unreadableJob: sandbox.__evidence.sceneSchemaValidationDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "ValueError: Scene response was not valid structured JSON" } }),
+  incompleteJob: sandbox.__evidence.sceneSchemaValidationDetailsOf({ error: { code: "scene_schema_validation", details: { ...completeDetails, writeback_applied: undefined } } }),
+  verifiedJob: sandbox.__evidence.sceneSchemaValidationDetailsOf({ error: { code: "scene_schema_validation", details: completeDetails } }),
+  legacyViaRun: sandbox.__evidence.sceneSchemaValidationDetailsOf({ error: { code: "engine_result_unreadable" }, latest_run: completeRun })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["fromRun"]["providerCalls"] == 3
+    assert result["fromRun"]["chapterChars"] == 0
+    assert result["unsettled"] is None
+    assert result["bridgeRun"] is None
+    assert result["unreadableJob"] is None
+    assert result["incompleteJob"] is None
+    assert result["verifiedJob"]["verified"] is True
+    assert result["verifiedJob"]["providerCalls"] == 3
+    assert result["legacyViaRun"]["verified"] is True
 
 
 def test_repair_not_converging_uses_only_verified_structured_evidence_and_no_blind_retry() -> None:
