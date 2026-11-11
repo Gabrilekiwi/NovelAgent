@@ -46,6 +46,7 @@ from core.quality.repair_patch import (
     coerce_repair_patch,
 )
 from core.quality.scene_evidence import (
+    SceneEvidenceAlignmentError,
     canonicalize_scene_local_repair_patch,
     realign_scene_evidence,
 )
@@ -2146,14 +2147,38 @@ class AgentExecutor:
             patch_audit["attempt"] = attempt
             if separator_canonicalization is not None:
                 patch_audit["scene_separator_canonicalization"] = separator_canonicalization
+            try:
+                realigned_pipeline = self._realign_chapter_pipeline(
+                    state.get("chapter_pipeline"),
+                    before_chapter=before_chapter,
+                    after_chapter=repaired_text,
+                    patch=repair_patch,
+                    stage="repair",
+                )
+            except SceneEvidenceAlignmentError as exc:
+                # Cross-scene repairs are rejected rather than guessed, but
+                # that rejection is a failed repair attempt, not a lost
+                # chapter. Keep the already generated, receipt-backed prose
+                # so the author can still review it.
+                patch_audit["rejected"] = True
+                patch_audit["rejected_code"] = getattr(exc, "code", "stale_scene_evidence")
+                patch_audit["rejected_reason"] = str(exc)
+                if getattr(exc, "evidence", None) is not None:
+                    patch_audit["rejected_evidence"] = copy.deepcopy(exc.evidence)
+                state["repair_patches"].append(patch_audit)
+                state["repair_attempts"] += 1
+                self._authorize_elastic_repair_budget(state)
+                state["repair_deltas"].append(
+                    _repair_delta(
+                        attempt=attempt,
+                        before=before_validation,
+                        after=before_validation,
+                        patch=patch_audit,
+                    )
+                )
+                continue
             state["repair_patches"].append(patch_audit)
-            state["chapter_pipeline"] = self._realign_chapter_pipeline(
-                state.get("chapter_pipeline"),
-                before_chapter=before_chapter,
-                after_chapter=repaired_text,
-                patch=repair_patch,
-                stage="repair",
-            )
+            state["chapter_pipeline"] = realigned_pipeline
             state["chapter"] = repaired_text
             self._record_integrity_transition(
                 state,

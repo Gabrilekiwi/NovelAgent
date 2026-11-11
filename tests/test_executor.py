@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import unittest
@@ -1994,6 +1995,90 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(1, saved["repair_attempts"])
         self.assertEqual("ContextBudgetError", saved["run"]["error"]["type"])
         self.assertIn("execution_evidence", saved["run"])
+
+    def test_cross_scene_repair_keeps_generated_chapter_instead_of_crashing(self) -> None:
+        tmp_path = self._case_dir("cross_scene_repair_rejected")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        run_dir = tmp_path / "runs"
+        first = "Alpha enters the corridor."
+        second = "Beta closes the damaged gate."
+        before = f"{first}\n\n{second}"
+        pipeline = {
+            "chapter_index": 1,
+            "plan": {
+                "goal": "cross two scenes",
+                "scenes": [
+                    {"index": 1, "type": "setup", "goal": "enter", "required_beats": ["enter"]},
+                    {"index": 2, "type": "turn", "goal": "close gate", "required_beats": ["close"]},
+                ],
+            },
+            "stages": ["generate"],
+            "merged_chapter": before,
+            "scene_drafts": [
+                {"index": 1, "goal": "enter", "text": first},
+                {"index": 2, "goal": "close gate", "text": second},
+            ],
+            "scene_spans": [
+                {"index": 1, "start_char": 0, "end_char": len(first), "chars": len(first)},
+                {
+                    "index": 2,
+                    "start_char": len(first) + 2,
+                    "end_char": len(before),
+                    "chars": len(second),
+                },
+            ],
+        }
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "keep_chapter_when_repair_crosses_scenes",
+                "actions": ["generate_chapter", "validate", "repair_if_needed"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 1,
+                "notes": [],
+            }
+
+        def generate_with_pipeline(self, state, input_pack, snapshot):
+            state["chapter"] = before
+            state["chapter_pipeline"] = copy.deepcopy(pipeline)
+
+        def validator(snapshot, chapter, decision):
+            return self._problem_validation("missing_conflict_marker")
+
+        with patch.object(AgentExecutor, "_handle_generate", generate_with_pipeline):
+            result = AgentExecutor(
+                snapshot_path=snapshot_path,
+                run_dir=run_dir,
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                director=director,
+                generator=lambda input_pack: before,
+                validator=validator,
+                repairer=lambda chapter, validation, input_pack, repair_plan: (
+                    "A completely different single-scene chapter."
+                ),
+            ).run_once(persist=True)
+
+        self.assertEqual(before, result["chapter"])
+        self.assertEqual(1, result["repair_attempts"])
+        self.assertFalse(result["validation"]["ok"])
+        self.assertFalse(result["committed"])
+        repair_event = next(
+            event
+            for event in result["run"]["trace"]
+            if event["action"] == "repair_if_needed"
+        )
+        rejected_patch = repair_event["repair_deltas"][0]["patch"]
+        self.assertTrue(rejected_patch["rejected"])
+        self.assertEqual("stale_scene_evidence", rejected_patch["rejected_code"])
+        self.assertEqual(before, result["run"]["chapter"] if isinstance(result["run"].get("chapter"), str) else result["chapter"])
+        saved_path = max(run_dir.glob("chapter_*.json"), key=lambda path: path.stat().st_mtime_ns)
+        saved = json.loads(saved_path.read_text(encoding="utf-8"))
+        self.assertEqual(before, saved["chapter"])
+        self.assertEqual(1, saved["repair_attempts"])
+        self.assertNotEqual("SceneEvidenceAlignmentError", saved["run"].get("error", {}).get("type"))
 
     def test_executor_passes_trace_repair_plan_to_repairer(self) -> None:
         tmp_path = self._case_dir("repair_plan_passthrough")
