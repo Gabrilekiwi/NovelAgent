@@ -1823,23 +1823,80 @@
     renderCohortDetail(payload);
   };
 
+  const isActionableCohort = (item) => Boolean(item) && item.status === "active";
+
+  const productionCohortView = (cohorts) => {
+    const items = Array.isArray(cohorts) ? cohorts : [];
+    const actionable = items.find(isActionableCohort) || null;
+    return {
+      actionable,
+      historical: items.filter((item) => !isActionableCohort(item)),
+      expandScoring: Boolean(actionable)
+    };
+  };
+
+  const cohortHistoryStatusLabel = (status) => ({
+    active: "进行中",
+    passed: "已通过",
+    failed: "未通过",
+    invalidated: "已作废"
+  }[status] || "已结束");
+
+  const formatCohortHistoryDate = (value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(date);
+  };
+
+  const renderCohortHistory = (historical) => {
+    const historyPanel = one("[data-cohort-history]");
+    const historyList = one("[data-cohort-history-list]");
+    const historySummary = one("[data-cohort-history-summary]");
+    if (!historyPanel || !historyList) return;
+    clear(historyList);
+    if (!historical.length) {
+      historyPanel.hidden = true;
+      if (historySummary) historySummary.textContent = "历史试验记录";
+      return;
+    }
+    historyPanel.hidden = false;
+    if (historySummary) historySummary.textContent = `历史试验记录（${historical.length} 轮，均已结束）`;
+    historical.forEach((item) => {
+      const li = el("li", "cohort-history-item");
+      const range = el("strong", "", `第 ${item.start_chapter}–${item.end_chapter} 章`);
+      const badge = el("span", `cohort-history-status is-${item.status || "closed"}`, cohortHistoryStatusLabel(item.status));
+      const closed = formatCohortHistoryDate(item.closed_at || item.updated_at || item.created_at);
+      li.append(range, badge);
+      if (closed) li.append(el("span", "muted-copy", closed));
+      historyList.append(li);
+    });
+  };
+
   const renderCohorts = async (payload) => {
     const cohorts = arrayFrom(payload.cohorts, "items");
     state.scoreDimensions = payload.score_dimensions || Object.keys(scoreDimensionLabels);
     const officialLaunch = payload.official_launch || {};
     UI.updateStatusBadge(one("[data-product-readiness]"), "idle", officialLaunch.badge_label || "上线不以十章验收轮次为准");
-    const active = cohorts.find((item) => item.status === "active");
-    const latest = active || cohorts[0] || null;
+    const view = productionCohortView(cohorts);
     const createPanel = one("[data-cohort-create-panel]");
     const activePanel = one("[data-cohort-active]");
     const createForm = one("[data-cohort-create-form]");
     createForm.action = `/api/projects/${encodeURIComponent(state.projectId)}/cohorts`;
     // Optional historical experiment only: never prefill the official next chapter,
     // so this form cannot be mistaken for continuing the book.
-    createPanel.hidden = Boolean(active);
-    activePanel.hidden = !latest;
-    if (latest) await loadCohort(latest.id);
+    createPanel.hidden = Boolean(view.actionable);
+    // Auto-expand scoring only for an in-progress trial the author must handle now.
+    // Historical / failed / invalidated / closed trials stay in collapsed history.
+    activePanel.hidden = !view.expandScoring;
+    if (view.expandScoring) await loadCohort(view.actionable.id);
     else { state.cohort = null; state.cohortLiveResult = null; }
+    renderCohortHistory(view.historical);
   };
 
 

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+import shutil
+import subprocess
+
 from tests.test_workbench_app import _client, _create_project, _unlock
 from workbench.cohorts import build_official_launch_declaration
 
@@ -125,3 +129,95 @@ def test_production_page_keeps_chapter_writing_as_primary_and_demotes_cohort_cre
     assert ".cohort-panel { margin-top: 22px; border-top: 1px solid var(--line); }" in css
     assert ".cohort-panel { margin-top: 22px; border-top: 3px solid var(--jade); }" not in css
     assert ".cohort-create-details" in css
+
+
+def test_production_page_does_not_auto_expand_historical_cohort_scoring() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    css = (STATIC / "workbench.css").read_text(encoding="utf-8")
+
+    details_token = '<details class="cohort-history-details" data-cohort-history-details>'
+    details_idx = html.find(details_token)
+    assert details_idx != -1
+    details_tag = html[details_idx:html.find(">", details_idx) + 1]
+    assert "open" not in details_tag
+    assert 'data-cohort-history hidden' in html
+    assert "data-cohort-history-summary" in html
+    assert "data-cohort-history-list" in html
+    assert "这些是已经结束的可选试验，不是当前需要处理的工作" in html
+    assert html.find("data-cohort-active") < details_idx
+
+    assert "const latest = active || cohorts[0] || null;" not in spa
+    assert "activePanel.hidden = !latest;" not in spa
+    assert "if (latest) await loadCohort(latest.id);" not in spa
+    assert "const view = productionCohortView(cohorts);" in spa
+    assert "activePanel.hidden = !view.expandScoring;" in spa
+    assert "if (view.expandScoring) await loadCohort(view.actionable.id);" in spa
+    assert "renderCohortHistory(view.historical);" in spa
+    assert "Auto-expand scoring only for an in-progress trial the author must handle now." in spa
+
+    assert ".cohort-history-details" in css
+    assert ".cohort-history-list" in css
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_production_cohort_view_expands_scoring_only_for_active_trials() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const start = source.indexOf("  const isActionableCohort =");
+const end = source.indexOf("  const renderCohortHistory =", start);
+if (start < 0 || end < 0) throw new Error("production cohort view helpers are missing");
+const sandbox = { Intl, Date, Boolean, Array };
+vm.createContext(sandbox);
+vm.runInContext(
+  source.slice(start, end) + `
+    this.productionCohortView = productionCohortView;
+    this.formatCohortHistoryDate = formatCohortHistoryDate;
+    this.cohortHistoryStatusLabel = cohortHistoryStatusLabel;
+  `,
+  sandbox
+);
+
+const historical = [
+  { id: "c-invalid", status: "invalidated", start_chapter: 27, end_chapter: 36 },
+  { id: "c-failed", status: "failed", start_chapter: 17, end_chapter: 26 },
+  { id: "c-passed", status: "passed", start_chapter: 1, end_chapter: 10 }
+];
+const closedView = sandbox.productionCohortView(historical);
+if (closedView.expandScoring !== false) throw new Error("historical trials must not expand scoring");
+if (closedView.actionable !== null) throw new Error("no historical trial is actionable");
+if (closedView.historical.map((item) => item.id).join(",") !== "c-invalid,c-failed,c-passed") {
+  throw new Error("historical order must be preserved");
+}
+
+const mixed = [{ id: "c-active", status: "active", start_chapter: 64, end_chapter: 72 }, ...historical];
+const activeView = sandbox.productionCohortView(mixed);
+if (activeView.expandScoring !== true) throw new Error("an active trial must expand scoring");
+if (activeView.actionable?.id !== "c-active") throw new Error("the active trial must be selected");
+if (activeView.historical.some((item) => item.status === "active")) {
+  throw new Error("the active trial must not appear in history");
+}
+
+const emptyView = sandbox.productionCohortView([]);
+if (emptyView.expandScoring !== false || emptyView.actionable !== null || emptyView.historical.length !== 0) {
+  throw new Error("empty history must not expand scoring");
+}
+
+const date = sandbox.formatCohortHistoryDate("2026-09-02T06:28:34.275214+00:00");
+if (date !== "2026-09-02") throw new Error(`expected Asia/Shanghai date, got ${date}`);
+if (sandbox.cohortHistoryStatusLabel("invalidated") !== "已作废") throw new Error("invalidated label mismatch");
+if (sandbox.cohortHistoryStatusLabel("failed") !== "未通过") throw new Error("failed label mismatch");
+if (sandbox.cohortHistoryStatusLabel("passed") !== "已通过") throw new Error("passed label mismatch");
+console.log("ok");
+"""
+    completed = subprocess.run(
+        ["node", "-e", script, str(spa_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "ok" in completed.stdout
