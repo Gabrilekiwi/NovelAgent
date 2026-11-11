@@ -469,11 +469,19 @@ def test_production_view_reloads_canonical_state_after_a_terminal_job() -> None:
 def test_outline_planner_does_not_reuse_a_stale_draft_range() -> None:
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
+    loader = spa.split("const loadOutlines = async () =>", 1)[1].split("const renderCohortEvaluation", 1)[0]
 
-    assert 'const nextChapter = Number(state.project?.next_chapter || 0);' in spa
-    assert 'const isCurrentRange = (item) => Number(item?.start_chapter || 0) === nextChapter;' in spa
-    assert '["draft", "ready"].includes(item.status) && isCurrentRange(item)' in spa
-    assert 'batches[0] || null' not in spa.split("const loadOutlines = async () =>", 1)[1].split("const renderCohortEvaluation", 1)[0]
+    assert "const isCurrentDraftRange = (item) => Number(item?.start_chapter || 0) === nextChapter;" in spa
+    assert '["draft", "ready"].includes(item.status) && isCurrentDraftRange(item)' in loader
+    assert "coversNextChapter" in loader
+    assert "coveringApproved" in loader
+    assert "batches[0] || null" not in loader
+    assert "function updateOutlinePlanningCopy(remaining)" in spa
+    assert "查看剩余章纲" in spa
+    assert "data-outline-action-title" in html
+    assert "data-outline-plan-button" in html
+    assert "data-outlines-heading" in html
+    assert "data-outline-remaining-note" in html
     assert 'all("[data-project-route]").forEach((link) => { link.href = projectHash(link.dataset.projectRoute); });' in spa
     assert html.count('data-project-route="outlines"') >= 2
 

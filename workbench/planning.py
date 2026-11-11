@@ -20,6 +20,7 @@ from workbench.outlines import (
     OutlineBatchRecord,
     OutlineBatchService,
     compute_source_fingerprint,
+    raise_if_remaining_approved_coverage,
     validate_outline_items,
 )
 
@@ -104,6 +105,7 @@ class OutlinePlanner:
             raise OutlinePlanningError("chapter_count must be between 1 and 20")
         project = write.project
         start_chapter = infer_next_chapter(project.root)
+        raise_if_remaining_approved_coverage(self.outlines, project, start_chapter)
         source_fingerprint_before = compute_source_fingerprint(project)
         context = collect_planning_context(project.root, start_chapter=start_chapter)
         if compute_source_fingerprint(project) != source_fingerprint_before:

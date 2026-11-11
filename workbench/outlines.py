@@ -30,6 +30,41 @@ class OutlineBatchError(ValueError):
     """Raised when an outline batch is invalid, stale, or unsafe to publish."""
 
 
+def covering_approved_batch(batches, start: int):
+    chapter = int(start)
+    return next(
+        (
+            batch
+            for batch in batches
+            if getattr(batch, "status", None) == "approved"
+            and int(batch.start_chapter) <= chapter <= int(batch.end_chapter)
+            and getattr(batch, "approval_manifest_path", None)
+            and getattr(batch, "approval_receipt_sha256", None)
+        ),
+        None,
+    )
+
+
+def remaining_approved_coverage_message(start: int, batch) -> str:
+    remaining = int(batch.end_chapter) - int(start) + 1
+    if remaining == 1:
+        return (
+            f"第 {start} 章已有批准并冻结的章纲。请直接去生产页续写，不要再生成重叠的新提案。"
+        )
+    return (
+        f"第 {start}—{batch.end_chapter} 章已有批准并冻结的章纲（共 {remaining} 章）。"
+        "请直接去生产页续写，不要再生成重叠的新提案。"
+    )
+
+
+def raise_if_remaining_approved_coverage(service, project, start: int) -> None:
+    batch = covering_approved_batch(service.list_batches(project.id), start)
+    if batch is not None:
+        raise OutlineBatchError(remaining_approved_coverage_message(start, batch))
+
+
+
+
 class OutlineBatchConflict(OutlineBatchError):
     """Raised when a revision, hash, source, or filesystem CAS fails."""
 
@@ -127,6 +162,7 @@ class OutlineBatchService:
         project = write.project
         items = validate_outline_items(proposal)
         next_chapter = infer_next_chapter(project.root)
+        raise_if_remaining_approved_coverage(self, project, next_chapter)
         if items[0].chapter_index != next_chapter:
             raise OutlineBatchError(
                 "outline batch must start at the canonical next chapter: "

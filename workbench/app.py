@@ -1607,6 +1607,7 @@ def _project_overview(
         except (OSError, ValueError):
             continue
         word_count += _visible_character_count(current_text)
+    window = _session_outline_window(batches, record.next_chapter)
     return {
         "chapter_count": len(prose),
         "word_count": word_count,
@@ -1617,6 +1618,8 @@ def _project_overview(
         "pending_count": len(pending) + sum(1 for batch in batches if batch.status == "draft"),
         "recent_history": [job.to_dict() for job in recent_jobs],
         "latest_outline_batch": batches[0].to_dict() if batches else None,
+        "outline_remaining": window,
+        "outline_ready_count": int(window["chapter_count"] or 0) if window["covered"] else 0,
         "chapter_20_recovery": _chapter_recovery_summary(record.root, 20),
     }
 

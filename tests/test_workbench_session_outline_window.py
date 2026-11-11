@@ -169,3 +169,54 @@ def test_launch_form_uses_session_defaults_and_explains_remaining_window() -> No
     assert "approvedBatchWindow" in script
     assert "当前已批准章纲还可写第" in script
     assert "下一章还没有已批准且冻结的章纲，不能开始生产。" in script
+
+def test_overview_counts_remaining_approved_outlines_not_the_full_batch(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace)
+    project_id = project["id"]
+    batch = _approve_batch(client, project_id, 1, 10)
+    _write_formal_chapter(Path(project["root"]), 1)
+
+    overview = client.get(f"/api/projects/{project_id}").json()["overview"]
+    assert overview["next_chapter"] == 2
+    assert overview["outline_ready_count"] == 9
+    assert overview["outline_remaining"] == {
+        "start_chapter": 2,
+        "chapter_count": 9,
+        "end_chapter": 10,
+        "max_chapter_count": 9,
+        "outline_batch_id": batch["id"],
+        "outline_batch_start": 1,
+        "outline_batch_end": 10,
+        "covered": True,
+    }
+
+
+def test_new_outline_batch_is_rejected_while_approved_coverage_remains(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace)
+    project_id = project["id"]
+    _approve_batch(client, project_id, 1, 10)
+    _write_formal_chapter(Path(project["root"]), 1)
+
+    created = client.post(
+        f"/api/projects/{project_id}/outline-batches",
+        headers={"origin": "http://testserver"},
+        json={"chapters": [_outline(chapter) for chapter in range(2, 12)]},
+    )
+    assert created.status_code == 400, created.text
+    message = created.json()["error"]["message"]
+    assert "第 2—10 章已有批准并冻结的章纲（共 9 章）" in message
+    assert "不要再生成重叠的新提案" in message
+
+
+def test_outline_page_copy_explains_remaining_approved_coverage() -> None:
+    html = (REPOSITORY / "workbench/static/index.html").read_text(encoding="utf-8")
+    script = (REPOSITORY / "workbench/static/workbench-spa.js").read_text(encoding="utf-8")
+    assert "data-outlines-heading" in html
+    assert "data-outline-remaining-note" in html
+    assert "updateOutlinePlanningCopy" in script
+    assert "coveringApproved" in script
+    assert "去生产页续写" in html

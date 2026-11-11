@@ -495,6 +495,20 @@
     container.append(link);
   };
 
+
+  function updateOutlinePlanningCopy(remaining) {
+    const covered = Boolean(remaining?.covered) && Number(remaining?.chapter_count || 0) > 0;
+    const start = Number(remaining?.start_chapter || 0);
+    const end = Number(remaining?.end_chapter || 0);
+    const count = Number(remaining?.chapter_count || 0);
+    setText("[data-outlines-heading]", covered ? "剩余章纲" : "未来 10 章");
+    setText("[data-outlines-lede]", covered ? "这些章纲已经批准并冻结，可直接用于生产。不必再生成重叠的新提案。" : "先调整整体节奏，再一次性确认。确认后章纲冻结，成为连续生产的唯一依据。");
+    setText("[data-outline-action-title]", covered ? "查看剩余章纲" : "规划未来 10 章");
+    setText("[data-outline-action-detail]", covered ? (count === 1 ? `已批准章纲还可写第 ${start} 章，确认后即可去生产页续写。` : `已批准章纲还可写第 ${start}–${end} 章，确认后即可去生产页续写。`) : "先生成提案，编辑确认后才发布。");
+    const planButton = one("[data-outline-plan-button]");
+    if (planButton) planButton.textContent = covered ? "查看剩余章纲" : "规划未来 10 章";
+  }
+
   const renderOverview = (payload) => {
     const overview = payload.overview || payload;
     const project = payload.project || state.project;
@@ -509,6 +523,7 @@
     const latestBatch = overview.latest_outline_batch || {};
     const approvedOutlineCount = overview.outline_ready_count ?? (latestBatch.status === "approved" ? arrayFrom(latestBatch.items || latestBatch.proposal, "items").length : 0);
     setText("[data-overview-outlines]", `${numberLabel(approvedOutlineCount)} 章`);
+    updateOutlinePlanningCopy(overview.outline_remaining);
     const recoveryAttention = overview.chapter_20_recovery?.recoverable ? 1 : 0;
     const pendingTotal = Math.max(Number(overview.pending_count || 0), recoveryAttention);
     setText("[data-overview-pending]", numberLabel(pendingTotal));
@@ -1590,10 +1605,28 @@
     state.batch = batch;
     const createPanel = one("[data-outline-create-panel]");
     const editor = one("[data-outline-editor]");
+    const nextChapter = Number(state.project?.next_chapter || 0);
+    const approvedRemaining = Boolean(batch) && batch.status === "approved" && Number(batch.start_chapter || 0) <= nextChapter && nextChapter <= Number(batch.end_chapter || 0);
+    const remainingCount = approvedRemaining ? Number(batch.end_chapter) - nextChapter + 1 : 0;
+    updateOutlinePlanningCopy(approvedRemaining ? { covered: true, start_chapter: nextChapter, end_chapter: Number(batch.end_chapter), chapter_count: remainingCount } : null);
     createPanel.hidden = Boolean(batch);
     editor.hidden = !batch;
     const createForm = one("[data-create-outline-form]");
     createForm.action = `/api/projects/${encodeURIComponent(state.projectId)}/outline-batches`;
+    const savebar = one(".sticky-savebar", editor);
+    if (savebar) savebar.hidden = approvedRemaining;
+    const remainingNote = one("[data-outline-remaining-note]", editor);
+    const continueLink = one("[data-outline-continue-production]", editor);
+    if (remainingNote) {
+      remainingNote.hidden = !approvedRemaining;
+      remainingNote.textContent = approvedRemaining
+        ? (remainingCount === 1 ? `当前已批准章纲还可写第 ${nextChapter} 章。以下内容已冻结，可直接去生产页续写。` : `当前已批准章纲还可写第 ${nextChapter}–${batch.end_chapter} 章，共 ${remainingCount} 章。以下内容已冻结，可直接去生产页续写。`)
+        : "";
+    }
+    if (continueLink) {
+      continueLink.hidden = !approvedRemaining;
+      continueLink.href = projectHash("production");
+    }
     if (!batch) return;
     editor.action = `/api/outline-batches/${encodeURIComponent(batch.id)}`;
     editor.dataset.casRevision = String(batch.revision || 1);
@@ -1601,13 +1634,17 @@
     one('input[name="expected_revision"]', editor).value = String(batch.revision || 1);
     one('input[name="expected_sha256"]', editor).value = batch.proposal_sha256 || batch.sha256 || "";
     setText("[data-batch-direction]", batch.direction || batch.metadata?.direction || "以总纲和当前权威状态为主。");
+    setText("[data-batch-direction-title]", approvedRemaining ? "已批准并冻结" : "推进当前主线");
     setText("[data-batch-revision]", `r${batch.revision || 1}`);
     const items = arrayFrom(batch.items || batch.proposal, "items");
     const start = batch.start_chapter || items[0]?.chapter_index || state.project?.next_chapter || 1;
-    setText("[data-batch-range]", `第 ${start}–${batch.end_chapter || start + 9} 章`);
+    setText("[data-batch-range]", approvedRemaining
+      ? (remainingCount === 1 ? `已批准第 ${start}–${batch.end_chapter || start} 章，还可写第 ${nextChapter} 章` : `已批准第 ${start}–${batch.end_chapter || start} 章，还可写第 ${nextChapter}–${batch.end_chapter} 章`)
+      : `第 ${start}–${batch.end_chapter || start + 9} 章`);
     const stack = one("[data-outline-stack]"); clear(stack);
     const template = one("#outline-card-template");
-    for (let index = 0; index < 10; index += 1) {
+    const cardCount = approvedRemaining ? Math.max(items.length, 0) : 10;
+    for (let index = 0; index < cardCount; index += 1) {
       const item = items[index] || {};
       const number = item.chapter_index || start + index;
       const fragment = template.content.cloneNode(true);
@@ -1621,6 +1658,15 @@
       });
       const toggle = fragment.querySelector(".outline-toggle");
       toggle.addEventListener("click", () => { const collapsed = card.classList.toggle("is-collapsed"); toggle.setAttribute("aria-expanded", String(!collapsed)); });
+      if (approvedRemaining) {
+        card.classList.add("is-frozen");
+        card.querySelectorAll("input, textarea").forEach((field) => { field.readOnly = true; });
+        const status = document.createElement("small");
+        status.className = "outline-card-status";
+        status.textContent = number < nextChapter ? "已提交正文" : "待生产";
+        card.querySelector(".outline-card-header")?.append(status);
+        if (number < nextChapter) card.classList.add("is-written");
+      }
       stack.append(fragment);
     }
   };
@@ -1629,10 +1675,21 @@
     const { payload } = await api(`/api/projects/${encodeURIComponent(state.projectId)}/outline-batches`);
     const batches = arrayFrom(payload, "items", "batches");
     const nextChapter = Number(state.project?.next_chapter || 0);
-    const isCurrentRange = (item) => Number(item?.start_chapter || 0) === nextChapter;
-    let batch = payload.batch && isCurrentRange(payload.batch)
-      ? payload.batch
-      : batches.find((item) => ["draft", "ready"].includes(item.status) && isCurrentRange(item)) || null;
+    const isCurrentDraftRange = (item) => Number(item?.start_chapter || 0) === nextChapter;
+    const coversNextChapter = (item) => (
+      (item.status || "approved") === "approved"
+      && Number(item.start_chapter) <= nextChapter
+      && Number(item.end_chapter) >= nextChapter
+      && item.approval_manifest_path
+      && item.approval_receipt_sha256
+    );
+    const coveringApproved = (payload.batch && coversNextChapter(payload.batch) ? payload.batch : null)
+      || batches.find((item) => coversNextChapter(item))
+      || null;
+    let batch = coveringApproved
+      || (payload.batch && ["draft", "ready"].includes(payload.batch.status) && isCurrentDraftRange(payload.batch) ? payload.batch : null)
+      || batches.find((item) => ["draft", "ready"].includes(item.status) && isCurrentDraftRange(item))
+      || null;
     if (batch?.id && !batch.items && !batch.proposal) {
       const detail = await api(`/api/outline-batches/${encodeURIComponent(batch.id)}`);
       batch = detail.payload.batch || detail.payload;
