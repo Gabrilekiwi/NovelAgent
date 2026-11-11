@@ -778,7 +778,7 @@ def test_settled_stale_scene_evidence_failure_explains_retained_candidate() -> N
     assert "不会直接重试这次失败的修订" in spa
     assert "不要盲目重试这次失败修订" in spa
     assert 'form.dataset.recoveryMode = "stale-scene-evidence-classify"' in spa
-    assert "!staleSceneEvidence && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
+    assert "!staleSceneEvidence && !sceneBoundaryValidation && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
 
     assert stream.count('"chapter.stale_scene_evidence"') >= 3
     assert '"chapter.stale_scene_evidence": "自动修订与场景证据对不齐，任务已安全暂停"' in stream
@@ -863,6 +863,114 @@ process.stdout.write(JSON.stringify(output));
     assert result["verifiedJob"]["chapterChars"] == 3423
     assert result["legacyViaRun"]["chapterChars"] == 3423
     assert result["legacyViaRun"]["providerCalls"] == 6
+
+
+
+def test_settled_scene_boundary_validation_failure_explains_next_step() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    assert "const sceneBoundaryValidationDetailsOfRun = (run) =>" in spa
+    assert 'run?.error_type !== "SceneBoundaryValidationError"' in spa
+    assert 'message.startsWith("scene boundary validation failed:")' in spa
+    assert "const sceneBoundaryValidationDetailsOf = (job) =>" in spa
+    assert 'value.code === "scene_boundary_validation"' in spa
+    assert "scene_boundary_validation_failure: sceneBoundaryValidationFailure" in spa
+    assert "因场景边界校验失败而停止" in spa
+    assert "场景边界校验未通过" in spa
+    assert "调用已结算，场景边界未通过，正文未提交" in spa
+    assert "先做无模型恢复分类" in spa
+    assert "不会盲目重试这次失败的场景生成" in spa
+    assert 'form.dataset.recoveryMode = "scene-boundary-validation-classify"' in spa
+    assert "边界重生" not in spa.split("sceneBoundaryValidationFailure ?")[1].split(";")[0]
+
+    assert stream.count('"chapter.scene_boundary_validation"') >= 3
+    assert '"chapter.scene_boundary_validation": "场景边界校验未通过，任务已安全暂停"' in stream
+    assert '"chapter.scene_boundary_validation": "awaiting_input"' in stream
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_scene_boundary_validation_browser_classifier_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { sceneBoundaryValidationDetailsOf, sceneBoundaryValidationDetailsOfRun };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const completeRun = {
+  error_type: "SceneBoundaryValidationError",
+  error_message: "scene boundary validation failed: scene_boundary_state_mismatch x2, location_state_rollback; first=scene_boundary_state_mismatch: Scene 4 places X at Y without a matching location delta.; evidence={}",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 2,
+  chapter_chars: 0
+};
+const completeDetails = {
+  failure_origin: "scene_boundary_validation",
+  provider_calls: 2,
+  settled_provider_calls: 2,
+  unsettled_attempt_count: 0,
+  candidate_chars: 0,
+  formal_prose_exists: false,
+  accepted: false,
+  committed: false,
+  writeback_attempted: false,
+  writeback_applied: false,
+  automatic_retry: false,
+  safe_to_retry: false,
+  recovery_required: true,
+  source_error_type: "SceneBoundaryValidationError",
+  finding_codes: ["scene_boundary_state_mismatch", "location_state_rollback"],
+  failed_scene: 4
+};
+const output = {
+  fromRun: sandbox.__evidence.sceneBoundaryValidationDetailsOfRun(completeRun),
+  unsettled: sandbox.__evidence.sceneBoundaryValidationDetailsOfRun({ ...completeRun, unsettled_attempt_count: 1 }),
+  staleRun: sandbox.__evidence.sceneBoundaryValidationDetailsOfRun({ ...completeRun, error_type: "SceneEvidenceAlignmentError", error_message: "stale_scene_evidence: repair operation crosses a Scene boundary or separator" }),
+  unreadableJob: sandbox.__evidence.sceneBoundaryValidationDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "SceneBoundaryValidationError: scene boundary validation failed: scene_boundary_state_mismatch" } }),
+  incompleteJob: sandbox.__evidence.sceneBoundaryValidationDetailsOf({ error: { code: "scene_boundary_validation", details: { ...completeDetails, writeback_applied: undefined } } }),
+  verifiedJob: sandbox.__evidence.sceneBoundaryValidationDetailsOf({ error: { code: "scene_boundary_validation", details: completeDetails } }),
+  legacyViaRun: sandbox.__evidence.sceneBoundaryValidationDetailsOf({ error: { code: "engine_result_unreadable" }, latest_run: completeRun })
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["fromRun"]["providerCalls"] == 2
+    assert result["fromRun"]["chapterChars"] == 0
+    assert result["fromRun"]["failedScene"] == 4
+    assert result["fromRun"]["findingCodes"] == [
+        "scene_boundary_state_mismatch",
+        "location_state_rollback",
+    ]
+    assert result["unsettled"] is None
+    assert result["staleRun"] is None
+    assert result["unreadableJob"] is None
+    assert result["incompleteJob"] is None
+    assert result["verifiedJob"]["verified"] is True
+    assert result["verifiedJob"]["providerCalls"] == 2
+    assert result["legacyViaRun"]["verified"] is True
+
 
 
 def test_repair_not_converging_uses_only_verified_structured_evidence_and_no_blind_retry() -> None:
