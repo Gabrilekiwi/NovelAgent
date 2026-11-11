@@ -25,6 +25,7 @@ from workbench.jobs import (
     PROVIDER_PARTIAL_RESPONSE_ERROR,
     LOCAL_BUDGET_AFTER_PROVIDER_ERROR,
     CONTEXT_BUDGET_AFTER_PROVIDER_ERROR,
+    STRUCTURED_CONTEXT_AFTER_PROVIDER_ERROR,
     _classify_repair_not_converging_failure,
     _classify_stale_scene_evidence_failure,
     _classify_scene_boundary_validation_failure,
@@ -33,6 +34,7 @@ from workbench.jobs import (
     _classify_provider_partial_response_failure,
     _classify_local_budget_after_provider_failure,
     _classify_context_budget_after_provider_failure,
+    _classify_structured_context_after_provider_failure,
     _classify_pre_provider_context_failure,
     _classify_pre_provider_provenance_failure,
     _git_provenance_preflight,
@@ -4483,5 +4485,460 @@ def test_cbap_legacy_pause_reconciles_without_requeue(
     assert store.claim_next() is None
     assert store.resume_ready(parent.id) is False
     assert store.events_after(parent.id)[-1]["event"] == "chapter.context_budget_after_provider"
+    with pytest.raises(JobError, match="completed, receipt-backed recovery"):
+        store.resume(parent.id, confirmed=True)
+
+
+def _write_structured_context_after_provider_run(
+    project_root: Path,
+    *,
+    chapter: int = 15,
+    run_id: str = "run-scap",
+    succeeded_calls: int = 1,
+    unsettled_attempt_count: int = 0,
+    candidate: str = "",
+    action: str = "generate_chapter",
+    error_message: str | None = None,
+    write_artifact: bool = False,
+    omit_one_receipt: bool = False,
+    extra_rejected: bool = False,
+    error_type: str = "StructuredContextError",
+    shared_execution_run_id: str | None = None,
+    shift_run_hours: int = 0,
+    include_started_at: bool = True,
+) -> tuple[dict, Path, str]:
+    if error_message is None:
+        error_message = "required_json_item_exceeds_budget: required entries exceed 1472 characters"
+    execution_id = f"execution_{run_id}"
+    model_calls_root = (
+        project_root
+        / ".novelagent"
+        / "runtime"
+        / "runs"
+        / "executions"
+        / execution_id
+        / "model_calls"
+    )
+    from core.model_calls import build_model_call_intent, build_model_call_receipt
+    from datetime import timedelta
+
+    (model_calls_root / "intents").mkdir(parents=True, exist_ok=True)
+    (model_calls_root / "receipts").mkdir(parents=True, exist_ok=True)
+    (model_calls_root / "responses").mkdir(parents=True, exist_ok=True)
+    request_digest = hashlib.sha256(b"structured-context-after-provider-fixture-request").hexdigest()
+    reservation = {
+        "reserved_input_tokens": 16,
+        "reserved_output_tokens": 8,
+        "reserved_total_tokens": 24,
+    }
+    started_at = datetime.now(timezone.utc) - timedelta(seconds=60)
+    finished_at = None
+
+    def _write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + chr(10), encoding="utf-8")
+
+    def _write_call(attempt_id: str, *, status: str, body: bytes, skip_receipt: bool = False) -> None:
+        intent = build_model_call_intent(
+            call_id=attempt_id.rsplit("-", 1)[0],
+            attempt_id=attempt_id,
+            provider="openai",
+            model="gpt-test",
+            stage="director_decision" if action == "generate_chapter" else "chapter_generation",
+            budget_reservation=reservation,
+            request_digest=request_digest,
+        )
+        _write_json(model_calls_root / "intents" / f"{attempt_id}.json", intent)
+        response_path = model_calls_root / "responses" / f"{attempt_id}.txt"
+        response_path.write_bytes(body)
+        if skip_receipt:
+            return
+        receipt = build_model_call_receipt(
+            intent,
+            response_artifact_hash=hashlib.sha256(body).hexdigest(),
+            response_artifact_ref=f"responses/{attempt_id}.txt",
+            status=status,
+            usage={"input_tokens": 1, "output_tokens": 1},
+        )
+        _write_json(model_calls_root / "receipts" / f"{attempt_id}.json", receipt)
+
+    for index in range(succeeded_calls):
+        attempt_id = f"ok{index + 1}-a1"
+        skip = omit_one_receipt and index == succeeded_calls - 1
+        _write_call(attempt_id, status="succeeded", body=f"ok-call-{index + 1}".encode("utf-8"), skip_receipt=skip)
+    if extra_rejected:
+        _write_call("rj-a1", status="budget_rejected", body=b"")
+    provider_calls = succeeded_calls + (1 if extra_rejected else 0)
+
+    finished_at = datetime.now(timezone.utc)
+    if shift_run_hours:
+        finished_at = finished_at - timedelta(hours=shift_run_hours)
+        started_at = finished_at - timedelta(seconds=60)
+    else:
+        started_at = finished_at - timedelta(seconds=60)
+
+    chapter_payload: dict = {"chars": len(candidate)}
+    if write_artifact and candidate:
+        artifact_path = (
+            project_root
+            / ".novelagent"
+            / "runtime"
+            / "chapters"
+            / f"chapter_{chapter:04d}_failed_{run_id}.md"
+        )
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_raw = ("failed candidate" + chr(10) + candidate + chr(10)).encode("utf-8")
+        artifact_path.write_bytes(artifact_raw)
+        chapter_payload["artifact"] = {
+            "chars": len(candidate),
+            "format": "markdown",
+            "path": artifact_path.relative_to(project_root).as_posix(),
+            "sha256": hashlib.sha256(artifact_raw).hexdigest(),
+        }
+
+    result = {
+        "chapter": candidate,
+        "accepted": False,
+        "committed": False,
+        "run": {
+            "id": run_id,
+            "chapter_index": chapter,
+            "status": "failed",
+            "accepted": False,
+            "committed": False,
+            "chapter": chapter_payload,
+            "error": {"type": error_type, "message": error_message},
+            "execution_evidence": {
+                "budget": {
+                    "provider_calls": provider_calls,
+                    "unsettled_attempt_count": unsettled_attempt_count,
+                },
+                "execution_id": execution_id,
+                "model_calls_ref": f"executions/{execution_id}/model_calls",
+            },
+            "persistence": None,
+            "story_project": {
+                "writeback": {"attempted": False, "applied": False}
+            },
+            "trace": [
+                {"action": "build_snapshot", "status": "completed"},
+                {"action": "pre_validate_bridge", "status": "completed"},
+            ]
+            + (
+                [
+                    {"action": "generate_chapter", "status": "completed"},
+                    {"action": "validate", "status": "completed"},
+                ]
+                if action == "repair_if_needed"
+                else []
+            )
+            + [
+                {
+                    "action": action,
+                    "status": "failed",
+                    "error_type": error_type,
+                    "error_message": error_message,
+                },
+            ],
+            "started_at": started_at.isoformat() if include_started_at else None,
+            "finished_at": finished_at.isoformat(),
+        },
+    }
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_path = run_dir / f"chapter_{chapter}_{run_id}.json"
+    run_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    if shared_execution_run_id:
+        sibling = {
+            "chapter": "committed sibling",
+            "accepted": True,
+            "committed": True,
+            "run": {
+                "id": shared_execution_run_id,
+                "chapter_index": max(1, chapter - 1),
+                "status": "committed",
+                "accepted": True,
+                "committed": True,
+                "execution_evidence": {
+                    "budget": {"provider_calls": provider_calls, "unsettled_attempt_count": 0},
+                    "execution_id": execution_id,
+                    "model_calls_ref": f"executions/{execution_id}/model_calls",
+                },
+                "finished_at": started_at.isoformat(),
+            },
+        }
+        (run_dir / f"chapter_{max(1, chapter - 1)}_{shared_execution_run_id}.json").write_text(
+            json.dumps(sibling, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    stderr = (
+        "Traceback (most recent call last):" + chr(10)
+        + f"core.structured_context.StructuredContextError: {error_message}"
+    )
+    return result, run_path, stderr
+
+
+def test_scap_binds_generate_json_item_overflow_without_candidate(
+    tmp_path: Path,
+) -> None:
+    _, _, project_id = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    _, run_path, stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=15,
+        run_id="run-scap-generate",
+        succeeded_calls=1,
+        action="generate_chapter",
+        error_message="required_json_item_exceeds_budget: required entries exceed 1472 characters",
+    )
+    classified = _classify_structured_context_after_provider_failure(
+        project_root,
+        15,
+        exit_code=1,
+        stderr_tail=stderr,
+    )
+    assert classified is not None
+    error = classified["error"]
+    details = error["details"]
+    assert error["code"] == STRUCTURED_CONTEXT_AFTER_PROVIDER_ERROR
+    assert error["automatic_retry"] is False
+    assert error["safe_to_retry"] is False
+    assert error["recovery_required"] is True
+    assert details["failure_origin"] == "structured_context_after_provider"
+    assert details["code"] == "required_json_item_exceeds_budget"
+    assert details["input_stage"] == "generate"
+    assert details["provider_calls"] == 1
+    assert details["succeeded_provider_calls"] == 1
+    assert details["candidate_chars"] == 0
+    assert details["hard_limit_chars"] == 1472
+    assert details["source_error_type"] == "StructuredContextError"
+    assert details["writeback_applied"] is False
+    assert "不是调用前的预算拒绝" in error["message"]
+    assert "尚无完整候选正文，但已保留已付费调用回执" in error["message"]
+    assert _classify_pre_provider_context_failure(
+        project_root,
+        15,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+    assert _classify_context_budget_after_provider_failure(
+        project_root,
+        15,
+        exit_code=1,
+        stderr_tail=stderr,
+    ) is None
+    assert run_path.exists()
+
+
+def test_scap_binds_repair_authority_overflow_with_retained_candidate(
+    tmp_path: Path,
+) -> None:
+    _, _, project_id = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    candidate = "修订前已保留的三千四百字候选" * 10
+    message = (
+        "required_authoritative_records_exceed_budget: required records need 6425 characters including "
+        "audit metadata, exceeding the 5978 character authority budget: characters/林夏, characters/陆沉"
+    )
+    _, _, stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=21,
+        run_id="run-scap-repair",
+        succeeded_calls=2,
+        action="repair_if_needed",
+        candidate=candidate,
+        write_artifact=True,
+        error_message=message,
+    )
+    classified = _classify_structured_context_after_provider_failure(
+        project_root,
+        21,
+        exit_code=1,
+        stderr_tail=stderr,
+    )
+    assert classified is not None
+    error = classified["error"]
+    details = error["details"]
+    assert error["code"] == STRUCTURED_CONTEXT_AFTER_PROVIDER_ERROR
+    assert details["code"] == "required_authoritative_records_exceed_budget"
+    assert details["input_stage"] == "repair"
+    assert details["stage"] == "repair_authority"
+    assert details["provider_calls"] == 2
+    assert details["candidate_chars"] == len(candidate)
+    assert details["required_chars"] == 6425
+    assert details["hard_limit_chars"] == 5978
+    assert details["overage_chars"] == 447
+    assert f"{len(candidate)} 字候选正文已保留" in error["message"]
+    assert "修订所需权威记录超过本地装配预算" in error["message"]
+    assert error["automatic_retry"] is False
+
+
+def test_scap_fails_closed_on_incomplete_mixed_or_pre_provider_evidence(
+    tmp_path: Path,
+) -> None:
+    _, _, project_id = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    message = "required_json_item_exceeds_budget: required entries exceed 1472 characters"
+
+    _, _, zero_stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=15,
+        run_id="run-scap-zero",
+        succeeded_calls=0,
+        error_message=message,
+    )
+    # 0 succeeded calls cannot satisfy expected_calls >= 1; leave to pre-provider only when budget says 0.
+    assert _classify_structured_context_after_provider_failure(
+        project_root, 15, exit_code=1, stderr_tail=zero_stderr
+    ) is None
+
+    _, _, wrap_stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=16,
+        run_id="run-scap-wrap",
+        error_type="ModelCallError",
+        error_message=message,
+    )
+    wrap_stderr = "ModelCallError: (local_budget; " + message + ")"
+    assert _classify_structured_context_after_provider_failure(
+        project_root, 16, exit_code=1, stderr_tail=wrap_stderr
+    ) is None
+
+    _, _, shared_stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=17,
+        run_id="run-scap-shared",
+        shared_execution_run_id="run-committed-sibling",
+        error_message=message,
+    )
+    assert _classify_structured_context_after_provider_failure(
+        project_root, 17, exit_code=1, stderr_tail=shared_stderr
+    ) is None
+
+    _, _, stale_stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=18,
+        run_id="run-scap-stale",
+        shift_run_hours=6,
+        error_message=message,
+    )
+    assert _classify_structured_context_after_provider_failure(
+        project_root, 18, exit_code=1, stderr_tail=stale_stderr
+    ) is None
+
+    _, _, missing_start_stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=19,
+        run_id="run-scap-nostart",
+        include_started_at=False,
+        error_message=message,
+    )
+    assert _classify_structured_context_after_provider_failure(
+        project_root, 19, exit_code=1, stderr_tail=missing_start_stderr
+    ) is None
+
+    _, _, omitted_stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=20,
+        run_id="run-scap-omit",
+        omit_one_receipt=True,
+        error_message=message,
+    )
+    assert _classify_structured_context_after_provider_failure(
+        project_root, 20, exit_code=1, stderr_tail=omitted_stderr
+    ) is None
+
+    _, _, unsettled_stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=22,
+        run_id="run-scap-unsettled",
+        unsettled_attempt_count=1,
+        error_message=message,
+    )
+    assert _classify_structured_context_after_provider_failure(
+        project_root, 22, exit_code=1, stderr_tail=unsettled_stderr
+    ) is None
+
+    _, _, exit0_stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=23,
+        run_id="run-scap-exit0",
+        error_message=message,
+    )
+    assert _classify_structured_context_after_provider_failure(
+        project_root, 23, exit_code=0, stderr_tail=exit0_stderr
+    ) is None
+
+    prose_root = project_root
+    _, _, prose_stderr = _write_structured_context_after_provider_run(
+        prose_root,
+        chapter=24,
+        run_id="run-scap-prose",
+        error_message=message,
+    )
+    prose_path = canonical_prose_path(prose_root, 24)
+    prose_path.parent.mkdir(parents=True, exist_ok=True)
+    prose_path.write_text("已经提交的正式正文\\n", encoding="utf-8")
+    assert _classify_structured_context_after_provider_failure(
+        prose_root, 24, exit_code=1, stderr_tail=prose_stderr
+    ) is None
+
+
+def test_scap_legacy_pause_reconciles_without_requeue(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id, end_chapter=3)
+    project_root = tmp_path / "books" / "test-book"
+    candidate = "已付费后保留的修订候选"
+    message = (
+        "required_authoritative_records_exceed_budget: required records need 6425 characters including "
+        "audit metadata, exceeding the 5978 character authority budget: characters/林夏"
+    )
+    _, _, stderr = _write_structured_context_after_provider_run(
+        project_root,
+        chapter=1,
+        run_id="run-legacy-scap",
+        succeeded_calls=2,
+        action="repair_if_needed",
+        candidate=candidate,
+        write_artifact=True,
+        error_message=message,
+    )
+    legacy = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={
+            "code": "engine_result_unreadable",
+            "exit_code": 1,
+            "stderr_tail": stderr,
+        },
+        uncertain=False,
+    )
+    assert legacy.result is None
+    assert legacy.error["code"] == "engine_result_unreadable"
+
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    supervisor._reconcile_structured_context_after_provider_failures()
+
+    reconciled = store.get(parent.id)
+    assert reconciled.state == "awaiting_input"
+    assert reconciled.manual_confirmation_required is True
+    assert reconciled.error is not None
+    assert reconciled.error["code"] == STRUCTURED_CONTEXT_AFTER_PROVIDER_ERROR
+    assert reconciled.error["automatic_retry"] is False
+    assert reconciled.error["safe_to_retry"] is False
+    assert reconciled.error["details"]["candidate_chars"] == len(candidate)
+    assert reconciled.result is not None
+    assert store.claim_next() is None
+    assert store.resume_ready(parent.id) is False
+    assert store.events_after(parent.id)[-1]["event"] == "chapter.structured_context_after_provider"
     with pytest.raises(JobError, match="completed, receipt-backed recovery"):
         store.resume(parent.id, confirmed=True)

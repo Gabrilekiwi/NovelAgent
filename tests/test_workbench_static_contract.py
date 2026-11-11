@@ -1773,3 +1773,129 @@ process.stdout.write(JSON.stringify(output));
     assert result["verifiedJob"]["chapterChars"] == 4398
     assert result["legacyViaRun"]["verified"] is True
     assert result["preProviderNotStolen"] is None
+
+
+def test_settled_structured_context_after_provider_failure_explains_next_step() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+    stream = (STATIC / "workbench.js").read_text(encoding="utf-8")
+
+    assert "const structuredContextAfterProviderDetailsOfRun = (run) =>" in spa
+    assert "const structuredContextAfterProviderDetailsOf = (job) =>" in spa
+    assert 'value.code === "structured_context_after_provider"' in spa
+    assert "structured_context_after_provider: structuredContextAfterProvider" in spa
+    assert "已付费后结构化上下文中断" in spa
+    assert "结构化上下文装配中断" in spa
+    assert "不是调用前的预算拒绝" in spa
+    assert 'form.dataset.recoveryMode = "structured-context-after-provider-classify"' in spa
+    assert "&& !structuredContextAfterProviderFailure" in spa
+    assert "&& !repairAuthorityFailure" in spa.split("const forceResetAllowed")[1].split(");")[0]
+    assert "先做无模型恢复分类" in spa.split("structured-context-after-provider-classify")[1][:800]
+
+    assert stream.count('"chapter.structured_context_after_provider"') >= 3
+    assert '"chapter.structured_context_after_provider": "已付费调用后结构化上下文装配中断，已保留已付费内容，任务已安全暂停"' in stream
+    assert '"chapter.structured_context_after_provider": "awaiting_input"' in stream
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_structured_context_after_provider_browser_classifier_fails_closed() -> None:
+    spa_path = STATIC / "workbench-spa.js"
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+let source = fs.readFileSync(process.argv[1], "utf8");
+const marker = "  const reviewStatusOf =";
+if (!source.includes(marker)) throw new Error("classifier export marker is missing");
+source = source.replace(marker, "  globalThis.__evidence = { structuredContextAfterProviderDetailsOf, structuredContextAfterProviderDetailsOfRun, contextBudgetAfterProviderDetailsOfRun };\n  return;\n" + marker);
+const sandbox = {
+  document: {
+    body: { hasAttribute: () => true },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    createElement: () => ({})
+  },
+  window: { NovelAgentUI: {} }
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const generateRun = {
+  error_type: "StructuredContextError",
+  error_message: "required_json_item_exceeds_budget: required entries exceed 1472 characters",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 1,
+  chapter_chars: 0
+};
+const repairRun = {
+  error_type: "StructuredContextError",
+  error_message: "required_authoritative_records_exceed_budget: required records need 6425 characters including audit metadata, exceeding the 5978 character authority budget: characters/LinXia",
+  unsettled_attempt_count: 0,
+  committed: false,
+  provider_calls: 2,
+  chapter_chars: 3400
+};
+const completeDetails = {
+  failure_origin: "structured_context_after_provider",
+  code: "required_authoritative_records_exceed_budget",
+  input_stage: "repair",
+  limit_kind: "character_budget",
+  stage: "repair_authority",
+  required_chars: 6425,
+  hard_limit_chars: 5978,
+  overage_chars: 447,
+  provider_calls: 2,
+  settled_provider_calls: 2,
+  succeeded_provider_calls: 2,
+  unsettled_attempt_count: 0,
+  candidate_chars: 3400,
+  provider_reached: true,
+  formal_prose_exists: false,
+  accepted: false,
+  committed: false,
+  writeback_attempted: false,
+  writeback_applied: false,
+  automatic_retry: false,
+  safe_to_retry: false,
+  recovery_required: true,
+  source_error_type: "StructuredContextError",
+  source_error_message: "required_authoritative_records_exceed_budget: required records need 6425 characters including audit metadata, exceeding the 5978 character authority budget: characters/LinXia"
+};
+const output = {
+  fromGenerate: sandbox.__evidence.structuredContextAfterProviderDetailsOfRun(generateRun),
+  fromRepair: sandbox.__evidence.structuredContextAfterProviderDetailsOfRun(repairRun),
+  zeroCalls: sandbox.__evidence.structuredContextAfterProviderDetailsOfRun(Object.assign({}, generateRun, { provider_calls: 0 })),
+  wrapRun: sandbox.__evidence.structuredContextAfterProviderDetailsOfRun(Object.assign({}, generateRun, { error_type: "ModelCallError", error_message: "ModelCallError: (local_budget; required_json_item_exceeds_budget: required entries exceed 1472 characters)" })),
+  tokenBudgetNotStolen: sandbox.__evidence.structuredContextAfterProviderDetailsOfRun(Object.assign({}, repairRun, { error_type: "ContextBudgetError", error_message: "story_project_context_budget_exceeded: repair input requires 39267 tokens; hard limit is 32000" })),
+  unreadableJob: sandbox.__evidence.structuredContextAfterProviderDetailsOf({ error: { code: "engine_result_unreadable", stderr_tail: "StructuredContextError: required_json_item_exceeds_budget: required entries exceed 1472 characters" } }),
+  incompleteJob: sandbox.__evidence.structuredContextAfterProviderDetailsOf({ error: { code: "structured_context_after_provider", details: Object.assign({}, completeDetails, { writeback_applied: undefined }) } }),
+  verifiedJob: sandbox.__evidence.structuredContextAfterProviderDetailsOf({ error: { code: "structured_context_after_provider", details: completeDetails } }),
+  legacyViaRun: sandbox.__evidence.structuredContextAfterProviderDetailsOf({ error: { code: "engine_result_unreadable" }, latest_run: repairRun }),
+  cbapNotStolen: sandbox.__evidence.contextBudgetAfterProviderDetailsOfRun(repairRun)
+};
+process.stdout.write(JSON.stringify(output));
+"""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "-e", script, str(spa_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["fromGenerate"]["verified"] is True
+    assert result["fromGenerate"]["providerCalls"] == 1
+    assert result["fromGenerate"]["chapterChars"] == 0
+    assert result["fromGenerate"]["inputStage"] == "generate"
+    assert result["fromGenerate"]["hardLimitChars"] == 1472
+    assert result["fromRepair"]["verified"] is True
+    assert result["fromRepair"]["providerCalls"] == 2
+    assert result["fromRepair"]["chapterChars"] == 3400
+    assert result["fromRepair"]["inputStage"] == "repair"
+    assert result["fromRepair"]["requiredChars"] == 6425
+    assert result["zeroCalls"] is None
+    assert result["wrapRun"] is None
+    assert result["tokenBudgetNotStolen"] is None
+    assert result["unreadableJob"] is None
+    assert result["incompleteJob"] is None
+    assert result["verifiedJob"]["verified"] is True
+    assert result["verifiedJob"]["chapterChars"] == 3400
+    assert result["legacyViaRun"]["verified"] is True
+    assert result["cbapNotStolen"] is None
