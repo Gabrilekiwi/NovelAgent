@@ -40,6 +40,7 @@ from core.state.generation_state_view import (
     build_scene_generation_state_reference,
     filter_scene_state_for_generation,
     generation_state_view_from_markdown,
+    project_bookkeeping_for_generation,
     scene_generation_state_reference_from_markdown,
 )
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
@@ -1511,6 +1512,7 @@ def _compact_scene_context(
         scene_state_reference = build_scene_generation_state_reference(
             generation_state_view
         )
+        text = _project_scene_bookkeeping_sections(text, generation_state_view)
         selection = compact_markdown_context(
             text,
             max_chars=max_section_chars * 8,
@@ -1718,6 +1720,57 @@ def _initial_scene_state(input_pack: str) -> dict[str, Any]:
         if normalized and normalized not in state["completed_event_ids"]:
             state["completed_event_ids"].append(normalized)
     return state
+
+
+
+def _project_scene_bookkeeping_sections(
+    text: str, generation_state_view: dict[str, Any]
+) -> str:
+    """Replace growing ledgers with working-set projections before compaction."""
+
+    project_profile = _input_pack_json_section(text, "Project Profile")
+    spatial_state = _input_pack_json_section(text, "Spatial State")
+    if project_profile is None and spatial_state is None:
+        return text
+    projected = project_bookkeeping_for_generation(
+        generation_state_view,
+        project_profile=project_profile,
+        spatial_state=spatial_state,
+    )
+    updated = text
+    if project_profile is not None:
+        updated = _replace_markdown_json_section(
+            updated, "Project Profile", projected["project_profile"]
+        )
+    if spatial_state is not None:
+        updated = _replace_markdown_json_section(
+            updated, "Spatial State", projected["spatial_state"]
+        )
+    return updated
+
+
+def _replace_markdown_json_section(
+    text: str, section: str, payload: dict[str, Any]
+) -> str:
+    rendered = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    pattern = rf"(?ms)^# {re.escape(section)}[ \t]*\r?\n(.*?)(?=^# |\Z)"
+    replaced, count = re.subn(
+        pattern,
+        f"# {section}\n{rendered}\n\n",
+        str(text or ""),
+        count=1,
+    )
+    if count != 1:
+        raise ContextBudgetError(
+            "story_project_context_reference_mismatch",
+            f"{section} could not be replaced with a working-set projection",
+        )
+    return replaced
 
 
 def _input_pack_json_section(input_pack: str, section: str) -> dict[str, Any] | None:

@@ -368,6 +368,114 @@ class ChapterPipelineGenerationViewTests(unittest.TestCase):
             pipeline_module.authoritative_state_from_markdown(compact)
         )
 
+    def test_gsv_scene_context_projects_ledgers_that_exceed_section_cap(
+        self,
+    ) -> None:
+        # Chapter 59 failed at 10:15 Asia/Shanghai because the GSV compact path
+        # still required the complete Project Profile (1678 chars) and Spatial
+        # State (2093 chars). Those living ledgers are larger than the 1500-char
+        # section cap (1481-char body for Project Profile). Raising the cap
+        # would only postpone the same overflow. With a Generation State View,
+        # the sections must be projected onto the working set and still fit.
+        authority = _authority()
+        view = _generation_view(authority)
+        junk_characters = [f"crowd-{index:03d}" for index in range(80)]
+        junk_locations = [f"unused-space-{index:03d}" for index in range(80)]
+        profile = {
+            "language": "zh-CN",
+            "known_characters": ["hero", *junk_characters],
+            "known_locations": [
+                "second-floor-radio-room",
+                "unrelated-location",
+                *junk_locations,
+            ],
+        }
+        spatial = {
+            "spaces": {
+                "second-floor-radio-room": {"known": True},
+                "unrelated-location": {},
+                **{
+                    name: {"source": "chapter_analysis"}
+                    for name in junk_locations
+                },
+            },
+            "connections": [],
+            "character_positions": {
+                "hero": "second-floor-radio-room",
+                "noise-character": "unrelated-location",
+                **{name: "unrelated-location" for name in junk_characters},
+            },
+            "blocked_paths": [],
+            "last_transition": {
+                "source": "chapter_analysis",
+                "to": "second-floor-radio-room",
+            },
+        }
+        profile_section = "# Project Profile\n" + json.dumps(
+            profile, ensure_ascii=False, indent=2
+        )
+        spatial_section = "# Spatial State\n" + json.dumps(
+            spatial, ensure_ascii=False, indent=2
+        )
+        self.assertGreater(len(profile_section), 1678)
+        self.assertGreater(len(spatial_section), 2093)
+
+        pack = _input_pack(authority, view)
+        pack = pack.replace("# Project Profile\n{}", profile_section, 1)
+        pack = pack.replace("# Spatial State\n{}", spatial_section, 1)
+
+        seen: dict[str, int] = {}
+        real = pipeline_module.compact_markdown_context
+
+        def wrapper(*args, **kwargs):
+            seen["max_chars"] = int(kwargs["max_chars"])
+            seen["per_section_max_chars"] = int(kwargs["per_section_max_chars"])
+            return real(*args, **kwargs)
+
+        with patch.object(
+            pipeline_module, "compact_markdown_context", side_effect=wrapper
+        ):
+            compact = pipeline_module._compact_scene_context(
+                pack, max_section_chars=1_500
+            )
+
+        self.assertEqual(1_500, seen.get("per_section_max_chars"))
+        self.assertEqual(1_500 * 8, seen.get("max_chars"))
+        profile_body = compact.split("# Project Profile\n", 1)[1].split(
+            "\n# ", 1
+        )[0]
+        spatial_body = compact.split("# Spatial State\n", 1)[1].split(
+            "\n# ", 1
+        )[0]
+        retained_profile = json.loads(profile_body)
+        retained_spatial = json.loads(spatial_body)
+        self.assertLessEqual(len("# Project Profile\n" + profile_body), 1_500)
+        self.assertLessEqual(len("# Spatial State\n" + spatial_body), 1_500)
+        self.assertEqual("zh-CN", retained_profile["language"])
+        self.assertIn("hero", retained_profile["known_characters"])
+        self.assertIn(
+            "second-floor-radio-room", retained_profile["known_locations"]
+        )
+        self.assertNotIn("crowd-000", retained_profile["known_characters"])
+        self.assertNotIn(
+            "unused-space-000", retained_profile["known_locations"]
+        )
+        self.assertNotIn("noise-character", retained_profile["known_characters"])
+        self.assertEqual(
+            {"source": "chapter_analysis", "to": "second-floor-radio-room"},
+            retained_spatial["last_transition"],
+        )
+        self.assertEqual(
+            "second-floor-radio-room",
+            retained_spatial["character_positions"]["hero"],
+        )
+        self.assertNotIn(
+            "noise-character", retained_spatial["character_positions"]
+        )
+        self.assertNotIn("unused-space-000", retained_spatial["spaces"])
+
+
+
 
 if __name__ == "__main__":
     unittest.main()
