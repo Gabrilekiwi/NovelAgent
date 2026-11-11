@@ -31,6 +31,7 @@ from core.story_project.activation import (
 )
 from core.story_project.amendments import read_current_chapter_text
 from core.story_project.identity import load_project_identity, project_identity_for_operation
+from core.story_project.mapper import extract_chapter_title
 from core.story_project.paths import (
     outline_chapter_index,
     prose_chapter_index,
@@ -1599,6 +1600,7 @@ def _project_overview(
         "word_count": word_count,
         "word_count_label": f"{word_count:,} 字",
         "next_chapter": record.next_chapter,
+        "next_outline_title": _next_outline_title(record),
         "current_tasks": [job.to_dict() for job in recent_jobs if job.state not in TERMINAL_JOB_STATES],
         "pending_count": len(pending) + sum(1 for batch in batches if batch.status == "draft"),
         "recent_history": [job.to_dict() for job in recent_jobs],
@@ -1631,7 +1633,10 @@ def _chapter_list(record: ProjectRecord, amendments: AmendmentService) -> list[d
         result.append(
             {
                 "chapter": chapter,
-                "title": _chapter_title(prose_resolution.path or outline_resolution.path),
+                "title": _chapter_display_title(
+                    outline_path=outline_resolution.path if not outline_resolution.conflict else None,
+                    prose_path=prose_resolution.path if not prose_resolution.conflict else None,
+                ),
                 "has_outline": outline_resolution.path is not None and not outline_resolution.conflict,
                 "has_prose": prose_resolution.path is not None and not prose_resolution.conflict,
                 "conflict": prose_resolution.conflict or outline_resolution.conflict,
@@ -1666,7 +1671,10 @@ def _chapter_detail(
     return {
         "project": {"id": record.id, "title": record.name},
         "chapter": chapter,
-        "title": _chapter_title(prose.path or outline.path),
+        "title": _chapter_display_title(
+            outline_path=outline.path if not outline.conflict else None,
+            prose_path=prose.path if not prose.conflict else None,
+        ),
         "has_outline": has_outline,
         "has_prose": has_prose,
         "conflict": conflict,
@@ -2394,12 +2402,30 @@ def _read_optional_text(path: Path | None) -> str | None:
         return None
 
 
+def _next_outline_title(record: ProjectRecord) -> str | None:
+    outline = resolve_outline(record.root, record.next_chapter)
+    if outline.path is None or outline.conflict:
+        return None
+    title = _chapter_display_title(outline_path=outline.path)
+    return title if title != "未命名章节" else None
+
+
+def _chapter_display_title(
+    *,
+    outline_path: Path | None = None,
+    prose_path: Path | None = None,
+) -> str:
+    for path in (outline_path, prose_path):
+        if path is None:
+            continue
+        title = extract_chapter_title(_read_optional_text(path) or "", path)
+        if title:
+            return title
+    return "未命名章节"
+
+
 def _chapter_title(path: Path | None) -> str:
-    if path is None:
-        return "未命名章节"
-    stem = path.stem
-    match = re.search(r"章[_：:\s-]*(.+)$", stem)
-    return match.group(1).strip() if match else stem
+    return _chapter_display_title(outline_path=path, prose_path=path)
 
 
 def _visible_character_count(text: str) -> int:
