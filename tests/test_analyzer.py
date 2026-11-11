@@ -193,3 +193,59 @@ class LocationMentionIndexTest(unittest.TestCase):
             _location_mention_index(prose, "人防医院支线外侧隔离撤回口"),
             _location_mention_index(prose, "北侧维护通道"),
         )
+
+
+class DiscourseLocationTest(unittest.TestCase):
+    def test_last_scene_ignores_zuihou_adverb_even_when_already_known(self) -> None:
+        chapter = (
+            "二层通信室里，林夏接通了通往消防站侧首段递送路线的有线回路。"
+            "陆沉和顾岚守在线路另一侧，没有开无线电。"
+            "韩野把旧取水记录压回图上。"
+            "屋里只剩手摇机组模糊的摩擦声——没有托片离开消防站侧，也没有一条求援被送往医院方向。"
+            "最后，她把旧取水图重新摊回桌面。手动阀旁那行褪色的小字依旧清晰。"
+            "静默的边界已经守住，真正留给他们的，仍是阀口那一分钟——任何记录都覆盖不了的一分钟。"
+        )
+        snapshot = {
+            "project_profile": {
+                "known_characters": ["林夏", "陆沉", "顾岚", "韩野"],
+                "known_locations": [
+                    "最后",
+                    "的人",
+                    "和撤回",
+                    "原处",
+                    "二层通信室",
+                    "消防站侧首段递送路线",
+                    "消防站侧",
+                ],
+            }
+        }
+
+        analysis = analyze_chapter(chapter, {"ok": True}, snapshot=snapshot)
+
+        self.assertNotEqual("最后", analysis["story_state"]["last_scene_location"])
+        self.assertNotIn("最后", analysis["new_locations"])
+        self.assertNotIn("的人", analysis["new_locations"])
+        self.assertNotIn("和撤回", analysis["new_locations"])
+        self.assertNotIn("最后", analysis["story_state"]["required_opening_bridge"])
+        self.assertIn(
+            analysis["story_state"]["last_scene_location"],
+            {"消防站侧", "消防站侧首段递送路线", "二层通信室"},
+        )
+        self.assertNotEqual(
+            {"to": "最后", "source": "chapter_analysis"},
+            analysis["spatial_state"]["last_transition"],
+        )
+
+
+class UsableLocationNameTest(unittest.TestCase):
+    def test_rejects_discourse_and_grammatical_fragments(self) -> None:
+        from core.location_names import is_usable_location_name
+
+        self.assertFalse(is_usable_location_name("最后"))
+        self.assertFalse(is_usable_location_name("的人"))
+        self.assertFalse(is_usable_location_name("和撤回"))
+        self.assertFalse(is_usable_location_name("然后"))
+        self.assertFalse(is_usable_location_name(""))
+        self.assertTrue(is_usable_location_name("消防站侧首段递送路线"))
+        self.assertTrue(is_usable_location_name("二层通信室"))
+        self.assertTrue(is_usable_location_name("废弃管廊支仓"))

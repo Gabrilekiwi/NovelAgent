@@ -4,6 +4,7 @@ import re
 import unicodedata
 from typing import Any
 
+from core.location_names import fallback_cast_location, is_usable_location_name
 from core.validator.common import get_location_terms, get_locations
 
 
@@ -169,30 +170,24 @@ def _ending_location_from_authoritative_state(snapshot: dict[str, Any]) -> str:
         return ""
     joined = chr(10).join(texts)
     last_location = str(_story_state(snapshot).get("last_scene_location") or "").strip()
-    if last_location and last_location in joined:
+    if (
+        is_usable_location_name(last_location)
+        and last_location in joined
+    ):
         return last_location
     found: list[str] = []
     for match in _AUTHORITATIVE_PLACE_RE.finditer(joined):
         location = match.group(1).rstrip("的了着过")
-        if len(location) >= 2 and location not in found:
+        if is_usable_location_name(location) and location not in found:
             found.append(location)
     return max(found, key=len) if found else ""
 
 
-def continuity_story_state(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Prefer the formal ending location when last_scene_location is stale.
-
-    Chapter writeback can leave last_scene_location and required_opening_bridge
-    on the opening place even after characters have already moved. Authoritative
-    after/current_goal text is the durable ending signal already stored on the
-    snapshot, so opening continuity should follow that when it conflicts.
-    """
-
-    story_state = dict(_story_state(snapshot))
-    last_location = str(story_state.get("last_scene_location") or "").strip()
-    ending_location = _ending_location_from_authoritative_state(snapshot)
-    if not ending_location or ending_location == last_location:
-        return story_state
+def _replace_continuity_location(
+    story_state: dict[str, Any],
+    last_location: str,
+    ending_location: str,
+) -> dict[str, Any]:
     bridge = str(story_state.get("required_opening_bridge") or "")
     if last_location and last_location in bridge:
         story_state["required_opening_bridge"] = bridge.replace(last_location, ending_location, 1)
@@ -214,6 +209,39 @@ def continuity_story_state(snapshot: dict[str, Any]) -> dict[str, Any]:
             )
     story_state["last_scene_location"] = ending_location
     return story_state
+
+
+def continuity_story_state(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Prefer a real ending location when last_scene_location is stale or unusable.
+
+    Chapter writeback can leave last_scene_location and required_opening_bridge
+    on the opening place even after characters have already moved, or can
+    register a discourse adverb such as「最后」as if it were a place.
+    Authoritative after/current_goal text and the last-scene cast positions
+    are stronger ending signals than a token that is not a usable location.
+    """
+
+    story_state = dict(_story_state(snapshot))
+    last_location_raw = str(story_state.get("last_scene_location") or "").strip()
+    last_location = last_location_raw if is_usable_location_name(last_location_raw) else ""
+    ending_location = _ending_location_from_authoritative_state(snapshot)
+    if ending_location and not is_usable_location_name(ending_location):
+        ending_location = ""
+    if not last_location:
+        ending_location = fallback_cast_location(snapshot) or ending_location
+        if not ending_location:
+            if last_location_raw:
+                story_state["last_scene_location"] = ""
+                bridge = str(story_state.get("required_opening_bridge") or "")
+                if last_location_raw and last_location_raw in bridge:
+                    story_state["required_opening_bridge"] = bridge.replace(
+                        last_location_raw, "", 1
+                    ).strip(" ；;、,")
+            return story_state
+        return _replace_continuity_location(story_state, last_location_raw, ending_location)
+    if not ending_location or ending_location == last_location:
+        return story_state
+    return _replace_continuity_location(story_state, last_location, ending_location)
 
 
 def validate_bridge_preconditions(snapshot: dict[str, Any]) -> dict[str, Any]:

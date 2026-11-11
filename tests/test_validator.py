@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from core.validator import validate_chapter
 from core.validator.llm import LLM_VALIDATION_AREAS, llm_payload_to_check, validate_llm
-from core.validator.spatial import validate_bridge_preconditions
+from core.validator.spatial import continuity_story_state, validate_bridge_preconditions
 
 
 class ValidatorTest(unittest.TestCase):
@@ -1219,3 +1219,59 @@ class ValidatorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiscourseContinuityTest(unittest.TestCase):
+    def test_opening_continuity_rejects_discourse_last_scene_location(self) -> None:
+        snapshot = {
+            "chapter_index": 64,
+            "world_state": {
+                "locations": {
+                    "最后": {"source": "chapter_analysis", "first_seen_chapter": 63},
+                    "消防站侧首段递送路线": {},
+                    "二层通信室": {},
+                }
+            },
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "静默的边界已经守住，真正留给他们的，仍是阀口那一分钟——任何记录都覆盖不了的一分钟。",
+                "last_scene_location": "最后",
+                "last_scene_characters": ["陆沉", "韩野", "顾岚"],
+                "open_threads": [],
+                "required_opening_bridge": "最后；陆沉、韩野、顾岚",
+            },
+            "spatial_state": {
+                "spaces": {
+                    "最后": {"source": "chapter_analysis"},
+                    "消防站侧首段递送路线": {"source": "chapter_analysis"},
+                    "二层通信室": {"source": "chapter_analysis"},
+                },
+                "connections": [],
+                "character_positions": {
+                    "陆沉": "消防站侧首段递送路线",
+                    "韩野": "消防站侧首段递送路线",
+                    "顾岚": "消防站侧首段递送路线",
+                },
+                "blocked_paths": [],
+                "last_transition": {"to": "最后", "source": "chapter_analysis"},
+            },
+        }
+
+        resolved = continuity_story_state(snapshot)
+        self.assertEqual("消防站侧首段递送路线", resolved["last_scene_location"])
+        self.assertIn("消防站侧首段递送路线", resolved["required_opening_bridge"])
+        self.assertNotIn("最后；", resolved["required_opening_bridge"])
+
+        pre = validate_bridge_preconditions(snapshot)
+        self.assertTrue(pre["ok"])
+        self.assertEqual([], pre["problem_codes"])
+
+        result = validate_chapter(
+            snapshot,
+            "陆沉与顾岚从消防站侧首段递送路线外侧的撤回线后观察备用取水口，韩野仍在本侧复核记录。",
+            {"validation_focus": ["spatial"]},
+        )
+        problem_codes = {problem["code"] for problem in result["problems"]}
+        self.assertNotIn("missing_last_scene_continuity", problem_codes)
+        self.assertNotIn("missing_opening_bridge", problem_codes)

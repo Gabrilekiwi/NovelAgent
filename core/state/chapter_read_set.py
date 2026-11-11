@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from core.location_names import fallback_cast_location, is_usable_location_name
 from core.schema import validate_schema
 
 
@@ -606,14 +607,40 @@ def _derived_continuity(
     spatial_state = {}
     if isinstance(snapshot, Mapping):
         if isinstance(snapshot.get("story_state"), Mapping):
-            story_state = snapshot["story_state"]
+            story_state = dict(snapshot["story_state"])
         if isinstance(snapshot.get("spatial_state"), Mapping):
             spatial_state = snapshot["spatial_state"]
-    location = str(
-        story_state.get("last_scene_location")
-        or (spatial_state.get("last_transition") or {}).get("to")
-        or ""
-    ).strip()
+    recorded_location = str(story_state.get("last_scene_location") or "").strip()
+    previous_location = recorded_location
+    if not is_usable_location_name(recorded_location):
+        recorded_location = ""
+    transition_to = str((spatial_state.get("last_transition") or {}).get("to") or "").strip()
+    if not is_usable_location_name(transition_to):
+        transition_to = ""
+    location = recorded_location or transition_to or fallback_cast_location(snapshot)
+    if location and location != previous_location:
+        story_state["last_scene_location"] = location
+        bridge = str(story_state.get("required_opening_bridge") or "")
+        if previous_location and previous_location in bridge:
+            story_state["required_opening_bridge"] = bridge.replace(
+                previous_location, location, 1
+            )
+        else:
+            characters = [
+                str(item).strip()
+                for item in story_state.get("last_scene_characters") or []
+                if str(item).strip()
+            ]
+            if any("\u4e00" <= char <= "\u9fff" for char in location):
+                joined = "、".join(characters)
+                story_state["required_opening_bridge"] = (
+                    f"{location}；{joined}" if joined else location
+                )
+            else:
+                joined = ", ".join(characters)
+                story_state["required_opening_bridge"] = (
+                    f"{location}; {joined}" if joined else location
+                )
     characters = _continuity_character_ids(story_state, spatial_state)
     bridge = str(
         story_state.get("required_opening_bridge")

@@ -31,6 +31,7 @@ from core.delivery_intents import (
     validate_file_delivery_profile,
 )
 from core.director import decide_next_step, validate_decision
+from core.location_names import is_usable_location_name
 from core.project_profile import project_language
 from core.quality.final_artifact_integrity import (
     FinalArtifactIntegrityConfig,
@@ -4888,8 +4889,17 @@ def _prefer_ending_consistent_location(
     Without chapter text, preserve the existing Scene-final preference.
     """
 
-    if not chapter_text or not analyzer_location or analyzer_location == scene_location:
+    if not is_usable_location_name(analyzer_location):
         return scene_location
+    if not is_usable_location_name(scene_location):
+        return analyzer_location
+    if not chapter_text or analyzer_location == scene_location:
+        return scene_location
+    # Keep the more specific place when one name is only a stem of the other.
+    if scene_location.startswith(analyzer_location) or scene_location.endswith(analyzer_location):
+        return scene_location
+    if analyzer_location.startswith(scene_location) or analyzer_location.endswith(scene_location):
+        return analyzer_location
     body = str(chapter_text)
     analyzer_index = body.rfind(analyzer_location)
     scene_index = body.rfind(scene_location)

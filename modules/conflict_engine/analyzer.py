@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.location_names import is_usable_location_name
 from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
 
@@ -257,7 +258,7 @@ def _extract_movement_destinations(text: str) -> list[str]:
         if any(prefix.endswith(negation) for negation in _MOVEMENT_NEGATION_PREFIXES):
             continue
         location = _trim_movement_destination(match.group(1))
-        if location and location not in found:
+        if location and is_usable_location_name(location) and location not in found:
             found.append(location)
     return found
 
@@ -290,7 +291,11 @@ def _extract_candidate_locations(text: str, known_locations: list[str] | None = 
     return [
         term
         for term, position in sorted(
-            ((item, index) for item, index in mentions.items() if index >= 0),
+            (
+                (item, index)
+                for item, index in mentions.items()
+                if index >= 0 and is_usable_location_name(item)
+            ),
             key=lambda item: item[1],
         )
     ]
@@ -428,16 +433,21 @@ def _last_known_location(
     mentioned_locations = [
         (_location_family_index(text, location, new_locations), location)
         for location in new_locations
-        if location and _location_family_index(text, location, new_locations) >= 0
+        if is_usable_location_name(location)
+        and _location_family_index(text, location, new_locations) >= 0
     ]
     if mentioned_locations:
         _, raw_location = max(mentioned_locations, key=lambda item: (item[0], len(item[1])))
-        return _canonical_location_name(raw_location, new_locations)
+        canonical = _canonical_location_name(raw_location, new_locations)
+        if is_usable_location_name(canonical):
+            return canonical
+        return raw_location
     for change in reversed(character_changes):
-        location = change.get("current_location")
-        if location:
+        location = str(change.get("current_location") or "").strip()
+        if is_usable_location_name(location):
             return location
-    return new_locations[-1] if new_locations else ""
+    usable = [item for item in new_locations if is_usable_location_name(item)]
+    return usable[-1] if usable else ""
 
 
 def _required_opening_bridge(last_location: str, last_sentence: str, characters: list[str]) -> str:
@@ -504,9 +514,11 @@ def _clean_location(value: str, known_locations: list[str] | None = None) -> str
     if location.startswith("the "):
         location = location[4:]
     for known_location in sorted(known_locations or _KNOWN_LOCATION_TERMS, key=len, reverse=True):
+        if not is_usable_location_name(known_location):
+            continue
         if known_location.lower() in location or known_location in raw_location:
             return known_location
-    return location
+    return location if is_usable_location_name(location) else ""
 
 
 def _is_known_location(value: str, known_locations: list[str] | None = None) -> bool:
