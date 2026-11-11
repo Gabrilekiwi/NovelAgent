@@ -224,6 +224,7 @@ def recover_locked_chapter(
                     and _remaining_problems_require_author_review(source_payload)
                 )
                 or _repair_assembly_blocked_after_paid_calls(source_payload)
+                or _repair_stale_scene_blocked_after_paid_calls(source_payload)
             )
         )
         if prefer_author_draft:
@@ -2586,6 +2587,63 @@ def _repair_assembly_blocked_after_paid_calls(payload: dict[str, Any]) -> bool:
         return False
     failed_action = str(failed[0].get("action") or failed[0].get("name") or failed[0].get("step") or "")
     if failed_action not in {"repair_if_needed", "repair"}:
+        return False
+    evidence = run.get("execution_evidence") if isinstance(run.get("execution_evidence"), dict) else {}
+    budget = evidence.get("budget") if isinstance(evidence.get("budget"), dict) else {}
+    try:
+        provider_calls = int(budget.get("provider_calls") or run.get("provider_calls") or 0)
+        unsettled = int(budget.get("unsettled_attempt_count") or run.get("unsettled_attempt_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if provider_calls < 1 or unsettled != 0:
+        return False
+    writeback = None
+    story_project = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+    if isinstance(story_project.get("writeback"), dict):
+        writeback = story_project.get("writeback")
+    elif isinstance(run.get("writeback"), dict):
+        writeback = run.get("writeback")
+    if isinstance(writeback, dict) and writeback.get("applied") is True:
+        return False
+    return True
+
+
+def _repair_stale_scene_blocked_after_paid_calls(payload: dict[str, Any]) -> bool:
+    """True when settled stale-scene evidence blocked repair or polish after paid calls.
+
+    Official evidence: generate (and usually validate) already retained a
+    complete candidate, then repair_if_needed or polish raised
+    SceneEvidenceAlignmentError: stale_scene_evidence.  Mixed leftover
+    deterministic repairs cannot be applied because the revision itself was
+    rejected.  Scene resume would only re-enter that blocked revision.
+    Fail closed on mixed or incomplete evidence.
+    """
+
+    run = payload.get("run")
+    if not isinstance(run, dict):
+        return False
+    if run.get("status") not in {"failed", "rejected"}:
+        return False
+    if run.get("committed") is True or run.get("accepted") is True:
+        return False
+    error = run.get("error") if isinstance(run.get("error"), dict) else {}
+    error_type = str(error.get("type") or "")
+    message = str(error.get("message") or "")
+    if error_type != "SceneEvidenceAlignmentError" or "stale_scene_evidence" not in message:
+        return False
+    trace = run.get("trace")
+    if not isinstance(trace, list) or not trace:
+        return False
+    failed = [
+        item
+        for item in trace
+        if isinstance(item, dict)
+        and str(item.get("status") or item.get("state") or "") == "failed"
+    ]
+    if len(failed) != 1:
+        return False
+    failed_action = str(failed[0].get("action") or failed[0].get("name") or failed[0].get("step") or "")
+    if failed_action not in {"repair_if_needed", "repair", "polish"}:
         return False
     evidence = run.get("execution_evidence") if isinstance(run.get("execution_evidence"), dict) else {}
     budget = evidence.get("budget") if isinstance(evidence.get("budget"), dict) else {}
