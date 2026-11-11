@@ -128,20 +128,33 @@
     const hardLimit = numberFrom("hard", "hard_limit", "hard_limit_tokens", "hard_input_limit", "limit_tokens", "max_input_tokens", "limit") ?? (legacyMatch ? Number(legacyMatch[2]) : null);
     const overageTokens = numberFrom("excess", "overage_tokens", "overage", "excess_tokens", "exceeded_by", "over_by", "tokens_over_limit")
       ?? (requiredTokens != null && hardLimit != null ? Math.max(0, requiredTokens - hardLimit) : null);
+    const unit = details.unit === "characters" ? "characters" : "tokens";
+    const sourceCode = typeof details.code === "string" ? details.code : "";
     return {
-      requiredTokens,
+      requiredTokens: unit === "tokens" ? requiredTokens : null,
       hardLimit,
-      overageTokens,
+      overageTokens: unit === "tokens" ? overageTokens : null,
+      unit,
+      sourceCode,
       suspected: true,
       verified: Boolean(structuredError && zeroCallEvidenceVerified(details)),
       legacy: !structuredError
     };
   };
-  const contextBudgetSummary = (budget) => (
-    budget?.requiredTokens != null && budget?.hardLimit != null && budget?.overageTokens != null
+  const contextBudgetSummary = (budget) => {
+    if (budget?.unit === "characters" && budget?.hardLimit != null) {
+      if (budget.sourceCode === "required_json_item_exceeds_budget") {
+        return `装配本章必填 JSON 条目时超过了 ${budget.hardLimit} 字符的本地预算。`;
+      }
+      if (budget.sourceCode === "required_markdown_context_exceeds_budget") {
+        return `装配本章必填 Markdown/JSON 上下文时超过了 ${budget.hardLimit} 字符的本地预算。`;
+      }
+      return `本章必填上下文超过了 ${budget.hardLimit} 字符的本地装配预算。`;
+    }
+    return budget?.requiredTokens != null && budget?.hardLimit != null && budget?.overageTokens != null
       ? `本地输入上下文为 ${budget.requiredTokens} tokens，上限 ${budget.hardLimit} tokens，超出 ${budget.overageTokens} tokens。`
-      : "本地输入上下文超过了当前安全上限。"
-  );
+      : "本地输入上下文超过了当前安全上限。";
+  };
   const contextHeadroomDetailsOfRun = (run) => {
     if (run?.error_type !== "ContextBudgetError" || Number(run?.unsettled_attempt_count) !== 0) return null;
     const message = String(run?.error_message || "");

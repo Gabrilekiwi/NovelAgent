@@ -3627,11 +3627,119 @@ def _classify_repair_not_converging_failure(
     return matches[0] if len(matches) == 1 else None
 
 
+_STRUCTURED_CHARACTER_BUDGET_CODES = (
+    "required_json_item_exceeds_budget",
+    "required_markdown_context_exceeds_budget",
+    "required_structured_entry_exceeds_budget",
+    "required_structured_manifest_exceeds_budget",
+)
+_STRUCTURED_CHARACTER_BUDGET_PATTERN = re.compile(
+    r"(?P<code>"
+    + "|".join(_STRUCTURED_CHARACTER_BUDGET_CODES)
+    + r"): "
+    r"(?:required (?:complete Markdown/JSON )?entries|selection and manifest) "
+    r"exceed(?:s)? (?P<hard>[0-9]+) characters"
+)
+
+
+def _zero_call_pre_provider_run_guards(
+    value: Mapping[str, Any],
+    run: Mapping[str, Any],
+) -> bool:
+    execution_evidence = run.get("execution_evidence")
+    budget = (
+        execution_evidence.get("budget")
+        if isinstance(execution_evidence, Mapping)
+        else None
+    )
+    if not isinstance(budget, Mapping):
+        return False
+    provider_calls = budget.get("provider_calls")
+    unsettled = budget.get("unsettled_attempt_count")
+    if (
+        not isinstance(provider_calls, int)
+        or isinstance(provider_calls, bool)
+        or provider_calls != 0
+        or not isinstance(unsettled, int)
+        or isinstance(unsettled, bool)
+        or unsettled != 0
+    ):
+        return False
+    run_chapter = run.get("chapter")
+    chapter_chars = run_chapter.get("chars") if isinstance(run_chapter, Mapping) else None
+    if not isinstance(chapter_chars, int) or isinstance(chapter_chars, bool) or chapter_chars != 0:
+        return False
+    generated_chapter = value.get("chapter")
+    if generated_chapter is not None and generated_chapter != "":
+        return False
+    if value.get("accepted") is not False or value.get("committed") is not False:
+        return False
+    if run.get("accepted") is not False or run.get("committed") is not False:
+        return False
+    persistence = run.get("persistence")
+    if isinstance(persistence, Mapping) and (
+        persistence.get("committed") is True
+        or persistence.get("state") in {"committed", "completed"}
+    ):
+        return False
+    story_project = run.get("story_project")
+    writeback = story_project.get("writeback") if isinstance(story_project, Mapping) else None
+    if isinstance(writeback, Mapping) and writeback.get("applied") is True:
+        return False
+    run_id = run.get("id")
+    return isinstance(run_id, str) and bool(run_id.strip())
+
+
+def _pre_provider_structured_character_budget_evidence(
+    value: Mapping[str, Any],
+    *,
+    chapter: int,
+) -> dict[str, Any] | None:
+    run = value.get("run")
+    if not isinstance(run, Mapping) or int(run.get("chapter_index") or 0) != int(chapter):
+        return None
+    run_error = run.get("error")
+    if not isinstance(run_error, Mapping) or run_error.get("type") != "StructuredContextError":
+        return None
+    error_message = run_error.get("message")
+    if not isinstance(error_message, str):
+        return None
+    match = _STRUCTURED_CHARACTER_BUDGET_PATTERN.fullmatch(error_message)
+    if match is None:
+        return None
+    hard = int(match.group("hard"))
+    if hard < 1:
+        return None
+    if not _zero_call_pre_provider_run_guards(value, run):
+        return None
+    return {
+        "stage": "structured_context",
+        "code": match.group("code"),
+        "hard": hard,
+        "unit": "characters",
+        "provider_reached": False,
+        "provider_calls": 0,
+        "unsettled_attempt_count": 0,
+        "chapter_chars": 0,
+        "formal_prose_exists": False,
+        "accepted": False,
+        "committed": False,
+        "persistence_committed": False,
+        "writeback_applied": False,
+        "run_id": run.get("id"),
+        "source_error_type": "StructuredContextError",
+        "source_error_message": error_message,
+    }
+
+
 def _pre_provider_context_evidence(
     value: Mapping[str, Any],
     *,
     chapter: int,
 ) -> dict[str, Any] | None:
+    structured = _pre_provider_structured_character_budget_evidence(value, chapter=chapter)
+    if structured is not None:
+        return structured
     run = value.get("run")
     if not isinstance(run, Mapping) or int(run.get("chapter_index") or 0) != int(chapter):
         return None
@@ -3734,7 +3842,10 @@ def _classify_pre_provider_context_failure(
     ):
         return None
     stderr_text = str(stderr_tail or "")
-    if "ContextBudgetError" not in stderr_text:
+    if (
+        "ContextBudgetError" not in stderr_text
+        and "StructuredContextError" not in stderr_text
+    ):
         return None
     root = Path(project_root).resolve(strict=True)
     run_dir = root / ".novelagent" / "runtime" / "runs"
@@ -3779,11 +3890,17 @@ def _classify_pre_provider_context_failure(
                 "run_record_sha256": digest,
                 "safe_to_retry": True,
             }
-            message = (
-                f"第 {chapter} 章在调用 Provider 前被本地上下文预算拒绝："
-                f"需要 {details['required']} tokens，硬上限 {details['hard']}，"
-                f"超出 {details['excess']}；尚未调用模型。"
-            )
+            if details.get("unit") == "characters":
+                message = (
+                    f"第 {chapter} 章在调用模型前被本地上下文装配拒绝："
+                    f"必填上下文超过了 {details['hard']} 字符的预算；尚未调用模型。"
+                )
+            else:
+                message = (
+                    f"第 {chapter} 章在调用 Provider 前被本地上下文预算拒绝："
+                    f"需要 {details['required']} tokens，硬上限 {details['hard']}，"
+                    f"超出 {details['excess']}；尚未调用模型。"
+                )
             matches.append(
                 {
                     "result": dict(value),

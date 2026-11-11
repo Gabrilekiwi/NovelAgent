@@ -605,6 +605,21 @@ def test_context_budget_pause_is_explained_before_provider_or_quality_branches()
     assert '"chapter.pre_provider_context_budget_exceeded", "chapter.pre_provider_provenance_unavailable"' in stream
 
 
+
+def test_structured_character_budget_failure_is_explained_in_characters_not_tokens() -> None:
+    spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
+
+    assert 'details.unit === "characters"' in spa
+    assert "装配本章必填 JSON 条目时超过了" in spa
+    assert "装配本章必填 Markdown/JSON 上下文时超过了" in spa
+    assert "字符的本地预算" in spa
+    assert "本章必填上下文超过了" in spa
+    assert "字符的本地装配预算" in spa
+    classifier = spa.split("const contextBudgetDetailsOf = (job) =>", 1)[1].split("const contextBudgetSummary", 1)[0]
+    assert 'unit === "tokens" ? requiredTokens : null' in classifier
+    assert "requiredTokens," not in classifier.split("const unit =", 1)[1]
+
+
 def test_settled_scene_retry_headroom_failure_is_not_reported_as_pre_provider() -> None:
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
 

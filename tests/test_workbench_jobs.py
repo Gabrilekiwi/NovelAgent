@@ -93,6 +93,50 @@ def _review_rejected_result(*, run_id: str = "run-review-rejected") -> dict:
     }
 
 
+
+def _write_structured_character_budget_run(
+    project_root: Path,
+    *,
+    chapter: int = 59,
+    run_id: str = "run-structured-character-budget",
+    error_message: str = "required_json_item_exceeds_budget: required entries exceed 1481 characters",
+    provider_calls: int = 0,
+    unsettled_attempt_count: int = 0,
+    generated_chapter: str = "",
+) -> tuple[dict, Path, str]:
+    result = {
+        "chapter": generated_chapter,
+        "accepted": False,
+        "committed": False,
+        "run": {
+            "id": run_id,
+            "chapter_index": chapter,
+            "status": "failed",
+            "accepted": False,
+            "committed": False,
+            "chapter": {"chars": len(generated_chapter)},
+            "error": {"type": "StructuredContextError", "message": error_message},
+            "execution_evidence": {
+                "budget": {
+                    "provider_calls": provider_calls,
+                    "unsettled_attempt_count": unsettled_attempt_count,
+                }
+            },
+            "persistence": None,
+            "story_project": {
+                "writeback": {"attempted": False, "applied": False}
+            },
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    run_dir = project_root / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_path = run_dir / f"chapter_{chapter}_{run_id}.json"
+    run_path.write_text(json.dumps(result), encoding="utf-8")
+    stderr = f"StructuredContextError: {error_message}"
+    return result, run_path, stderr
+
+
 def _write_context_budget_run(
     project_root: Path,
     *,
@@ -875,6 +919,141 @@ def test_git_preflight_failure_pauses_before_process_factory(
     assert resumed.state == "queued"
     assert resumed.next_chapter == 1
     assert {item.id for item in store.list_jobs(project_id=project_id)} == ids_before
+
+
+
+def test_structured_character_budget_classifier_uses_official_zero_call_messages(
+    tmp_path: Path,
+) -> None:
+    _, _, _ = _job_store(tmp_path)
+    project_root = tmp_path / "books" / "test-book"
+    _, run_path, stderr = _write_structured_character_budget_run(
+        project_root,
+        chapter=1,
+        error_message="required_json_item_exceeds_budget: required entries exceed 1481 characters",
+    )
+
+    classified = _classify_pre_provider_context_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=stderr,
+        prior_fingerprints={},
+    )
+
+    assert classified is not None
+    error = classified["error"]
+    assert error["code"] == PRE_PROVIDER_CONTEXT_BUDGET_ERROR
+    assert error["automatic_retry"] is False
+    assert error["safe_to_retry"] is True
+    assert "1481 字符" in error["message"]
+    assert "尚未调用模型" in error["message"]
+    assert error["details"]["unit"] == "characters"
+    assert error["details"]["code"] == "required_json_item_exceeds_budget"
+    assert error["details"]["hard"] == 1481
+    assert error["details"]["provider_reached"] is False
+    assert error["details"]["provider_calls"] == 0
+    assert error["details"]["formal_prose_exists"] is False
+    assert classified["result"]["run"]["id"] == "run-structured-character-budget"
+
+    run_path.unlink()
+    _, _, markdown_stderr = _write_structured_character_budget_run(
+        project_root,
+        chapter=1,
+        run_id="run-structured-markdown-budget",
+        error_message=(
+            "required_markdown_context_exceeds_budget: "
+            "required complete Markdown/JSON entries exceed 10500 characters"
+        ),
+    )
+    markdown = _classify_pre_provider_context_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=markdown_stderr,
+        prior_fingerprints={},
+    )
+    assert markdown is not None
+    assert markdown["error"]["details"]["code"] == "required_markdown_context_exceeds_budget"
+    assert markdown["error"]["details"]["hard"] == 10500
+    assert markdown["error"]["details"]["unit"] == "characters"
+    assert "10500 字符" in markdown["error"]["message"]
+
+    _, unsafe_path, unsafe_stderr = _write_structured_character_budget_run(
+        project_root,
+        chapter=1,
+        run_id="run-structured-called",
+        provider_calls=1,
+    )
+    for leftover in (project_root / ".novelagent" / "runtime" / "runs").glob("chapter_*.json"):
+        if leftover != unsafe_path:
+            leftover.unlink()
+    assert _classify_pre_provider_context_failure(
+        project_root,
+        1,
+        exit_code=1,
+        stderr_tail=unsafe_stderr,
+        prior_fingerprints={},
+    ) is None
+
+
+def test_legacy_structured_character_budget_pause_reconciles_and_resumes_same_session(
+    tmp_path: Path,
+) -> None:
+    _, store, project_id = _job_store(tmp_path)
+    parent = _running_job(store, project_id, end_chapter=3)
+    project_root = tmp_path / "books" / "test-book"
+    _, _, stderr = _write_structured_character_budget_run(project_root, chapter=1)
+    legacy = store.chapter_failed(
+        parent.id,
+        chapter=1,
+        error={
+            "code": "engine_result_unreadable",
+            "exit_code": 1,
+            "stderr_tail": stderr,
+        },
+        uncertain=False,
+    )
+    assert legacy.state == "awaiting_input"
+    assert store.resume_ready(parent.id) is False
+
+    supervisor = JobSupervisor(
+        store=store,
+        project_lookup=lambda requested_id: type(
+            "Project", (), {"id": requested_id, "root": project_root}
+        )(),
+        repo_root=Path(__file__).resolve().parents[1],
+        runtime_root=tmp_path / "job-runtime",
+    )
+    try:
+        supervisor.start()
+        reconciled = store.get(parent.id)
+    finally:
+        supervisor.shutdown()
+
+    assert reconciled.id == parent.id
+    assert reconciled.kind == "generation_session"
+    assert reconciled.state == "awaiting_input"
+    assert reconciled.next_chapter == 1
+    assert reconciled.manual_confirmation_required is True
+    assert reconciled.error is not None
+    assert reconciled.error["code"] == PRE_PROVIDER_CONTEXT_BUDGET_ERROR
+    assert reconciled.error["details"]["unit"] == "characters"
+    assert reconciled.error["details"]["provider_calls"] == 0
+    assert store.resume_ready(parent.id) is True
+    assert store.events_after(parent.id)[-1]["event"] == (
+        "chapter.pre_provider_context_budget_exceeded"
+    )
+    with pytest.raises(JobError, match="explicit author confirmation"):
+        store.resume(parent.id, confirmed=False)
+
+    job_ids_before = {job.id for job in store.list_jobs(project_id=project_id)}
+    resumed = store.resume(parent.id, confirmed=True)
+    assert resumed.id == parent.id
+    assert resumed.state == "queued"
+    assert resumed.next_chapter == 1
+    assert resumed.error is None
+    assert {job.id for job in store.list_jobs(project_id=project_id)} == job_ids_before
 
 
 def test_context_budget_classifier_requires_complete_zero_call_evidence(
