@@ -971,6 +971,7 @@ def _create_app_owned(
             "score_dimensions": list(SCORE_DIMENSIONS),
             "self_use_production_ready": cohorts.production_ready(record.id),
             "official_launch": cohorts.official_launch_declaration(record.id),
+            "session_defaults": _session_outline_window(batches, record.next_chapter),
         }
 
     @app.get("/api/projects/{project_id}/outline-batches")
@@ -1042,17 +1043,27 @@ def _create_app_owned(
     async def create_session(project_id: str, payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
         project = projects.get(project_id)
         start = int(payload.get("start_chapter") or project.next_chapter)
-        count = int(payload.get("chapter_count") or 10)
-        end = int(payload.get("end_chapter") or (start + count - 1))
-        batch = _approved_batch_for_range(outlines.list_batches(project.id), start, end)
+        batches = outlines.list_batches(project.id)
+        window = _session_outline_window(batches, start)
+        if payload.get("end_chapter") not in (None, ""):
+            end = int(payload.get("end_chapter"))
+            if end < start:
+                raise OutlineBatchError(f"结束章不能早于起始章第 {start} 章")
+        else:
+            default_count = window["chapter_count"] or 10
+            count = int(payload["chapter_count"]) if payload.get("chapter_count") not in (None, "") else default_count
+            if count < 1:
+                raise OutlineBatchError("连续章数必须至少为 1")
+            end = start + count - 1
+            if window["covered"]:
+                end = min(end, int(window["end_chapter"]))
+        batch = _approved_batch_for_range(batches, start, end)
         if batch is None and start == end and payload.get("recovery_confirmed") is True:
             if not _has_recovery_checkpoint(project.root, start):
                 raise JobError("locked chapter must be classified before a recovery commit can start")
             outline_binding = _recovery_outline_binding(project, start)
         elif batch is None:
-            raise OutlineBatchError(
-                f"第 {start}—{end} 章必须先由一个已批准且冻结的章纲批次完整覆盖"
-            )
+            raise OutlineBatchError(_missing_outline_coverage_message(start, end, window))
         else:
             outline_binding = {
                 "outline_batch_id": batch.id,
@@ -1876,6 +1887,56 @@ def _health_payload(record: ProjectRecord) -> dict[str, Any]:
         "strict_status": strict_status,
         "strict_error": strict_error,
     }
+
+
+def _covering_approved_batch(batches: Sequence[Any], start: int) -> Any | None:
+    return next(
+        (
+            batch
+            for batch in batches
+            if batch.status == "approved"
+            and batch.start_chapter <= start <= batch.end_chapter
+            and batch.approval_manifest_path
+            and batch.approval_receipt_sha256
+        ),
+        None,
+    )
+
+
+def _session_outline_window(batches: Sequence[Any], start: int) -> dict[str, Any]:
+    batch = _covering_approved_batch(batches, start)
+    if batch is None:
+        return {
+            "start_chapter": start,
+            "chapter_count": 0,
+            "end_chapter": None,
+            "max_chapter_count": 0,
+            "outline_batch_id": None,
+            "outline_batch_start": None,
+            "outline_batch_end": None,
+            "covered": False,
+        }
+    remaining = batch.end_chapter - start + 1
+    return {
+        "start_chapter": start,
+        "chapter_count": remaining,
+        "end_chapter": batch.end_chapter,
+        "max_chapter_count": remaining,
+        "outline_batch_id": batch.id,
+        "outline_batch_start": batch.start_chapter,
+        "outline_batch_end": batch.end_chapter,
+        "covered": True,
+    }
+
+
+def _missing_outline_coverage_message(start: int, end: int, window: dict[str, Any]) -> str:
+    if window.get("covered"):
+        return (
+            f"已批准且冻结的章纲批次只覆盖第 {window['outline_batch_start']}—{window['outline_batch_end']} 章。"
+            f"当前可从第 {start} 章连续写到第 {window['end_chapter']} 章（共 {window['chapter_count']} 章），"
+            "不能把范围延伸到尚未批准的章节。"
+        )
+    return f"第 {start}—{end} 章必须先由一个已批准且冻结的章纲批次完整覆盖"
 
 
 def _approved_batch_for_range(batches: Sequence[Any], start: int, end: int) -> Any | None:

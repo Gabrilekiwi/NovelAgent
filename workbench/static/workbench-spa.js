@@ -1726,6 +1726,77 @@
     else { state.cohort = null; state.cohortLiveResult = null; }
   };
 
+
+  const approvedBatchWindow = (batches, start) => {
+    const chapter = Number(start);
+    const batch = arrayFrom(batches, "items").find((item) => (
+      (item.status || "approved") === "approved"
+      && Number(item.start_chapter) <= chapter
+      && Number(item.end_chapter) >= chapter
+      && item.approval_manifest_path
+      && item.approval_receipt_sha256
+    ));
+    if (!batch) {
+      return { start_chapter: chapter, chapter_count: 0, end_chapter: null, max_chapter_count: 0, covered: false };
+    }
+    const end = Number(batch.end_chapter);
+    const remaining = end - chapter + 1;
+    return {
+      start_chapter: chapter,
+      chapter_count: remaining,
+      end_chapter: end,
+      max_chapter_count: remaining,
+      outline_batch_id: batch.id,
+      outline_batch_start: Number(batch.start_chapter),
+      outline_batch_end: end,
+      covered: true
+    };
+  };
+
+  const applySessionOutlineWindow = (form, payload, startOverride) => {
+    const startInput = one('input[name="start_chapter"]', form);
+    const start = Number(
+      startOverride
+      || startInput?.value
+      || payload.session_defaults?.start_chapter
+      || payload.project?.next_chapter
+      || payload.next_chapter
+      || state.project?.next_chapter
+      || 1
+    );
+    if (startInput && startOverride == null && !startInput.dataset.windowBound) {
+      startInput.value = String(payload.session_defaults?.start_chapter || start);
+      startInput.addEventListener("input", () => applySessionOutlineWindow(form, payload, Number(startInput.value) || start));
+      startInput.dataset.windowBound = "true";
+    } else if (startInput && startOverride != null) {
+      startInput.value = String(start);
+    }
+    const defaults = approvedBatchWindow(payload.approved_batches, start);
+    const select = one('select[name="chapter_count"]', form);
+    const note = one("[data-session-window-note]", form);
+    const submit = one('button[type="submit"]', form);
+    const maxCount = Number(defaults.max_chapter_count || 0);
+    if (select) {
+      const options = [];
+      if (maxCount >= 1) options.push(1);
+      if (maxCount >= 4) options.push(4);
+      if (maxCount >= 10) options.push(10);
+      if (maxCount > 0 && !options.includes(maxCount)) options.push(maxCount);
+      options.sort((a, b) => a - b);
+      select.innerHTML = options.map((count) => `<option value="${count}">${count} 章</option>`).join("");
+      if (maxCount > 0) select.value = String(maxCount);
+      select.disabled = maxCount < 1;
+    }
+    if (submit) submit.disabled = maxCount < 1;
+    if (note) {
+      note.textContent = maxCount < 1
+        ? "下一章还没有已批准且冻结的章纲，不能开始生产。"
+        : maxCount === 1
+          ? `当前已批准章纲还可写第 ${start} 章，共 1 章。`
+          : `当前已批准章纲还可写第 ${start}–${defaults.end_chapter} 章，共 ${maxCount} 章。`;
+    }
+  };
+
   const renderProduction = async (payload) => {
     const jobs = arrayFrom(payload, "jobs");
     const finishedStates = new Set(["completed", "committed", "cancelled", "failed"]);
@@ -1736,7 +1807,7 @@
     const sessionPanel = one("[data-production-session]");
     const form = one("[data-session-form]");
     form.action = `/api/projects/${encodeURIComponent(state.projectId)}/sessions`;
-    one('input[name="start_chapter"]', form).value = payload.project?.next_chapter || payload.next_chapter || state.project?.next_chapter || 1;
+    applySessionOutlineWindow(form, payload);
     await renderCohorts(payload);
     const jobId = session?.job_id || session?.id;
     const jobStatus = session?.status || session?.state;
