@@ -41,8 +41,10 @@ def test_valid_descendant_selects_latest_ledger_without_adding_archive_total(ful
     with verified_archive_view(c['package']) as view:
         result = reconcile_usage_evidence(_StoryEvidence(view), MemoryEvidence(c['root'], files), book_id=c['project'].book_id)
     assert result['usage']['summary']['attempt_count'] == 3
-    assert result['usage']['chapter_budgets'][0]['charged_amount'] == '0.000769'
-    assert result['usage']['chapter_times'][0]['interval_count'] == 2
+    # The shared author fixture also freezes chapter 2's token-only budget.
+    # Select the actual monetary source chapter rather than list position.
+    assert next(b for b in result['usage']['chapter_budgets'] if b['chapter']==3)['charged_amount'] == '0.000769'
+    assert next(t for t in result['usage']['chapter_times'] if t['binding']['chapter']==3)['interval_count'] == 2
     assert not result['settled'] and not result['write_activation_allowed']
     assert c['outside_finance'] not in result['files']
 
@@ -69,7 +71,7 @@ def test_higher_or_valid_current_totals_do_not_hide_loss_of_archive_evidence(ful
     evidence = MemoryEvidence(c['root'], files)
     current = _usage(evidence, c['project'].book_id, lambda code, reference:None)
     assert current['summary']['attempt_count'] >= 2
-    assert current['chapter_budgets'][0]['charged_amount'] != '0'
+    assert next(b for b in current['chapter_budgets'] if b['chapter']==3)['charged_amount'] not in (None,'0')
     # Its standalone evidence is still valid. The cross-snapshot relationship
     # must independently reject the lost earlier receipt/attempt/interval.
     with verified_archive_view(c['package']) as view, pytest.raises(RestoreHandoffError):

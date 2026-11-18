@@ -32,6 +32,15 @@ def full_source():
     from tests import test_chapter_fact_extraction as fx
     extra = {}
     def before_archive(c):
+        # Preserve an opaque historical grant as archive data. Its contents
+        # are deliberately not accepted as authorization; the restored path
+        # alone must be fenced before a new driver can inspect/use it.
+        grant=c['root']/'.novelagent/runtime/reviewed/batches'/('batch_'+'a'*32+'.json')
+        grant.parent.mkdir(parents=True,exist_ok=True)
+        grant.write_text('{"historical_grant_fixture":true}',encoding='utf-8')
+        control=c['root']/'.novelagent/runtime/reviewed/batch_controls'/('batch_'+'a'*32+'.json')
+        control.parent.mkdir(parents=True,exist_ok=True)
+        control.write_text('{"historical_control_fixture":true}',encoding='utf-8')
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr('workbench.book_ownership.default_machine_store',lambda:c['machine'])
             patch.setattr(fx,'BOOK_ID',c['project'].book_id)
@@ -68,6 +77,15 @@ def test_actual_old_candidate_fact_and_call_namespaces_cannot_run(prepared):
     assert list((c['target']/FRESH_JOBS).iterdir()) == []
     policy = json.loads((c['target']/POLICY_FILE).read_text(encoding='utf-8'))
     assert 'book/.novelagent/runtime/runs/executions/execution_shared' in policy['blocked_paths']
+    grant_relative='.novelagent/runtime/reviewed/batches/'+('batch_'+'a'*32+'.json')
+    assert 'book/'+grant_relative in policy['blocked_paths']
+    grant_bytes=(root/grant_relative).read_bytes()
+    with pytest.raises(RestoredExecutionBlocked,match='只保留历史'):
+        require_restored_execution_paths(root/grant_relative)
+    assert (root/grant_relative).read_bytes()==grant_bytes
+    control_relative='.novelagent/runtime/reviewed/batch_controls/'+('batch_'+'a'*32+'.json')
+    assert 'book/'+control_relative in policy['blocked_paths']
+    with pytest.raises(RestoredExecutionBlocked):require_restored_execution_paths(root/control_relative)
     calls = []
     executor = ReviewedChapterCandidateExecutor(story_project_root=root,
         generator=lambda _:calls.append('candidate'),execution_kind='deterministic',provenance_factory=_fixed_provenance)
@@ -89,6 +107,9 @@ def test_actual_old_candidate_fact_and_call_namespaces_cannot_run(prepared):
     new_execution = root/'.novelagent/runtime/runs/executions/execution_new_after_restore'
     require_restored_execution_paths(new_execution)
     assert not new_execution.exists()  # The denial gate itself grants/creates nothing.
+    new_batch=root/'.novelagent/runtime/reviewed/batches'/('batch_'+'b'*32+'.json')
+    require_restored_execution_paths(new_batch)
+    assert not new_batch.exists()
     with absent_source(c['root']):
         assert prepare(c,resume=True) == result and prepare(c) == result
     assert inventory_tree(root) == before and inventory_tree(c['root']) == source

@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuthorChapterCandidateRecord",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "record_type",
+    "candidate_id",
+    "book_id",
+    "chapter_index",
+    "status",
+    "started_at",
+    "finished_at",
+    "intent_hash",
+    "request_sha256",
+    "input",
+    "authority",
+    "source_verification",
+    "execution",
+    "prose",
+    "evidence",
+    "error",
+    "record_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "author_chapter_candidate_v1"
+      ]
+    },
+    "record_type": {
+      "type": "string",
+      "enum": [
+        "chapter_candidate_record"
+      ]
+    },
+    "candidate_id": {
+      "type": "string",
+      "pattern": "^candidate_[0-9a-f]{40}$"
+    },
+    "book_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "finished_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "request_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "input": {
+      "type": "object"
+    },
+    "authority": {
+      "type": "object"
+    },
+    "source_verification": {
+      "type": "object",
+      "required": [
+        "before",
+        "after"
+      ],
+      "properties": {
+        "before": {
+          "type": "object"
+        },
+        "after": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "enum": [
+        {
+          "execution_kind": "author_import"
+        }
+      ]
+    },
+    "prose": {
+      "type": "object",
+      "required": [
+        "artifact_ref",
+        "sha256",
+        "chars"
+      ],
+      "properties": {
+        "artifact_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chars": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "enum": [
+        {
+          "intent_hashes": [],
+          "receipt_hashes": [],
+          "receipt_statuses": [],
+          "unresolved_calls": [],
+          "selected_response": null,
+          "budget": {
+            "provider_calls": 0,
+            "billing": "not_applicable"
+          }
+        }
+      ]
+    },
+    "error": {
+      "type": "null"
+    },
+    "record_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

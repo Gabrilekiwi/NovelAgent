@@ -6,13 +6,25 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            project_python: .venv/bin/python
+          - os: windows-latest
+            project_python: .venv/Scripts/python.exe
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: python scripts/setup_environment.py
-      - run: .venv/bin/python -B scripts/check_environment.py --dev
-      - run: .venv/bin/python -B -m pytest -q
-      - run: .venv/bin/python -B scripts/smoke_v1.py --skip-tests
+      - run: ${{ matrix.project_python }} -B scripts/check_environment.py --dev
+      - run: ${{ matrix.project_python }} -B -m pytest -q
+      - run: ${{ matrix.project_python }} -B scripts/smoke_v1.py --skip-tests

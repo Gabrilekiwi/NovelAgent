@@ -121,6 +121,20 @@ def test_invalid_original_v1_request_plan_is_not_automatically_reinterpreted():
     with pytest.raises(BillingRequestError):validate_stored_openai_billing_plan(plan)
 
 
+@pytest.mark.parametrize('model,url,available',[(MODEL,URL,True),('alias',URL,False),
+    (MODEL,'https://user:synthetic-secret@api.openai.com/v1',False),(MODEL,'https://proxy.invalid/v1',False)])
+def test_product_monetary_option_only_exposes_supported_identity_without_keys(monkeypatch,model,url,available):
+    from workbench.chapter_budgets import ChapterBudgetService
+    monkeypatch.setattr('workbench.chapter_budgets.get_config',lambda:SimpleNamespace(
+        openai_model=model,openai_base_url=url,openai_api_key='synthetic-secret'))
+    option=ChapterBudgetService.monetary_option()
+    assert option['available'] is available
+    assert 'synthetic-secret' not in json.dumps(option) and url not in json.dumps(option)
+    if available:
+        assert option['pricing_template']['billing_policy']==openai_text_billing_policy()
+        assert option['input_reservation_per_call']==400000
+
+
 @pytest.mark.parametrize('change',[
     {'request':None}, {'base_url':'https://proxy.invalid/v1'},
     {'request':{**body(),'service_tier':'priority'}},
@@ -190,6 +204,29 @@ def test_sdk_final_payload_price_reserve_receipt_and_restart_replay(monkeypatch,
     assert receipt['usage']['prompt_tokens_details']=={'cached_tokens':40}
     assert s.report()['items'][0]['accounting_state']=='settled'
     assert sdk_call(runtime(tmp_path))=='draft' and len(calls)==1
+
+
+def test_installed_sdk_typed_response_preserves_optional_nulls_and_settles(monkeypatch,tmp_path):
+    from openai.types.chat import ChatCompletion
+    s=setup(tmp_path)
+    response=ChatCompletion.model_validate(dict(id='synthetic',created=0,object='chat.completion',
+        model=MODEL,service_tier='default',usage=usage(),choices=[{
+            'index':0,'message':{'role':'assistant','content':'draft'},'finish_reason':'stop'}]))
+    calls,_=install_sdk(monkeypatch,tmp_path,response=response)
+    assert sdk_call(runtime(tmp_path))=='draft'
+    assert s.report()['charged_amount']=='0.000104' and len(calls)==1
+
+
+@pytest.mark.parametrize('field,value',[('prompt_tokens',400001),('completion_tokens',201)])
+def test_provider_usage_beyond_reviewed_bound_blocks_future_spending(tmp_path,field,value):
+    s=setup(tmp_path);raw=usage();raw[field]=value
+    observed=OpenAIBillingObservations();observed.observe(model=MODEL,service_tier='default')
+    response=ModelResponse('draft',actual_model=MODEL,endpoint_type='official',
+        usage=observed.attach(reported_model_usage(raw)))
+    runtime(tmp_path).execute_attempt(**args(operation=lambda:response))
+    account=s.report()['items'][0]
+    assert account['accounting_state']=='held_unknown' and account['reason']=='billing_bound_exceeded'
+    assert float(account['charged_amount'])>=0.4004
 
 
 def test_generated_then_extracted_requests_cannot_reset_chapter_money(monkeypatch,tmp_path):

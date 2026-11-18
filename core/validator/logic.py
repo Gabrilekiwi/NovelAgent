@@ -50,7 +50,7 @@ def validate_logic(
         problems.append(
             {
                 "code": "missing_conflict_marker",
-                "message": "Chapter does not show an obvious conflict signal.",
+                "message": "No lexical conflict marker found; this does not establish that narrative conflict is absent.",
                 "evidence": [
                     {"kind": "missing_any_marker", "value": ", ".join(_CONFLICT_MARKERS[:6])},
                 ],

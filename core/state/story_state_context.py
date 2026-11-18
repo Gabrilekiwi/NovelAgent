@@ -9,6 +9,7 @@ STORY_STATE_CONTEXT_KEYS = (
     "last_scene_location",
     "last_scene_characters",
     "open_threads",
+    "pending_threads",
     "required_opening_bridge",
 )
 STORY_STATE_SECTION_MAX_CHARS = 4_096
@@ -60,12 +61,21 @@ def project_story_state_for_model(value: Any) -> dict[str, Any]:
             _REQUIRED_OPENING_BRIDGE_MAX_CHARS,
         ),
     }
+    # Preserve the legacy field's meaning instead of silently discarding it or
+    # claiming it is the same, current list as open_threads.
+    pending = _bounded_items(story_state.get("pending_threads"),
+                             max_items=_OPEN_THREAD_MAX_ITEMS,
+                             max_item_chars=_OPEN_THREAD_MAX_CHARS, prefer_recent=True)
+    if pending:
+        projected["pending_threads"] = pending
 
     # The soft target keeps routine prompts compact. Drop the oldest open
     # threads first, but keep every other continuity field and at least the
     # newest open thread. The 4096-character section cap remains the hard stop.
     while len(_json_text(projected)) > STORY_STATE_SOFT_MAX_CHARS and len(open_threads) > 1:
         open_threads.pop(0)
+    while len(_json_text(projected)) > STORY_STATE_SOFT_MAX_CHARS and len(pending) > 1:
+        pending.pop(0)
     return projected
 
 

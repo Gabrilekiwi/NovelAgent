@@ -154,7 +154,7 @@
 
         <!-- Project overview -->
         <section data-spa-view="overview" hidden>
-          <div class="page-heading project-heading"><div><div class="heading-status-row"><p class="eyebrow">作品概览</p><span class="status-badge status-experimental" data-overview-status><span class="status-dot"></span><span data-status-label>实验运行</span></span></div><h1 data-project-title></h1><p class="lede" data-project-summary></p></div><div class="page-heading-actions"><a class="button button-ghost" data-project-export href="#">导出当前正文</a><a class="button button-primary" href="#/production">继续写作</a></div></div>
+          <div class="page-heading project-heading"><div><div class="heading-status-row"><p class="eyebrow">作品概览</p><span class="status-badge status-experimental" data-overview-status><span class="status-dot"></span><span data-status-label>实验运行</span></span></div><h1 data-project-title></h1><p class="lede" data-project-summary></p></div><div class="page-heading-actions"><a class="button button-secondary" data-reviewed-batch-link href="#" hidden>自动连续写作</a><a class="button button-ghost" data-project-export href="#">导出当前正文</a><a class="button button-primary" href="#/production">继续写作</a></div></div>
           <div class="metrics-grid overview-metrics">
             <article class="metric-card"><p class="eyebrow">已提交正文</p><p class="metric-value" data-overview-chapters>0 章</p><p class="metric-note" data-overview-words>0 字</p></article>
             <article class="metric-card"><p class="eyebrow">下一章</p><p class="metric-value" data-overview-next>第 1 章</p><p class="metric-note" data-overview-next-title>待规划</p></article>
@@ -230,14 +230,24 @@
                 <div data-chapter-budget-body class="model-usage-summary"></div>
                 <form data-chapter-budget-form>
                   <p>限额确认后固定用于本章。生成、提取及重试共同占用额度，重启不会清零；审稿等待不占用主动执行时间。</p>
-                  <p class="muted-copy">当前可设置调用、token 与时间限制。金额控制还需核验接口计费依据，此处不提供金额止损承诺。</p>
+                  <p class="muted-copy" data-chapter-budget-money-note>正在核对当前模型的金额配置条件。</p>
                   <div class="form-grid">
                     <label class="field"><span>最多模型调用次数</span><input name="max_provider_calls" type="number" min="1" step="1" required></label>
                     <label class="field"><span>最多输入 token</span><input name="max_input_tokens" type="number" min="1" step="1" required></label>
                     <label class="field"><span>最多输出 token</span><input name="max_output_tokens" type="number" min="1" step="1" required></label>
                     <label class="field"><span>主动执行上限（秒）</span><input name="max_active_seconds" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" required></label>
                   </div>
-                  <label class="check-field"><input name="author_confirmed" type="checkbox" required><span>我确认以上本章限额，并了解当前金额未受控。</span></label>
+                  <div data-chapter-budget-money hidden>
+                    <label class="check-field"><input name="monetary_enabled" type="checkbox"><span>为本章冻结价格并启用金额限额</span></label>
+                    <div class="form-grid">
+                      <label class="field"><span>币种（不换汇）</span><input name="budget_currency" type="text" maxlength="3" pattern="[A-Z]{3}" placeholder="USD" disabled></label>
+                      <label class="field"><span>本章金额上限</span><input name="budget_amount" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
+                      <label class="field"><span>未缓存输入单价 / 百万 token</span><input name="budget_input_price" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
+                      <label class="field"><span>缓存命中输入单价 / 百万 token</span><input name="budget_cached_price" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
+                      <label class="field"><span>输出单价 / 百万 token</span><input name="budget_output_price" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
+                    </div>
+                  </div>
+                  <label class="check-field"><input name="author_confirmed" type="checkbox" required><span>我确认以上本章限额；启用金额控制时，已核对模型、端点、档位和适用价格。</span></label>
                   <button type="submit" class="button button-primary" data-chapter-budget-submit>确认本章限额</button>
                 </form>
                 <p class="form-error" data-chapter-budget-error role="alert" hidden></p>
@@ -252,19 +262,38 @@
                 <div class="notice notice-warning" data-candidate-old-binding hidden><strong>候选与当前确认不一致</strong><p>草稿和运行证据会继续保留；如要新生成，请以当前章节卡重新确认意图。</p></div>
                 <div class="button-row chapter-candidate-actions">
                   <button class="button button-primary" type="button" data-candidate-generate disabled>生成正文候选</button>
+                  <button class="button button-secondary" type="button" data-author-draft-open disabled>导入已有稿件</button>
                   <button class="button button-secondary" type="button" data-candidate-resume hidden>确认继续生成</button>
                   <button class="button button-secondary" type="button" data-candidate-create-draft hidden>建立可编辑草稿</button>
                   <button class="button button-danger-ghost" type="button" data-candidate-abandon-provider hidden>放弃这次不确定结果</button>
                 </div>
+                <section class="notice notice-warning" data-candidate-continuation hidden>
+                  <strong>受控续试</strong>
+                  <p data-continuation-message></p>
+                  <p data-continuation-budget></p>
+                  <div class="button-row">
+                    <button class="button button-secondary" type="button" data-continuation-authorize hidden>允许再试一次</button>
+                    <button class="button button-primary" type="button" data-continuation-run hidden>开始这一次续试</button>
+                    <button class="button button-secondary" type="button" data-continuation-result hidden>查看续试结果</button>
+                  </div>
+                </section>
                 <div class="form-error" data-candidate-action-error role="alert" hidden tabindex="-1"></div>
                 <p class="chapter-candidate-safety">生成请求发出后可以离开本页；工作台会从本地记录恢复状态。为避免制造 Provider 不确定状态，本页不提供硬取消。</p>
+              </section>
+              <section class="panel" data-author-draft-panel hidden>
+                <h3>导入已有稿件</h3>
+                <p>将已有正文作为本章草稿导入，接着审阅事实并检查入稿。此步骤不调用模型。</p>
+                <label>稿件来源<input type="text" data-author-draft-origin maxlength="200" value="作者提供的已有稿件"></label>
+                <label>正文<textarea data-author-draft-text rows="16" maxlength="200000"></textarea></label>
+                <button class="button button-primary" type="button" data-author-draft-import>导入并开始审阅</button>
+                <p data-author-draft-error role="alert"></p>
               </section>
               <section class="panel chapter-candidate-editor" data-candidate-editor hidden>
                 <div class="section-heading compact">
                   <div><p class="eyebrow">工作台草稿</p><h2>编辑正文候选</h2></div>
                   <span class="status-badge status-draft" data-candidate-draft-status><span class="status-dot"></span><span data-status-label>草稿</span></span>
                 </div>
-                <p class="muted-copy">这里编辑的是 Candidate 的独立工作台副本。保存只更新带 revision/SHA 的草稿，不会修改不可变候选、正式正文或权威状态。</p>
+                <p class="muted-copy">在这里修改并保存草稿，重新打开后可以继续编辑。正式入稿需要完成后续审核与确认。</p>
                 <form action="/api/candidate-drafts/0" method="post" data-candidate-draft-form>
                   <input type="hidden" name="expected_revision">
                   <label class="field"><span>正文草稿</span><textarea class="prose-editor" name="text" rows="24" required></textarea></label>
@@ -282,11 +311,13 @@
                 <div class="notice notice-warning" data-fact-stale hidden><strong>这组事实已失效</strong><p>正文草稿或权威状态已变化。本组卡片只保留作证据，不能继续编辑或确认。</p></div>
                 <div class="button-row chapter-fact-actions">
                   <button class="button button-primary" type="button" data-fact-extract>提取事实候选</button>
+                  <button class="button button-secondary" type="button" data-fact-manual>自行审阅事实（不调用模型）</button>
                   <button class="button button-secondary" type="button" data-fact-resume hidden>确认恢复事实提取</button>
                   <button class="button button-secondary" type="button" data-fact-open-review hidden>继续事实审核</button>
                   <button class="button button-danger-ghost" type="button" data-fact-cancel hidden>取消未开始的提取</button>
                   <button class="button button-danger-ghost" type="button" data-fact-abandon-provider hidden>放弃这次不确定结果</button>
                 </div>
+                <p class="help-text" data-fact-manual-help>自行审阅会打开空白事实清单。请对照已保存正文，补充需要记录的人物、事件和状态变化，再逐项确认。</p>
                 <div class="form-error" data-fact-action-error role="alert" hidden tabindex="-1"></div>
                 <form data-fact-review-form hidden>
                   <div class="fact-review-summary"><p data-fact-counts>—</p><p data-fact-save-state>所有修改已保存</p></div>
@@ -384,7 +415,7 @@
             <article class="metric-card"><p class="eyebrow">安全恢复</p><p class="metric-value" data-history-recoveries>0</p><p class="metric-note" data-history-recoveries-note></p></article>
             <article class="metric-card"><p class="eyebrow">用量与费用</p><p class="metric-value" data-history-cost>—</p><p class="metric-note" data-history-cost-note></p></article>
           </div>
-          <section class="panel history-panel"><div class="toolbar"><label class="search-field"><span>⌕</span><input type="search" name="history_search" placeholder="搜索章号、运行 ID" data-spa-history-search></label></div><div class="table-scroll"><table class="data-table"><thead><tr><th>时间</th><th>章节 / 操作</th><th>结果</th><th>用时</th><th>Tokens</th><th>费用</th><th>详情</th></tr></thead><tbody data-history-rows></tbody></table></div></section>
+          <section class="panel history-panel"><div class="toolbar"><label class="search-field"><span>⌕</span><input type="search" name="history_search" placeholder="搜索章号、运行 ID" data-spa-history-search></label></div><div class="table-scroll"><table class="data-table"><thead><tr><th>时间</th><th>章节 / 操作</th><th>结果</th><th>运行耗时</th><th>Tokens</th><th>费用</th><th>详情</th></tr></thead><tbody data-history-rows></tbody></table></div></section>
           <section class="panel" data-history-detail hidden aria-live="polite"></section>
         </section>
 

@@ -84,17 +84,13 @@ def main() -> int:
     args = build_parser().parse_args()
     repository = Path(__file__).resolve().parent
     if _should_redirect_official_launch(args):
-        plan = plan_official_launch(
-            repository,
-            sys.argv[1:],
-            use_working_tree=args.use_working_tree,
-        )
-        if plan.redirected:
-            try:
+        try:
+            plan = plan_official_launch(repository, sys.argv[1:], use_working_tree=args.use_working_tree)
+            if plan.redirected:
                 return launch_from_official_plan(plan)
-            except OfficialLaunchError as exc:
-                print(f"工作台未启动：{exc}", file=sys.stderr)
-                return 2
+        except OfficialLaunchError as exc:
+            print(f"工作台未启动：{exc}", file=sys.stderr)
+            return 2
     workspaces = [Path(value).resolve(strict=True) for value in args.workspace] or [repository]
     directory = Path(args.restore_dir or args.data_dir or _local_app_root()).expanduser().absolute()
     try:

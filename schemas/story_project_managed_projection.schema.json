@@ -30,6 +30,7 @@
       "items": {"type": "string", "minLength": 1}
     },
     "values": {"type": "object", "additionalProperties": true},
+    "field_sources": {"type": "object", "additionalProperties": true},
     "tombstones": {
       "type": "array",
       "items": {

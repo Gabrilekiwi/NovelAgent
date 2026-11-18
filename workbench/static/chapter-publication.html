@@ -16,6 +16,10 @@
     <section class="panel"><h2>最终正文</h2><p id="binding"></p><pre id="prose" class="publication-prose"></pre></section>
     <section class="panel" id="preview-panel" hidden>
       <h2>质量检查</h2><p id="quality"></p><ul id="checks"></ul>
+      <section aria-labelledby="quality-actions-heading"><h3 id="quality-actions-heading">问题与正文依据</h3>
+        <p id="quality-action-summary"></p><div id="quality-actions"></div>
+        <p>处理建议供本次审阅参考。修改正文后，需要重新提取事实并完成检查。</p>
+      </section>
       <h2>本次接受的事实</h2><div id="facts"></div>
       <div id="support-panel" hidden><h2>作者补充的身份与初始情况</h2>
         <p>这些是本次审核中明确补充的内容，会与章节事实一同保存。</p><div id="support"></div></div>
@@ -23,6 +27,7 @@
     </section>
     <section class="panel publication-actions">
       <div class="button-row"><button id="preview" class="button button-secondary" disabled>生成提交预览</button>
+        <button id="reload" class="button button-secondary">重新读取审核与预算</button>
         <button id="resolve" class="button button-secondary" hidden>查询原提交结果</button>
         <button id="recover" class="button button-secondary" hidden>恢复原事务</button>
         <button id="restart" class="button button-secondary" hidden>重新准备提交</button></div>

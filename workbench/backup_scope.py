@@ -20,9 +20,11 @@ from core.story_project.reviewed_state_document import digest,read_project_bytes
 from core.model_calls import model_response_artifact_hash,validate_model_call_receipt
 from workbench.backup_files import inventory_tree
 from workbench.backup_history import verify_persistence_history
-from workbench.backup_references import inspect_metadata_references
-from workbench.backup_auxiliary import inspect_auxiliary_settlement
-from workbench.backup_job_state import first_boundary_pause
+from workbench.backup_references import inspect_metadata_references, ReferenceRoots
+from workbench.backup_auxiliary import inspect_auxiliary_settlement, Evidence
+from workbench.backup_lazy_calls import LazyModelCallReferences
+from workbench.backup_legacy_unknowns import RetainedLegacyUnknowns
+from workbench.backup_job_state import first_boundary_pause,empty_cancelled_stdout
 from workbench.model_usage import read_project_model_usage
 
 
@@ -94,6 +96,7 @@ def inspect_backup_scope(projects,project_id,*,connection,task_runtime_root,lock
                 if operation[field] in unsettled:block('provider_operation_not_settled',table+'/'+operation['id'])
 
     pending_files=set()
+    reference_roots=ReferenceRoots({key:Path(tree['source_root']) for key,tree in inventories.items()})
     def required_path(value,label,*,relative_to_book=False,kind='file',expected_sha256=None,follow_json=False,evidence=None):
         if not isinstance(value,str) or not value:
             block('invalid_file_reference',label);return
@@ -107,22 +110,23 @@ def inspect_backup_scope(projects,project_id,*,connection,task_runtime_root,lock
         if historical is not None:
             try:candidate=historical.path(candidate,evidence=evidence,inventories=inventories)
             except ValueError:block('historical_reference_unverified',label);return
-        for key,tree in inventories.items():
-            base=Path(tree['source_root'])
-            if candidate.is_relative_to(base):
-                relative=candidate.relative_to(base).as_posix()
-                if kind=='directory':
-                    if relative=='.' or relative in tree['directories']:
-                        references.append({'source':label,'root':key,'path':relative,'kind':'directory'})
-                    else:block('required_directory_missing_or_excluded',label)
-                elif relative in tree['files']:
-                    if expected_sha256 is not None and expected_sha256!=tree['files'][relative]['sha256']:
-                        block('referenced_artifact_digest_mismatch',label);return
-                    references.append({'source':label,'root':key,'path':relative,
-                        'sha256':tree['files'][relative]['sha256']})
-                    if follow_json:pending_files.add((key,relative))
-                else:block('required_file_missing_or_excluded',label)
-                return
+        resolved=reference_roots.find(candidate)
+        if resolved is not None:
+            key,base=resolved
+            tree=inventories[key]
+            relative=candidate.relative_to(base).as_posix()
+            if kind=='directory':
+                if relative=='.' or relative in tree['directories']:
+                    references.append({'source':label,'root':key,'path':relative,'kind':'directory'})
+                else:block('required_directory_missing_or_excluded',label)
+            elif relative in tree['files']:
+                if expected_sha256 is not None and expected_sha256!=tree['files'][relative]['sha256']:
+                    block('referenced_artifact_digest_mismatch',label);return
+                references.append({'source':label,'root':key,'path':relative,
+                    'sha256':tree['files'][relative]['sha256']})
+                if follow_json:pending_files.add((key,relative))
+            else:block('required_file_missing_or_excluded',label)
+            return
         block('unknown_external_file_reference',label)
 
     # These fields are artifact references, not arbitrary prose or user notes.
@@ -159,6 +163,7 @@ def inspect_backup_scope(projects,project_id,*,connection,task_runtime_root,lock
     tree=inventories.get('story_project')
     root_bindings={}
     if tree:
+        lazy_calls=LazyModelCallReferences(Evidence(root,tree))
         auxiliary=inspect_auxiliary_settlement(root,tree,row['book_id'])
         checks.append({k:v for k,v in auxiliary.items() if k!='blockers'})
         for issue in auxiliary['blockers']:block(issue['code'],issue['reference'])
@@ -179,7 +184,7 @@ def inspect_backup_scope(projects,project_id,*,connection,task_runtime_root,lock
         for value,label,evidence in pending_metadata:
             def require_metadata(value,label,**options):return required_path(value,label,evidence=evidence,**options)
             inspect_metadata_references(value,source=label,book_root=root,require_path=require_metadata,
-                block=block,root_bindings=root_bindings)
+                block=block,root_bindings=root_bindings,lazy_calls=lazy_calls)
         # Final run records and captured child stdout carry nested publication,
         # outbox and artifact references absent from the compact job columns.
         for key,source_tree in inventories.items():
@@ -202,12 +207,17 @@ def inspect_backup_scope(projects,project_id,*,connection,task_runtime_root,lock
                 if record['size']>32*1024**2:raise ValueError('run metadata too large')
                 raw=read_project_bytes(Path(source_tree['source_root']),name)
                 if len(raw)!=record['size'] or digest(raw)!=record['sha256']:raise ValueError('run metadata changed')
+                diagnostic=empty_cancelled_stdout(connection,key,name,raw)
+                if diagnostic is not None:
+                    checks.append({'check':'job_diagnostic_output','state':'retained','evidence':diagnostic})
+                    continue
                 value=json.loads(raw)
                 if not isinstance(value,(dict,list)):raise ValueError('machine metadata must be structured')
             except (OSError,ValueError,RuntimeError):block('run_metadata_unreadable',label);continue
             def require_file(value,label,**options):return required_path(value,label,evidence=('file',key,name),**options)
             inspect_metadata_references(value,source=label,book_root=root,require_path=require_file,
-                block=block,root_bindings=root_bindings)
+                block=block,root_bindings=root_bindings,lazy_calls=lazy_calls)
+        checks.append({'check':'legacy_lazy_call_directories','evidence':lazy_calls.recognized})
     try:
         identity=json.loads(read_project_bytes(root,'.novelagent/project.json'))
         if not isinstance(identity,dict):raise BackupScopeError('invalid project identity')
@@ -239,7 +249,11 @@ def inspect_backup_scope(projects,project_id,*,connection,task_runtime_root,lock
         except (OSError,ValueError,RuntimeError):block('execution_evidence_unverified',store_type.__name__)
     try:
         usage=read_project_model_usage(root,book_id=row['book_id'])
-        if any(item['receipt_hash'] is None for item in usage['items']):block('model_call_without_receipt')
+        retained=RetainedLegacyUnknowns(Evidence(root,tree),row['book_id'])
+        for item in usage['items']:
+            if item['receipt_hash'] is None and retained.recognize(item['execution_id'],item['attempt_id']) is None:
+                block('model_call_without_receipt')
+        checks.append({'check':'previously_resolved_legacy_unknown_fees','state':'retained_unknown','evidence':retained.retained})
         for item in usage['items']:
             if item['receipt_hash'] is None:continue
             execution=item['execution_id']
@@ -259,6 +273,9 @@ def inspect_backup_scope(projects,project_id,*,connection,task_runtime_root,lock
             frozen=registry.load(budget_report['chapter'])
             time=ChapterExecutionClock(registry.root/f"c{budget_report['chapter']}",frozen).report()
             if not time['active_time_complete']:block('chapter_active_time_unsettled',str(budget_report['chapter']))
+        for batch in usage.get('batch_budgets',[]):
+            if batch['unresolved_attempts']:block('batch_budget_unsettled',batch['batch_id'])
+            if batch['exceeded']:block('batch_budget_exceeded',batch['batch_id'])
         checks.append({'check':'model_usage_and_budgets','state':'verified'})
     except (OSError,ValueError,RuntimeError):block('model_or_budget_evidence_unverified')
     db_bytes=connection.execute('PRAGMA page_count').fetchone()[0]*connection.execute('PRAGMA page_size').fetchone()[0]

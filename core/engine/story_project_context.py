@@ -19,6 +19,7 @@ from core.story_project.identity import (
     validate_project_identity,
 )
 from core.story_project.read_set import capture_story_project_read_set
+from core.story_project.legacy_memory_integrity import require_legacy_memory_integrity
 from core.story_project.reviewed_state_context import (
     reviewed_state_memory_context, reviewed_state_snapshot, validated_reviewed_state_context,
 )
@@ -272,6 +273,10 @@ class StoryProjectContextService:
                 "strict_semantic_state_missing",
                 "strict StoryProject context is missing authoritative semantic state",
             )
+        try:
+            require_legacy_memory_integrity(semantic)
+        except ValueError as exc:
+            raise StoryProjectContextError("legacy_memory_requires_review", str(exc)) from exc
         for field in (
             "story_state",
             "world_state",

@@ -9,7 +9,8 @@ from typing import Any, Iterable
 from core.schema import validate_schema
 from core.story_project.identity import ProjectIdentity, project_identity_for_operation
 from core.story_project.loader import load_text
-from core.story_project.managed_block import ManagedBlockError, parse_managed_block
+from core.story_project.managed_block import ManagedBlockError, compute_base_source_digest, parse_managed_block
+from core.story_project.legacy_memory_integrity import current_state_issues, projection_source_issues
 from core.story_project.paths import resolve_outline, resolve_prose
 from core.story_project.semantic_contracts import validate_story_project_semantic_state
 
@@ -112,13 +113,16 @@ class _SemanticStateBuilder:
         self._parse_timeline()
         self._parse_settings()
         self._parse_managed_projections()
+        for code, message in current_state_issues(self.story_state, self.characters):
+            self._warn(code, "追踪", message)
         for name in TRACKING_FILES:
             key = f"追踪/{name}"
             if key not in self.sources:
                 self._warn("tracking_file_missing", key, f"Tracking file is missing: {name}")
 
     def state(self) -> dict[str, Any]:
-        if not self.spatial_state["character_positions"]:
+        # A missing position does not erase known spaces, paths and transitions.
+        if self.spatial_state == {"character_positions": {}}:
             self.spatial_state = {}
         return {
             "schema_version": "1.0",
@@ -544,9 +548,47 @@ class _SemanticStateBuilder:
                     f"Managed projection scope {projection['scope']} does not match {expected_scope}",
                 )
                 continue
+            previous = str((self.sources.get("previous_prose") or {}).get("text") or "")
+            source_issues = projection_source_issues(self.root, projection, previous)
+            for code, message in source_issues:
+                self._warn(code, relative_path, message)
+            source_bound = not source_issues and compute_base_source_digest(Path(source["path"]).read_bytes()) == projection["base_source_digest"]
             tombstones = {item["field_path"] for item in projection["tombstones"]}
             for field_path, value in projection["values"].items():
-                if field_path in tombstones or self._has_manual_authority(field_path):
+                if field_path in tombstones:
+                    continue
+                if source_bound and field_path in projection.get("field_sources", {}):
+                    # The untouched manual header predates this verified update.
+                    # Match characters by their declared name, not storage key.
+                    if expected_scope == "character_state" and field_path.startswith("characters.") and isinstance(value, dict):
+                        name = str(value.get("name") or field_path.split(".", 1)[1])
+                        entity_id = next((key for key, item in self.characters.items() if item.get("name") == name), name)
+                        record = self.characters.setdefault(entity_id, {"name": name})
+                        record.update(value)
+                        location = value.get("current_location", value.get("location"))
+                        if location:
+                            record["location"] = location
+                            self.spatial_state["character_positions"][name] = location
+                            self._provenance(f"spatial_state.character_positions.{name}", source,
+                                             parsed.start_char, parsed.end_char, "managed_projection", "authoritative")
+                        self._provenance(f"characters.{entity_id}", source, parsed.start_char, parsed.end_char,
+                                         "managed_projection", "authoritative")
+                        continue
+                    if expected_scope == "context" and field_path == "story_state.open_threads" and value:
+                        # Only an actual extracted list supersedes the untouched
+                        # initial pending list. An empty extraction proves nothing.
+                        self.story_state["pending_threads"] = list(value)
+                        self._provenance("story_state.pending_threads", source, parsed.start_char, parsed.end_char,
+                                         "managed_projection", "authoritative")
+                    if expected_scope == "context":
+                        alias = {"story_state.last_scene_location": "current_location",
+                                 "story_state.required_opening_bridge": "opening_bridge",
+                                 "story_state.last_chapter_ending": "previous_ending"}.get(field_path)
+                        if alias and value:
+                            self.story_state[alias] = value
+                            self._provenance(f"story_state.{alias}", source, parsed.start_char, parsed.end_char,
+                                             "managed_projection", "authoritative")
+                if self._has_manual_authority(field_path):
                     continue
                 if not self._apply_managed_value(expected_scope, field_path, value):
                     self._warn(

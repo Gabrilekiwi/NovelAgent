@@ -9,6 +9,8 @@ from core.chapter_budget_contract import freeze_chapter_budget, ChapterBudgetCon
 from core.chapter_budget_freeze import ChapterBudgetFreezeRegistry
 from core.chapter_budget_store import ChapterBudgetStore, ChapterBudgetError, ChapterBudgetConflict
 from core.chapter_execution_time import ChapterExecutionClock, ChapterTimeError
+from core.provider_billing_request import BillingRequestError
+from core.config import get_config
 from core.engine.chapter_candidate import ChapterCandidateStore
 from core.engine.chapter_fact_extraction import ChapterFactExtractionStore
 from core.engine.reviewed_candidate_context import ReviewedChapterCandidateContextBuilder
@@ -26,12 +28,30 @@ class ChapterBudgetService:
         self.projects=publication.projects
         self.fault_injector=None
 
+    @staticmethod
+    def monetary_option():
+        """Expose only a checked configured identity, never keys or a URL."""
+        from core.provider_billing_request import plan_openai_text_billing,openai_text_billing_policy
+        config=get_config()
+        try:
+            plan=plan_openai_text_billing(dict(model=config.openai_model,messages=[{'role':'user','content':''}],
+                max_completion_tokens=1,service_tier='default',prompt_cache_retention='in_memory',n=1,stream=False),
+                base_url=config.openai_base_url or 'https://api.openai.com/v1')
+        except BillingRequestError:
+            return {'available':False,'message':'当前模型或端点尚无已核对的金额契约，可先使用调用、token和时间限额。'}
+        return {'available':True,'model':plan['model'],'service_tier':plan['service_tier'],
+            'input_reservation_per_call':plan['max_billable_input_tokens'],
+            'message':'请填入已核对且覆盖本章调用范围的价格。金额占用包含保守预留，实际账单不由工作台核对。',
+            'pricing_template':dict(provider='openai',model=plan['model'],endpoint_type='official',
+                endpoint_fingerprint=plan['endpoint_fingerprint'],input_token_semantics='input_includes_cache',
+                billing_policy=openai_text_billing_policy())}
+
     def get(self,project_id,chapter):
         project=self.projects.get(project_id)
         registry=ChapterBudgetFreezeRegistry(project.root,book_id=project.book_id)
         result=registry.status(chapter)
         answer={'project_id':project.id,'book_id':project.book_id,'chapter':chapter,**result,
-            'usage':None,'time':None}
+            'usage':None,'time':None,'monetary_option':self.monetary_option()}
         if result['state']=='ready':
             store=ChapterBudgetStore(registry.root/f'c{chapter}',book_id=project.book_id,chapter=chapter)
             answer['usage']=store.report()
@@ -80,6 +100,13 @@ class ChapterBudgetService:
                 trusted=ReviewedChapterCandidateContextBuilder(root).build(chapter)
                 if trusted.context_sha256!=expected_context_sha256:
                     raise ChapterBudgetConflict('章节输入已变化，请刷新后重新确认预算。')
+                if registry.status(chapter)['state']=='not_configured':
+                    for row in budget['pricing']:
+                        if 'billing_policy' not in row:continue
+                        option=self.monetary_option()
+                        if not option['available'] or any(row.get(key)!=value
+                                for key,value in option['pricing_template'].items()):
+                            raise ChapterBudgetConflict('模型或端点已变化，请重新读取并确认金额预算。')
                 self._require_no_chapter_work(root,current['book_id'],chapter)
             registry.freeze(budget,before_write=preflight,fault_injector=self.fault_injector)
         return self.get(project_id,chapter)
@@ -92,7 +119,7 @@ def install_chapter_budget_routes(app,publication):
     async def error(request,exc):
         return JSONResponse({'error':{'code':getattr(exc,'code','chapter_budget_invalid'),
             'message':str(exc)}},status_code=409)
-    for kind in (ChapterBudgetError,ChapterBudgetContractError,ChapterTimeError):
+    for kind in (ChapterBudgetError,ChapterBudgetContractError,ChapterTimeError,BillingRequestError):
         app.add_exception_handler(kind,error)
 
     @app.get('/api/projects/{project_id}/chapters/{chapter}/budget')

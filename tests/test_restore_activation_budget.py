@@ -18,7 +18,7 @@ from workbench.restore_handoff import RestoreHandoffError
 def test_actual_unsettled_source_call_cannot_activate_or_erase_occupancy(prepared):
     c = prepared; root = c['target']/'book'; before = inventory_tree(root)
     usage = read_project_model_usage(root, book_id=c['project'].book_id)
-    assert usage['chapter_budgets'][0]['charged_amount'] == '0.000769'
+    assert next(b for b in usage['chapter_budgets'] if b['chapter']==3)['charged_amount'] == '0.000769'
     with pytest.raises(RestoreHandoffError, match='尚未核实结算'): activate(c)
     assert not c['activation_service']._path(c['id'], 'activation').exists()
     assert not c['activation_service']._path(c['id'], 'activation-done').exists()

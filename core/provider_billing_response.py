@@ -58,15 +58,17 @@ def reviewed_openai_billing_quantities(plan, receipt, projection):
     for container, key in ((raw, 'cache_creation_input_tokens'),
             (raw.get('prompt_tokens_details', {}), 'cache_write_tokens'),
             (raw.get('input_tokens_details', {}), 'cache_write_tokens')):
+        if container is None:continue
         if not isinstance(container, dict):
             return None, 'billing_quantities_unknown'
-        if key in container and (type(container[key]) is not int or container[key] != 0):
+        if container.get(key) is not None and (type(container[key]) is not int or container[key] != 0):
             return None, 'billing_cache_policy_differs'
     for detail in ('prompt_tokens_details', 'completion_tokens_details', 'input_tokens_details', 'output_tokens_details'):
         container = raw.get(detail, {})
+        if container is None:continue
         if not isinstance(container, dict):
             return None, 'billing_quantities_unknown'
-        if 'audio_tokens' in container and (type(container['audio_tokens']) is not int or container['audio_tokens'] != 0):
+        if container.get('audio_tokens') is not None and (type(container['audio_tokens']) is not int or container['audio_tokens'] != 0):
             return None, 'billing_feature_differs'
     quantities = dict(input_tokens=tokens['input_tokens']['value'],
         output_tokens=tokens['output_tokens']['value'], cache_read_tokens=tokens['cache_read_tokens']['value'],

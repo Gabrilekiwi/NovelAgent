@@ -44,6 +44,7 @@ def run_review_pipeline(
     build_repair_prompt: bool = True,
     build_human_report: bool = True,
     title: str | None = None,
+    include_prose_evidence: bool = False,
 ) -> dict:
     if rule_pack is None and rule_pack_path is None and not use_default_rules:
         raise ReviewPipelineError("missing rules: pass rule_pack, rule_pack_path, or use_default_rules=True")
@@ -57,6 +58,7 @@ def run_review_pipeline(
         chapter_text=chapter,
         snapshot=copy.deepcopy(snapshot_copy),
         previous_chapter_text=previous,
+        include_prose_evidence=include_prose_evidence,
     )
     rule_validation_report = validate_chapter_against_rules(
         chapter_text=chapter,

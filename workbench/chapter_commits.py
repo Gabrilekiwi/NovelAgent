@@ -61,10 +61,13 @@ class ChapterCommitPreparationService:
         project = self.projects.get(project_id, **connection_args)
         trusted = self.context_builder_factory(project.root).build(chapter)
         quality = prepare_candidate_chapter_quality(trusted_context=trusted,
-            chapter_preparation=prepared, quality_policy=quality_policy)
+            chapter_preparation=prepared, quality_policy=quality_policy,candidate_source_verifier=self.quality_candidate_source)
         if self.prepare(**request, **connection_args) != prepared:
             raise ChapterCommitConflict("draft, review or context changed during quality preparation")
-        return {"preparation": prepared, "quality": quality, "publication_authorized": False}
+        from core.quality.reviewed_disposition import project_reviewed_quality_disposition
+        disposition=project_reviewed_quality_disposition(preparation=prepared,quality=quality)
+        return {"preparation": prepared, "quality": quality,
+            "quality_disposition": disposition,"publication_authorized": False}
 
     def prepare(self, *, project_id: str, chapter: int, review_id: str,
                 expected_draft_revision: int, expected_review_revision: int,
@@ -96,8 +99,9 @@ class ChapterCommitPreparationService:
             raise ChapterCommitConflict("draft changed while reading Candidate evidence")
         self._verify_candidate_binding(project, review, intent)
         trusted = self.context_builder_factory(project.root).build(chapter)
-        if (trusted.context_sha256 != intent["source"]["context_sha256"]
-                or trusted.story_project_context["read_set"] != intent["source"]["story_project_read_set"]):
+        source=self.fact_reviews.review_source(draft,intent)
+        if (trusted.context_sha256 != source["context_sha256"]
+                or trusted.story_project_context["read_set"] != source["story_project_read_set"]):
             raise ChapterCommitConflict("current context differs from the confirmed Candidate")
         result = prepare_reviewed_chapter(trusted_context=trusted, project_id=project.id,
             draft=draft.to_dict(), review=asdict(review), idempotency_key=idempotency_key)
@@ -116,6 +120,14 @@ class ChapterCommitPreparationService:
         self._verify_candidate_binding(project, current_review, after_intent)
         verify_preparation_sources(trusted.story_project_context, phase="prepare")
         return result
+
+    def quality_candidate_source(self,intent,binding):
+        draft=self.drafts.get(binding['draft_id'])
+        if (draft.candidate_id!=intent['candidate_id'] or draft.project_id!=binding['project_id']
+                or draft.chapter!=binding['chapter'] or draft.sha256!=binding['draft_sha256']
+                or draft.revision!=binding['draft_revision']):
+            raise ChapterCommitConflict('Candidate draft changed during final source verification')
+        return self.fact_reviews.review_source(draft,intent)
 
     def _read_pair(self, review_id: str, *, connection=None) -> tuple[CandidateDraftRecord, ChapterFactReviewRecord]:
         def read(conn):
@@ -144,15 +156,16 @@ class ChapterCommitPreparationService:
                 or review.source_draft_sha256 != draft.sha256 or review.source_text != draft.text):
             raise ChapterCommitConflict("confirmed review is stale for the current draft")
 
-    @staticmethod
-    def _verify_candidate_binding(project: ProjectRecord, review: ChapterFactReviewRecord, intent: dict):
+    def _verify_candidate_binding(self,project: ProjectRecord, review: ChapterFactReviewRecord, intent: dict):
+        draft=self.drafts.get(review.draft_id)
+        source=self.fact_reviews.review_source(draft,intent)
         authority = {name:intent["authority"].get(name) for name in
                      ("mode","authority_epoch","head_event_hash","identity_revision")}
-        authority["authority_projection_sha256"] = intent["source"]["authority_projection_sha256"]
+        authority["authority_projection_sha256"] = source["authority_projection_sha256"]
         if (intent["book_id"] != project.book_id or intent["chapter_index"] != review.chapter
                 or intent["candidate_id"] != review.candidate_id
                 or intent["intent_hash"] != review.candidate_intent_hash
-                or intent["source"]["context_sha256"] != review.context_sha256
+                or source["context_sha256"] != review.context_sha256
                 or authority != review.authority):
             raise ChapterCommitIntegrityError("fact review is not bound to verified Candidate evidence")
         if review.source_extraction_id is not None:

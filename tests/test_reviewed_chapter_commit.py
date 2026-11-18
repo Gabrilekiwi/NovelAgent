@@ -43,6 +43,13 @@ def ready(case):
     from core.engine.chapter_candidate_context import ChapterCandidateContextBuilder
     case["inputs"]["trusted_context"] = ChapterCandidateContextBuilder(root).build(2)
     db, projects, project, upgrade = registered_upgrade(case)
+    # Freeze before deterministic generation. These fixtures never dispatch a
+    # paid Provider; publication now shares the same chapter active-time clock.
+    from core.chapter_budget_contract import freeze_chapter_budget
+    from core.chapter_budget_freeze import ChapterBudgetFreezeRegistry
+    ChapterBudgetFreezeRegistry(root,book_id=project.book_id).freeze(freeze_chapter_budget(
+        book_id=project.book_id,chapter=2,max_provider_calls=10,max_input_tokens=1000000,
+        max_output_tokens=100000,max_active_seconds='900'),before_write=lambda:None)
     builder = ReviewedChapterCandidateContextBuilder
     confirmation = author_confirmation(projects, project)
     example = fact_contract_example()

@@ -605,7 +605,8 @@ class ChapterFactReviewService:
             raise ChapterFactReviewError(
                 _candidate_error_message(exc), code=exc.code
             ) from exc
-        authority = _review_authority_binding(intent)
+        source=self.review_source(draft,intent)
+        authority = _review_authority_binding({**intent,'source':source})
         record = self.reviews.create(
             project_id=draft.project_id,
             chapter=draft.chapter,
@@ -615,7 +616,7 @@ class ChapterFactReviewService:
             source_draft_revision=draft.revision,
             source_draft_sha256=draft.sha256,
             source_text=draft.text,
-            context_sha256=intent["source"]["context_sha256"],
+            context_sha256=source["context_sha256"],
             authority=authority,
             facts=facts,
         )
@@ -723,6 +724,20 @@ class ChapterFactReviewService:
         draft = self.candidate_drafts.get(draft_id, connection=connection)
         return draft, self._verified_candidate_intent(draft, **({} if connection is None else {"connection": connection}))
 
+    def review_source(self,draft,intent):
+        from workbench.restored_batch_continuation import restored_author_review_source
+        project=self.projects.get(draft.project_id)
+        try:
+            source=restored_author_review_source(self.reviews.database,project,draft,intent)
+        except (StoryProjectSourceDriftError, ChapterCandidateContextError) as exc:
+            # After a formal commit the former next-chapter context is stale.
+            # Preserve readable review evidence without treating it as fresh.
+            raise ChapterFactReviewConflict(
+                "restored author review context changed",
+                code="chapter_fact_authority_changed",
+            ) from exc
+        return source if source is not None else intent['source']
+
     def create_from_extraction(
         self,
         draft_id: str,
@@ -774,7 +789,10 @@ class ChapterFactReviewService:
                 "fact-extraction record changed before review creation"
             )
 
-        expected_authority = _review_authority_binding(candidate_intent)
+        # A qualified restore preserves the immutable Candidate Intent, while
+        # new extraction/review decisions bind to its verified current source.
+        source = self.review_source(draft, candidate_intent)
+        expected_authority = _review_authority_binding({**candidate_intent, "source": source})
         authority_view_binding = authority_view.get("authority_binding")
         actual_authority = {
             **copy.deepcopy(extraction_intent["authority"]),
@@ -797,7 +815,7 @@ class ChapterFactReviewService:
             or extraction_intent["draft"]["sha256"] != draft.sha256
             or source_text != draft.text
             or extraction_intent["context"]["context_sha256"]
-            != candidate_intent["source"]["context_sha256"]
+            != source["context_sha256"]
             or actual_authority != expected_authority
         ):
             raise ChapterFactReviewConflict(
@@ -823,7 +841,7 @@ class ChapterFactReviewService:
             source_draft_revision=draft.revision,
             source_draft_sha256=draft.sha256,
             source_text=draft.text,
-            context_sha256=candidate_intent["source"]["context_sha256"],
+            context_sha256=source["context_sha256"],
             authority=expected_authority,
             facts=facts,
             source_extraction_id=extraction_intent["extraction_id"],
@@ -956,6 +974,8 @@ class ChapterFactReviewService:
                 code="chapter_fact_authority_changed",
             ) from exc
         except ChapterCandidateContextError as exc:
+            if self.review_source(draft,intent) != intent['source']:
+                return intent
             raise ChapterFactReviewConflict(
                 "trusted chapter context or authority binding changed; create a new Candidate",
                 code="chapter_fact_authority_changed",
@@ -992,12 +1012,13 @@ class ChapterFactReviewService:
             return False, "candidate_draft_changed"
         try:
             intent = self._verified_candidate_intent(draft)
+            source=self.review_source(draft,intent)
         except ChapterFactReviewConflict:
             return False, "authority_or_source_changed"
         if (
             intent["intent_hash"] != record.candidate_intent_hash
-            or intent["source"]["context_sha256"] != record.context_sha256
-            or _review_authority_binding(intent) != record.authority
+            or source["context_sha256"] != record.context_sha256
+            or _review_authority_binding({**intent,'source':source}) != record.authority
         ):
             raise ChapterFactReviewIntegrity("fact review Candidate binding is corrupt")
         return True, None

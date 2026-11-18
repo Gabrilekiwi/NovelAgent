@@ -7,7 +7,10 @@ from core.story_project.reviewed_state_document import digest
 from workbench.backup_archive import BackupArchiveError
 from workbench.backup_archive_database import _database
 from workbench.backup_archive_view import verified_archive_view
-from workbench.backup_references import inspect_metadata_references
+from workbench.backup_references import inspect_metadata_references, ReferenceRoots
+from workbench.backup_job_state import empty_cancelled_stdout
+from workbench.backup_auxiliary import Evidence
+from workbench.backup_lazy_calls import LazyModelCallReferences
 
 
 class _ReferenceGraph:
@@ -15,9 +18,13 @@ class _ReferenceGraph:
         self.view=view;self.root=book_root
         self.inventories=view.manifest['preview']['scope']['inventories']
         self.bases={key:Path(tree['source_root']) for key,tree in self.inventories.items()}
+        self.root_index=ReferenceRoots(self.bases)
         self.directories={key:set(tree['directories']) for key,tree in self.inventories.items()}
         self.references=[];self.blockers=[];self.pending=set();self.bindings={}
         self.nodes=0;self.bytes=0
+        self.connection=connection;self.diagnostic_outputs=[]
+        self.lazy_calls=LazyModelCallReferences(Evidence(book_root,self.inventories['story_project'],
+            _read_bytes=lambda root,name:view.read_root('story_project',name)))
         self.historical=None
         proof=view.manifest['preview']['scope'].get('restored_provenance')
         if proof is not None:
@@ -52,8 +59,9 @@ class _ReferenceGraph:
         if self.historical is not None:
             try:path=self.historical.path(path,evidence=evidence,inventories=self.inventories)
             except ValueError:self.block('historical_reference_unverified',label);return
-        for key,base in self.bases.items():
-            if not path.is_relative_to(base):continue
+        resolved=self.root_index.find(path)
+        if resolved is not None:
+            key,base=resolved
             name=path.relative_to(base).as_posix();tree=self.inventories[key]
             if kind=='directory':
                 if name=='.' or name in self.directories[key]:
@@ -75,7 +83,7 @@ class _ReferenceGraph:
             raise BackupArchiveError('归档引用元数据数量超过支持范围。')
         def require(value,label,**options):return self.require(value,label,evidence=evidence,**options)
         inspect_metadata_references(value,source=label,book_root=self.root,require_path=require,
-                                    block=self.block,root_bindings=self.bindings)
+                                    block=self.block,root_bindings=self.bindings,lazy_calls=self.lazy_calls)
 
     def decode(self,raw,label):
         if not isinstance(raw,(str,bytes)):
@@ -112,7 +120,12 @@ class _ReferenceGraph:
             key,name=min(self.pending);self.pending.remove((key,name))
             if (key,name) in visited:continue
             visited.add((key,name));label=key+'/'+name
-            value=self.decode(self.view.read_root(key,name),label)
+            raw=self.view.read_root(key,name)
+            diagnostic=empty_cancelled_stdout(self.connection,key,name,raw)
+            if diagnostic is not None:
+                self.diagnostic_outputs.append(diagnostic)
+                continue
+            value=self.decode(raw,label)
             if value is not None:self.metadata(value,label,('file',key,name))
         return [{'root':key,'path':name} for key,name in sorted(visited)]
 
@@ -164,6 +177,8 @@ def inspect_archived_references(package,*,project_id,book_id,temporary_root=None
             'archive_receipt_sha256':view.verified['receipt_sha256'],'project_id':project_id,'book_id':book_id,
             'database_logical_sha256':view.manifest['database']['logical_sha256'],
             'references':graph.references,'metadata_files':traversed,'blockers':graph.blockers,
+            'diagnostic_outputs':graph.diagnostic_outputs,
+            'lazy_call_directories':graph.lazy_calls.recognized,
             'references_verified':not graph.blockers,'coverage':'target_db_artifact_fields_jobs_events_runs_and_followed_json',
             'restore_plan_ready':False,'recoverable':False,'write_activation_allowed':False}
         result['verification_sha256']=digest(result)

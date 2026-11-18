@@ -1249,6 +1249,11 @@
     all("[data-breadcrumb-project]").forEach((node) => { node.hidden = !hasProject; });
     const reviewedNotice = one("[data-reviewed-project-notice]");
     if (reviewedNotice) reviewedNotice.hidden = !hasProject || !state.project?.reviewed_format;
+    const batchLink = one("[data-reviewed-batch-link]");
+    if (batchLink) {
+      batchLink.hidden = !hasProject || state.project?.reviewed_format !== true;
+      batchLink.href = !batchLink.hidden ? `/reviewed-batches?project_id=${encodeURIComponent(state.projectId)}` : "#";
+    }
     if (!hasProject) return;
     if (state.project.reviewed_format) {
       setText("[data-reviewed-project-message]", state.project.reviewed_status?.message || "请核对当前事实与提交历史。");
@@ -1664,7 +1669,7 @@
       failed: { status: "failed", label: "生成失败", title: "正文候选生成失败", message: candidate.error?.message || "失败记录已保留；正式正文和权威状态均未修改。" },
       provider_uncertain: { status: "blocked", label: "结果不确定", title: "Provider 结果需要作者处理", message: "Provider 是否完成无法确认；系统没有自动重试，正式正文和权威状态均未修改。" },
       cancelled: { status: "cancelled", label: "已取消", title: "正文候选已取消", message: "取消记录已保留；正式正文和权威状态均未修改。" },
-      abandoned: { status: "warning", label: "已放弃采用", title: "不确定结果已放弃采用", message: "原始调用证据仍被保留；正式正文和权威状态均未修改。确认当前章节卡后可以创建新候选。" }
+      abandoned: { status: "warning", label: "已放弃采用", title: "不确定结果已放弃采用", message: "原请求的证据和预算占用仍保留。请按下方续试状态继续；放弃采用不代表请求免费，也不会自动重新生成。" }
     };
     return presentations[candidate.status] || { status: "warning", label: "需要检查", title: "正文候选状态需要检查", message: "工作台不会自动重试或提交任何内容。" };
   };
@@ -1676,11 +1681,14 @@
     if (error) return { phase: "blocked", label: "需要处理", message: error };
     if (candidate?.status === "running") return { phase: "candidate", label: "生成中", message: "正文生成仍在执行。页面只查询进度，刷新不会重复调用。" };
     if (extraction?.status === "running") return { phase: "facts", label: "检查中", message: "事实提取仍在执行。请等待当前提取结束。" };
+    if (candidate?.continuation?.state === "ready") return { phase: "candidate", label: "可续试一次", message: "一次续试许可已保存。点击下方“开始这一次续试”才会发送请求；旧请求占用继续保留。" };
+    if (candidate?.continuation?.state === "available") return { phase: "candidate", label: "续试待确认", message: "上次请求结果未知。可在下方核对占用，明确允许同一章再试一次。" };
     if ([candidate?.status, extraction?.status].some(s => ["needs_recovery", "provider_uncertain", "failed"].includes(s))) return { phase: "blocked", label: "需要处理", message: "当前操作已停止，请查看下方原因和恢复操作；已有草稿仍保留。" };
     if (review?.state === "stale") return { phase: "facts", label: "事实需重查", message: "正文或依据发生变化，请核对草稿并重新检查事实。旧决定保留为只读记录。" };
     if (review?.state === "confirmed") return { phase: "publication", label: "待发布", message: "事实决定已确认。下一步预览最终正文并发布。" };
     if (review) return { phase: "facts", label: "待审阅", message: "请对事实明确接受、修改、拒绝或补充，再确认整组决定。" };
     if (extraction?.status === "completed" && extraction.source_state === "current") return { phase: "facts", label: "事实已提取", message: "提取结果已经保存。点击“继续事实审核”采用本次结果，无需再次调用模型。" };
+    if (budgetBlocked && candidate?.draft) return { phase: "candidate", label: "可编辑草稿", message: "草稿可以继续编辑和保存，也可选择“自行审阅事实”。新增模型调用仍受下方预算限制。" };
     if (budgetBlocked) return { phase: "blocked", label: "预算待处理", message: budgetMessage || "请先读取并确认下方本章预算，已有草稿仍可编辑。" };
     if (candidate?.draft) return { phase: "candidate", label: "可编辑草稿", message: "正文草稿已保存。编辑完成后提取事实，继续本章审核。" };
     if (candidate?.status === "completed") return { phase: "candidate", label: "候选已生成", message: "正文候选已保留，请建立可编辑草稿。" };
@@ -1750,7 +1758,7 @@
       candidate: state.chapterCandidate, extraction: state.chapterFactExtraction, review: state.chapterFactReview,
       error: state.chapterCandidateError || state.chapterFactError, confirmed: currentConfirmationMatchesCard(),
       budgetBlocked: state.chapterBudgetBlocked, budgetMessage: state.chapterBudgetMessage,
-      pending: one('[data-candidate-generate].is-busy, [data-candidate-resume].is-busy') ? "candidate"
+      pending: one('[data-candidate-generate].is-busy, [data-candidate-resume].is-busy, [data-continuation-run].is-busy') ? "candidate"
         : one('[data-fact-extract].is-busy, [data-fact-resume].is-busy') ? "facts" : null });
     setText("[data-chapter-flow-message]", presentation.message);
     UI.updateStatusBadge(one("[data-chapter-status]"), presentation.phase === "committed" ? "committed" : presentation.phase === "blocked" ? "warning" : "draft", presentation.label);
@@ -1791,6 +1799,11 @@
     const blocksNewCandidate = ["running", "needs_recovery", "provider_uncertain"].includes(candidate?.status);
     const currentCompleted = candidate?.status === "completed" && confirmationCurrent;
     const generate = one("[data-candidate-generate]", panel);
+    const importButton = one('[data-author-draft-open]', panel);
+    if (importButton) {
+      importButton.hidden = !state.project?.reviewed_format || state.chapterHasFormalProse;
+      importButton.disabled = !confirmed || blocksNewCandidate || Boolean(state.chapterCandidateError) || state.chapterRecoveryRequired;
+    }
     if (generate) {
       generate.hidden = currentCompleted;
       generate.disabled = !confirmed || blocksNewCandidate || Boolean(state.chapterCandidateError) || state.chapterBudgetBlocked;
@@ -1809,6 +1822,19 @@
     if (createDraft) createDraft.hidden = candidate?.status !== "completed" || Boolean(candidate?.draft);
     const abandon = one("[data-candidate-abandon-provider]", panel);
     if (abandon) abandon.hidden = candidate?.status !== "provider_uncertain" || !candidate?.uncertainty || candidate.uncertainty.abandoned === true;
+    const continuation = candidate?.continuation;
+    const continuationPanel = one('[data-candidate-continuation]', panel);
+    if (continuationPanel) continuationPanel.hidden = !continuation;
+    setText('[data-continuation-message]', continuation?.message || '', panel, '');
+    const charged = continuation?.charged, limits = continuation?.limits;
+    setText('[data-continuation-budget]', charged && limits
+      ? `本章已占用 ${charged.calls}/${limits.max_provider_calls} 次调用（包含未知请求预留），输入 ${charged.input_tokens}/${limits.max_input_tokens}、输出 ${charged.output_tokens}/${limits.max_output_tokens} token。续试不增加总限额，实际费用仍可能未知。` : '', panel, '');
+    const allowOnce = one('[data-continuation-authorize]', panel);
+    const runOnce = one('[data-continuation-run]', panel);
+    const resultOnce = one('[data-continuation-result]', panel);
+    if (allowOnce) allowOnce.hidden = continuation?.state !== 'available';
+    if (runOnce) runOnce.hidden = continuation?.state !== 'ready';
+    if (resultOnce) resultOnce.hidden = continuation?.state !== 'used' || !continuation?.target_candidate_id;
 
     const actionError = one("[data-candidate-action-error]", panel);
     if (actionError && !options.keepActionError) { actionError.hidden = true; actionError.textContent = ""; }
@@ -1912,8 +1938,8 @@
     if (errorMessage) return { status: "failed", label: "状态不可用", title: "无法安全恢复事实审核", message: `${errorMessage} 状态恢复前不会调用模型或写入权威状态。` };
     if (review?.state === "stale") return { status: "warning", label: "来源已变化", title: "旧事实审核只读保留", message: "正文草稿或权威状态已经变化；旧卡片不会被覆盖，也不能用于后续写入。" };
     if (review?.state === "confirmed") return { status: "pass", label: "审核已确认", title: "关键事实已由作者锁定", message: "审核结果已锁定，但正式正文和权威状态仍未写入。" };
-    if (review) return { status: "reviewing", label: "等待作者", title: "逐项确认关键事实", message: "可编辑模型建议，并对每项明确接受、拒绝或删除；保存和确认都不会写入权威状态。" };
-    if (!extraction) return { status: "ready", label: "可提取", title: "从当前草稿提取关键事实", message: "模型只读取当前工作台正文和精简权威视图，输出待审卡片；不会修改正文或权威状态。" };
+    if (review) return { status: "reviewing", label: "等待作者", title: "逐项确认关键事实", message: "对照正文补充事实，并对每项明确接受、拒绝或删除；保存和确认都不会写入权威状态。" };
+    if (!extraction) return { status: "ready", label: "可审阅", title: "核对当前草稿的关键事实", message: "可调用模型提取待审建议，也可自行添加和审阅事实。两种方式都需要作者确认。" };
     if (extraction.status === "completed" && extraction.source_state === "current") return { status: "ready", label: "事实已提取", title: "继续审阅已保存的事实", message: "提取结果已保存。继续事实审核会核验并采用本次结果，不会再次调用模型。" };
     const presentations = {
       running: { status: "reviewing", label: "检查中", title: "事实提取正在执行", message: "系统仍在读取当前正文并提取事实。刷新后可继续查询进度，无需重新发起。" },
@@ -2156,6 +2182,9 @@
       confirm.title = counts.pending > 0 ? "每项都必须先明确接受、拒绝或删除" : "";
     }
   };
+  const canStartManualFactReview = ({ draft, review, extraction, error }) => Boolean(draft) && !error
+    && (!review || review.state === 'stale')
+    && !['running', 'needs_recovery', 'provider_uncertain'].includes(extraction?.status);
   const renderChapterFacts = (extraction, review, errorMessage = "", options = {}) => {
     state.chapterFactExtraction = extraction || null;
     state.chapterFactReview = review || extraction?.fact_review || null;
@@ -2174,8 +2203,8 @@
     }
     const presentation = factStatusPresentation(state.chapterFactExtraction, activeReview, state.chapterFactError);
     if (state.chapterBudgetBlocked && !state.chapterFactExtraction && !activeReview) {
-      presentation.status = 'warning'; presentation.label = '预算待处理';
-      presentation.message = state.chapterBudgetMessage || '请先核对本章预算。';
+      presentation.status = 'warning'; presentation.label = '可自行审阅';
+      presentation.message = '模型提取受预算限制。你仍可自行审阅事实，不新增模型调用，旧请求的占用和未知费用继续保留。';
     }
     UI.updateStatusBadge(one("[data-fact-status]", panel), presentation.status, presentation.label);
     setText("[data-fact-title]", presentation.title, panel);
@@ -2198,6 +2227,11 @@
       extract.disabled = Boolean(state.chapterFactError) || state.chapterBudgetBlocked;
       extract.textContent = state.chapterFactExtraction ? "从当前草稿重新提取" : "提取事实候选";
     }
+    const manual = one('[data-fact-manual]', panel);
+    const manualAllowed = canStartManualFactReview({ draft, review: activeReview, extraction: state.chapterFactExtraction, error: state.chapterFactError });
+    if (manual) { manual.hidden = !manualAllowed; manual.disabled = !manualAllowed || manual.classList.contains('is-busy'); }
+    const manualHelp = one('[data-fact-manual-help]', panel);
+    if (manualHelp) manualHelp.hidden = !manualAllowed;
     const resume = one("[data-fact-resume]", panel);
     if (resume) resume.hidden = state.chapterFactExtraction?.status !== "needs_recovery" || stale;
     const openReview = one("[data-fact-open-review]", panel);
@@ -2241,7 +2275,7 @@
     const list = one("[data-fact-card-list]", form);
     clear(list);
     facts.forEach((fact) => appendFactCard(list, fact, activeReview.state !== "editing" || !context));
-    if (!facts.length) list.append(el("p", "fact-empty", "本次未提取到关键事实。请核对正文，补充遗漏，或明确确认没有需要记录的变化。"));
+    if (!facts.length) list.append(el("p", "fact-empty", "事实清单目前为空。请对照正文补充需要记录的变化；清单为空不代表本章没有变化。"));
     setText("[data-fact-source-text]", context?.source_text || "正在读取本次审核正文…");
     const supportPanel = one("[data-fact-support-panel]");
     supportPanel.hidden = !context?.support_supported && !activeReview.support;
@@ -2437,8 +2471,8 @@
       const extract = one('[data-fact-extract]');
       if (extract) extract.disabled = blocked || Boolean(state.chapterFactError) || extract.classList.contains('is-busy');
       if (!state.chapterFactExtraction && !state.chapterFactReview) {
-        UI.updateStatusBadge(one('[data-fact-status]'), blocked ? 'warning' : 'ready', blocked ? '预算待处理' : '可提取');
-        setText('[data-fact-message]', blocked ? message || '请先核对本章预算。' : '从当前已保存草稿提取事实候选。');
+        UI.updateStatusBadge(one('[data-fact-status]'), blocked ? 'warning' : 'ready', blocked ? '可自行审阅' : '可审阅');
+        setText('[data-fact-message]', blocked ? '模型提取受预算限制；仍可自行审阅事实，旧占用和未知费用继续保留。' : '可从已保存草稿提取事实建议，也可自行添加并审阅。');
       }
       renderChapterWorkflow();
     });
@@ -3982,7 +4016,20 @@
       kind_label: job.kind === "locked_chapter_recovery" ? "安全恢复" : "连续生产",
       created_at_label: job.created_at ? new Date(job.created_at).toLocaleString("zh-CN") : "—"
     }));
-    state.runs = [...jobRecords, ...runRecords.map((run) => ({ ...run, history_source: "run" }))];
+    state.runs = [...jobRecords, ...runRecords.map((run) => {
+      const started = run.started_at ? Date.parse(run.started_at) : NaN;
+      const finished = run.finished_at ? Date.parse(run.finished_at) : NaN;
+      const elapsed = Number.isFinite(started) && Number.isFinite(finished) && finished >= started
+        ? `${Math.round((finished - started) / 1000)} 秒` : "—";
+      return {
+        ...run,
+        history_source: "run",
+        chapter: run.chapter_index ?? run.chapter,
+        created_at_label: run.created_at_label || run.time_label
+          || (Number.isFinite(started) ? new Date(started).toLocaleString("zh-CN") : "—"),
+        duration_label: run.duration_label || elapsed
+      };
+    })];
     const stats = payload.stats;
     const hasStats = Boolean(stats) && typeof stats === "object";
     setText("[data-history-total]", hasStats && stats.total_runs != null ? stats.total_runs : "—");
@@ -4302,6 +4349,33 @@
   };
   const candidateFromPayload = (payload) => payload?.candidate || payload;
 
+  one('[data-author-draft-open]')?.addEventListener('click', () => {
+    const panel=one('[data-author-draft-panel]');
+    panel.hidden=false; one('[data-author-draft-text]',panel)?.focus();
+  });
+  one('[data-author-draft-import]')?.addEventListener('click', async (event) => {
+    const button=event.currentTarget;
+    if (button.disabled || !currentConfirmationMatchesCard() || state.chapterRecoveryRequired || state.chapterCandidateError) return;
+    const text=one('[data-author-draft-text]').value, origin=one('[data-author-draft-origin]').value;
+    if (!text.trim() || !origin.trim()) { setText('[data-author-draft-error]','请填写正文和稿件来源。'); return; }
+    const confirmation=JSON.parse(JSON.stringify(state.chapterConfirmation));
+    const action=beginCandidateAction({requireCardBinding:true,requireConfirmation:true});
+    // Identical content/confirmation retries keep the original request identity.
+    const bytes=new TextEncoder().encode(JSON.stringify({text,origin,confirmation}));
+    const sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(b=>b.toString(16).padStart(2,'0')).join('');
+    setCandidateButtonBusy(button,true); setText('[data-author-draft-error]','');
+    try {
+      const {payload}=await api(`/api/projects/${encodeURIComponent(action.project_id)}/chapters/${action.chapter}/author-drafts`,{
+        method:'POST',json:{confirmation,text,origin_label:origin,idempotency_key:`author-import-${sha}`}});
+      const candidate=candidateFromPayload(payload);
+      if (!candidateActionTargetsCurrentChapter({action,candidate})) return;
+      renderChapterCandidate(candidate,''); one('[data-author-draft-panel]').hidden=true;
+      await refreshChapterFactsForCurrentDraft(); UI.showToast(payload.message);
+    } catch(error) {
+      if (candidateActionTargetsCurrentChapter({action})) setText('[data-author-draft-error]',UI.errorMessage(error?.payload,error?.status));
+    } finally { finishCandidateAction(button,action); }
+  });
+
   one("[data-candidate-generate]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
@@ -4426,7 +4500,7 @@
     if (!button || button.disabled) return;
     const candidate = state.chapterCandidate;
     if (!candidate || candidate.status !== "provider_uncertain" || !candidate.uncertainty?.sha256) return;
-    const accepted = await UI.confirmAction("放弃表示这次未知 Provider 结果永不采用；原始 Intent、调用证据和不确定记录会继续保留。确认放弃并允许之后创建新候选吗？", "danger");
+    const accepted = await UI.confirmAction("放弃表示这次未知结果不再采用，调用证据和预算占用继续保留。放弃本身不保证可以重试。确认放弃吗？", "danger");
     if (!accepted) return;
     const action = beginCandidateAction({ candidate });
     setCandidateButtonBusy(button, true);
@@ -4451,6 +4525,51 @@
       UI.showToast(message, "error");
     } finally {
       finishCandidateAction(button, action);
+    }
+  });
+
+  const continuationAction = async (event, start) => {
+    const button = event.currentTarget, candidate = state.chapterCandidate;
+    if (!button || button.disabled || !candidate?.continuation) return;
+    if (candidate.continuation.state !== (start ? 'ready' : 'available')) return;
+    const accepted = await UI.confirmAction(start
+      ? '现在发送这一次续试请求？将沿用原章意图，保留旧请求的全部预算占用；可能产生额外费用。失败后不会自动再试。'
+      : '上一笔请求可能已收费且结果未知。确认不采用该未知结果，保留其全部占用，并在本章剩余限额内允许同一章再试一次？这一步只保存许可，不发送请求。', 'danger');
+    if (!accepted || state.chapterCandidate?.candidate_id !== candidate.candidate_id) return;
+    const action = beginCandidateAction({ candidate });
+    setCandidateButtonBusy(button, true);
+    try {
+      const json = start ? { expected_grant_sha256: candidate.continuation.grant_sha256, author_confirmed: true }
+        : { expected_ledger_sha256: candidate.continuation.expected_ledger_sha256,
+          expected_intent_hash: candidate.intent_hash, expected_record_hash: candidate.record_hash,
+          expected_uncertainty_sha256: candidate.uncertainty.sha256, author_confirmed: true };
+      const { payload } = await api(`${candidateDetailPath(action.project_id, action.chapter, action.candidate_id)}/continuation${start ? '/run' : ''}`, { method: 'POST', json });
+      if (!candidateActionTargetsCurrentChapter({ action })) return;
+      state.chapterCandidateError = '';
+      renderChapterCandidate(candidateFromPayload(payload), '');
+      if (start) await refreshChapterFactsForCurrentDraft();
+      UI.showToast(payload.message);
+    } catch (error) {
+      if (!candidateActionTargetsCurrentChapter({ action })) return;
+      showCandidateActionError(`${UI.errorMessage(error?.payload, error?.status)} 请刷新读取保存的状态；不要重复生成。`);
+    } finally {
+      finishCandidateAction(button, { ...action, candidate_id: null });
+      void window.NovelAgentChapterBudget?.refresh();
+    }
+  };
+  one('[data-continuation-authorize]')?.addEventListener('click', event => continuationAction(event, false));
+  one('[data-continuation-run]')?.addEventListener('click', event => continuationAction(event, true));
+  one('[data-continuation-result]')?.addEventListener('click', async (event) => {
+    const candidate = state.chapterCandidate, target = candidate?.continuation?.target_candidate_id;
+    if (!target) return;
+    const action = beginCandidateAction({ candidate });
+    try {
+      const { payload } = await api(candidateDetailPath(action.project_id, action.chapter, target));
+      if (!candidateActionTargetsCurrentChapter({ action })) return;
+      renderChapterCandidate(candidateFromPayload(payload), '');
+      await refreshChapterFactsForCurrentDraft();
+    } catch (error) {
+      if (candidateActionTargetsCurrentChapter({ action })) showCandidateActionError(UI.errorMessage(error?.payload, error?.status));
     }
   });
 
@@ -4497,7 +4616,7 @@
       }
       const currentErrorBox = one("[data-candidate-draft-error]");
       if (currentErrorBox) {
-        currentErrorBox.textContent = error?.status === 409 ? `${message} 你的文字已原样保留；请核对最新 revision 后再次保存。` : message;
+        currentErrorBox.textContent = error?.status === 409 ? `${message} 你的文字已原样保留；请先在新页面核对已保存版本，确认后再保存本页修改。` : message;
         currentErrorBox.hidden = false;
         currentErrorBox.focus?.();
       }
@@ -4523,7 +4642,9 @@
   const showFactError = (message, selector = "[data-fact-action-error]") => {
     const box = one(selector);
     if (!box) return;
-    box.textContent = message;
+    box.textContent = String(message).includes('event proposal requires at least one explicit anchor')
+      ? '请为事件补充发生地点、参与人物或关联对象中的至少一项，再保存。你填写的内容仍保留在页面中。'
+      : message;
     box.hidden = false;
     box.focus?.();
   };
@@ -4542,6 +4663,33 @@
   };
   const extractionFromPayload = (payload) => payload?.fact_extraction || payload;
   const reviewFromPayload = (payload) => payload?.fact_review || payload;
+
+  one('[data-fact-manual]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const allowed = () => canStartManualFactReview({ draft: state.chapterCandidate?.draft,
+      review: state.chapterFactReview, extraction: state.chapterFactExtraction, error: state.chapterFactError });
+    if (!button || button.disabled || !allowed()) return;
+    if (one('[data-candidate-draft-form].is-dirty')) { UI.showToast('请先保存正文修改，再开始事实审阅。', 'error'); return; }
+    const action = beginFactAction();
+    if (!action) return;
+    const accepted = await UI.confirmAction('将基于当前已保存正文打开空白事实清单，由你补充并逐项审阅。不调用模型，不改变旧请求费用，也不会直接保存为正式章节。继续吗？');
+    if (!accepted || !factActionTargetsCurrentDraft({ action }) || !allowed()
+        || one('[data-candidate-draft-form].is-dirty')) return;
+    setFactButtonBusy(button, true);
+    try {
+      const { payload } = await api(`/api/candidate-drafts/${encodeURIComponent(action.draft_id)}/fact-reviews`, {
+        method: 'POST', json: { expected_draft_revision: action.draft_revision,
+          expected_draft_sha256: action.draft_sha256, proposals: [], author_confirmed: true }
+      });
+      const review = reviewFromPayload(payload);
+      if (!factActionTargetsCurrentDraft({ action, review })) return;
+      renderChapterFacts(state.chapterFactExtraction, review, '');
+      UI.showToast('已打开自行审阅清单，请补充正文中的关键变化。');
+    } catch (error) {
+      if (!factActionTargetsCurrentDraft({ action })) return;
+      showFactError(UI.errorMessage(error?.payload, error?.status));
+    } finally { finishFactAction(button, action); }
+  });
 
   one("[data-fact-open-review]")?.addEventListener("click", async (event) => {
     const extraction = state.chapterFactExtraction;

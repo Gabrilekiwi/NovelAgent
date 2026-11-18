@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit
@@ -125,11 +126,13 @@ def create_app(*, database_path: str | Path | None = None,
     except BaseException:
         lease.close()
         raise
-    weakref.finalize(app, _close_owned_app, app.state.supervisor, lease, app.state.maintenance)
+    weakref.finalize(app, _close_owned_app, app.state.supervisor, lease, app.state.maintenance,
+        app.state.reviewed_batches.tasks)
     return app
 
 
-def _close_owned_app(supervisor: JobSupervisor, lease: InstanceLease, maintenance=None) -> None:
+def _close_owned_app(supervisor: JobSupervisor, lease: InstanceLease, maintenance=None, batch_tasks=None) -> None:
+    if batch_tasks is not None:batch_tasks.close()
     supervisor.shutdown()
     if maintenance is not None and lease.held:maintenance.require_no_active()
     lease.close()
@@ -237,6 +240,9 @@ def _create_app_owned(
                 supervisor.start()
             yield
         finally:
+            batch_workflow = getattr(app.state, 'reviewed_batches', None)
+            if batch_workflow is not None:
+                await asyncio.to_thread(batch_workflow.tasks.close)
             await maintenance.drain_async()
             if start_worker:
                 supervisor.shutdown()
@@ -390,6 +396,10 @@ def _create_app_owned(
         facts=chapter_facts, extractions=chapter_fact_extractions,
         candidate_executor_factory=reviewed_chapter_candidate_executor_factory,
         extraction_executor_factory=reviewed_chapter_fact_extraction_executor_factory)
+    from workbench.reviewed_batch_api import install_reviewed_batch_routes
+    install_reviewed_batch_routes(app,chapter_publication,instance_lease=instance_lease,maintenance=maintenance,
+        generation_executor_factory=reviewed_chapter_candidate_executor_factory,
+        extraction_executor_factory=reviewed_chapter_fact_extraction_executor_factory)
     display_projects = ProjectDisplayRegistry(database, allowed_workspaces=workspaces)
     reviewed_views = ReviewedProjectViews(chapter_publication)
 
@@ -446,6 +456,9 @@ def _create_app_owned(
 
     @app.get("/api/projects")
     async def list_projects(include_fixtures: bool = Query(False)) -> dict[str, Any]:
+        return await asyncio.to_thread(_list_projects_payload, include_fixtures)
+
+    def _list_projects_payload(include_fixtures: bool) -> dict[str, Any]:
         records = select_author_bookshelf(
             display_projects.list_projects(),
             repository=repository,
@@ -570,6 +583,13 @@ def _create_app_owned(
             chapter,
         )
         return {"items": list(items)}
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/author-drafts")
+    async def import_project_author_draft(project_id: str, chapter: int, payload: dict[str, Any] = Body(...)):
+        candidate = await asyncio.to_thread(chapter_candidates.import_author_draft, project_id, chapter,
+            confirmation=payload.get('confirmation'),text=payload.get('text'),origin_label=payload.get('origin_label'),
+            idempotency_key=payload.get('idempotency_key') or '')
+        return {'candidate':candidate,'message':'已有稿件已导入为可编辑草稿；请继续审阅事实。'}
 
     @app.post("/api/projects/{project_id}/chapters/{chapter}/candidates")
     async def generate_project_chapter_candidate(
@@ -913,9 +933,30 @@ def _create_app_owned(
         return {
             "candidate": candidate,
             "message": (
-                "未知 Provider 结果已放弃采用，原始证据仍保留；现在可以创建新的正文候选。"
+                "未知结果已放弃采用，原始证据和预算占用仍保留；新增调用仍需满足本章预算或受控续试条件。"
             ),
         }
+
+    @app.post('/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/continuation')
+    async def authorize_candidate_continuation(project_id: str, chapter: int, candidate_id: str,
+                                              payload: dict[str, Any] = Body(...)):
+        candidate=await asyncio.to_thread(chapter_candidates.authorize_continuation,
+            project_id,chapter,candidate_id,
+            expected_ledger_sha256=str(payload.get('expected_ledger_sha256') or ''),
+            expected_intent_hash=str(payload.get('expected_intent_hash') or ''),
+            expected_record_hash=payload.get('expected_record_hash'),
+            expected_uncertainty_sha256=str(payload.get('expected_uncertainty_sha256') or ''),
+            author_confirmed=payload.get('author_confirmed') is True)
+        return {'candidate':candidate,'message':'一次续试许可已保存，尚未发送；旧请求占用继续保留。'}
+
+    @app.post('/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/continuation/run')
+    async def run_candidate_continuation(project_id: str, chapter: int, candidate_id: str,
+                                        payload: dict[str, Any] = Body(...)):
+        candidate=await asyncio.to_thread(chapter_candidates.run_continuation,
+            project_id,chapter,candidate_id,
+            expected_grant_sha256=str(payload.get('expected_grant_sha256') or ''),
+            author_confirmed=payload.get('author_confirmed') is True)
+        return {'candidate':candidate,'message':_candidate_result_message(candidate)}
 
     @app.get("/api/projects/{project_id}/export")
     async def export_project(project_id: str) -> PlainTextResponse:
@@ -1373,17 +1414,39 @@ def _create_app_owned(
         chapter = int(payload.get("chapter") or project.next_chapter)
         if resolve_prose(project.root, chapter).path is not None:
             raise JobError(f"chapter {chapter} already has formal prose")
+        parent = next(
+            (
+                item
+                for item in jobs.list_jobs(project_id=project.id, limit=100)
+                if item.kind == "generation_session"
+                and item.state in PAUSED_JOB_STATES
+                and item.next_chapter == chapter
+            ),
+            None,
+        )
         recovery = jobs.create_job(
             project_id=project.id,
             kind="locked_chapter_recovery",
             start_chapter=chapter,
             end_chapter=chapter,
-            config={"force_reset": bool(payload.get("force_reset"))},
+            config={
+                "force_reset": bool(payload.get("force_reset")),
+                **(
+                    {
+                        "parent_job_id": parent.id,
+                        "parent_failure_revision": parent.revision,
+                    }
+                    if parent is not None
+                    else {}
+                ),
+            },
             idempotency_key=_derived_idempotency_key(
                 "recover-project",
                 project.id,
                 chapter,
                 bool(payload.get("force_reset")),
+                parent.id if parent is not None else None,
+                parent.revision if parent is not None else None,
             ),
         )
         supervisor.notify()
@@ -1570,6 +1633,13 @@ def _create_app_owned(
     @app.get("/publication", include_in_schema=False)
     async def chapter_publication_page() -> FileResponse:
         response = FileResponse(static_root / "chapter-publication.html")
+        response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
+            samesite="strict", secure=False, path="/")
+        return response
+
+    @app.get("/reviewed-batches", include_in_schema=False)
+    async def reviewed_batches_page() -> FileResponse:
+        response = FileResponse(static_root / "reviewed-batches.html")
         response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
             samesite="strict", secure=False, path="/")
         return response
@@ -2215,20 +2285,47 @@ def _history_run_by_id(root: Path, run_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _run_file_signature(path: Path) -> tuple[int, ...]:
+    stat = path.stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+@lru_cache(maxsize=4096)
+def _run_chapter_index(path: Path, signature: tuple[int, ...]) -> int | None:
+    # Cache only routing metadata, never manuscript/snapshot payloads. Exceptions
+    # are not cached, so partially written or damaged records can recover.
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if _run_file_signature(path) != signature:
+        raise OSError("Run record changed during lookup")
+    run = payload.get("run") if isinstance(payload, dict) else None
+    return int(run.get("chapter_index") or 0) if isinstance(run, dict) else None
+
+
 def _latest_run_for_chapter(root: Path, chapter: int) -> dict[str, Any] | None:
     runtime = RuntimePaths.for_story_project(root)
-    candidates: list[tuple[int, dict[str, Any]]] = []
     if not runtime.run_dir.is_dir():
         return None
+    candidates: list[tuple[int, Path]] = []
     for path in runtime.run_dir.glob("chapter_*.json"):
         try:
+            candidates.append((path.stat().st_mtime_ns, path))
+        except OSError:
+            continue
+    # Read newest first and retain the original directory order for equal
+    # timestamps. Avoid decoding older full snapshots once a match is found.
+    for _, path in sorted(candidates, key=lambda item: item[0], reverse=True):
+        try:
+            path = path.absolute()
+            if _run_chapter_index(path, _run_file_signature(path)) != chapter:
+                continue
+            # Matching records are always reread and checked before returning.
             payload = json.loads(path.read_text(encoding="utf-8"))
             run = payload.get("run") if isinstance(payload, dict) else None
             if isinstance(run, dict) and int(run.get("chapter_index") or 0) == chapter:
-                candidates.append((path.stat().st_mtime_ns, payload))
+                return payload
         except (OSError, ValueError, TypeError):
             continue
-    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+    return None
 
 
 def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:

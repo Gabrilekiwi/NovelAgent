@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
 from core.engine.chapter_candidate import (
+    AUTHOR_CANDIDATE_VERSION,
     ChapterCandidateConflictError,
     ChapterCandidateExecutionError,
     ChapterCandidateExecutor,
@@ -278,6 +279,17 @@ class ChapterCandidateService:
             lambda root: ChapterCandidateExecutor(story_project_root=root)
         )
 
+    def import_author_draft(self, project_id, chapter_index, *, confirmation, text, origin_label, idempotency_key):
+        from core.engine.author_chapter_candidate import import_author_candidate
+        project = self.projects.get(project_id)
+        key = _validated_idempotency_key(idempotency_key)
+        verified = self.chapter_cards.verify_confirmation(project_id,chapter_index,confirmation)
+        with _candidate_error_boundary():
+            record = import_author_candidate(root=project.root, chapter=chapter_index, confirmation=verified,
+                text=text, origin_label=origin_label, idempotency_key=key,
+                builder=self.chapter_cards.context_builder_factory(project.root))
+            return self._public_candidate(project.id,project.root,record['candidate_id'],import_completed=True,include_text=True)
+
     def generate(
         self,
         project_id: str,
@@ -289,6 +301,10 @@ class ChapterCandidateService:
         project = self.projects.get(project_id)
         key = _validated_idempotency_key(idempotency_key)
         executor = self.executor_factory(project.root)
+        if (project.root/f'.novelagent/runtime/budgets/c{chapter_index}/budget.json').exists():
+            from core.chapter_execution_budget import ChapterExecutionBudget
+            if executor.execution_budget is None and executor.execution_budget_factory is None:
+                executor.execution_budget_factory=ChapterExecutionBudget
         candidate_id = _candidate_id(book_id=project.book_id,chapter_index=chapter_index,idempotency_key=key)
         with chapter_service_operation(executor,project,chapter_index,_execution_id(candidate_id),
                 completed=ChapterCandidateStore(project.root).has_record(candidate_id)):
@@ -335,6 +351,8 @@ class ChapterCandidateService:
             store = ChapterCandidateStore(project.root)
             intent = _load_candidate_intent(store, candidate_id)
             _require_candidate_route(intent, project.book_id, chapter_index)
+            if intent['schema_version']==AUTHOR_CANDIDATE_VERSION:
+                raise ChapterCandidateWorkbenchConflict('已有稿件不需要继续模型生成；请使用原导入请求恢复。')
             if intent["intent_hash"] != _validated_sha256(
                 expected_intent_hash,
                 "expected_intent_hash",
@@ -468,6 +486,23 @@ class ChapterCandidateService:
                 include_text=True,
             )
 
+    def authorize_continuation(self, project_id, chapter_index, candidate_id, **kwargs):
+        from workbench.chapter_continuation import authorize
+        project=self.projects.get(project_id)
+        with _candidate_error_boundary():
+            intent=_load_candidate_intent(ChapterCandidateStore(project.root),candidate_id)
+            _require_candidate_route(intent,project.book_id,chapter_index)
+            authorize(self,project,intent,**kwargs)
+            return self._public_candidate(project.id,project.root,candidate_id,include_text=True)
+
+    def run_continuation(self, project_id, chapter_index, candidate_id, **kwargs):
+        from workbench.chapter_continuation import run
+        project=self.projects.get(project_id)
+        with _candidate_error_boundary():
+            intent=_load_candidate_intent(ChapterCandidateStore(project.root),candidate_id)
+            _require_candidate_route(intent,project.book_id,chapter_index)
+            return run(self,project,intent,**kwargs)
+
     def list_for_chapter(
         self,
         project_id: str,
@@ -501,13 +536,14 @@ class ChapterCandidateService:
         store = ChapterCandidateStore(project_root)
         intent = store.load_intent(candidate_id)
         record = store.load_record(candidate_id) if store.has_record(candidate_id) else None
-        resolution = load_candidate_provider_resolution(
+        is_author = intent['schema_version'] == AUTHOR_CANDIDATE_VERSION
+        resolution = None if is_author else load_candidate_provider_resolution(
             store.paths.run_dir,
             candidate_id,
         )
-        unresolved_calls = store.model_call_store(intent).list_uncertain_calls()
+        unresolved_calls = [] if is_author else store.model_call_store(intent).list_uncertain_calls()
         active = False
-        if not isinstance(record, Mapping):
+        if not isinstance(record, Mapping) and not is_author:
             active = execution_is_active(store.paths.run_dir, intent["execution"]["execution_id"])
             if not active:
                 # Execution may finish between the first record read and the
@@ -574,6 +610,7 @@ class ChapterCandidateService:
         }
         if include_text:
             prose_payload["text"] = prose_text
+        from workbench.chapter_continuation import view as continuation_view
         return {
             "candidate_id": candidate_id,
             "project_id": project_id,
@@ -588,12 +625,16 @@ class ChapterCandidateService:
                 "card_sha256": intent["author_confirmation"]["card_sha256"],
                 "context_sha256": intent["author_confirmation"]["context_sha256"],
                 "confirmation_sha256": intent["author_confirmation"]["confirmation_sha256"],
-            },
+            } if 'author_confirmation' in intent else None,
+            **({'generation_source':'policy','policy_authorization':copy.deepcopy(intent['policy_authorization'])}
+               if 'policy_authorization' in intent else {}),
             "chapter_intent": copy.deepcopy(intent["chapter_intent"]),
+            **({'generation_source':'author_import','origin_label':intent['author_import']['origin_label']} if is_author else {}),
             "prose": prose_payload,
             "draft_import": draft_import,
             "draft": _public_draft(draft, include_text=include_text),
             "uncertainty": uncertainty,
+            "continuation": continuation_view(project_root,intent) if uncertainty else None,
             "resolution": (
                 {
                     "action": resolution["action"],

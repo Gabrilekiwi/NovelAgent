@@ -75,5 +75,7 @@ def read_project_model_usage(root, *, book_id=None):
             item=project_model_attempt(identity,intent,receipt,active=observed)
             rows.append(budgets.project(binding,store,name,intent,receipt,item))
     rows.sort(key=lambda item:(item['created_at'],item['execution_id'],item['attempt_id']),reverse=True)
-    return {'schema_version':'model_usage_report_v1','scope':'project','observed_at':datetime.now(timezone.utc).isoformat(),
+    result={'schema_version':'model_usage_report_v1','scope':'project','observed_at':datetime.now(timezone.utc).isoformat(),
             'items':rows,'summary':summarize_model_attempts(rows),'chapter_budgets':budgets.reports()}
+    if budgets.batches:result['batch_budgets']=budgets.batches
+    return result

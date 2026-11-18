@@ -90,10 +90,10 @@ PROBLEM_METADATA = {
         "repair_hint": "Expand the scene with concrete plot movement, consequence, and cost.",
     },
     "missing_conflict_marker": {
-        "severity": "high",
-        "blocking": True,
-        "repair_action": "add_conflict_signal",
-        "repair_hint": "Add explicit danger, choice, threat, secret, cost, or conflict.",
+        "severity": "low",
+        "blocking": False,
+        "repair_action": "manual_review",
+        "repair_hint": "Advisory only: assess concrete action and consequences; do not insert conflict keywords to satisfy this lexical check.",
     },
     "forbidden_constraint_term": {
         "severity": "critical",

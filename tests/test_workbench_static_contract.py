@@ -12,6 +12,30 @@ ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "workbench" / "static"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_automatic_batch_entry_tracks_current_reviewed_project_without_starting_work() -> None:
+    script = r'''
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync(process.argv[1],'utf8');
+const start=source.indexOf('  const updateProjectChrome =');
+const end=source.indexOf('  const fillBookCard =',start);
+assert(start>=0 && end>start);
+const link={hidden:true,href:'#'},state={projectId:'book one/?',project:{reviewed_format:true}};
+const sandbox={state,one:selector=>selector==='[data-reviewed-batch-link]'?link:null,all:()=>[],
+ setText:()=>{},projectTitleOf:()=>'',projectGenreOf:()=>'',projectLanguageOf:()=>'',
+ projectHash:()=>'',updatePendingCount:()=>{}};
+vm.runInNewContext(source.slice(start,end)+'\nglobalThis.update=updateProjectChrome;',sandbox);
+sandbox.update();assert.equal(link.hidden,false);
+assert.equal(link.href,'/reviewed-batches?project_id=book%20one%2F%3F');
+state.projectId='second';sandbox.update();assert.equal(link.href,'/reviewed-batches?project_id=second');
+state.project={reviewed_format:false};sandbox.update();assert.equal(link.hidden,true);assert.equal(link.href,'#');
+state.project=null;state.projectId=null;sandbox.update();assert.equal(link.hidden,true);assert.equal(link.href,'#');
+'''
+    result = subprocess.run([shutil.which("node"), "-e", script, str(STATIC / "workbench-spa.js")],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_chapter_card_ui_is_source_bound_and_never_claims_to_generate() -> None:
     spa = (STATIC / "workbench-spa.js").read_text(encoding="utf-8")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
@@ -612,8 +636,8 @@ def test_context_budget_pause_is_explained_before_provider_or_quality_branches()
     assert "本地输入上下文为 ${budget.requiredTokens} tokens，上限 ${budget.hardLimit} tokens，超出 ${budget.overageTokens} tokens。" in spa
     assert "本次尝试在请求发出前停止：新增模型调用 0 次、新增费用 0" in spa
     assert "安全核对完成前不能重新执行" in spa
-    assert "const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && (Boolean(qualityRejection) || isQualityRevisionPause(session));" in spa
-    assert "const qualityRevision = !provenanceFailure && !contextBudget && !repairConvergence && !staleSceneEvidenceFailure && (Boolean(qualityRejection) || issue.quality_revision === true || isQualityRevisionPause(issue));" in spa
+    assert "const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && (Boolean(qualityRejection) || isQualityRevisionPause(session));" in spa
+    assert "const qualityRevision = !provenanceFailure && !contextBudget && !repairConvergence && !staleSceneEvidenceFailure && !sceneBoundaryValidationFailure && (Boolean(qualityRejection) || issue.quality_revision === true || isQualityRevisionPause(issue));" in spa
     assert 'form.dataset.recoveryMode = "context-budget"' in spa
     assert 'setText("[data-recover-button]", `确认重新执行第 ${chapter} 章`)' in spa
     assert 'contextBudget.verified ? "等待系统修复" : "等待安全核对"' in spa
@@ -802,7 +826,7 @@ def test_settled_stale_scene_evidence_failure_explains_retained_candidate() -> N
     assert "不会直接重试这次失败的修订" in spa
     assert "不要盲目重试这次失败修订" in spa
     assert 'form.dataset.recoveryMode = "stale-scene-evidence-classify"' in spa
-    assert "!staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation && !providerPartialResponse && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
+    assert "!staleSceneEvidence && !sceneBoundaryValidation && !sceneSchemaValidation && !bridgePrevalidation && !providerPartialResponse && !localBudgetAfterProvider && !contextBudgetAfterProvider && !structuredContextAfterProvider && !qualityRejection && jobStatus === \"needs_recovery\"" in spa
 
     assert stream.count('"chapter.stale_scene_evidence"') >= 3
     assert '"chapter.stale_scene_evidence": "自动修订与场景证据对不齐，任务已安全暂停"' in stream
@@ -1536,7 +1560,7 @@ def test_pre_provider_provenance_git_failure_is_system_blocked_not_recovery() ->
     assert "const provenanceFailure = paused ? preProviderProvenanceDetailsOf(session) : null;" in spa
     assert "provenanceFailure?.verified && session?.resume_ready === true" in spa
     assert "const contextBudget = paused && !provenanceFailure ? contextBudgetDetailsOf(session) : null;" in spa
-    assert "const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && (Boolean(qualityRejection) || isQualityRevisionPause(session));" in spa
+    assert "const qualityRevision = paused && !provenanceFailure && !contextBudget && !repairConvergence && !repairAuthority && !staleSceneEvidence && !sceneBoundaryValidation && (Boolean(qualityRejection) || isQualityRevisionPause(session));" in spa
     assert "const providerUncertain = paused && !provenanceFailure && !contextBudget" in spa
 
     assert "检测到疑似 Git 来源记录环境异常，正在进行安全核对。" in spa

@@ -7,11 +7,23 @@ import json
 
 from core.engine.safe_paths import assert_safe_local_tree
 from core.story_project.paths import resolve_outline, resolve_prose, scan_prose_chapters
+from core.story_project.mapper import extract_chapter_title
 from core.story_project.reviewed_identity import load_verified_reviewed_identity, validate_reviewed_identity
 from core.story_project.reviewed_state_document import digest, read_project_bytes, verify_current_sources
 from core.story_project.reviewed_state_store import read_verified_commit_requests
 from workbench.chapter_commits import ChapterCommitRecoveryRequired
 from workbench.projects import ProjectRegistry
+
+
+def _display_title(root, chapter, outline, prose):
+    for source in (outline, prose):
+        if source.path is None or source.conflict:
+            continue
+        text = read_project_bytes(root, source.path.relative_to(root).as_posix()).decode('utf-8')
+        title = extract_chapter_title(text, source.path)
+        if title and title != '无题':
+            return title
+    return f'第 {chapter} 章'
 
 
 class ProjectDisplayRegistry(ProjectRegistry):
@@ -113,7 +125,7 @@ class ReviewedProjectViews:
         for chapter in sorted(indexes):
             prose, outline = resolve_prose(record.root, chapter), resolve_outline(record.root, chapter)
             exists = prose.path is not None and not prose.conflict
-            items.append({"chapter":chapter, "title":f"第 {chapter} 章", "has_prose":exists,
+            items.append({"chapter":chapter, "title":_display_title(record.root,chapter,outline,prose), "has_prose":exists,
                 "has_outline":outline.path is not None and not outline.conflict, "status":"committed" if exists else "draft",
                 "publication":publications.get(chapter), "reviewed_format":True})
         return items
@@ -130,7 +142,7 @@ class ReviewedProjectViews:
         published = publications.get(chapter)
         if published and (raw is None or digest(raw) != published["prose_sha256"]):
             raise ChapterCommitRecoveryRequired("published prose changed during display")
-        return {"project":{"id":record.id,"title":record.name}, "chapter":chapter, "title":f"第 {chapter} 章",
+        return {"project":{"id":record.id,"title":record.name}, "chapter":chapter, "title":_display_title(record.root,chapter,outline,prose),
             "reviewed_format":True, "has_prose":raw is not None, "has_outline":outline.path is not None and not outline.conflict,
             "status":"committed" if raw is not None else "draft", "current_prose":None if raw is None else raw.decode("utf-8"),
             "current_sha256":None if raw is None else digest(raw), "publication":published,

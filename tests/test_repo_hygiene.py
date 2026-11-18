@@ -92,7 +92,7 @@ class RepoHygieneTest(unittest.TestCase):
                 values[key] = value
 
         self.assertEqual("gpt-4.1-mini", values["OPENAI_MODEL"])
-        self.assertEqual("claude-3-5-sonnet-latest", values["CLAUDE_MODEL"])
+        self.assertEqual("claude-opus-5-5", values["CLAUDE_MODEL"])
         for key, value in values.items():
             if key.endswith("_MODEL"):
                 continue

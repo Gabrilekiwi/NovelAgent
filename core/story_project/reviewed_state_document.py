@@ -331,9 +331,15 @@ def prepare_chapter_document(*, document: bytes, book_id: str, preparation: dict
             or binding["committed_through"] != value["committed_through"]
             or binding["reviewed_source_sha256"] != digest(document)
             or binding["manual_sources_sha256"] != value["source_revision"]["sha256"]
-            or binding["acceptance_kind"] != "author"
+            or binding["acceptance_kind"] not in {"author","policy"}
             or p["request_sha256"] != digest({"version": PREPARATION_VERSION, "binding": binding})):
         fail("reviewed_preparation_stale")
+    policy=binding['acceptance_kind']=='policy'
+    if policy:
+        from core.engine.reviewed_policy_review import verify_policy_preparation
+        verify_policy_preparation(p)
+    elif 'policy_review' in p or 'policy_acceptance' in binding:
+        fail('reviewed_acceptance_source_invalid')
     support = normalize_fact_support(p.get("support"))
     if (support is not None and binding.get("support_sha256") != digest(support)
             or support is None and "support_sha256" in binding):
@@ -356,8 +362,12 @@ def prepare_chapter_document(*, document: bytes, book_id: str, preparation: dict
         "before_sha256": binding["state_before_sha256"], "after_sha256": digest(value["current_state"]),
         "draft_id": binding["draft_id"], "draft_revision": binding["draft_revision"],
         "review_id": binding["review_id"], "review_revision": binding["review_revision"],
-        "confirmation_sha256": binding["confirmation_sha256"], "acceptance_kind": binding["acceptance_kind"],
+        "acceptance_kind": binding["acceptance_kind"],
         "idempotency_scope_sha256": p["idempotency_scope_sha256"]}
+    if policy:
+        value['last_transition'].update(policy_review=copy.deepcopy(p['policy_review']),
+            policy_acceptance=copy.deepcopy(binding['policy_acceptance']))
+    else:value['last_transition']['confirmation_sha256']=binding['confirmation_sha256']
     if support is not None:
         value["last_transition"].update(support=support, support_sha256=digest(support))
     value["head"] = publication_head(run_id=run_id, kind="chapter", request_sha256=p["request_sha256"],
@@ -435,9 +445,11 @@ def verify_transition(*, document: bytes, previous_document: bytes, book_id: str
         from core.engine.chapter_commit_prepare import normalize_commit_prose
 
         support = normalize_fact_support(change.get("support"))
+        policy=change.get('acceptance_kind')=='policy'
+        approval_fields={'policy_review','policy_acceptance'} if policy else {'confirmation_sha256'}
         _shape(change, {"kind", "facts", "facts_sha256", "chapter_sha256", "before_sha256", "after_sha256",
-            "draft_id", "draft_revision", "review_id", "review_revision", "confirmation_sha256",
-            "acceptance_kind", "idempotency_scope_sha256"} | ({"support", "support_sha256"} if support is not None else set()), "reviewed_transition_invalid")
+            "draft_id", "draft_revision", "review_id", "review_revision",
+            "acceptance_kind", "idempotency_scope_sha256"} | approval_fields | ({"support", "support_sha256"} if support is not None else set()), "reviewed_transition_invalid")
         if support is not None and change["support_sha256"] != digest(support):
             fail("reviewed_support_binding_mismatch")
         if (change["kind"] != "chapter" or chapter_prose is None or change["chapter_sha256"] != digest(chapter_prose)
@@ -446,9 +458,20 @@ def verify_transition(*, document: bytes, previous_document: bytes, book_id: str
                 or current["source_decisions"] != previous["source_decisions"]
                 or change["before_sha256"] != digest(previous["current_state"])
                 or change["after_sha256"] != digest(current["current_state"])
-                or change["facts_sha256"] != digest(change["facts"]) or change["acceptance_kind"] != "author"):
+                or change["facts_sha256"] != digest(change["facts"]) or change["acceptance_kind"] not in {'author','policy'}):
             fail("reviewed_chapter_transition_mismatch")
-        for key in ("confirmation_sha256", "idempotency_scope_sha256"):
+        if policy:
+            from core.engine.reviewed_policy_review import validate_policy_fact_review,policy_acceptance
+            review=validate_policy_fact_review(change['policy_review'])
+            if (support is not None or change['policy_acceptance']!=policy_acceptance(review)
+                    or digest(change['policy_acceptance'])!=digest(policy_acceptance(review))
+                    or review['book_id']!=book_id or review['chapter']!=current['committed_through']
+                    or normalize_commit_prose(review['source_text']).encode('utf-8')!=chapter_prose
+                    or review['facts']!=change['facts']
+                    or any(change[k]!=review[v] for k,v in {'review_id':'id','review_revision':'revision',
+                        'draft_id':'draft_id','draft_revision':'source_draft_revision'}.items())):
+                fail('reviewed_policy_transition_mismatch')
+        for key in (("idempotency_scope_sha256",) if policy else ("confirmation_sha256", "idempotency_scope_sha256")):
             _sha(change[key])
         for key in ("draft_revision", "review_revision"):
             _positive(change[key])

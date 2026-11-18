@@ -27,6 +27,34 @@ def seed_job(c,value=None):
     return job
 
 
+@pytest.mark.parametrize('damage',['none','needs_recovery','repair_not_converging','unknown_error','active','missing_event','later_event','nonempty','success'])
+def test_empty_failed_child_output_is_preserved_as_diagnostics(archive_case,private_temporary_directory,damage):
+    c=archive_case;job=seed_job(c)
+    path=c['runtime']/job.id/'chapter_0001/stdout.json';path.parent.mkdir(parents=True)
+    path.write_bytes(b'' if damage!='nonempty' else b'{broken')
+    payload={'chapter':1,'automatic_retry':False,'error':{'code':'engine_result_unreadable',
+        'exit_code':0 if damage=='success' else 1}}
+    event_type='chapter.needs_revision'
+    if damage=='needs_recovery':event_type='chapter.needs_recovery'
+    if damage=='repair_not_converging':
+        event_type='chapter.repair_not_converging';payload['error']['code']='chapter_repair_not_converging'
+    if damage=='unknown_error':payload['error']['code']='unknown'
+    with c['db'].transaction() as connection:
+        connection.execute('UPDATE jobs SET state=? WHERE id=?',('awaiting_input' if damage=='active' else 'cancelled',job.id))
+        if damage!='missing_event':
+            connection.execute("INSERT INTO job_events(job_id,sequence,event_type,payload_json,created_at) VALUES (?,999,?,?,'now')",(job.id,event_type,json.dumps(payload)))
+        if damage=='later_event':
+            connection.execute("INSERT INTO job_events(job_id,sequence,event_type,payload_json,created_at) VALUES (?,1000,'chapter.started',?,'now')",(job.id,json.dumps({'chapter':1})))
+    package=Path(capture(c)['path'])
+    with absent_source(c['root']):result=inspect(c,package,private_temporary_directory)
+    if damage in {'none','needs_recovery','repair_not_converging'}:
+        assert result['references_verified']
+        assert result['diagnostic_outputs'][0]['job_id']==job.id
+        assert result['recoverable'] is False
+    else:
+        assert 'run_metadata_unreadable' in {b['code'] for b in result['blockers']}
+
+
 def test_source_book_and_external_job_root_can_be_absent_while_graph_is_checked(archive_case,private_temporary_directory):
     c=archive_case;job=seed_job(c);artifact=c['runtime']/job.id/'draft.json'
     artifact.parent.mkdir(parents=True);artifact.write_text('{"text":"saved author draft"}')

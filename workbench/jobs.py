@@ -9,6 +9,7 @@ import json
 import os
 import re
 import stat
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -423,7 +424,9 @@ class JobStore:
             ).fetchone()
             if prior is not None:
                 record = _job_from_row(prior)
-                if (
+                if record.state in {"failed", "cancelled"}:
+                    job_id = f"job_{uuid.uuid4().hex}"
+                elif (
                     record.project_id != str(project_id)
                     or record.kind != kind
                     or record.start_chapter != start_chapter
@@ -431,7 +434,8 @@ class JobStore:
                     or record.config != safe_config
                 ):
                     raise JobError("idempotency key was already used for another job")
-                return record
+                else:
+                    return record
             parent_id = safe_config.get("parent_job_id")
             if parent_id is not None:
                 parent = _require_job_row(connection, str(parent_id))
@@ -2199,7 +2203,16 @@ class JobSupervisor:
                 self._wake.clear()
 
     def _run_one_job(self) -> bool:
-        job=self.store.claim_next()
+        try:
+            job=self.store.claim_next()
+        except sqlite3.OperationalError as exc:
+            # No job was returned and no execution has started. A concurrent
+            # reviewed chapter may own SQLite's writer lock longer than its
+            # busy timeout. Retry admission later; never replay a running job.
+            code=getattr(exc,'sqlite_errorcode',None)
+            if isinstance(code,int) and code & 0xff in {sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED}:
+                return False
+            raise
         if job is None:return False
         try:
             if job.kind == "generation_session":self._run_generation_session(job)
@@ -2939,15 +2952,23 @@ class JobSupervisor:
                         uncertain=False,
                     )
                     return
+                stderr_tail = execution.get("stderr_tail")
+                unreadable_error: dict[str, Any] = {
+                    "code": "engine_result_unreadable",
+                    "exit_code": execution.get("exit_code"),
+                    "stderr_tail": stderr_tail,
+                }
+                uncertain_message = _provider_uncertain_user_message(stderr_tail)
+                if uncertain_message:
+                    unreadable_error["message"] = uncertain_message
+                    unreadable_error["user_message"] = uncertain_message
+                    unreadable_error["error_type"] = "ProviderCallUncertainError"
+
                 self.store.chapter_failed(
                     job.id,
                     chapter=chapter,
-                    error={
-                        "code": "engine_result_unreadable",
-                        "exit_code": execution.get("exit_code"),
-                        "stderr_tail": execution.get("stderr_tail"),
-                    },
-                    uncertain=_contains_uncertainty(execution.get("stderr_tail")),
+                    error=unreadable_error,
+                    uncertain=_contains_uncertainty(stderr_tail),
                 )
                 return
             verification = verify_committed_chapter(project_root, chapter, result)
@@ -3147,6 +3168,15 @@ class JobSupervisor:
                 if conflict is not None:
                     result_payload["draft_source_conflict"] = conflict
             self.store.recovery_succeeded(job.id, result_payload)
+            if result_payload.get("action") == "reset":
+                parent_id = job.config.get("parent_job_id")
+                if isinstance(parent_id, str) and parent_id.strip():
+                    try:
+                        parent = self.store.get(parent_id)
+                    except JobError:
+                        parent = None
+                    if parent is not None and parent.state in PAUSED_JOB_STATES:
+                        self.store.request_cancel(parent.id)
             if isinstance(draft_id, str) and isinstance(draft_revision, int):
                 try:
                     self.store.mark_draft_validated(
@@ -3163,15 +3193,23 @@ class JobSupervisor:
                         {"draft_id": draft_id, "expected_revision": draft_revision},
                     )
             return
-        self.store.fail_job(
-            job.id,
-            {
-                "code": "locked_chapter_recovery_failed",
-                "exit_code": execution.get("exit_code"),
-                "stderr_tail": execution.get("stderr_tail"),
-                "result": _compact_result(result) if isinstance(result, dict) else None,
-            },
-        )
+        recovery_error: dict[str, Any] = {
+            "code": "locked_chapter_recovery_failed",
+            "exit_code": execution.get("exit_code"),
+            "stderr_tail": execution.get("stderr_tail"),
+            "result": _compact_result(result) if isinstance(result, dict) else None,
+        }
+        if isinstance(result, dict):
+            payload_error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
+            message = str(
+                payload_error.get("message") or result.get("message") or result.get("reason") or ""
+            ).strip()
+            if message:
+                recovery_error["message"] = message
+                recovery_error["reason"] = message
+                if payload_error.get("type"):
+                    recovery_error["error_type"] = payload_error.get("type")
+        self.store.fail_job(job.id, recovery_error)
 
     def _execute_subprocess(
         self, job_id: str, chapter: int, command: Sequence[str], paths: Mapping[str, Path],
@@ -8574,6 +8612,17 @@ def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
     return False
 
 
+
+def _provider_uncertain_user_message(stderr_tail: Any) -> str | None:
+    text = str(stderr_tail or "")
+    if "ProviderCallUncertainError" not in text and "provider_call_uncertain" not in text:
+        return None
+    return (
+        "上次模型调用结果不确定，没有完整回执。不要盲目重试；"
+        "请先结束本章失败尝试，再开始新的一次写作。"
+    )
+
+
 def _compact_result(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -8617,6 +8666,15 @@ def _compact_result(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
             "unsettled_attempt_count": budget.get("unsettled_attempt_count"),
             "chapter_chars": run_chapter.get("chars"),
             "draft_source_conflict": value.get("draft_source_conflict"),
+            "message": value.get("message"),
+            "error": (
+                {
+                    "type": value["error"].get("type"),
+                    "message": value["error"].get("message"),
+                }
+                if isinstance(value.get("error"), Mapping)
+                else None
+            ),
         }
     )
 

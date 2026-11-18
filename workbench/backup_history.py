@@ -16,6 +16,10 @@ from workbench.backup_history_discovery import discover_history_layout
 class BackupHistoryError(ValueError):
     code='backup_history_unverified'
 
+    def __init__(self,message,*,gap=None):
+        super().__init__(message)
+        self.gap=gap
+
 
 def verify_legacy_history(root,tree,*,book_id,max_search=1000000):
     try:
@@ -144,7 +148,7 @@ def _verify_legacy_history(root,tree,*,book_id,max_search,additional=None,layout
     # A surviving final run can expose a journal deleted as a whole (including
     # its directory). Do not infer completeness merely from directories left.
     run_roots=layout.legacy_controls
-    final_records=[]
+    final_records=[];nontransactional_runs=[]
     for name in files:
         path=PurePosixPath(name)
         if path.suffix!='.json' or str(path.parent) not in run_roots:continue
@@ -152,6 +156,19 @@ def _verify_legacy_history(root,tree,*,book_id,max_search,additional=None,layout
         run=value.get('run');persistence=value.get('persistence')
         if persistence is None and isinstance(run,dict):persistence=run.get('persistence')
         if persistence is None:continue
+        # A pre-target validation failure has no transaction to recover. This
+        # exact producer shape differs from prepare/commit failures that name a
+        # journal (those still need their original complete evidence).
+        if (isinstance(persistence,dict) and isinstance(run,dict)
+                and set(persistence)=={'run_id','state','committed','partial','targets','errors'}
+                and persistence['state']=='preparation_failed'
+                and persistence['committed'] is False and persistence['partial'] is False
+                and persistence['targets']==[] and isinstance(persistence['errors'],list) and persistence['errors']
+                and run.get('status')=='failed' and persistence['run_id']==run.get('id')==path.stem
+                and not any(entry['run_id']==run['id'] for entry in evidence)):
+            nontransactional_runs.append({'path':name,'sha256':files[name]['sha256'],
+                'run_id':run['id'],'state':'preparation_failed_before_targets'})
+            continue
         if (not isinstance(persistence,dict) or not isinstance(run,dict)
                 or persistence.get('partial') is not False
                 or persistence.get('state') not in {'completed','rolled_back'}
@@ -170,6 +187,10 @@ def _verify_legacy_history(root,tree,*,book_id,max_search,additional=None,layout
             raise BackupHistoryError('最终运行记录与保留事务不同。')
         final_records.append({'path':name,'sha256':files[name]['sha256'],'journal':relative})
 
+    from workbench.legacy_history_revisions import read_revisions
+    revisions,revision_evidence=read_revisions(tree=tree,book_id=book_id,transactions=transactions,record=record)
+    original_transactions=dict(transactions)
+    transactions.update(revisions)
     # Reverse all transactions atomically across their complete target sets.
     # Repeated hashes/no-op writes and independent roots can create ties; search
     # those orders, bounded explicitly, rather than trust clocks or filenames.
@@ -180,10 +201,14 @@ def _verify_legacy_history(root,tree,*,book_id,max_search,additional=None,layout
             result={'schema_version':'legacy_backup_history_v1','state':'verified',
                     'coverage':'retained_v1_journals_and_known_final_run_references','transactions':evidence,
                     'final_run_records':final_records,
+                    'nontransactional_runs':nontransactional_runs,
+                    'external_revisions':revision_evidence,
                     'consistent_reverse_order':order,'current_targets':observed,'baseline_targets':state}
             if additional and additional[0]:
                 result.update(schema_version='mixed_backup_history_v1',
                     coverage='retained_v1_v2_journals_and_known_final_run_references')
+            if revision_evidence:
+                result['coverage']='retained_transactions_and_explicit_observed_external_revisions'
             result['history_sha256']=digest(result)
             return result
         key=(remaining,tuple(sorted(state.items())))
@@ -197,4 +222,6 @@ def _verify_legacy_history(root,tree,*,book_id,max_search,additional=None,layout
                 if work>max_search:raise BackupHistoryError('历史排序核验超过计算上限，未获得完整证明。')
                 previous={**state,**{name:before for name,(before,_) in targets.items()}}
                 stack.append((remaining-{journal},previous,order+[journal]))
-    raise BackupHistoryError('历史目标链无法衔接到当前完整文件状态。')
+    raise BackupHistoryError('历史目标链无法衔接到当前完整文件状态。',gap={
+        'transactions':original_transactions,'observed':observed,'remaining':sorted(remaining),
+        'state':state,'reverse_order':order,'external_revisions':revision_evidence})

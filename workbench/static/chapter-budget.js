@@ -2,7 +2,13 @@
   'use strict';
   const doc=document, UI=window.NovelAgentUI;
   const fields=['max_provider_calls','max_input_tokens','max_output_tokens','max_active_seconds'];
+  const moneyFields=['budget_currency','budget_amount','budget_input_price','budget_cached_price','budget_output_price'];
   const quantity=value => value == null ? '未知' : String(value);
+  const priceLines=b=>(b.pricing || []).flatMap(row=>[
+    `冻结价格：${row.provider} / ${row.model} / ${row.endpoint_type}；服务档位：${row.billing_policy?.service_tier || '旧价格记录未绑定档位'}`,
+    `每百万 token：输入 ${row.input_price_per_million}，缓存命中 ${quantity(row.cache_read_price_per_million)}，输出 ${row.output_price_per_million} ${row.currency}`,
+    ...['5m','1h'].filter(ttl=>row[`cache_write_${ttl}_price_per_million`]!=null)
+      .map(ttl=>`缓存写入 ${ttl}：${row[`cache_write_${ttl}_price_per_million`]} ${row.currency} / 百万 token`)]);
   const errorMessage=error=>({
     chapter_budget_evidence_invalid:'本章预算记录未能通过核验。请保留原记录并检查恢复状态。',
     chapter_time_evidence_invalid:'本章计时记录未能通过核验。请保留原记录并检查恢复状态。',
@@ -13,7 +19,8 @@
     if(!report)return {blocked:true,message:'正在读取本章预算…',lines:[]};
     if(report.state==='not_configured')return {blocked:true,message:'请在首次生成前确认本章限额。',lines:[]};
     if(report.state==='initializing')return {blocked:true,message:'上次预算确认中断。核对原限额后可继续完成确认，已有配置不会更改。',
-      lines:[report.budget.amount_limit==null?'原预算未启用金额控制。':`原金额上限：${report.budget.amount_limit} ${report.budget.currency}；价格配置需在原配置入口核对。`]};
+      lines:[report.budget.amount_limit==null?'原预算未启用金额控制。':`原金额上限：${report.budget.amount_limit} ${report.budget.currency}`,
+        ...priceLines(report.budget)]};
     if(report.state!=='ready' || !report.budget || !report.usage || !report.time)throw Error('预算记录不完整，请重新读取。');
     const b=report.budget,u=report.usage,t=report.time;
     const lines=[
@@ -28,6 +35,7 @@
         : `金额占用（估算及预留）：${quantity(u.charged_amount)} / ${b.amount_limit} ${b.currency}`,
       '占用包含已用和未释放的预留，不能当作实际账单；每次请求前还会检查所需额度。'
     ];
+    if(b.amount_limit!=null)lines.push(...priceLines(b));
     let message='本章限额已确认；生成与事实提取共用，刷新不会重置。';
     let blocked=true;
     if(t.active_status==='running')message='本章正在执行，当前区间结束后更新已测耗时。';
@@ -45,6 +53,8 @@
   const refresh=doc.querySelector('[data-chapter-budget-refresh]');
   const submit=doc.querySelector('[data-chapter-budget-submit]');
   const errorBox=doc.querySelector('[data-chapter-budget-error]');
+  const moneyBox=doc.querySelector('[data-chapter-budget-money]');
+  const moneyNote=doc.querySelector('[data-chapter-budget-money-note]');
   let context=null,report=null,serial=0,writing=false,onChange=()=>{};
   const node=(tag,text)=>{const value=doc.createElement(tag);value.textContent=text;return value;};
   const current=(captured,number)=>context===captured && serial===number;
@@ -53,8 +63,22 @@
   const render=()=>{
     const view=presentation(report);status.textContent=view.message;
     body.replaceChildren(...view.lines.map(line=>node('p',line)));
-    form.hidden=!context?.canFreeze || report?.state==='ready' || !report
-      || (report.state==='initializing' && report.budget.amount_limit!=null);
+    form.hidden=!context?.canFreeze || report?.state==='ready' || !report;
+    const original=report?.state==='initializing',option=report?.monetary_option;
+    if(original)form.elements.monetary_enabled.checked=report.budget.amount_limit!=null;
+    else if(!option?.available && form.elements.monetary_enabled.checked){
+      form.elements.monetary_enabled.checked=false;form.elements.author_confirmed.checked=false;
+    }
+    moneyBox.hidden=!option?.available && !(original && report.budget.amount_limit!=null);
+    form.elements.monetary_enabled.disabled=writing || original || !option?.available;
+    moneyNote.textContent=option?.available
+      ? `${option.model}，官方标准端点，${option.service_tier}档位；每次最多按 ${option.input_reservation_per_call} 输入 token 保守预留。${option.message}`
+      : option?.message || '当前配置未提供可核对的金额契约。';
+    if(original && report.budget.amount_limit!=null)moneyNote.textContent=`继续完成原金额预算：${report.budget.amount_limit} ${report.budget.currency}。本次保留原价格和全部限额。`;
+    for(const name of moneyFields){
+      form.elements[name].disabled=writing || original || !form.elements.monetary_enabled.checked || !option?.available;
+      form.elements[name].required=!form.elements[name].disabled;
+    }
     if(report?.state==='initializing')for(const name of fields)form.elements[name].value=report.budget[name];
     for(const name of fields)form.elements[name].disabled=writing || report?.state==='initializing';
     submit.textContent=report?.state==='initializing'?'继续确认原预算':'确认本章限额';
@@ -70,6 +94,7 @@
   const load=async()=>{
     if(!context || writing)return;
     const captured=context,number=++serial;
+    form.elements.author_confirmed.checked=false;
     refresh.disabled=true;clearError();report=null;render();
     try {
       const response=await fetch(path(captured),{credentials:'same-origin',headers:UI.requestHeaders()});
@@ -104,6 +129,15 @@
         if(name==='max_active_seconds')configuration[name]=raw;
         else {const value=Number(raw);if(!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(value))throw Error('请填写有效的正整数限额。');configuration[name]=value;}
       }
+      if(report?.state!=='initializing' && form.elements.monetary_enabled.checked) {
+        const option=report?.monetary_option;
+        if(!option?.available)throw Error('当前模型的金额契约不可用，请重新读取预算。');
+        const value=name=>form.elements[name].value.trim();
+        configuration.amount_limit=value('budget_amount');configuration.currency=value('budget_currency');
+        configuration.pricing=[{...option.pricing_template,currency:configuration.currency,
+          input_price_per_million:value('budget_input_price'),cache_read_price_per_million:value('budget_cached_price'),
+          output_price_per_million:value('budget_output_price')}];
+      }
       if(!form.elements.author_confirmed.checked)throw Error('请先勾选确认本章限额。');
       writing=true;clearError();render();refresh.disabled=true;
       const response=await fetch(path(captured),{method:'POST',credentials:'same-origin',headers:UI.requestHeaders({'Content-Type':'application/json'}),
@@ -123,5 +157,8 @@
     }
   });
   refresh?.addEventListener('click',()=>void load());
+  form?.addEventListener('change',event=>{
+    if(event.target.name!=='author_confirmed'){form.elements.author_confirmed.checked=false;if(report)render();}
+  });
   window.NovelAgentChapterBudget={presentation,setContext,refresh:load};
 })();

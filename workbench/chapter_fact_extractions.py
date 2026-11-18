@@ -149,7 +149,7 @@ class ChapterFactExtractionService:
                         "revision": draft.revision,
                         "sha256": draft.sha256,
                     },
-                    context_sha256=intent["source"]["context_sha256"],
+                    context_sha256=trusted.context_sha256,
                     authority_binding=intent["authority"],
                     chapter_text=draft.text,
                     authority_view=view.to_dict(),
@@ -347,7 +347,8 @@ class ChapterFactExtractionService:
                 "当前章节上下文或权威状态不可用；事实提取尚未启动。",
                 code=exc.code,
             ) from exc
-        if trusted.context_sha256 != intent["source"]["context_sha256"]:
+        source = self.chapter_facts.review_source(draft, intent)
+        if trusted.context_sha256 != source["context_sha256"]:
             raise ChapterFactExtractionWorkbenchConflict(
                 "章节上下文已不同于正文 Candidate；请重新生成正文。",
                 code="chapter_fact_authority_changed",
@@ -552,11 +553,12 @@ class ChapterFactExtractionService:
             return False, "candidate_draft_changed"
         try:
             _draft, candidate_intent = self.chapter_facts.verify_draft_source(draft.id)
+            source = self.chapter_facts.review_source(current, candidate_intent)
         except ChapterFactReviewConflict:
             return False, "authority_or_source_changed"
         if (
             candidate_intent["intent_hash"] != intent["candidate"]["intent_hash"]
-            or candidate_intent["source"]["context_sha256"]
+            or source["context_sha256"]
             != intent["context"]["context_sha256"]
         ):
             return False, "candidate_or_context_changed"

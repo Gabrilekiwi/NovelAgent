@@ -34,6 +34,15 @@ def verify_quality_binding(quality, preparation):
     from core.quality_decision import resolve_quality_policy
     from core.story_project.coverage import build_text_blueprint_coverage
     p, q = preparation, quality
+    quality_policy=resolve_quality_policy('standard').to_dict()
+    if p['binding'].get('acceptance_kind')=='policy':
+        from core.engine.reviewed_policy_review import verify_policy_preparation
+        from core.quality.reviewed_disposition import project_reviewed_quality_disposition
+        review=verify_policy_preparation(p)
+        quality_policy=review['batch_grant']['manifest']['quality_policy']
+        action_policy=review['batch_grant']['manifest']['action_policy']
+        _require(project_reviewed_quality_disposition(preparation=p,quality=q,policy_snapshot=action_policy)['automatic_action']=='continue',
+            'policy publication requires all automatic-admission gates to pass')
     _require(isinstance(q, dict) and q.get("quality_preparation_version") == "reviewed_candidate_quality_v1"
         and q.get("stage") == "candidate_quality_checked" and q.get("publication_authorized") is False
         and q.get("quality_coverage_complete") is True and q.get("pending_gates") == []
@@ -45,7 +54,8 @@ def verify_quality_binding(quality, preparation):
         and binding["chapter_preparation_sha256"] == p["preparation_sha256"]
         and binding["request_sha256"] == p["request_sha256"]
         and binding["idempotency_scope_sha256"] == p["idempotency_scope_sha256"]
-        and binding["quality_policy"] == resolve_quality_policy("standard").to_dict()
+        and binding["quality_policy"] == quality_policy
+        and digest(binding['quality_policy']) == digest(quality_policy)
         and binding["state_after_sha256"] == digest(p["fact_preparation"]["state_after"])
         and binding["rule_pack_sha256"] == digest(q["rule_pack"])
         and binding["candidate_evidence_sha256"] == digest(q["candidate_evidence"])

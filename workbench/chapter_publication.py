@@ -6,8 +6,10 @@ write transaction -> persistence locks is the fixed acquisition order.
 from __future__ import annotations
 
 import json
+import time
 from contextlib import contextmanager
 from pathlib import Path
+from core.chapter_execution_budget import ChapterExecutionBudget
 
 from core.engine.chapter_commit_request import chapter_commit_request, prepare_commit_request_evidence
 from core.engine.persistence import atomic_create_json
@@ -30,12 +32,14 @@ INTENT_VERSION = "reviewed_commit_intent_v1"
 
 class ChapterPublicationService:
     def __init__(self, *, preparations, machine_store=None, quality_policy="standard",
-                 fault_injector=None, persistence_fault_injector=None):
+                 fault_injector=None, persistence_fault_injector=None,
+                 execution_budget_factory=ChapterExecutionBudget):
         self.preparations = preparations
         self.database, self.projects = preparations.database, preparations.projects
         self.index = ChapterCommitIndex(database=self.database, projects=self.projects)
         self.machine_store, self.quality_policy = machine_store, quality_policy
         self.fault_injector, self.persistence_fault_injector = fault_injector, persistence_fault_injector
+        self.execution_budget_factory=execution_budget_factory
 
     def _registration(self, project_id, connection):
         row = connection.execute("SELECT id, book_id, root FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -82,38 +86,77 @@ class ChapterPublicationService:
             if not prepare_new:
                 return {"state": "not_started", "committed": False, "publication_verified": False,
                     "retry_requires_new_key": False}
-            preparation = self.preparations.prepare(**route, connection=connection)
-            trusted = ReviewedChapterCandidateContextBuilder(root).build(chapter)
-            run_id = f"commit_{incoming['idempotency_scope_sha256'][:32]}"
-            tx, arguments = build_reviewed_chapter_transaction(trusted_context=trusted,
-                chapter_preparation=preparation, request=incoming, run_id=run_id,
-                quality_policy=self.quality_policy, fault_injector=self.persistence_fault_injector)
-            if owner.require(**owner_args) != ownership:
-                raise ChapterCommitConflict("book ownership changed during preparation")
-            evidence = prepare_commit_request_evidence(preparation=preparation, request=incoming)
-            intent = {"version": INTENT_VERSION, "run_id": run_id, "evidence": evidence,
-                "ownership_sha256": ownership["record_sha256"]}
-            intent["intent_sha256"] = digest(intent)
-            intents.mkdir(parents=True, exist_ok=True)
-            atomic_create_json(intent_path, intent)
-            self._fault("after_intent", intent)
-            tx.prepare(**arguments)
-            self._fault("after_prepare", intent)
-            self._fault("before_commit", intent)
-            if (owner.require(**owner_args) != ownership
-                    or self.preparations.prepare(**route, connection=connection) != preparation):
-                raise ChapterCommitConflict("author request or ownership changed before publication")
-            result = tx.commit()
-            if not result["committed"]:
-                self._reconcile_owned_persistence(tx_root, book_id=current["book_id"])
-            self._fault("after_file_commit_before_index", intent)
-            if owner.require(**owner_args) != ownership:
-                raise ChapterCommitConflict("book ownership changed after file publication")
-            published = self.index.find_published(**index_args)
-            if published is None:
-                return self._original_unpublished(intent_path, incoming=incoming, tx_root=tx_root)
-            self._fault("before_db_commit", published)
-            return published
+            with self._local_operation(route,root,current,connection,'execution_publish_'+incoming['client_request_sha256'][:32]) as (check, budget):
+                return self._publish_new(route,context=context,incoming=incoming,index_args=index_args,
+                    intent_path=intent_path,before_effect=check)
+
+    @contextmanager
+    def _local_operation(self,route,root,current,connection,operation_id):
+        # The source family comes from verified immutable storage, never a client
+        # request flag. Author text needs no generation allowance or new ledger.
+        from core.engine.chapter_candidate import ChapterCandidateStore, AUTHOR_CANDIDATE_VERSION
+        draft,review=self.preparations._read_pair(route['review_id'],connection=connection)
+        if (draft.project_id!=route['project_id'] or draft.chapter!=route['chapter']
+                or review.project_id!=route['project_id'] or review.chapter!=route['chapter']):
+            raise ChapterCommitConflict('review does not belong to the requested chapter')
+        candidate=ChapterCandidateStore(root).load(draft.candidate_id)
+        if candidate['intent']['schema_version']==AUTHOR_CANDIDATE_VERSION:
+            if (candidate['status']!='completed' or candidate['intent']['book_id']!=current['book_id']
+                    or candidate['intent']['chapter_index']!=route['chapter']):
+                raise ChapterCommitConflict('author import binding differs from this chapter')
+            deadline=time.monotonic()+120
+            def check():
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise ChapterCommitConflict('本地入稿检查超时，请保留原请求并重试。')
+                return remaining
+            yield check,None
+        else:
+            budget=self.execution_budget_factory(root,book_id=current['book_id'],chapter=route['chapter'])
+            with budget.operation(operation_id,allow_provider_dispatch=False) as action:
+                yield action.interval.remaining_seconds,budget
+
+    def _publish_new(self, route, *, context, incoming, index_args, intent_path, before_effect,prepare=None,
+                     persistence_fault=None):
+        current, connection, owner, owner_args, ownership, root, runtime, roots, tx_root = context
+        chapter=route['chapter']
+        before_effect()
+        prepare=self.preparations.prepare if prepare is None else prepare
+        preparation = prepare(**route, connection=connection)
+        trusted = ReviewedChapterCandidateContextBuilder(root).build(chapter)
+        run_id = f"commit_{incoming['idempotency_scope_sha256'][:32]}"
+        tx, arguments = build_reviewed_chapter_transaction(trusted_context=trusted,
+            chapter_preparation=preparation, request=incoming, run_id=run_id,
+            quality_policy=self.quality_policy,
+            candidate_source_verifier=self.preparations.quality_candidate_source,
+            fault_injector=self.persistence_fault_injector if persistence_fault is None else persistence_fault)
+        if owner.require(**owner_args) != ownership:
+            raise ChapterCommitConflict("book ownership changed during preparation")
+        evidence = prepare_commit_request_evidence(preparation=preparation, request=incoming)
+        intent = {"version": INTENT_VERSION, "run_id": run_id, "evidence": evidence,
+            "ownership_sha256": ownership["record_sha256"]}
+        intent["intent_sha256"] = digest(intent)
+        before_effect()
+        intent_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_create_json(intent_path, intent)
+        self._fault("after_intent", intent)
+        tx.prepare(**arguments)
+        self._fault("after_prepare", intent)
+        self._fault("before_commit", intent)
+        if (owner.require(**owner_args) != ownership
+                or prepare(**route, connection=connection) != preparation):
+            raise ChapterCommitConflict("author request or ownership changed before publication")
+        before_effect()
+        result = tx.commit()
+        if not result["committed"]:
+            self._reconcile_owned_persistence(tx_root, book_id=current["book_id"])
+        self._fault("after_file_commit_before_index", intent)
+        if owner.require(**owner_args) != ownership:
+            raise ChapterCommitConflict("book ownership changed after file publication")
+        published = self.index.find_published(**index_args)
+        if published is None:
+            return self._original_unpublished(intent_path, incoming=incoming, tx_root=tx_root)
+        self._fault("before_db_commit", published)
+        return published
 
     @contextmanager
     def _owned_project(self, project_id):
@@ -143,12 +186,19 @@ class ChapterPublicationService:
                         raise ChapterCommitConflict("book ownership changed during the operation")
 
     def preview(self, **route):
-        """Read-only quality preview; pending transactions need explicit recovery."""
+        """Explicit local quality execution; only its budget timer is written."""
         with self._owned_project(route["project_id"]) as context:
             current, connection, owner, owner_args, ownership, root, runtime, roots, tx_root = context
-            chapter_commit_request(book_id=current["book_id"], request=route)
+            incoming=chapter_commit_request(book_id=current["book_id"], request=route)
             self._require_settled_persistence(tx_root)
-            return self.preparations.prepare_quality(**route, quality_policy=self.quality_policy, connection=connection)
+            with self._local_operation(route,root,current,connection,'execution_quality_'+incoming['client_request_sha256'][:32]) as (check,budget):
+                check()
+                result=self.preparations.prepare_quality(**route,quality_policy=self.quality_policy,connection=connection)
+                check()
+            if budget is None:
+                return {**result,'execution_budget':None,'execution_mode':'local_author_review','provider_calls':0}
+            return {**result,'execution_budget':{'budget_sha256':budget.store.frozen_budget()['budget_sha256'],
+                'time':budget.time_clock.report()}}
 
     def review_input(self, *, project_id, chapter, review_id):
         # Reading an already stored draft does not require a current Candidate:
@@ -159,11 +209,15 @@ class ChapterPublicationService:
             if (draft.project_id != project_id or review.project_id != project_id
                     or draft.chapter != chapter or review.chapter != chapter):
                 raise ChapterCommitConflict("review does not belong to this project and chapter")
+            from core.engine.chapter_candidate import ChapterCandidateStore, AUTHOR_CANDIDATE_VERSION
+            candidate=ChapterCandidateStore(current['root']).load(draft.candidate_id)
+            local_author=candidate['intent']['schema_version']==AUTHOR_CANDIDATE_VERSION
             return {"project_id": project_id, "book_id": current["book_id"], "chapter": chapter,
                 "review_id": review.id, "review_state": review.state, "final_draft": draft.text,
                 "expected_draft_revision": draft.revision, "expected_review_revision": review.revision,
                 "expected_draft_sha256": draft.sha256, "expected_facts_sha256": review.facts_sha256,
-                "publication_authorized": False}
+                "publication_authorized": False,
+                "execution_mode":'local_author_review' if local_author else 'chapter_budget'}
 
     def recover(self, *, project_id):
         """Finish or roll back original transactions only; never prepare a chapter."""

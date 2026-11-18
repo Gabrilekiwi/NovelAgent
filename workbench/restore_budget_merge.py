@@ -27,6 +27,13 @@ def transferable(name):
 
 
 def _ledger_extends(old, new, reference):
+    # Consumption is monotonic across a restore. In particular, a valid v2
+    # ledger with the same spending is not a descendant of a claimed v3 one.
+    if (old.get('repair_cycle') is not None and ('repair_cycle' not in new
+            or old['repair_cycle']!=new['repair_cycle'])):
+        raise RestoreHandoffError('恢复不能重置或替换本章已消耗的修复周期：'+reference)
+    if old.get('batch_budget') is not None and new.get('batch_budget')!=old['batch_budget']:
+        raise RestoreHandoffError('恢复不能移除或替换本章原批次预算：'+reference)
     if old['budget_sha256'] != new['budget_sha256'] or len(old['attempts']) > len(new['attempts']):
         raise RestoreHandoffError('恢复预算丢失原冻结条件或调用：'+reference)
     for before, after in zip(old['attempts'], new['attempts']):

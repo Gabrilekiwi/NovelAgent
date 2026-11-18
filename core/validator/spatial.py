@@ -46,6 +46,7 @@ def validate_spatial(
         term
         for location, data in locations.items()
         for term in get_location_terms(str(location), data)
+        if is_usable_location_name(term)
     ]
     lowered = chapter_text.lower()
 
@@ -228,7 +229,11 @@ def continuity_story_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     if ending_location and not is_usable_location_name(ending_location):
         ending_location = ""
     if not last_location:
-        ending_location = fallback_cast_location(snapshot) or ending_location
+        # Repair a known bad scene token, but do not invent a last scene when
+        # the snapshot deliberately leaves it unknown. Reviewed state contains
+        # character positions keyed by stable IDs, not a declared scene/cast.
+        if last_location_raw:
+            ending_location = fallback_cast_location(snapshot) or ending_location
         if not ending_location:
             if last_location_raw:
                 story_state["last_scene_location"] = ""
@@ -255,7 +260,14 @@ def validate_bridge_preconditions(snapshot: dict[str, Any]) -> dict[str, Any]:
     required_bridge = str(story_state.get("required_opening_bridge") or "").strip()
     problems: list[dict[str, Any]] = []
 
-    if not last_location and required_bridge:
+    # A first-chapter read set can carry an intent bridge while its previous
+    # location is explicitly unknown. Keep the bridge check on the prose,
+    # without requiring the placeholder to become an actual place.
+    unknown_previous_location = (
+        str(_story_state(snapshot).get("last_scene_location") or "").strip().casefold()
+        == "unknown"
+    )
+    if not last_location and required_bridge and not unknown_previous_location:
         problems.append(
             {
                 "code": "missing_last_scene_continuity",

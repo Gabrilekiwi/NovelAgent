@@ -86,6 +86,10 @@ def execution_policy(copy_, value, budget_intent, jobs_receipt, *, jobs_intent):
                         blocked.add(runtime+'runs/executions/execution_fx_'+child[16:][:24])
         if name.startswith(runtime+'reviewed/intents/') and name.endswith('.json'):
             blocked.add(name)
+        if name.startswith(runtime+'reviewed/batches/') and name.endswith('.json'):
+            blocked.add(name)
+        if name.startswith(runtime+'reviewed/batch_controls/') and name.endswith('.json'):
+            blocked.add(name)
     for mapping in copy_.layout['roots']:
         if mapping['root'].startswith('jobs/'):
             blocked.add(Path(mapping['destination']).relative_to(copy_.root).as_posix())

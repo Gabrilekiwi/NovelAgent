@@ -76,6 +76,19 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
     names already used by ChapterFactReviewRecord. Automatic policy acceptance
     needs its own typed adapter; never manufacture an author confirmation here.
     """
+    return _prepare_reviewed_chapter(trusted_context=trusted_context,project_id=project_id,
+        draft=draft,review=review,idempotency_key=idempotency_key,review_source='author')
+
+
+def prepare_policy_reviewed_chapter(*,trusted_context,project_id,draft,policy_review,idempotency_key):
+    """Typed internal policy adapter; never manufacture an author review."""
+    from core.engine.reviewed_policy_review import validate_policy_fact_review
+    review=validate_policy_fact_review(policy_review)
+    return _prepare_reviewed_chapter(trusted_context=trusted_context,project_id=project_id,
+        draft=draft,review=review,idempotency_key=idempotency_key,review_source='policy')
+
+
+def _prepare_reviewed_chapter(*,trusted_context,project_id,draft,review,idempotency_key,review_source):
     project_id = _identifier(project_id, "project_id")
     key = _identifier(idempotency_key, "idempotency_key")
     if not isinstance(draft, dict) or not isinstance(review, dict):
@@ -89,10 +102,10 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
     review_id = _identifier(review.get("id"), "review id")
     if draft.get("state") != "editing" or draft.get("sha256") != raw_sha256:
         _reject("chapter_commit_draft_invalid", "draft state or content hash differs from its record")
-    if (review.get("state") != "confirmed" or review.get("review_source", "author") != "author"
+    if review_source=='author' and (review.get("state") != "confirmed" or review.get("review_source", "author") != "author"
             or review.get("record_type") != "chapter_fact_review" or review.get("schema_version") != "1.0"):
         _reject("chapter_commit_review_unconfirmed", "an explicit author review record is required")
-    confirmation = _sha(review.get("confirmation_sha256"), "review confirmation")
+    confirmation = _sha(review.get("confirmation_sha256"), "review confirmation") if review_source=='author' else None
     facts = review.get("facts")
     if not isinstance(facts, list) or review.get("facts_sha256") != _hash(facts):
         _reject("chapter_commit_review_invalid", "fact cards no longer match the stored review")
@@ -144,8 +157,8 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
         "draft_id":draft_id, "draft_revision":draft_revision,
         "draft_sha256":raw_sha256, "final_prose_sha256":_text_hash(final_prose),
         "review_id":review_id, "review_revision":review_revision,
-        "facts_sha256":review["facts_sha256"], "confirmation_sha256":confirmation,
-        "acceptance_kind":"author", "candidate_intent_hash":candidate_intent,
+        "facts_sha256":review["facts_sha256"],
+        "acceptance_kind":review_source, "candidate_intent_hash":candidate_intent,
         "candidate_id":_identifier(draft.get("candidate_id"), "candidate id"),
         "context_sha256":trusted_context.context_sha256,
         "read_set_sha256":_hash(read_set), "identity_revision":read_set["identity_revision"],
@@ -156,6 +169,10 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
         "state_before_sha256":prepared["base_state_sha256"],
         "committed_through":view["committed_through"],
     }
+    if review_source=='author':binding['confirmation_sha256']=confirmation
+    else:
+        from core.engine.reviewed_policy_review import policy_acceptance
+        binding['policy_acceptance']=policy_acceptance(review)
     if support is not None:
         binding["support_sha256"] = _hash(support)
     payload = {"preparation_version":PREPARATION_VERSION, "stage":"facts_prepared",
@@ -164,6 +181,7 @@ def prepare_reviewed_chapter(*, trusted_context: TrustedChapterCandidateContext,
         "fact_preparation":prepared, "read_set":copy.deepcopy(read_set)}
     if support is not None:
         payload["support"] = support
+    if review_source=='policy':payload['policy_review']=copy.deepcopy(review)
     payload["request_sha256"] = _hash({"version":PREPARATION_VERSION, "binding":binding})
     payload["preparation_sha256"] = _hash(payload)
     return payload

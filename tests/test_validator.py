@@ -11,6 +11,45 @@ from core.validator.spatial import continuity_story_state, validate_bridge_preco
 
 
 class ValidatorTest(unittest.TestCase):
+    def test_placeholder_location_does_not_require_a_prose_repair(self) -> None:
+        from core.validator.spatial import validate_spatial
+        snapshot = {
+            "world_state": {"locations": {"unknown": {}}},
+            "story_state": {"last_scene_location": "unknown"},
+        }
+        original = json.loads(json.dumps(snapshot))
+        result = validate_spatial(snapshot, "林川沿着通道走进仓库。")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(original, snapshot)
+        snapshot["story_state"]["required_opening_bridge"] = "林川沿着通道"
+        self.assertTrue(validate_bridge_preconditions(snapshot)["ok"])
+        self.assertTrue(validate_spatial(snapshot, "林川沿着通道走进仓库。")["ok"])
+        self.assertIn("missing_opening_bridge", {
+            p["code"] for p in validate_spatial(snapshot, "周岚独自在屋顶值守。")["problems"]
+        })
+        snapshot["world_state"]["locations"] = {"unknown-room": {}}
+        snapshot["story_state"]["last_scene_location"] = "unknown-room"
+        result = validate_spatial(snapshot, "林川沿着通道走进仓库。")
+        self.assertIn("no_known_location", {p["code"] for p in result["problems"]})
+        self.assertIn("missing_last_scene_continuity", {p["code"] for p in result["problems"]})
+
+    def test_unknown_last_scene_does_not_become_an_arbitrary_character_position(self) -> None:
+        snapshot = {
+            "story_state": {"last_chapter_ending": "林澈收好地图。"},
+            "spatial_state": {"character_positions": {
+                "character_lin": "location_warehouse",
+                "character_zhou": "location_station",
+            }},
+        }
+        original = json.loads(json.dumps(snapshot))
+
+        resolved = continuity_story_state(snapshot)
+
+        self.assertNotIn("last_scene_location", resolved)
+        self.assertNotIn("required_opening_bridge", resolved)
+        self.assertTrue(validate_bridge_preconditions(snapshot)["ok"])
+        self.assertEqual(original, snapshot)
+
     def test_llm_validator_retries_once_when_response_is_not_json(self) -> None:
         with patch(
             "core.validator.llm.chat_completion",
@@ -213,10 +252,8 @@ class ValidatorTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("chapter_too_short", {p["code"] for p in result["problems"]})
         self.assertIn("missing_conflict_marker", {p["code"] for p in result["problems"]})
-        self.assertEqual(len(result["problems"]), result["blocking_problem_count"])
-        self.assertEqual(0, result["warning_count"])
-        self.assertTrue(all(problem["blocking"] for problem in result["problems"]))
-        self.assertTrue(all(problem["category"] == "blocking" for problem in result["problems"]))
+        self.assertEqual(1, result["blocking_problem_count"])
+        self.assertEqual(1, result["warning_count"])
         self.assertTrue(all(problem["repair_hint"] for problem in result["problems"]))
         self.assertTrue(all(problem["repair_action"] for problem in result["problems"]))
         self.assertTrue(all(isinstance(problem["repair_parameters"], dict) for problem in result["problems"]))
@@ -225,17 +262,17 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(["continuity", "spatial", "logic"], result["requested_focus"])
         self.assertEqual(["continuity", "spatial", "logic"], result["executed_checks"])
         self.assertEqual([], result["skipped_checks"])
-        self.assertEqual(2, result["deterministic_repair_count"])
-        self.assertEqual(0, result["manual_review_count"])
+        self.assertEqual(1, result["deterministic_repair_count"])
+        self.assertEqual(1, result["manual_review_count"])
         self.assertEqual(
             [
-                {"action": "add_conflict_signal", "count": 1},
                 {"action": "expand_scene", "count": 1},
+                {"action": "manual_review", "count": 1},
             ],
             result["repair_action_counts"],
         )
         severities = {item["severity"]: item["count"] for item in result["severity_counts"]}
-        self.assertEqual(1, severities["high"])
+        self.assertEqual(1, severities["low"])
         self.assertEqual(1, severities["medium"])
 
     def test_rejects_declared_chapter_index_mismatch(self) -> None:

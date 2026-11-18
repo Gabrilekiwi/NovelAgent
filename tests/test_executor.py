@@ -1888,7 +1888,8 @@ class AgentExecutorTest(unittest.TestCase):
 
         self.assertEqual(1, result["repair_attempts"])
         self.assertTrue(result["validation"]["ok"])
-        self.assertIn("conflict", result["chapter"].lower())
+        self.assertGreater(len(result["chapter"]), len("天气很好。"))
+        self.assertTrue(result["chapter"].startswith("天气很好。"))
         self.assertEqual(["generate_chapter", "polish", "validate", "repair_if_needed"], [event["action"] for event in result["run"]["trace"]])
         self.assertGreaterEqual(result["run"]["trace"][-1]["repair_attempts"], 1)
         self.assertIs(
@@ -1896,7 +1897,7 @@ class AgentExecutorTest(unittest.TestCase):
             validate_schema(result["run"]["trace"][-1]["repair_plan"], "repair_plan.schema.json"),
         )
         self.assertIn("expand_scene", result["run"]["trace"][-1]["repair_plan"]["actions"])
-        self.assertIn("add_conflict_signal", result["run"]["trace"][-1]["repair_plan"]["actions"])
+        self.assertNotIn("add_conflict_signal", result["run"]["trace"][-1]["repair_plan"]["actions"])
         self.assertEqual(1, result["run"]["trace"][-1]["repair_plan"]["attempt"])
         self.assertEqual(1, result["run"]["trace"][-1]["repair_plan"]["repair_budget"])
         self.assertEqual("high", result["run"]["trace"][-1]["repair_plan"]["risk_level"])
@@ -1906,7 +1907,8 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertFalse(repair_deltas[0]["before_ok"])
         self.assertTrue(repair_deltas[0]["after_ok"])
         self.assertIn("chapter_too_short", repair_deltas[0]["resolved_problem_codes"])
-        self.assertIn("missing_conflict_marker", repair_deltas[0]["resolved_problem_codes"])
+        # Expanding a short scene may incidentally introduce a conflict marker;
+        # it must not be a dedicated automatic repair action (checked above).
         self.assertEqual([], repair_deltas[0]["new_problem_codes"])
         self.assertEqual(
             "controlled_full_text_fallback",

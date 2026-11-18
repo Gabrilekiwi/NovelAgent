@@ -19,12 +19,14 @@ from core.story_project.paths import PROSE_DIR_NAME, UNTITLED_CHAPTER, canonical
 from core.story_project.managed_block import (
     build_managed_projection,
     compute_base_source_digest,
+    managed_payload_sha256,
     parse_managed_block,
     parse_manual_tombstones,
     three_way_merge_managed,
     write_managed_block,
 )
 from core.story_project.format_compatibility import assert_project_execution_compatible
+from core.location_names import is_usable_location_name
 
 
 TRACKING_DIR_NAME = CORE_DIRECTORY_NAMES[3]
@@ -230,6 +232,7 @@ def prepare_story_project_writeback(
                     run=run,
                     plan=plan,
                     analysis=analysis or {},
+                    chapter_text=chapter_text,
                 ).decode("utf-8")
                 current = parse_managed_block(before_bytes)
                 if current is not None and current.projection["run_id"] == str(run.get("id")):
@@ -404,10 +407,45 @@ def build_story_project_writeback_plan(
         return plan
 
     _apply_gate(plan, run=run, validation=validation, chapter_text=chapter_text, context=context)
+    if plan.story_state_mode == "strict":
+        _validate_memory_writeback(plan, analysis or {}, chapter_text)
     assert_project_execution_compatible(root)
     _plan_prose_target(plan, root=root, chapter_index=chapter_index, title=title, overwrite=config.overwrite)
     _plan_tracking_targets(plan, root=root, tracking_dir=tracking_dir)
     return plan
+
+
+def _validate_memory_writeback(plan: StoryProjectWritebackPlan, analysis: dict, chapter_text: str) -> None:
+    story = analysis.get("story_state") or {}
+    location = story.get("last_scene_location") if isinstance(story, dict) else None
+    if location and not is_usable_location_name(location):
+        _block(plan, "memory_invalid_scene_location", "Extracted scene location is not a place; review memory before committing.")
+    for change in analysis.get("character_changes") or []:
+        if not isinstance(change, dict):
+            continue
+        quote = str(change.get("text") or "").strip()
+        if quote and quote not in chapter_text:
+            _block(plan, "memory_observation_not_in_prose", "A character observation is absent from the final prose; rebuild extraction before committing.")
+        place = change.get("current_location") or change.get("location")
+        if place and not is_usable_location_name(place):
+            _block(plan, "memory_invalid_character_location", "Extracted character location is not a place; review memory before committing.")
+    if plan.story_project_root is not None:
+        expected = hashlib.sha256(chapter_text.replace("\r\n", "\n").rstrip().encode("utf-8")).hexdigest()
+        # Retrying an existing run may not replace its prose while silently
+        # skipping the memory projections that still describe its old prose.
+        for filename in TRACKING_TARGETS.values():
+            path = plan.story_project_root / TRACKING_DIR_NAME / filename
+            if not path.exists():
+                continue
+            try:
+                parsed = parse_managed_block(path.read_bytes())
+            except ValueError:
+                continue  # Existing projection validation reports the malformed source.
+            if parsed is not None:
+                for source in parsed.projection.get("field_sources", {}).values():
+                    if source["chapter"] == plan.chapter_index and source["prose_sha256"] != expected:
+                        _block(plan, "memory_chapter_revision_requires_review", "Existing chapter memory belongs to different prose; use the historical revision workflow.")
+                        return
 
 
 def apply_story_project_writeback_plan(
@@ -456,6 +494,7 @@ def apply_story_project_writeback_plan(
                     run=run,
                     plan=plan,
                     analysis=analysis,
+                    chapter_text=chapter_text,
                 ).decode("utf-8")
                 _write_exact_target(target, after)
             else:
@@ -695,6 +734,7 @@ def _managed_tracking_content(
     run: dict[str, Any],
     plan: StoryProjectWritebackPlan,
     analysis: dict[str, Any],
+    chapter_text: str,
 ) -> bytes:
     identity = plan.project_identity or {}
     book_id = str(identity.get("book_id") or "")
@@ -703,7 +743,20 @@ def _managed_tracking_content(
     current_parsed = parse_managed_block(document)
     current = current_parsed.projection if current_parsed is not None else None
     values = dict(current.get("values") or {}) if current is not None else {}
-    values.update(_managed_values(target.kind, int(plan.chapter_index or 0), analysis))
+    updates = _managed_values(target.kind, int(plan.chapter_index or 0), analysis)
+    if target.kind == "context" and not updates.get("story_state.open_threads"):
+        # The lexical analyzer has no evidence of resolution when it finds no
+        # thread marker. Do not erase a previously known unresolved thread.
+        updates.pop("story_state.open_threads", None)
+    values.update(updates)
+    field_sources = dict((current or {}).get("field_sources") or {})
+    source = {
+        "chapter": int(plan.chapter_index or run.get("chapter_index") or 0),
+        "run_id": str(run.get("id") or ""),
+        "prose_sha256": hashlib.sha256(chapter_text.replace("\r\n", "\n").rstrip().encode("utf-8")).hexdigest(),
+    }
+    for field_path in updates:
+        field_sources[field_path] = dict(source)
     tombstones = parse_manual_tombstones(document)
     if current is not None:
         existing_tombstones = {
@@ -714,6 +767,7 @@ def _managed_tracking_content(
     tombstone_fields = {item["field_path"] for item in tombstones}
     for field_path in tombstone_fields:
         values.pop(field_path, None)
+        field_sources.pop(field_path, None)
     semantic = plan.semantic_state or {}
     source_digest = str(semantic.get("source_digest") or hashlib.sha256(document).hexdigest())
     parser_version = str(semantic.get("parser_version") or "shadow-1.0")
@@ -728,6 +782,7 @@ def _managed_tracking_content(
         owned_fields=sorted(set(values) | tombstone_fields),
         values=values,
         tombstones=tombstones,
+        field_sources=field_sources,
     )
     merged = three_way_merge_managed(
         base=current,
@@ -737,7 +792,12 @@ def _managed_tracking_content(
     )
     if not merged.ok or merged.projection is None:
         raise ValueError("managed_projection_merge_conflict: " + json.dumps(merged.to_dict(), ensure_ascii=False))
-    return write_managed_block(document, merged.projection)
+    rendered = write_managed_block(document, merged.projection)
+    # First insertion adds a separator outside the block. Bind the manual bytes
+    # the reader will actually see, including their original line endings.
+    merged.projection["base_source_digest"] = compute_base_source_digest(rendered)
+    merged.projection["payload_sha256"] = managed_payload_sha256(merged.projection)
+    return write_managed_block(rendered, merged.projection)
 
 
 def _managed_values(kind: str, chapter: int, analysis: dict[str, Any]) -> dict[str, Any]:

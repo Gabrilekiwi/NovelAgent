@@ -8,6 +8,8 @@ from typing import Any
 # location called「最后」, even if an earlier writeback registered that token.
 _UNUSABLE_LOCATION_NAMES = frozenset(
     {
+        # Chapter read sets use this literal when no previous location exists.
+        "unknown",
         "最后",
         "最终",
         "然后",

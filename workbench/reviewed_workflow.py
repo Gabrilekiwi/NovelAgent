@@ -134,9 +134,9 @@ def install_reviewed_workflow(app, *, publication, cards, candidates, facts, ext
             route_kinds=route_kinds, mutations=mutations)
     cards = dispatch(cards, reviewed_cards, {k:"project" for k in ("get", "confirm", "verify_confirmation")}, [])
     candidates = dispatch(candidates, reviewed_candidates,
-        {**{k:"project" for k in ("generate", "resume", "create_editable_draft", "abandon_provider_uncertainty", "get", "list_for_chapter")},
+        {**{k:"project" for k in ("import_author_draft", "generate", "resume", "create_editable_draft", "abandon_provider_uncertainty", "authorize_continuation", "run_continuation", "get", "list_for_chapter")},
          "update_editable_draft":"draft"},
-        ["generate", "resume", "create_editable_draft", "abandon_provider_uncertainty", "update_editable_draft"])
+        ["import_author_draft", "generate", "resume", "create_editable_draft", "abandon_provider_uncertainty", "authorize_continuation", "run_continuation", "update_editable_draft"])
     facts = dispatch(facts, reviewed_facts,
         {**{k:"draft" for k in ("create", "create_from_extraction", "list_for_draft", "verify_draft_source")},
          **{k:"review" for k in ("get", "editor_context", "update", "update_support", "confirm")}}, ["create", "create_from_extraction", "update", "update_support", "confirm"])

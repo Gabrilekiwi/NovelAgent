@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from tests.test_workbench_app import _client, _create_project, _unlock
+from workbench.jobs import _compact_result, _provider_uncertain_user_message
 
 STATIC = Path(__file__).resolve().parents[1] / "workbench" / "static"
 
@@ -176,6 +177,7 @@ def test_pending_api_marks_unbound_uncertain_execution_recoverable() -> None:
     assert recovery["chapter"] == project["next_chapter"]
     assert recovery["latest_run"] is None
     assert recovery["formal_prose_exists"] is False
+    assert recovery["checkpoint"] is None
     assert recovery["recoverable"] is True
     assert recovery["uncertain_without_run"] is True
     assert recovery["needs_reclassification"] is True
@@ -311,3 +313,54 @@ def test_closing_paused_parent_after_reset_cleared_allows_new_session() -> None:
     )
     assert nxt.id != parent.id
     assert nxt.state in {"queued", "held"}
+
+
+def test_compact_result_keeps_locked_chapter_error_message() -> None:
+    compact = _compact_result(
+        {
+            "ok": False,
+            "error": {
+                "type": "LockedChapterRecoveryError",
+                "message": "an unresolved model execution has no durable chapter run; automatic recovery stopped safely",
+            },
+        }
+    )
+    assert compact["ok"] is False
+    assert compact["error"]["type"] == "LockedChapterRecoveryError"
+    assert "no durable chapter run" in compact["error"]["message"]
+
+
+def test_provider_uncertain_user_message_from_stderr() -> None:
+    message = _provider_uncertain_user_message(
+        "core.model_call_runtime.ProviderCallUncertainError: provider_call_uncertain: "
+        "intent openai-chapter_generation-scene-0004-primary-a1 exists without a durable receipt"
+    )
+    assert message is not None
+    assert "不要盲目重试" in message
+    assert _provider_uncertain_user_message("ValueError: other failure") is None
+
+
+def test_failed_recovery_job_can_be_retried_with_same_idempotency_key(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="force-reset-retry")
+    jobs = client.app.state.jobs
+    first = jobs.create_job(
+        project_id=project["id"],
+        kind="locked_chapter_recovery",
+        start_chapter=1,
+        end_chapter=1,
+        config={"force_reset": True},
+        idempotency_key="recover-retry-same-key",
+    )
+    jobs.fail_job(first.id, {"code": "locked_chapter_recovery_failed", "reason": "previous attempt"})
+    second = jobs.create_job(
+        project_id=project["id"],
+        kind="locked_chapter_recovery",
+        start_chapter=1,
+        end_chapter=1,
+        config={"force_reset": True},
+        idempotency_key="recover-retry-same-key",
+    )
+    assert second.id != first.id
+    assert second.state == "queued"

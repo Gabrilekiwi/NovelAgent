@@ -151,3 +151,74 @@ def test_default_workbench_provider_chain_requires_budget_and_shares_it_with_fac
     view=c['client'].get(c['path']).json()
     assert view['usage']['charged']['calls']==1 and not view['usage']['unresolved_attempts']
     assert len(view['usage']['items'])==2 and view['usage']['items'][1]['accounting_state']=='released'
+
+
+@pytest.mark.parametrize('actual_tier',['default',None])
+def test_public_money_freeze_default_generation_fact_gate_and_fee_report(fresh_api,monkeypatch,actual_tier):
+    from types import SimpleNamespace as NS
+    from api.openai_client import chat_completion
+    from core.model_calls import canonical_model_request_digest
+    from tests.test_chapter_execution_deadline import configure
+    from tests.test_reviewed_candidate_context import author_confirmation
+    from tests.test_reviewed_monetary_admission import MODEL,price,usage
+    c=fresh_api;calls=[]
+    prose='林澈推开控制室的门，周岚守住走廊。旧终端亮起时，失踪信号终于显出来源。'
+    def create(**kwargs):
+        calls.append(kwargs)
+        ledger=ChapterExecutionBudget(c['root'],book_id=c['project'].book_id,chapter=2).store
+        row=ledger.usage_snapshot()['attempts'][0]
+        assert row['dispatch_claimed'] and row['receipt'] is None
+        payload={k:v for k,v in kwargs.items() if k!='timeout'}
+        assert row['plan']['intent']['request_digest']==canonical_model_request_digest(payload)
+        assert kwargs['max_completion_tokens']==128 and 'max_tokens' not in kwargs
+        assert kwargs['service_tier']=='default' and kwargs['timeout']>0
+        return NS(model=MODEL,service_tier=actual_tier,usage=usage(),
+            choices=[NS(message=NS(content=prose),finish_reason='stop')])
+    config=configure(monkeypatch,'openai',create)
+    for key,value in dict(openai_model=MODEL,provider_max_attempts=2,provider_retry_base_delay_seconds=0,
+        provider_retry_max_delay_seconds=0,provider_retry_jitter_ratio=0,
+        provider_retry_deadline_seconds=900,openai_max_retries=0).items():setattr(config,key,value)
+    monkeypatch.setenv('OPENAI_MODEL',MODEL)
+    monkeypatch.setattr('core.engine.chapter_candidate.generate_chapter',lambda text,**unused:
+        chat_completion([{'role':'user','content':text}],max_tokens=128,stage='generation'))
+    c['payload']['configuration'].update(amount_limit='0.40045',currency='USD',pricing=[price()],
+        max_input_tokens=2000000)
+    if actual_tier=='default':
+        before=c['client'].get(c['path'])
+        assert before.json()['monetary_option']['available'] is True
+        monkeypatch.setenv('OPENAI_MODEL','changed-alias')
+        rejected=c['client'].post(c['path'],json=c['payload'])
+        assert rejected.status_code==409,rejected.text
+        assert '模型或端点已变化' in rejected.json()['error']['message']
+        assert not (c['root']/'.novelagent/runtime/budgets/i2.json').exists()
+        monkeypatch.setenv('OPENAI_MODEL',MODEL)
+    frozen=c['client'].post(c['path'],json=c['payload'])
+    assert frozen.status_code==200,frozen.text
+    confirmation=author_confirmation(c['app'].state.chapter_publication.projects,c['project'])
+    route=c['path'].removesuffix('/budget')+'/candidates'
+    headers={'Idempotency-Key':'monetary-generation'}
+    generated=c['client'].post(route,json={'confirmation':confirmation},headers=headers)
+    assert generated.status_code==200,generated.text
+    candidate=generated.json()['candidate']
+    assert candidate['status']=='completed' and len(calls)==1
+    assert c['client'].post(route,json={'confirmation':confirmation},headers=headers).status_code==200
+    assert len(calls)==1
+    view=c['client'].get(c['path'])
+    assert view.status_code==200,view.text
+    account=view.json()['usage']['items'][0]
+    expected='settled' if actual_tier=='default' else 'held_unknown'
+    assert account['accounting_state']==expected
+    assert view.json()['usage']['charged_amount']==('0.000104' if actual_tier=='default' else '0.400256')
+    fees=c['client'].get(f"/api/projects/{c['project'].id}/model-calls")
+    assert fees.status_code==200,fees.text
+    assert fees.json()['items'][0]['budget_accounting']['accounting_state']==expected
+    assert fees.json()['items'][0]['cost']['classification']==('estimated' if actual_tier=='default' else 'unknown')
+    draft=candidate['draft']
+    extracted=c['client'].post(f"/api/candidate-drafts/{draft['id']}/fact-extractions",json={
+        'expected_draft_revision':draft['revision'],'expected_draft_sha256':draft['sha256'],
+        'author_confirmed':True},headers={'Idempotency-Key':'monetary-facts'})
+    assert extracted.status_code==200,extracted.text
+    assert extracted.json()['fact_extraction']['status']=='failed',extracted.text
+    assert len(calls)==1
+    after=c['client'].get(c['path']).json()
+    assert after['usage']['items'][0]==account

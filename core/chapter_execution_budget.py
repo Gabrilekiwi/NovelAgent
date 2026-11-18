@@ -24,6 +24,7 @@ class ChapterBudgetOperation:
     execution_id: str
     interval: object
     local_only: bool
+    provider_dispatch_allowed: bool = True
     closed: bool = False
 
     def require_target(self,budget,execution_id):
@@ -51,7 +52,7 @@ class ChapterExecutionBudget:
             raise ChapterBudgetConflict('chapter time and amount stores have different bindings')
 
     @contextmanager
-    def operation(self,execution_id,*,local_only=False):
+    def operation(self,execution_id,*,local_only=False,allow_provider_dispatch=True):
         """One service action, including preparation and final local publication.
 
         The caller holds machine book ownership. A completed replay or explicit
@@ -59,9 +60,11 @@ class ChapterExecutionBudget:
         """
         if _CHAPTER_OPERATION.get() is not None:
             raise ChapterBudgetConflict('nested chapter service operations are forbidden')
+        if type(allow_provider_dispatch) is not bool:
+            raise ChapterBudgetConflict('chapter Provider dispatch policy must be explicit')
         manager=self.time_clock.local_recovery(execution_id) if local_only else self.time_clock.active(execution_id,awaiting_author_after=True)
         with manager as interval:
-            action=ChapterBudgetOperation(self,execution_id,interval,local_only)
+            action=ChapterBudgetOperation(self,execution_id,interval,local_only,allow_provider_dispatch)
             token=_CHAPTER_OPERATION.set(action)
             try:yield action
             finally:

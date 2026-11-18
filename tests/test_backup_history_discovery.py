@@ -26,6 +26,47 @@ def book(tmp_path):
     return root
 
 
+@pytest.mark.parametrize('damage', ['none', 'missing_manifest', 'staged', 'orphan'])
+def test_real_storyproject_v1_flat_journals_remain_strictly_verified(book, damage):
+    control = book / '.novelagent/runtime'
+    transaction = LocalPersistenceTransaction(run_dir=control/'runs', run_id='chapter_10',
+        transactions_dir=control/'persistence', allowed_roots=[book], book_id=BOOK_ID)
+    transaction.prepare([PersistenceTarget(kind='prose', path=book/'chapter.txt', content='正文')])
+    transaction.commit()
+    transaction.complete_publication()
+    (control/'runs').mkdir(exist_ok=True)
+    (control/'runs/final.json').write_text(json.dumps({'run': {'id': 'chapter_10'},
+        'persistence': {'run_id': 'chapter_10', 'state': 'completed', 'committed': True,
+            'partial': False, 'journal_path': str(transaction.journal_dir)}}), encoding='utf-8')
+    if damage == 'missing_manifest': transaction.manifest_path.unlink()
+    elif damage == 'staged': (transaction.journal_dir/'staged/000.bin').write_bytes(b'corrupt')
+    elif damage == 'orphan': (control/'persistence/lost-transaction').mkdir()
+    before = inventory_tree(book)
+    if damage == 'none':
+        result = verify(book)
+        assert len(result['transactions']) == 1
+        assert result['transactions'][0]['journal'] == '.novelagent/runtime/persistence/chapter_10'
+    else:
+        with pytest.raises(ValueError): verify(book)
+    assert inventory_tree(book) == before
+
+
+@pytest.mark.parametrize('damage',['none','journal','targets','partial','committed','wrong_run'])
+def test_pre_target_validation_failure_is_not_an_unfinished_transaction(book, damage):
+    control=book/'.novelagent/runtime/runs';control.mkdir(parents=True)
+    failure={'run_id':'failed-run','state':'preparation_failed','committed':False,'partial':False,
+             'targets':[],'errors':[{'reason':'blueprint_coverage_missing'}]}
+    if damage=='journal':failure['journal_path']=str(control/'transactions/failed-run')
+    elif damage=='targets':failure['targets']=[{'path':str(book/'chapter.txt')}]
+    elif damage in {'partial','committed'}:failure[damage]=True
+    elif damage=='wrong_run':failure['run_id']='other'
+    (control/'failed-run.json').write_text(json.dumps({'run':{'id':'failed-run','status':'failed'},
+        'persistence':failure}),encoding='utf-8')
+    if damage=='none':assert verify(book)['nontransactional_runs'][0]['run_id']=='failed-run'
+    else:
+        with pytest.raises(ValueError):verify(book)
+
+
 @pytest.mark.parametrize('namespace', ['journals', 'transactions'])
 def test_ordinary_author_folders_are_not_persistence_journals(book, namespace):
     directory = book / 'author-notes' / namespace / '2026'

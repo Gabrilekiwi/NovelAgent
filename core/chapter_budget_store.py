@@ -175,11 +175,26 @@ class ChapterBudgetStore:
     def _load(self):
         budget=validate_chapter_budget(self._read('budget.json'),expected_book_id=self.book_id,expected_chapter=self.chapter)
         value=self._read('ledger.json')
-        if (not isinstance(value,dict) or set(value)!={'schema_version','budget_sha256','attempts','ledger_sha256'}
-                or value['schema_version']!='chapter_budget_ledger_v2' or value['budget_sha256']!=budget['budget_sha256']
+        schema=value.get('schema_version') if isinstance(value,dict) else None
+        fields={'schema_version','budget_sha256','attempts','ledger_sha256'}
+        if schema in ('chapter_budget_ledger_v3','chapter_budget_ledger_v4'):fields.add('repair_cycle')
+        if schema=='chapter_budget_ledger_v4':fields.add('batch_budget')
+        if (not isinstance(value,dict)
+                or schema not in ('chapter_budget_ledger_v2','chapter_budget_ledger_v3','chapter_budget_ledger_v4') or set(value)!=fields
+                or value['budget_sha256']!=budget['budget_sha256']
                 or value['ledger_sha256']!=_hash({k:v for k,v in value.items() if k!='ledger_sha256'})
                 or not isinstance(value['attempts'],list) or len(value['attempts'])>10000):
             raise ChapterBudgetError('budget ledger shape, hash or frozen binding differs')
+        if schema=='chapter_budget_ledger_v3' or schema=='chapter_budget_ledger_v4' and value['repair_cycle'] is not None:
+            from core.quality.reviewed_repair_cycle import validate_repair_cycle_claim
+            try:validate_repair_cycle_claim(value['repair_cycle'],budget=budget)
+            except (ValueError,TypeError) as exc:raise ChapterBudgetError('repair cycle claim is invalid') from exc
+        if schema=='chapter_budget_ledger_v4':
+            from core.batch_budget_contract import validate_chapter_batch_binding
+            try:validate_chapter_batch_binding(value['batch_budget'],budget)
+            except (ValueError,TypeError) as exc:raise ChapterBudgetError('chapter batch binding is invalid') from exc
+            if value['repair_cycle'] is not None and value['repair_cycle']['batch_id']!=value['batch_budget']['batch_id']:
+                raise ChapterBudgetError('repair cycle belongs to a different original batch')
         keys=set()
         for row in value['attempts']:
             if not isinstance(row,dict) or set(row)!={'execution_id','plan','receipt','local_rejection','dispatch_claimed'}:
@@ -197,7 +212,8 @@ class ChapterBudgetStore:
             key=(execution,plan['intent']['attempt_id'])
             if key in keys:raise ChapterBudgetError('duplicate budget attempt identity')
             keys.add(key)
-            if row['local_rejection'] not in {None,'max_provider_calls','max_input_tokens','max_output_tokens','amount_limit'}:
+            if row['local_rejection'] not in {None,'max_provider_calls','max_input_tokens','max_output_tokens','amount_limit',
+                    'batch_max_provider_calls','batch_max_input_tokens','batch_max_output_tokens','batch_amount_limit'}:
                 raise ChapterBudgetError('invalid local budget rejection')
             if row['receipt'] is not None:
                 receipt=validate_model_call_receipt(row['receipt'])
@@ -268,11 +284,49 @@ class ChapterBudgetStore:
         limits={'calls':budget['max_provider_calls'],'input_tokens':budget['max_input_tokens'],'output_tokens':budget['max_output_tokens']}
         exceeded=[name for name in totals if totals[name]>limits[name]]
         if budget['amount_limit'] is not None and amount>Decimal(budget['amount_limit']):exceeded.append('amount')
-        return dict(book_id=budget['book_id'],chapter=budget['chapter'],budget_sha256=budget['budget_sha256'],
+        result=dict(book_id=budget['book_id'],chapter=budget['chapter'],budget_sha256=budget['budget_sha256'],
             currency=budget['currency'],amount_controlled=budget['amount_limit'] is not None,
             charged_amount=_amount(amount) if budget['amount_limit'] is not None else None,
             charged=totals,items=items,exceeded=exceeded,
             unresolved_attempts=[(x['execution_id'],x['attempt_id']) for x in items if x['accounting_state'] in {'reserved','held_unknown'}])
+        if 'repair_cycle' in value:result['repair_cycle']=copy.deepcopy(value['repair_cycle'])
+        return result
+
+    def repair_cycle_claim(self):
+        """Read only; a missing/corrupt ledger never becomes a new allowance."""
+        _,value=self._load()
+        return copy.deepcopy(value.get('repair_cycle'))
+
+    def claim_repair_cycle(self,claim,*,before_claim,fault_injector=None):
+        """Consume once per original chapter budget, before any repair action.
+
+        The service must hold book ownership and Provider exclusion, and use
+        before_claim to revalidate its real batch grant and original source.
+        This internal storage primitive grants no Provider or publish authority.
+        A different batch/request cannot replace an already consumed cycle.
+        """
+        from core.quality.reviewed_repair_cycle import validate_repair_cycle_claim
+        if not callable(before_claim):raise ChapterBudgetError('repair owner/source preflight is required')
+        with self._locked():
+            budget,value=self._load()
+            claim=validate_repair_cycle_claim(claim,budget=budget)
+            if 'batch_budget' in value and claim['batch_id']!=value['batch_budget']['batch_id']:
+                raise ChapterBudgetConflict('repair cycle belongs to a different original batch')
+            existing=value.get('repair_cycle')
+            if existing is not None:
+                if existing!=claim or _hash(existing)!=_hash(claim):
+                    raise ChapterBudgetConflict('this chapter has already consumed its one repair cycle')
+                return copy.deepcopy(existing)
+            report=self._report(budget,value)
+            if report['unresolved_attempts']:raise ChapterBudgetUncertain('unresolved calls block a new repair cycle')
+            if report['exceeded']:raise ChapterBudgetExceeded('chapter budget already exceeded before repair')
+            before_claim()
+            # Persist in the original ledger: there is no optional side file
+            # whose disappearance could be mistaken for an unused allowance.
+            value.update(schema_version='chapter_budget_ledger_v4' if 'batch_budget' in value else 'chapter_budget_ledger_v3',repair_cycle=claim)
+            self._save(value)
+            if fault_injector is not None:fault_injector('after_repair_cycle_claim')
+            return copy.deepcopy(claim)
 
     def report(self):
         budget,value=self._load()
@@ -285,8 +339,9 @@ class ChapterBudgetStore:
         Plans and accounting must come from the same revision while a call runs.
         """
         budget,value=self._load()
-        return copy.deepcopy(dict(budget=budget,attempts=value['attempts'],
-            report=self._report(budget,value)))
+        result=dict(budget=budget,attempts=value['attempts'],report=self._report(budget,value))
+        if 'batch_budget' in value:result['batch_budget']=value['batch_budget']
+        return copy.deepcopy(result)
 
     def frozen_budget(self):
         budget,_=self._load()
@@ -302,13 +357,20 @@ class ChapterBudgetStore:
         """Claim once, before invoking the Provider; a claim cannot be reset."""
         execution_id=_id(execution_id);intent=validate_model_call_intent(intent)
         with self._locked():
-            _,value=self._load()
+            budget,value=self._load()
             row=next((x for x in value['attempts'] if x['execution_id']==execution_id
                 and x['plan']['intent']['attempt_id']==intent['attempt_id']),None)
             if row is None or row['plan']['intent']!=intent:
                 raise ChapterBudgetConflict('dispatch has no matching original reservation')
             if row['dispatch_claimed'] or row['receipt'] is not None or row['local_rejection']:
                 raise ChapterBudgetConflict('attempt cannot be dispatched again or after local rejection')
+            from core.chapter_budget_continuation import require_dispatch
+            require_dispatch(self,budget,value,row)
+            from core.batch_budget_store import BatchBudgetRegistry
+            from core.batch_budget_contract import project_batch_usage
+            batch=BatchBudgetRegistry(self.root.parent,book_id=self.book_id).for_chapter(self.chapter,value)
+            if batch is not None and project_batch_usage(*batch)['exceeded']:
+                raise ChapterBudgetExceeded('original batch budget is exceeded before dispatch')
             row['dispatch_claimed']=True
             self._save(value)
 
@@ -320,6 +382,17 @@ class ChapterBudgetStore:
             raise ChapterBudgetConflict('provider receipt has no durable dispatch claim')
 
     def reserve(self,execution_id,intent,*,endpoint_type,endpoint_fingerprint,input_bound=None,
+                billing_plan=None,request=None,base_url=None):
+        from core.batch_budget_store import coordinator_lock
+        # Every reservation uses the same book-budget coordinator, including
+        # manual calls. A bound chapter cannot opt out by constructing a plain
+        # ChapterBudgetStore or by changing the runtime adapter.
+        with coordinator_lock(self.root.parent):
+            return self._reserve_in_coordinator(execution_id,intent,endpoint_type=endpoint_type,
+                endpoint_fingerprint=endpoint_fingerprint,input_bound=input_bound,
+                billing_plan=billing_plan,request=request,base_url=base_url)
+
+    def _reserve_in_coordinator(self,execution_id,intent,*,endpoint_type,endpoint_fingerprint,input_bound=None,
                 billing_plan=None,request=None,base_url=None):
         execution_id=_id(execution_id)
         if billing_plan is not None:
@@ -337,8 +410,16 @@ class ChapterBudgetStore:
                     if old['local_rejection']:raise ChapterBudgetExceeded(old['local_rejection'])
                     return self._account(old)
             before=self._report(budget,value)
-            if before['unresolved_attempts']:
-                raise ChapterBudgetUncertain('earlier chapter attempt needs receipt reconciliation before new spending')
+            from core.chapter_budget_continuation import allows, load as load_continuation
+            continuation=load_continuation(self,budget)
+            if before['unresolved_attempts'] or continuation and execution_id==continuation['target_execution_id']:
+                if not allows(self,budget,value,execution_id,plan):
+                    raise ChapterBudgetUncertain('earlier chapter attempt needs receipt reconciliation or its exact one-shot continuation before new spending')
+            from core.batch_budget_store import BatchBudgetRegistry
+            from core.batch_budget_contract import project_batch_usage
+            batch=BatchBudgetRegistry(self.root.parent,book_id=self.book_id).for_chapter(self.chapter,value)
+            if batch is not None and project_batch_usage(*batch)['unresolved_attempts']:
+                raise ChapterBudgetUncertain('earlier batch attempt needs receipt reconciliation before new spending')
             if len(value['attempts'])>=10000:raise ChapterBudgetError('chapter budget attempt limit reached')
             row={'execution_id':execution_id,'plan':plan,'receipt':None,'local_rejection':None,'dispatch_claimed':False}
             value['attempts'].append(row)
@@ -347,6 +428,13 @@ class ChapterBudgetStore:
             if after['exceeded']:
                 rejection=mapping[after['exceeded'][0]]
                 row['local_rejection']=rejection
+            elif batch is not None:
+                contract,snapshots=batch
+                snapshots[self.chapter]=dict(budget=budget,report=after)
+                exceeded=project_batch_usage(contract,snapshots)['exceeded']
+                if exceeded:
+                    rejection='batch_'+exceeded[0]
+                    row['local_rejection']=rejection
             self._save(value)
             result=self._account(row)
         if rejection:raise ChapterBudgetExceeded(rejection)

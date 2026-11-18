@@ -16,6 +16,7 @@ from workbench.backup_archive import BackupArchiveError
 from workbench.backup_archive_view import verified_archive_view
 from workbench.backup_auxiliary import Evidence
 from workbench.model_usage_budget import ProjectBudgetUsage
+from workbench.backup_legacy_unknowns import RetainedLegacyUnknowns
 
 
 class _StoryEvidence(Evidence):
@@ -104,10 +105,17 @@ class _Budgets(ProjectBudgetUsage):
                 execution=original['execution_id'];existing=self.executions.setdefault(execution,{'chapter':chapter,'attempts':{}})
                 if existing['chapter']!=chapter:raise ModelCallIntegrityError('execution appears in different archived budgets')
                 existing['attempts'][original['plan']['intent']['attempt_id']]=(original,account)
+        from core.batch_budget_store import inspect_batch_budgets
+        self.batches=inspect_batch_budgets(parent,book_id=book_id,snapshots=self.chapters,
+            read=evidence.document,entries=lambda path:[p.name for p in evidence.child_paths(path)])
+        for batch in self.batches:
+            if batch['unresolved_attempts']:block('batch_budget_unsettled',batch['batch_id'])
+            if batch['exceeded']:block('batch_budget_exceeded',batch['batch_id'])
 
 
 def _usage(evidence,book_id,block):
     budgets=_Budgets(evidence,book_id,block);stores={};rows=[]
+    retained=RetainedLegacyUnknowns(evidence,book_id)
     executions=evidence.root/'.novelagent/runtime/runs/executions'
     for execution in evidence.child_paths(executions):
         if not execution.name.startswith('execution_'):continue
@@ -142,14 +150,19 @@ def _usage(evidence,book_id,block):
             if intent.get('attempt_id')!=name:raise ModelCallIntegrityError('archived model-call filename differs from identity')
             receipt=evidence.document(store,'receipts/'+name+'.json') if evidence.exists(store/'receipts'/(name+'.json')) else None
             item=project_model_attempt(execution,intent,receipt,active=False)
-            if receipt is None:block('model_call_without_receipt',label)
+            if receipt is None:
+                if binding is not None or retained.recognize(execution,name) is None:
+                    block('model_call_without_receipt',label)
             else:
                 ref=receipt['response_artifact_ref']
                 if not ref or model_response_artifact_hash(evidence.raw(store,ref))!=receipt['response_artifact_hash']:
                     raise ModelCallIntegrityError('archived model response is missing or differs')
             rows.append(budgets.project(binding,store,name,intent,receipt,item))
     rows.sort(key=lambda item:(item['created_at'],item['execution_id'],item['attempt_id']),reverse=True)
-    return {'items':rows,'summary':summarize_model_attempts(rows),'chapter_budgets':budgets.reports(),'chapter_times':budgets.times}
+    result={'items':rows,'summary':summarize_model_attempts(rows),'chapter_budgets':budgets.reports(),'chapter_times':budgets.times}
+    result['retained_unknown_calls']=retained.retained
+    if budgets.batches:result['batch_budgets']=budgets.batches
+    return result
 
 
 def inspect_archived_usage(package,*,project_id,book_id):

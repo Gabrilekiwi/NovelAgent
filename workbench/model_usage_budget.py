@@ -21,6 +21,7 @@ class ProjectBudgetUsage:
         self._exists=os.path.lexists
         self.chapters={}
         self.executions={}
+        self.batches=[]
         registry=ChapterBudgetFreezeRegistry(root,book_id=book_id)
         if not registry.root.exists():return
         chapters=set()
@@ -54,6 +55,10 @@ class ProjectBudgetUsage:
                 if existing['chapter']!=chapter:
                     raise ModelCallIntegrityError('execution appears in different chapter budgets')
                 existing['attempts'][original['plan']['intent']['attempt_id']]=(original,account)
+        from core.batch_budget_store import BatchBudgetRegistry,inspect_batch_budgets
+        batches=BatchBudgetRegistry(registry.root,book_id=book_id)
+        self.batches=inspect_batch_budgets(registry.root,book_id=book_id,snapshots=self.chapters,
+            read=batches._read,entries=batches._entries)
 
     def bind(self, execution_id, store):
         """Verify a physical store's existing binding, including lost b.json."""

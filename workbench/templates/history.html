@@ -25,7 +25,7 @@
   </div>
   <div class="table-scroll">
     <table class="data-table" id="history-table">
-      <thead><tr><th>时间</th><th>章节 / 操作</th><th>结果</th><th>用时</th><th>Tokens</th><th>费用</th><th><span class="sr-only">详情</span></th></tr></thead>
+      <thead><tr><th>时间</th><th>章节 / 操作</th><th>结果</th><th>运行耗时</th><th>Tokens</th><th>费用</th><th><span class="sr-only">详情</span></th></tr></thead>
       <tbody>
       {% for run in runs|default([]) %}
         <tr data-filter-status="{{ run.status|default('idle') }}" data-filter-kind="{{ run.kind|default('generation') }}" data-search-value="{{ run.chapter|default('') }} {{ run.id }} {{ run.title|default('') }}">

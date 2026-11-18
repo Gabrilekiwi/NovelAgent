@@ -85,6 +85,36 @@ def _create_project(client: TestClient, workspace: Path, name: str = "测试长�
     return response.json()["project"]
 
 
+
+def _legacy_display_resolution(fields: dict, project: dict) -> dict:
+    """Valid legacy display fixture, not evidence for resuming model calls."""
+    from core.memory_v2.canonical import canonical_json_hash
+    from core.engine.locked_chapter_state import validate_locked_chapter_resolution
+    value = dict(schema_version="1.0", id="display-" + fields["action"],
+                 created_at="2026-01-01T00:00:00+00:00", book_id=project["book_id"],
+                 resolved_execution_ids=[], resolved_attempt_ids=[], discarded_run_ids=[],
+                 expected_scene_count=1, complete_draft=None, scenes=[])
+    value.update(fields)
+    value["scenes"] = [dict(index=x.get("index", x.get("scene_index")),
+        text="fixture scene", sha256=hashlib.sha256(b"fixture scene").hexdigest(),
+        source_attempt_id="fixture-attempt") for x in value["scenes"]]
+    value["resolution_hash"] = canonical_json_hash(value, exclude_fields=("resolution_hash",), exclude_environment_fields=False)
+    return validate_locked_chapter_resolution(value)
+
+def test_display_resolution_fixture_rejects_tampered_content() -> None:
+    from core.engine.locked_chapter_state import (
+        LockedChapterStateError, validate_locked_chapter_resolution,
+    )
+    value = _legacy_display_resolution({
+        "chapter_index": 1, "action": "resume_scenes",
+        "reason": "contiguous_scene_prefix_available", "source_run_id": "run-test",
+        "scenes": [{"index": 1}],
+    }, {"book_id": "test-book"})
+    value["scenes"][0]["text"] = "tampered scene"
+    with pytest.raises(LockedChapterStateError, match="hash mismatch"):
+        validate_locked_chapter_resolution(value)
+
+
 def _outline(chapter: int, *, title: str | None = None) -> dict:
     return {
         "chapter_index": chapter,
@@ -503,14 +533,14 @@ def test_recovery_summary_marks_missing_current_and_stale_checkpoints(tmp_path: 
     resolution_dir.mkdir()
     (resolution_dir / "resolution_current.json").write_text(
         json.dumps(
-            {
+            _legacy_display_resolution({
                 "chapter_index": 20,
                 "action": "resume_scenes",
-                "reason": "preserve trusted scene prefix",
+                "reason": "preserve_trusted_scene_prefix",
                 "source_run_id": "run-original",
                 "expected_scene_count": 3,
                 "scenes": [{"scene_index": 1}, {"scene_index": 2}],
-            }
+            }, project)
         ),
         encoding="utf-8",
     )
@@ -531,14 +561,14 @@ def test_recovery_summary_marks_missing_current_and_stale_checkpoints(tmp_path: 
 
     (resolution_dir / "resolution_reset.json").write_text(
         json.dumps(
-            {
+            _legacy_display_resolution({
                 "chapter_index": 20,
                 "action": "reset",
                 "reason": "operator_requested_reset",
                 "source_run_id": "run-newer-failure",
                 "expected_scene_count": 3,
                 "scenes": [],
-            }
+            }, project)
         ),
         encoding="utf-8",
     )
@@ -652,14 +682,14 @@ def test_pending_exposes_recovery_for_the_paused_session_chapter(tmp_path: Path)
     resolution_dir.mkdir()
     (resolution_dir / "resolution_chapter_21.json").write_text(
         json.dumps(
-            {
+            _legacy_display_resolution({
                 "chapter_index": 21,
                 "action": "resume_scenes",
                 "reason": "contiguous_scene_prefix_available",
                 "source_run_id": "chapter-21-failed",
                 "expected_scene_count": 4,
                 "scenes": [{"index": 1}],
-            }
+            }, project)
         ),
         encoding="utf-8",
     )
@@ -743,7 +773,7 @@ def test_pending_preserves_author_edit_and_exposes_verified_source_for_compariso
     checkpoint = resolution_dir / "resolution_chapter_22_final.json"
     checkpoint.write_text(
         json.dumps(
-            {
+            _legacy_display_resolution({
                 "chapter_index": 22,
                 "action": "repair_draft",
                 "reason": "durable_repaired_draft_available",
@@ -752,7 +782,7 @@ def test_pending_preserves_author_edit_and_exposes_verified_source_for_compariso
                     "text": source_text,
                     "sha256": source_sha256,
                 },
-            }
+            }, project)
         ),
         encoding="utf-8",
     )

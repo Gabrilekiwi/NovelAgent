@@ -73,6 +73,16 @@ def test_official_worktree_path_defaults_to_sibling(tmp_path: Path) -> None:
     ) == override
 
 
+def test_extracted_package_needs_no_git_even_inside_another_checkout(tmp_path, monkeypatch):
+    outer = _init_repo(tmp_path)
+    package = outer / "解压的候选包"
+    package.mkdir()
+    monkeypatch.setenv("PATH", "")
+    assert not plan_official_launch(package, [], environ={}).redirected
+    with pytest.raises(OfficialLaunchError, match="Git"):
+        plan_official_launch(outer, [], environ={})
+
+
 def test_clean_checkout_stays_in_place(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     plan = plan_official_launch(repo, ["--no-browser"], environ={})
@@ -115,7 +125,9 @@ def test_use_working_tree_keeps_dirty_sources_for_explicit_preview(tmp_path: Pat
 
 def test_prepare_official_worktree_serves_head_and_leaves_source_dirty(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     repo = _init_repo(tmp_path)
     _dirty_workbench(repo)
     (repo / ".env").write_text(f"OPENAI_API_KEY={SECRET}\n", encoding="utf-8")
@@ -139,8 +151,6 @@ def test_prepare_official_worktree_serves_head_and_leaves_source_dirty(
     loaded = load_source_credentials(repo)
     assert loaded is True
     assert os.environ.get("OPENAI_API_KEY") == SECRET
-    if os.environ.get("OPENAI_API_KEY") == SECRET:
-        os.environ.pop("OPENAI_API_KEY", None)
 
 
 def test_prepare_failure_does_not_fall_back_to_dirty_tree(tmp_path: Path) -> None:

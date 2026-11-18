@@ -75,9 +75,16 @@ def _head_sha(repo: Path) -> str:
 
 def workbench_sources_differ_from_head(repo: Path) -> bool:
     """Return True when process-visible sources differ from committed HEAD."""
-    result = _git(repo, "status", "--porcelain", "--", *SOURCE_PATHS)
-    if result.returncode != 0:
+    # An extracted distribution is not a checkout, even inside another repo.
+    # Only a checkout (including linked worktrees) needs Git at launch.
+    if not os.path.lexists(repo / ".git"):
         return False
+    try:
+        result = _git(repo, "status", "--porcelain", "--", *SOURCE_PATHS)
+    except OSError as exc:
+        raise OfficialLaunchError("开发检出目录需要 Git 来核对启动版本，请安装 Git 或使用解压后的候选包。") from exc
+    if result.returncode != 0:
+        raise OfficialLaunchError("无法核对开发检出目录的 Git 状态，未启动工作台。")
     return bool((result.stdout or "").strip())
 
 

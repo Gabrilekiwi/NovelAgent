@@ -630,6 +630,12 @@ class ChapterFactExtractionExecutor:
 
     def _execute_prepared(self, prepared: Mapping[str, Any]) -> dict[str, Any]:
         extraction_id = prepared["extraction_id"]
+        policy=prepared.get('policy_authorization')
+        if policy is not None:
+            from core.engine.reviewed_policy_extraction import require_policy_extraction_scope
+            require_policy_extraction_scope(policy,prepared=prepared)
+            if self._select_execution_budget(prepared['book_id'],prepared['chapter_index']) is None:
+                raise ChapterFactExtractionConflictError('policy extraction requires the original chapter budget')
         self._raise_if_abandoned(extraction_id)
         if self.store.has_record(extraction_id):
             record = self.store.load_record(extraction_id)
@@ -663,7 +669,7 @@ class ChapterFactExtractionExecutor:
             "model_calls_ref": f"executions/{execution_id}/model_calls",
         }
         intent = {
-            "schema_version": CHAPTER_FACT_EXTRACTION_SCHEMA_VERSION,
+            "schema_version": "1.1" if policy is not None else CHAPTER_FACT_EXTRACTION_SCHEMA_VERSION,
             "record_type": "chapter_fact_extraction_intent",
             "extraction_id": extraction_id,
             "book_id": prepared["book_id"],
@@ -684,12 +690,9 @@ class ChapterFactExtractionExecutor:
                 "sha256": prepared["authority_view_sha256"],
                 "chars": len(prepared["authority_view_text"]),
             },
-            "author_confirmation": {
-                "confirmed": True,
-                "purpose": CHAPTER_FACT_EXTRACTION_PURPOSE,
-            },
             "execution": execution,
         }
+        intent.update({'policy_authorization':policy} if policy is not None else {'author_confirmation':prepared['author_confirmation']})
         intent["intent_hash"] = _record_hash(intent, "intent_hash")
         claimed = self.store.claim(
             chapter_text=prepared["chapter_text"],
@@ -699,6 +702,27 @@ class ChapterFactExtractionExecutor:
         )
         self._inject_fault("after_intent_before_provider", extraction_id)
         return self._execute_claimed(claimed)
+
+    def prepare_policy_request(self, **request):
+        """Pure validation and normalization; no author identity is invented."""
+        return _prepare_request_data(**request)
+
+    def execute_policy(self, *, policy_authorization, **request):
+        from core.engine.reviewed_policy_extraction import require_policy_extraction_scope
+        require_policy_extraction_scope(policy_authorization)
+        prepared=self.prepare_policy_request(**request)
+        prepared['policy_authorization']=require_policy_extraction_scope(policy_authorization,prepared=prepared)
+        _bind_request_hash(prepared)
+        if _execution_id(prepared['extraction_id'])!=policy_authorization['execution_id']:
+            raise ChapterFactExtractionConflictError('policy extraction differs from original execution')
+        with provider_execution_lock(self.paths.run_dir),execution_activity(self.paths.run_dir,_execution_id(prepared['extraction_id'])):
+            # An explicitly authorized original pending step may recover its
+            # exact Intent. Scope/budget/uncertain-call guards still apply.
+            if self.store.has_intent(prepared['extraction_id']) and not self.store.has_record(prepared['extraction_id']):
+                intent=self.store.load_intent(prepared['extraction_id'])
+                _require_request_match(intent,prepared['request_sha256'])
+                return self._execute_claimed(intent,local_recovery=True)
+            return self._execute_prepared(prepared)
 
     def resume(self, extraction_id: str) -> dict[str, Any]:
         extraction_id = _validate_extraction_id(extraction_id)
@@ -844,6 +868,11 @@ class ChapterFactExtractionExecutor:
             )
 
     def _execute_claimed(self, intent: dict[str, Any], *, local_recovery=False) -> dict[str, Any]:
+        if 'policy_authorization' in intent:
+            from core.engine.reviewed_policy_extraction import require_policy_extraction_scope
+            require_policy_extraction_scope(intent['policy_authorization'])
+            if self._select_execution_budget(intent['book_id'],intent['chapter_index']) is None:
+                raise ChapterFactExtractionConflictError('policy extraction requires the original chapter budget')
         extraction_id = intent["extraction_id"]
         self._raise_if_abandoned(extraction_id)
         self._require_executor_kind(intent)
@@ -972,7 +1001,7 @@ class ChapterFactExtractionExecutor:
         error: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
         record = {
-            "schema_version": CHAPTER_FACT_EXTRACTION_SCHEMA_VERSION,
+            "schema_version": intent['schema_version'],
             "record_type": "chapter_fact_extraction_record",
             "extraction_id": intent["extraction_id"],
             "book_id": intent["book_id"],
@@ -1079,16 +1108,24 @@ def _prepare_request(
     idempotency_key: str,
     author_confirmed: bool,
 ) -> dict[str, Any]:
+    if author_confirmed is not True:
+        raise ChapterFactExtractionConflictError('explicit author confirmation is required to start fact extraction')
+    prepared=_prepare_request_data(book_id=book_id,chapter_index=chapter_index,candidate_binding=candidate_binding,
+        draft_binding=draft_binding,context_sha256=context_sha256,authority_binding=authority_binding,
+        chapter_text=chapter_text,authority_view=authority_view,idempotency_key=idempotency_key)
+    prepared['author_confirmation']={'confirmed':True,'purpose':CHAPTER_FACT_EXTRACTION_PURPOSE}
+    _bind_request_hash(prepared)
+    return prepared
+
+
+def _prepare_request_data(*,book_id,chapter_index,candidate_binding,draft_binding,context_sha256,
+                          authority_binding,chapter_text,authority_view,idempotency_key):
     book_id = _required_text(book_id, "book_id")
     chapter_index = _positive_integer(chapter_index, "chapter_index")
     key = str(idempotency_key or "")
     if _IDEMPOTENCY_KEY.fullmatch(key) is None:
         raise ChapterFactExtractionIntegrityError(
             "idempotency_key must be a safe non-empty identifier"
-        )
-    if author_confirmed is not True:
-        raise ChapterFactExtractionConflictError(
-            "explicit author confirmation is required to start fact extraction"
         )
     candidate = _validated_candidate_binding(candidate_binding)
     draft = _validated_draft_binding(draft_binding)
@@ -1115,27 +1152,11 @@ def _prepare_request(
         chapter_index=chapter_index,
         idempotency_key_sha256=idempotency_key_sha256,
     )
-    confirmation = {
-        "confirmed": True,
-        "purpose": CHAPTER_FACT_EXTRACTION_PURPOSE,
-    }
-    request_sha256 = _fact_extraction_request_hash(
-        book_id=book_id,
-        chapter_index=chapter_index,
-        candidate=candidate,
-        draft=draft,
-        context=context,
-        authority=authority,
-        authority_view_sha256=view_sha256,
-        authority_view_chars=len(view_text),
-        author_confirmation=confirmation,
-    )
     return {
         "book_id": book_id,
         "chapter_index": chapter_index,
         "extraction_id": extraction_id,
         "idempotency_key_sha256": idempotency_key_sha256,
-        "request_sha256": request_sha256,
         "candidate": candidate,
         "draft": draft,
         "context": context,
@@ -1144,14 +1165,22 @@ def _prepare_request(
         "authority_view": view,
         "authority_view_text": view_text,
         "authority_view_sha256": view_sha256,
+        "authority_view_chars": len(view_text),
     }
+
+
+def _bind_request_hash(prepared):
+    prepared['request_sha256']=_fact_extraction_request_hash(**{k:prepared[k] for k in
+        ('book_id','chapter_index','candidate','draft','context','authority','authority_view_sha256','authority_view_chars')},
+        author_confirmation=prepared.get('author_confirmation'),policy_authorization=prepared.get('policy_authorization'))
 
 
 def _validate_extraction_intent(value: Mapping[str, Any]) -> dict[str, Any]:
     try:
+        candidate=copy.deepcopy(dict(value))
         payload = validate_schema(
-            copy.deepcopy(dict(value)),
-            "chapter_fact_extraction_intent.schema.json",
+            candidate,
+            "chapter_policy_extraction_intent.schema.json" if candidate.get('schema_version')=='1.1' else "chapter_fact_extraction_intent.schema.json",
         )
     except (SchemaValidationError, TypeError, ValueError) as exc:
         raise ChapterFactExtractionIntegrityError(str(exc)) from exc
@@ -1172,6 +1201,16 @@ def _validate_extraction_intent(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ChapterFactExtractionIntegrityError(
             "chapter fact-extraction execution id binding mismatch"
         )
+    if payload['schema_version']=='1.1':
+        from core.engine.reviewed_policy_extraction import validate_policy_extraction_authorization,extraction_input_sha256
+        from core.engine.reviewed_batch_control import BatchControlError
+        try:a=validate_policy_extraction_authorization(payload['policy_authorization'])
+        except BatchControlError as exc:raise ChapterFactExtractionIntegrityError(str(exc)) from exc
+        if (a['book_id']!=payload['book_id'] or a['chapter']!=payload['chapter_index']
+                or a['execution_id']!=payload['execution']['execution_id']
+                or a['input_sha256']!=extraction_input_sha256({**payload,
+                    'authority_view_sha256':payload['authority_view']['sha256'],'authority_view_chars':payload['authority_view']['chars']})):
+            raise ChapterFactExtractionIntegrityError('policy extraction original input binding mismatch')
     expected_operation = canonical_json_hash(
         {
             "extraction_id": expected_id,
@@ -1193,7 +1232,8 @@ def _validate_extraction_intent(value: Mapping[str, Any]) -> dict[str, Any]:
         authority=payload["authority"],
         authority_view_sha256=payload["authority_view"]["sha256"],
         authority_view_chars=payload["authority_view"]["chars"],
-        author_confirmation=payload["author_confirmation"],
+        author_confirmation=payload.get("author_confirmation"),
+        policy_authorization=payload.get('policy_authorization'),
     )
     if payload["request_sha256"] != expected_request:
         raise ChapterFactExtractionIntegrityError(
@@ -1269,6 +1309,7 @@ def _require_record_links_intent(
     intent: Mapping[str, Any],
 ) -> None:
     for field in (
+        "schema_version",
         "extraction_id",
         "book_id",
         "chapter_index",
@@ -1298,7 +1339,8 @@ def _fact_extraction_request_hash(
     authority: Mapping[str, Any],
     authority_view_sha256: str,
     authority_view_chars: int,
-    author_confirmation: Mapping[str, Any],
+    author_confirmation: Mapping[str, Any] | None,
+    policy_authorization: Mapping[str, Any] | None = None,
 ) -> str:
     return canonical_json_hash(
         {
@@ -1316,7 +1358,8 @@ def _fact_extraction_request_hash(
                 "sha256": authority_view_sha256,
                 "chars": authority_view_chars,
             },
-            "author_confirmation": copy.deepcopy(dict(author_confirmation)),
+            **({'policy_authorization':copy.deepcopy(dict(policy_authorization))} if policy_authorization is not None
+               else {'author_confirmation':copy.deepcopy(dict(author_confirmation))}),
         },
         exclude_environment_fields=False,
     )

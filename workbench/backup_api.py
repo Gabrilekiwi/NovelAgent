@@ -18,6 +18,7 @@ from workbench.legacy_registration import LegacyRegistration
 from workbench.backup_certification_api import install_certification_routes
 from workbench.author_baseline_api import install_author_baseline_routes
 from workbench.onboarding_upgrade_api import install_upgrade_routes
+from workbench.legacy_memory_revision_api import install_legacy_memory_revision_routes
 
 
 class BackupControlRoute(APIRoute):
@@ -137,4 +138,5 @@ def install_backup_api(app,*,projects,maintenance,task_runtime_root,worker_enabl
     install_certification_routes(router,app,service,projects,execute,_payload)
     install_author_baseline_routes(router,app,service,projects,execute,_payload)
     install_upgrade_routes(router,app,service,execute,_payload)
+    install_legacy_memory_revision_routes(router,app,service,execute,_payload)
     app.include_router(router)

@@ -8,6 +8,53 @@ from workbench.backup_files import inventory_tree
 from workbench.backup_references import inspect_metadata_references
 
 
+@pytest.mark.parametrize('damage', ['none', 'unknown_detail', 'required', 'executable', 'wrong_context'])
+def test_optional_compatibility_probes_are_not_required_archive_files(legacy, damage):
+    from core.story_project.oh_story_detection import detect_oh_story_compatibility
+    c = legacy
+    report = detect_oh_story_compatibility(c['root'], workspace_root=c['root'].parent)
+    probe = next(item for item in report['markers'] if item['kind'] == 'active_book')
+    probe['path'] = str(c['root'].parent/'absent-probe')
+    if damage == 'unknown_detail': probe['details']['actual_output_path'] = str(c['root'].parent/'output')
+    elif damage == 'required': probe['required'] = True
+    elif damage == 'executable': report['capabilities']['oh_story_js_execution'] = True
+    payload = {'story_project': {'oh_story': report}} if damage != 'wrong_context' else {'arbitrary': report}
+    job(c, payload)
+    result = inspect(c)
+    if damage == 'none':
+        assert result['scope_checks_passed'], result['blockers']
+        assert not any('absent-probe' in item['path'] for item in result['references'])
+    else:
+        assert not result['scope_checks_passed']
+
+
+def test_published_prose_and_book_relative_failure_record_are_checked(legacy):
+    c = legacy
+    record = c['root']/'.novelagent/runtime/runs/failure.json'
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text('{}', encoding='utf-8')
+    prose = c['root']/'prose.txt'; prose.write_text('正文', encoding='utf-8')
+    job(c, {'verification': {'prose_path': str(prose)},
+        'error': {'details': {'run_record_path': record.relative_to(c['root']).as_posix()}}})
+    assert inspect(c)['scope_checks_passed']
+    record.unlink()
+    assert 'required_file_missing_or_excluded' in codes(inspect(c))
+
+
+@pytest.mark.parametrize('damage', ['none','outside','wrong_kind','unknown_field','wrong_context'])
+def test_memory_source_chapter_coordinates_are_not_files(tmp_path, damage):
+    source={'kind':'committed_chapter','path':'chapter:23'}
+    if damage=='outside': source['path']=str(tmp_path.parent/'outside.txt')
+    elif damage=='wrong_kind': source['kind']='file'
+    elif damage=='unknown_field': source['artifact_path']=str(tmp_path.parent/'outside.txt')
+    value={'memory_v2':{'source_index':{'patch_23':source}}} if damage!='wrong_context' else source
+    seen=[];blocked=[]
+    inspect_metadata_references(value,source='snapshot',book_root=tmp_path,
+        require_path=lambda *a,**k:seen.append(a),block=lambda *a:blocked.append(a))
+    if damage=='none': assert not seen and not blocked
+    else: assert seen or blocked
+
+
 def job(c,result=None):
     row=c['jobs'].create_job(project_id=c['project'].id,kind='generation_session',start_chapter=1,end_chapter=1)
     if result is not None:

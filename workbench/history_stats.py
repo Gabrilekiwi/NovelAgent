@@ -16,14 +16,15 @@ Definitions used by the API, the history page, and tests:
   author-visible recovery work after a stall or lock. Cancelled production
   batches with manual_confirmation_required are not treated as interventions.
 - cost_label / token_label: if any run has a positive estimated_cost, those
-  amounts are summed. If usage tokens exist but every estimated_cost is
-  missing or 0, the page shows an unpriced token state instead of a silent
-  dash or an invented currency amount.
+  amounts are summed as a subtotal. Unsettled calls or calls without usage
+  prevent that subtotal being labelled complete. Missing or zero estimates
+  with recorded usage are unpriced, not evidence that a call was free.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -39,7 +40,7 @@ def _as_int(value: Any) -> int:
         if value is None or isinstance(value, bool):
             return 0
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
@@ -47,7 +48,8 @@ def _as_float(value: Any) -> float | None:
     try:
         if value is None or isinstance(value, bool):
             return None
-        return float(value)
+        result = float(value)
+        return result if math.isfinite(result) else None
     except (TypeError, ValueError):
         return None
 
@@ -63,6 +65,17 @@ def format_first_pass_rate(passed: int, denominator: int) -> str:
     return f"{percent}%（{passed}/{denominator}）"
 
 
+def _has_unsettled_usage(run: Mapping[str, Any]) -> bool:
+    return _as_int(run.get("unsettled_attempt_count")) > 0
+
+
+def _has_unpriced_call(run: Mapping[str, Any]) -> bool:
+    has_activity = any(_as_int(run.get(key)) > 0 for key in (
+        "provider_calls", "total_input_tokens", "total_output_tokens",
+    ))
+    return has_activity and not ((_as_float(run.get("estimated_cost")) or 0) > 0)
+
+
 def annotate_run_usage(run: Mapping[str, Any] | None) -> dict[str, str]:
     if not isinstance(run, Mapping):
         return {"token_label": "—", "cost_label": "—"}
@@ -74,10 +87,16 @@ def annotate_run_usage(run: Mapping[str, Any] | None) -> dict[str, str]:
         if tokens_in or tokens_out
         else "—"
     )
-    if cost is not None and cost > 0:
+    unsettled = _as_int(run.get("unsettled_attempt_count"))
+    if unsettled > 0:
+        cost_label = (f"部分已计价 {cost:.2f}；{unsettled} 次待结算"
+                      if cost is not None and cost > 0 else f"费用未完整；{unsettled} 次待结算")
+    elif cost is not None and cost > 0:
         cost_label = f"{cost:.2f}"
     elif tokens_in or tokens_out:
         cost_label = "未计价"
+    elif _as_int(run.get("provider_calls")) > 0:
+        cost_label = "费用未知（调用已记录，用量缺失）"
     else:
         cost_label = "—"
     return {"token_label": token_label, "cost_label": cost_label}
@@ -107,11 +126,12 @@ def load_compact_runs(
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             compact = compact_run(payload)
+            modified_at = path.stat().st_mtime_ns
         except (OSError, ValueError):
             continue
         if compact is None:
             continue
-        values.append((path.stat().st_mtime_ns, compact))
+        values.append((modified_at, compact))
     values.sort(key=lambda item: item[0], reverse=True)
     return [item for _, item in values]
 
@@ -179,11 +199,8 @@ def build_history_stats(
         for cost in (_as_float(run.get("estimated_cost")) for run in run_rows)
         if cost is not None and cost > 0
     ]
-    unpriced_with_tokens = any(
-        (_as_int(run.get("total_input_tokens")) or _as_int(run.get("total_output_tokens")))
-        and not ((_as_float(run.get("estimated_cost")) or 0) > 0)
-        for run in run_rows
-    )
+    incomplete_cost = any(_has_unsettled_usage(run) or _has_unpriced_call(run) for run in run_rows)
+    unsettled_attempts = sum(max(0, _as_int(run.get("unsettled_attempt_count"))) for run in run_rows)
 
     token_label = ""
     if total_input_tokens or total_output_tokens:
@@ -191,14 +208,13 @@ def build_history_stats(
             f"输入 {format_token_count(total_input_tokens)} · "
             f"输出 {format_token_count(total_output_tokens)}"
         )
-    if priced_costs and not unpriced_with_tokens:
+    if priced_costs and not incomplete_cost:
         cost_label = f"{sum(priced_costs):.2f}"
         estimated_cost: float | None = float(sum(priced_costs))
         cost_priced = True
-    elif priced_costs and unpriced_with_tokens:
+    elif priced_costs and incomplete_cost:
         cost_label = f"部分已计价 {sum(priced_costs):.2f}"
-        if token_label:
-            token_label += "；其余运行没有可用计价结果"
+        token_label += ("；" if token_label else "") + "部分调用没有可用计价结果，以上不是总费用"
         estimated_cost = float(sum(priced_costs))
         cost_priced = False
     elif total_input_tokens or total_output_tokens:
@@ -206,10 +222,18 @@ def build_history_stats(
         token_label += "；已记录用量，但没有可用的计价结果"
         estimated_cost = None
         cost_priced = False
+    elif incomplete_cost:
+        cost_label = "费用未知"
+        token_label = "调用已记录，但用量或计价结果不完整"
+        estimated_cost = None
+        cost_priced = False
     else:
         cost_label = "—"
         estimated_cost = None
         cost_priced = False
+
+    if unsettled_attempts:
+        token_label += ("；" if token_label else "") + f"{unsettled_attempts} 次待结算"
 
     total_runs = len(run_rows)
     listed = total_runs if listed_run_count is None else min(listed_run_count, total_runs)

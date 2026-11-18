@@ -7,6 +7,7 @@
   const storageKey = `novelagent.publication:${project}:${chapter}:${review}`;
   const inputFields = ["review_id", "expected_draft_revision", "expected_review_revision", "expected_draft_sha256", "expected_facts_sha256"];
   let current = null, request = null, preview = null, pending = false, published = false, publication = null, terminal = false, busy = false;
+  let budgetBlocked = true;
   let entityNames = {};
   const labels = { characters: "人物", locations: "地点", items: "物品", events: "事件", relations: "关系", counters: "计数",
     relationships: "人物关系", roster: "成员名单", numeric_counters: "数值记录", inventory: "物品持有",
@@ -34,14 +35,48 @@
     if (!Object.keys(value).length) list.append(node("dt", "暂无记录"));
     return list;
   };
+  const showDisposition = (value) => {
+    if(!value || value.schema_version!=="reviewed_quality_disposition_v1"
+      || value.publication_authorized!==false || value.repair_authorized!==false)
+      throw new Error("本次问题与正文依据不完整，请重新生成预览。");
+    const groups={pause:"需要作者核对",repair_once:"可进行一次修正评估",advice:"一般建议"};
+    const names={duplicate_scene_text:"正文重复",near_duplicate_scene_text:"正文近似重复",
+      duplicate_opening:"重复开头",duplicate_ending_hook:"重复结尾",repetition_or_stalling:"重复或停滞",
+      chapter_length_reasonable:"篇幅建议",missing_required_beat:"章纲节拍缺失",
+      missing_ending_pressure:"结尾压力缺失",no_meta_output:"混入非正文内容",
+      language_consistency:"语言要求",continues_previous_ending:"前后章衔接",
+      preserves_last_scene_location:"场景位置衔接",continue_previous_ending:"前后章衔接规则",
+      llm_validator_unavailable:"必要模型检查未完成"};
+    names.short_near_prose_repetition_risk="短正文疑似重复";
+    $("quality-action-summary").textContent=({continue:"没有需要修正的问题，或仅有一般建议。",
+      pause:"存在需要作者核对的问题，请结合原文和事实记录审阅。",
+      repair_once:"重复问题已定位到正文，修正后须重新提取事实并检查。"}[value.automatic_action] || "请核对本次完整质量记录。");
+    const children=[];
+    for(const reason of value.pause_reasons || [])children.push(node("p",({
+      quality_coverage_incomplete:"必要检查尚未完成。",authoritative_state_not_accepted:"事实状态校验尚未通过。",
+      review_producer_failed:"叙事检查执行失败。",unexplained_local_gate_failure:"本地检查未通过，需要核对完整记录。",
+      admission_review_not_executed:"本次记录缺少处置策略所需的风险检查。",
+      short_prose_review_incomplete:"短正文风险检查超过当前支持范围，需要人工核对。"
+    }[reason] || "本项条件需要核对。")));
+    for(const finding of value.findings || []) {
+      const item=node("article");item.append(node("h4",`${groups[finding.disposition] || "需核对"}：${finding.codes.map(code=>names[code] || code).join("、")}`));
+      item.append(node("p",finding.message));
+      if(finding.quotes.length)for(const span of finding.quotes) {
+        item.append(node("p",`正文第 ${span.start_char+1}–${span.end_char} 字符（摘录）`),node("blockquote",span.quote));
+      } else if(finding.disposition!=="advice")item.append(node("p","此项未提供可核对的正文范围，请人工定位；当前依据不足以自动修正。"));
+      children.push(item);
+    }
+    $("quality-actions").replaceChildren(...children);
+  };
   const saveRequest = () => {
     // If durable browser storage is unavailable, do not send a publication that
     // the user could not identify after a lost response.
     localStorage.setItem(storageKey, JSON.stringify(request));
   };
   const controls = () => {
-    $("preview").disabled = busy || !current || pending || published || terminal || current.review_state !== "confirmed";
-    $("commit").disabled = busy || !preview || !$("confirmed").checked || pending || published || terminal;
+    $("preview").disabled = busy || budgetBlocked || !current || pending || published || terminal || current.review_state !== "confirmed";
+    $("commit").disabled = busy || budgetBlocked || !preview || !$("confirmed").checked || pending || published || terminal;
+    $("reload").disabled = busy || pending;
     $("resolve").hidden = !request || published || terminal;
     $("resolve").disabled = busy;
     $("recover").disabled = busy;
@@ -56,10 +91,15 @@
       chapter_commit_integrity_error: "提交证据未能通过完整性核验。请保留原记录并处理恢复问题，暂时不能发布。",
       chapter_commit_conflict: "草稿、审核或提交条件已变化。请查询原提交结果，或重新读取当前审核记录。",
       book_ownership_invalid: "此作品的本机登记尚未通过核验，暂时不能发布。请先完成作品接入或恢复核验。",
-      book_ownership_busy: "此作品正在由另一个进程处理，请稍后查询原提交结果。"
+      book_ownership_busy: "此作品正在由另一个进程处理，请稍后查询原提交结果。",
+      chapter_active_time_exceeded: "本章主动执行时间已用尽，已暂停新的检查和发布准备。原提交结果仍可查询。",
+      chapter_active_time_unknown: "上次执行没有完整计时记录，新的检查已暂停。请保留原记录并核对恢复状态。",
+      chapter_budget_evidence_invalid: "本章预算记录未能通过核验，请先核对本章原预算。",
+      chapter_time_evidence_invalid: "本章计时记录未能通过核验，请保留原记录并核对恢复状态。"
     };
     $("error").textContent = messages[error.code] || error.message;
     $("error").hidden = false;
+    if(["chapter_active_time_exceeded","chapter_active_time_unknown","chapter_time_evidence_invalid","chapter_budget_evidence_invalid"].includes(error.code))budgetBlocked=true;
     if (pending && !published) $("status").textContent = "发布结果待核对，请查询原提交结果。";
     if (error.code === "chapter_commit_recovery_required") $("recover").hidden = false;
     preview = null; $("confirmed").checked = false; $("confirm-label").hidden = true;
@@ -94,6 +134,31 @@
       $("prose").textContent = "";
     }
   };
+  const loadBudget = async () => {
+    budgetBlocked = true;
+    if (current?.execution_mode === 'local_author_review') {
+      budgetBlocked = false;
+      return true;
+    }
+    const value = await api(`${path}/budget`);
+    if(value.project_id !== project || value.book_id !== current.book_id || value.chapter !== chapter)
+      throw new Error("预算不属于当前章节，请保留原记录并核对作品。");
+    if(value.state !== "ready") {
+      $("status").textContent = "本章原预算尚未就绪，新的检查和发布准备已暂停。请返回章节页核对。";
+      return false;
+    }
+    const t = value.time;
+    if(!t || t.binding?.budget_sha256 !== value.budget?.budget_sha256)
+      throw new Error("本章计时与预算绑定不完整，请保留原记录并核对。");
+    if(t.active_status !== "settled" || t.active_limit_reached) {
+      $("status").textContent = t.active_status === "running" ? "本章正在执行，请等待原操作完成后重新读取。"
+        : t.active_status === "unknown" ? "上次执行没有完整计时记录，新的检查已暂停。原提交结果仍可查询。"
+        : "本章主动执行时间已用尽，新的检查和发布准备已暂停。原提交结果仍可查询。";
+      return false;
+    }
+    budgetBlocked = false;
+    return true;
+  };
   const presentResult = (result) => {
     preview = null; $("confirm-label").hidden = true;
     if (result.publication_verified === true) {
@@ -120,7 +185,9 @@
     presentResult((await api(`${path}/publication-status`, request.body, request.key)).publication);
   };
   $("preview").addEventListener("click", () => run(async () => {
+    preview = null; $("confirmed").checked = false; $("confirm-label").hidden = true; $("preview-panel").hidden = true;
     await loadInput();
+    if(!await loadBudget())return;
     const body = Object.fromEntries(inputFields.map((key) => [key, current[key]]));
     if (!request || JSON.stringify(request.body) !== JSON.stringify(body)) request = { body, key: crypto.randomUUID() };
     saveRequest();
@@ -131,6 +198,8 @@
     $("preview-panel").hidden = false;
     $("prose").textContent = result.preparation.final_prose;
     $("quality").textContent = allowed ? "本地标准质量检查通过。提交时将再次核验。" : "质量检查未通过，暂不能发布。请返回草稿处理问题。";
+    if(result.execution_budget?.time)$("quality").textContent+=` 本章累计已测主动执行 ${result.execution_budget.time.active_seconds} 秒（上限 ${result.execution_budget.time.active_limit_seconds} 秒），作者等待单列。`;
+    showDisposition(result.quality_disposition);
     $("checks").replaceChildren(...[
       ["正文完整性", quality.final_artifact_integrity.accepted], ["事实状态校验", quality.authoritative_state_validation.accepted],
       ["叙事审查", quality.review_gate.status === "pass"], ["检查项完整", quality.quality_coverage_complete]
@@ -165,6 +234,11 @@
     presentResult(result.publication);
   }));
   $("resolve").addEventListener("click", () => run(resolve));
+  $("reload").addEventListener("click", () => run(async () => {
+    preview = null; $("confirmed").checked = false; $("confirm-label").hidden = true; $("preview-panel").hidden = true;
+    await loadInput();
+    if(!published && await loadBudget())$("status").textContent="审核与预算已重新读取，请重新生成预览。";
+  }));
   $("recover").addEventListener("click", () => run(async () => {
     await api(`/api/projects/${encodeURIComponent(project)}/publication-recovery`, { author_confirmed: true });
     $("recover").hidden = true;
@@ -174,6 +248,7 @@
   $("restart").addEventListener("click", () => run(async () => {
     localStorage.removeItem(storageKey); request = null; terminal = false; preview = null;
     $("preview-panel").hidden = true; await loadInput(); $("status").textContent = "请重新核对当前草稿并生成预览。";
+    await loadBudget();
   }));
   run(async () => {
     if (!project || !review || !Number.isInteger(chapter) || chapter < 1) throw new Error("请从本章已确认的事实审核记录进入发布页面。");
@@ -188,6 +263,7 @@
       await resolve();
     }
     await loadInput();
-    if (!request) $("status").textContent = current.review_state === "confirmed" ? "事实审核已确认，请生成提交预览。" : "事实审核尚未确认，暂不能发布。";
+    if(!published && !terminal)await loadBudget();
+    if (!request && !budgetBlocked) $("status").textContent = current.review_state === "confirmed" ? "事实审核已确认，请生成提交预览。" : "事实审核尚未确认，暂不能发布。";
   });
 })();

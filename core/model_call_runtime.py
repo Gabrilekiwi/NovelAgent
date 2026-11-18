@@ -369,9 +369,15 @@ class ModelCallRuntimeContext:
     ) -> ModelResponse:
         from workbench.restore_execution_policy import require_restored_execution_paths
         require_restored_execution_paths(self.store.root, require_active=True)
+        from core.engine.reviewed_batch_control import current_policy_step
+        policy_step=current_policy_step()
+        if policy_step is not None:
+            policy_step.require(self.chapter_budget,provider=provider,model=model,stage=stage,
+                endpoint_fingerprint=endpoint_fingerprint)
         from core.chapter_execution_budget import current_chapter_operation
         chapter_operation=current_chapter_operation()
-        if chapter_operation is not None and (chapter_operation.local_only or chapter_operation.closed):
+        if chapter_operation is not None and (chapter_operation.local_only or chapter_operation.closed
+                or not chapter_operation.provider_dispatch_allowed):
             raise ChapterBudgetError('local or closed chapter operation cannot invoke a model attempt')
         if chapter_operation is not None:
             binding=self.chapter_budget
@@ -631,6 +637,11 @@ class ModelCallRuntimeContext:
             self.remaining_active_seconds()
             if before_dispatch is not None:
                 before_dispatch()
+            from core.engine.reviewed_batch_control import current_policy_step
+            policy_step=current_policy_step()
+            if policy_step is not None:
+                policy_step.require(self.chapter_budget,provider=provider,model=model,stage=stage,
+                    endpoint_fingerprint=endpoint_fingerprint)
             if billing_plan is not None:
                 from core.provider_billing_request import validate_openai_billing_plan
                 validate_openai_billing_plan(billing_plan,request,base_url=billing_base_url)

@@ -23,7 +23,7 @@
     "record_hash"
   ],
   "properties": {
-    "schema_version": {"type": "string", "enum": ["1.1"]},
+    "schema_version": {"type": "string", "enum": ["1.1", "1.2"]},
     "record_type": {"type": "string", "enum": ["chapter_candidate_record"]},
     "candidate_id": {"type": "string", "pattern": "^candidate_[0-9a-f]{40}$"},
     "book_id": {"type": "string", "minLength": 1},

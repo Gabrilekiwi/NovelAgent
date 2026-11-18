@@ -32,7 +32,7 @@ def prepare_reviewed_chapter_transaction(*, trusted_context, chapter_preparation
 
 
 def build_reviewed_chapter_transaction(*, trusted_context, chapter_preparation, request, run_id,
-                                       quality_policy="standard", fault_injector=None):
+                                       quality_policy="standard", fault_injector=None,candidate_source_verifier=None):
     """Verify and build without staging; service durably claims its intent next."""
     p = chapter_preparation
     root = Path(p["read_set"]["root_identity"]["resolved_path"])
@@ -40,7 +40,8 @@ def build_reviewed_chapter_transaction(*, trusted_context, chapter_preparation, 
     if trusted.to_dict() != trusted_context.to_dict():
         raise ReviewedChapterTransitionError("chapter context changed before transaction preparation")
     evidence = prepare_commit_request_evidence(preparation=p, request=request)
-    quality = prepare_candidate_chapter_quality(trusted_context=trusted, chapter_preparation=p, quality_policy=quality_policy)
+    quality = prepare_candidate_chapter_quality(trusted_context=trusted, chapter_preparation=p, quality_policy=quality_policy,
+        candidate_source_verifier=candidate_source_verifier)
     verify_quality_binding(quality, p)
     book_id = p["binding"]["book_id"]
     previous = read_project_bytes(root, RELATIVE_PATH)

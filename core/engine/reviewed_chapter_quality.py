@@ -74,7 +74,7 @@ def prepare_reviewed_chapter_quality(
 
 
 def prepare_candidate_chapter_quality(*, trusted_context: TrustedChapterCandidateContext,
-                                     chapter_preparation: dict, quality_policy: str = "standard") -> dict:
+                                     chapter_preparation: dict, quality_policy: str = "standard",candidate_source_verifier=None) -> dict:
     """Verify persisted Candidate inputs and evaluate its final author revision.
 
     A 1.1 Candidate is one whole-chapter response; it has no scene pipeline to
@@ -82,15 +82,15 @@ def prepare_candidate_chapter_quality(*, trusted_context: TrustedChapterCandidat
     textual coverage is recomputed on final prose. No input dict may claim that
     synthetic scenes or an old generation-time report survived author edits.
     """
-    evidence = _candidate_evidence(trusted_context, chapter_preparation)
+    evidence = _candidate_evidence(trusted_context, chapter_preparation,candidate_source_verifier)
     result = _prepare_quality(trusted_context=trusted_context, chapter_preparation=chapter_preparation,
                               quality_policy=quality_policy, candidate_evidence=evidence)
-    if _candidate_evidence(trusted_context, chapter_preparation) != evidence:
+    if _candidate_evidence(trusted_context, chapter_preparation,candidate_source_verifier) != evidence:
         _reject("Candidate evidence changed during final quality evaluation")
     return result
 
 
-def _candidate_evidence(trusted: TrustedChapterCandidateContext, prepared: dict) -> dict:
+def _candidate_evidence(trusted: TrustedChapterCandidateContext, prepared: dict,candidate_source_verifier=None) -> dict:
     context = validate_trusted_chapter_context(trusted)
     if not isinstance(prepared, dict) or not isinstance(prepared.get("binding"), dict):
         _reject("Candidate quality requires a server-verified preparation")
@@ -101,25 +101,36 @@ def _candidate_evidence(trusted: TrustedChapterCandidateContext, prepared: dict)
     identity = validate_preparation_identity(context)
     authority = {k: identity.authority[k] for k in ("mode", "authority_epoch", "head_event_hash")}
     authority["identity_revision"] = context["read_set"]["identity_revision"]
-    if (intent["schema_version"] != "1.1" or not isinstance(record, dict)
-            or record["schema_version"] != "1.1" or record["status"] != "completed"
+    source=intent['source']
+    if candidate_source_verifier is not None and binding.get('acceptance_kind')=='author':
+        source=candidate_source_verifier(intent,binding)
+    if (intent["schema_version"] not in {"1.1","1.2","author_chapter_candidate_v1"} or not isinstance(record, dict)
+            or record["schema_version"] != intent['schema_version'] or record["status"] != "completed"
             or intent["intent_hash"] != binding["candidate_intent_hash"]
             or intent["book_id"] != binding["book_id"] or intent["book_id"] != identity.book_id
             or intent["chapter_index"] != trusted.chapter_index
-            or intent["source"]["context_sha256"] != trusted.context_sha256
-            or intent["source"]["story_project_read_set"] != context["read_set"]
-            or intent["source"]["authority_projection_sha256"] != trusted.authority_projection_sha256
+            or source["context_sha256"] != trusted.context_sha256
+            or source["story_project_read_set"] != context["read_set"]
+            or source["authority_projection_sha256"] != trusted.authority_projection_sha256
             or intent["authority"] != authority):
         _reject("Candidate evidence is not the completed source of this final draft context")
     blueprint = blueprint_to_dict(context.get("chapter_blueprint"))
     if blueprint is None or blueprint["chapter_index"] != trusted.chapter_index:
         _reject("Candidate quality requires the same chapter blueprint")
     verify_preparation_sources(context, phase="prepare")
-    return {"candidate_schema_version": "1.1", "candidate_id": intent["candidate_id"],
+    if intent['schema_version']=='1.2' and binding.get('acceptance_kind')=='policy':
+        from core.engine.reviewed_policy_review import verify_policy_preparation
+        review=verify_policy_preparation(prepared)
+        a=intent['policy_authorization']
+        if (a['grant_sha256']!=review['batch_grant']['grant_sha256']
+                or a['manifest_sha256']!=review['batch_grant']['manifest']['manifest_sha256']):
+            _reject('policy Candidate and final policy review belong to different original batches')
+    return {"candidate_schema_version": intent['schema_version'], "candidate_id": intent["candidate_id"],
         "intent_hash": intent["intent_hash"], "record_hash": record["record_hash"],
         "input_sha256": intent["input"]["sha256"], "original_prose_sha256": record["prose"]["sha256"],
-        "candidate_author_confirmation_sha256": intent["author_confirmation"]["confirmation_sha256"],
-        "scene_evidence": {"status": "not_applicable", "reason": "whole_chapter_candidate_1_1",
+        **({'candidate_author_confirmation_sha256':intent['author_confirmation']['confirmation_sha256']}
+           if 'author_confirmation' in intent else {'candidate_policy_authorization_sha256':_hash(intent['policy_authorization'])}),
+        "scene_evidence": {"status": "not_applicable", "reason": 'author_supplied_prose' if intent['schema_version']=='author_chapter_candidate_v1' else "whole_chapter_candidate_"+intent['schema_version'].replace('.','_'),
                            "generated_scene_count": 0},
         "chapter_blueprint": blueprint, "chapter_blueprint_sha256": _hash(blueprint)}
 
@@ -157,9 +168,14 @@ def _prepare_quality(*, trusted_context, chapter_preparation, quality_policy, ca
         "reviewed_source_sha256": view["source_sha256"],
         "manual_sources_sha256": view["manual_sources_sha256"],
         "reviewed_payload_sha256": view["payload_sha256"],
-        "committed_through": view["committed_through"], "acceptance_kind": "author",
+        "committed_through": view["committed_through"],
         "authority": validate_preparation_identity(context).authority,
     }
+    if binding.get('acceptance_kind')=='policy':
+        from core.engine.reviewed_policy_review import verify_policy_preparation
+        verify_policy_preparation(prepared)
+    elif binding.get('acceptance_kind')!='author' or 'policy_review' in prepared or 'policy_acceptance' in binding:
+        _reject('chapter acceptance source is invalid')
     if (prepared.get("read_set") != read_set
             or any(binding.get(k) != v for k, v in expected_binding.items())
             or binding.get("facts_sha256") != _hash(prepared.get("facts"))):
@@ -214,6 +230,7 @@ def _prepare_quality(*, trusted_context, chapter_preparation, quality_policy, ca
         chapter_text=final_prose, snapshot=snapshot, previous_chapter_text=previous_text,
         rule_pack=rule_pack, use_default_rules=False, output_dir=None,
         build_repair_prompt=False, build_human_report=True,
+        include_prose_evidence=True,
     )
     # The raw review remains an independent gate. Aggregate acceptance never
     # overrides it, even if future producer fusion changes severity mappings.
@@ -257,5 +274,7 @@ def _prepare_quality(*, trusted_context, chapter_preparation, quality_policy, ca
         result["blueprint_coverage"] = coverage
         result["binding"]["candidate_evidence_sha256"] = _hash(candidate_evidence)
         result["binding"]["blueprint_coverage_sha256"] = _hash(coverage)
+    from core.quality.prose_evidence import review_short_prose_repetition
+    result['admission_review']=review_short_prose_repetition(final_prose)
     result["quality_sha256"] = _hash(result)
     return result

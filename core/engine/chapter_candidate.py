@@ -62,6 +62,7 @@ from modules.chapter_generator.generator import generate_chapter
 
 
 CHAPTER_CANDIDATE_SCHEMA_VERSION = "1.1"
+AUTHOR_CANDIDATE_VERSION = "author_chapter_candidate_v1"
 _CANDIDATE_ID = re.compile(r"^candidate_[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ALLOWED_EXECUTION_KINDS = frozenset({"model", "deterministic"})
@@ -332,6 +333,12 @@ class ChapterCandidateStore:
             raise ChapterCandidateIntegrityError("candidate input reference changed")
         self._read_bound_text(intent["input"], label="candidate input")
 
+        if intent['schema_version'] == AUTHOR_CANDIDATE_VERSION:
+            if self._read_bound_text(intent['input'], label='author import input') != json.dumps(
+                    intent['author_import'], ensure_ascii=False, sort_keys=True):
+                raise ChapterCandidateIntegrityError('author import input binding changed')
+            return
+
         execution_id = _execution_id(candidate_id)
         execution = intent["execution"]
         if execution["execution_id"] != execution_id:
@@ -367,6 +374,11 @@ class ChapterCandidateStore:
                 raise ChapterCandidateIntegrityError("candidate draft reference changed")
             prose_text = self._read_bound_text(prose, label="candidate draft")
 
+        if intent['schema_version'] == AUTHOR_CANDIDATE_VERSION:
+            if (prose['sha256'] != intent['author_import']['prose_sha256']
+                    or prose['chars'] != intent['author_import']['prose_chars']):
+                raise ChapterCandidateIntegrityError('author supplied prose binding changed')
+            return
         store = self.model_call_store(intent)
         actual = self._call_evidence(store)
         evidence = record["evidence"]
@@ -479,6 +491,23 @@ class ChapterCandidateExecutor:
             with execution_activity(self.paths.run_dir, _execution_id(candidate_id)):
                 return self._execute_prepared(prepared, idempotency_key=idempotency_key)
 
+    def prepare_policy_request(self, *, chapter_index, chapter_intent):
+        """Read-only preparation; this does not create execution permission."""
+        trusted=self.context_builder.build(chapter_index)
+        return self._prepare_trusted_request(trusted,chapter_intent=chapter_intent)
+
+    def execute_policy(self, *, chapter_index, chapter_intent, policy_authorization, idempotency_key):
+        from core.engine.reviewed_policy_generation import require_policy_generation_scope
+        require_policy_generation_scope(policy_authorization)
+        prepared=self.prepare_policy_request(chapter_index=chapter_index,chapter_intent=chapter_intent)
+        prepared['policy_authorization']=require_policy_generation_scope(policy_authorization,prepared=prepared)
+        with provider_execution_lock(self.paths.run_dir):
+            candidate_id=_candidate_id(book_id=prepared['identity']['book_id'],chapter_index=chapter_index,idempotency_key=idempotency_key)
+            if _execution_id(candidate_id)!=policy_authorization['execution_id']:
+                raise ChapterCandidateConflictError('policy candidate execution differs from original step')
+            with execution_activity(self.paths.run_dir,_execution_id(candidate_id)):
+                return self._execute_prepared(prepared,idempotency_key=idempotency_key)
+
     def _execute_prepared(
         self,
         prepared: Mapping[str, Any],
@@ -486,11 +515,20 @@ class ChapterCandidateExecutor:
         idempotency_key: str,
     ) -> dict[str, Any]:
         identity = prepared["identity"]
+        policy=prepared.get('policy_authorization')
+        if policy is not None:
+            from core.engine.reviewed_policy_generation import require_policy_generation_scope
+            require_policy_generation_scope(policy,prepared=prepared)
+            if self._select_execution_budget(identity['book_id'],prepared['chapter_index']) is None:
+                raise ChapterCandidateConflictError('policy generation requires the original chapter budget')
         candidate_id = _candidate_id(
             book_id=identity["book_id"],
             chapter_index=prepared["chapter_index"],
             idempotency_key=idempotency_key,
         )
+        from core.chapter_budget_continuation import require_candidate_binding
+        require_candidate_binding(self._select_execution_budget(identity['book_id'], prepared['chapter_index']),
+            _execution_id(candidate_id), prepared['input_sha256'], prepared.get('author_confirmation'))
         self._raise_if_abandoned(candidate_id)
         request_sha256 = _candidate_request_hash(
             book_id=identity["book_id"],
@@ -498,7 +536,8 @@ class ChapterCandidateExecutor:
             input_sha256=prepared["input_sha256"],
             source=prepared["source"],
             authority=prepared["authority"],
-            author_confirmation=prepared["author_confirmation"],
+            author_confirmation=prepared.get("author_confirmation"),
+            policy_authorization=policy,
             chapter_intent=prepared["chapter_intent"],
         )
 
@@ -540,7 +579,7 @@ class ChapterCandidateExecutor:
             "model_calls_ref": f"executions/{execution_id}/model_calls",
         }
         intent = {
-            "schema_version": CHAPTER_CANDIDATE_SCHEMA_VERSION,
+            "schema_version": "1.2" if policy is not None else CHAPTER_CANDIDATE_SCHEMA_VERSION,
             "record_type": "chapter_candidate_intent",
             "candidate_id": candidate_id,
             "book_id": identity["book_id"],
@@ -555,10 +594,10 @@ class ChapterCandidateExecutor:
             },
             "source": prepared["source"],
             "authority": prepared["authority"],
-            "author_confirmation": prepared["author_confirmation"],
             "chapter_intent": prepared["chapter_intent"],
             "execution": execution,
         }
+        intent.update({'policy_authorization':policy} if policy is not None else {'author_confirmation':prepared['author_confirmation']})
         intent["intent_hash"] = _record_hash(intent, "intent_hash")
         claimed = self.store.claim(
             input_pack=prepared["input_pack"],
@@ -734,6 +773,39 @@ class ChapterCandidateExecutor:
                 resolution,
             )
 
+    def authorize_budgeted_continuation(self, *, source_candidate_id, chapter_index,
+            confirmation, idempotency_key, expected_ledger_sha256, author_confirmed):
+        """Authorize one new same-input Candidate without settling the old call.
+
+        The author must first acknowledge the exact old Candidate using the
+        existing risk-resolution operation. Batch/policy execution is excluded.
+        """
+        from core.chapter_budget_continuation import authorize
+        if author_confirmed is not True:
+            raise ChapterCandidateConflictError('explicit continuation approval is required')
+        prepared = self._prepare_request(chapter_index=chapter_index, confirmation=confirmation)
+        with provider_execution_lock(self.paths.run_dir):
+            source = self.store.load_intent(source_candidate_id)
+            resolution = load_candidate_provider_resolution(self.paths.run_dir, source_candidate_id)
+            if resolution is None:
+                raise ChapterCandidateConflictError('acknowledge the exact uncertain Candidate before continuation')
+            if ('policy_authorization' in source or source['book_id'] != prepared['identity']['book_id']
+                    or source['chapter_index'] != chapter_index
+                    or source['input']['sha256'] != prepared['input_sha256']
+                    or source['author_confirmation'] != prepared['author_confirmation']):
+                raise ChapterCandidateConflictError('continuation must retain the same chapter, context and author intent')
+            scope = self._select_execution_budget(source['book_id'], chapter_index)
+            if scope is None:
+                raise ChapterCandidateConflictError('continuation requires the original chapter budget')
+            target = _candidate_id(book_id=source['book_id'], chapter_index=chapter_index,
+                idempotency_key=idempotency_key)
+            return authorize(scope.store, target_execution_id=_execution_id(target),
+                source_execution_id=source['execution']['execution_id'],
+                source_resolution_hash=resolution['resolution_hash'],
+                candidate_input_sha256=prepared['input_sha256'],
+                candidate_confirmation_sha256=prepared['author_confirmation']['confirmation_sha256'],
+                expected_ledger_sha256=expected_ledger_sha256, author_confirmed=True)
+
     def _prepare_request(
         self,
         *,
@@ -756,6 +828,12 @@ class ChapterCandidateExecutor:
             raise ChapterCandidateConflictError(
                 "trusted chapter inputs changed after author confirmation"
             )
+        return self._prepare_trusted_request(trusted,chapter_intent=author_confirmation['chapter_intent'],
+            author_confirmation={k:author_confirmation[k] for k in ('schema_version','card_sha256','context_sha256','confirmation_sha256')})
+
+    def _prepare_trusted_request(self,trusted,*,chapter_intent,author_confirmation=None):
+        context=copy.deepcopy(trusted.story_project_context)
+        chapter_index,identity,read_set=self._validate_prepared_context(context)
         before = copy.deepcopy(trusted.source_verification)
 
         base_snapshot = copy.deepcopy(trusted.snapshot)
@@ -775,7 +853,7 @@ class ChapterCandidateExecutor:
                 generation_state_view,
             )
         chapter_intent = _normalize_confirmed_intent(
-            author_confirmation["chapter_intent"],
+            chapter_intent,
             chapter_index,
         )
         decision = validate_decision(
@@ -820,12 +898,7 @@ class ChapterCandidateExecutor:
             "identity": identity.to_dict(),
             "authority": authority,
             "source": source,
-            "author_confirmation": {
-                "schema_version": author_confirmation["schema_version"],
-                "card_sha256": author_confirmation["card_sha256"],
-                "context_sha256": author_confirmation["context_sha256"],
-                "confirmation_sha256": author_confirmation["confirmation_sha256"],
-            },
+            **({'author_confirmation':copy.deepcopy(author_confirmation)} if author_confirmation is not None else {}),
             "chapter_intent": chapter_intent,
             "input_pack": input_pack,
             "input_sha256": _sha256_text(input_pack),
@@ -898,6 +971,13 @@ class ChapterCandidateExecutor:
         before_verification: dict[str, Any],
         local_recovery: bool = False,
     ) -> dict[str, Any]:
+        if intent['schema_version'] == AUTHOR_CANDIDATE_VERSION:
+            raise ChapterCandidateConflictError('author supplied drafts cannot dispatch generation')
+        if 'policy_authorization' in intent:
+            from core.engine.reviewed_policy_generation import require_policy_generation_scope
+            require_policy_generation_scope(intent['policy_authorization'])
+            if self._select_execution_budget(intent['book_id'],intent['chapter_index']) is None:
+                raise ChapterCandidateConflictError('policy generation requires the original chapter budget')
         self._raise_if_abandoned(intent["candidate_id"])
         self._require_executor_kind(intent)
         self._require_current_provenance(intent)
@@ -1053,7 +1133,7 @@ class ChapterCandidateExecutor:
         error: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
         record = {
-            "schema_version": CHAPTER_CANDIDATE_SCHEMA_VERSION,
+            "schema_version": intent["schema_version"],
             "record_type": "chapter_candidate_record",
             "candidate_id": intent["candidate_id"],
             "book_id": intent["book_id"],
@@ -1260,8 +1340,9 @@ def _candidate_request_hash(
     input_sha256: str,
     source: Mapping[str, Any],
     authority: Mapping[str, Any],
-    author_confirmation: Mapping[str, Any],
+    author_confirmation: Mapping[str, Any] | None,
     chapter_intent: Mapping[str, Any],
+    policy_authorization: Mapping[str, Any] | None = None,
 ) -> str:
     return canonical_json_hash(
         {
@@ -1276,7 +1357,8 @@ def _candidate_request_hash(
             "authority_projection_sha256": source["authority_projection_sha256"],
             "generation_state_view_sha256": source["generation_state_view_sha256"],
             "authority": copy.deepcopy(dict(authority)),
-            "author_confirmation": copy.deepcopy(dict(author_confirmation)),
+            **({'policy_authorization':copy.deepcopy(dict(policy_authorization))} if policy_authorization is not None
+               else {'author_confirmation':copy.deepcopy(dict(author_confirmation))}),
             "chapter_intent": copy.deepcopy(dict(chapter_intent)),
         },
         exclude_environment_fields=False,
@@ -1285,12 +1367,14 @@ def _candidate_request_hash(
 
 def _validate_candidate_intent(value: Mapping[str, Any]) -> dict[str, Any]:
     payload = copy.deepcopy(dict(value))
+    is_author = payload.get('schema_version') == AUTHOR_CANDIDATE_VERSION
     if payload.get("schema_version") == "1.0":
         raise ChapterCandidateIntegrityError(
             "legacy Candidate Intent 1.0 is preserved but cannot be resumed because it lacks an author-confirmation binding"
         )
     try:
-        validate_schema(payload, "chapter_candidate_intent.schema.json")
+        validate_schema(payload, 'author_chapter_candidate_intent.schema.json' if is_author else
+            "chapter_policy_candidate_intent.schema.json" if payload.get('schema_version')=='1.2' else "chapter_candidate_intent.schema.json")
         validate_schema(
             payload["source"]["story_project_read_set"],
             "story_project_read_set.schema.json",
@@ -1299,7 +1383,8 @@ def _validate_candidate_intent(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ChapterCandidateIntegrityError(str(exc)) from exc
     if _record_hash(payload, "intent_hash") != payload["intent_hash"]:
         raise ChapterCandidateIntegrityError("chapter candidate intent hash mismatch")
-    candidate_id = _candidate_id_from_digest(
+    id_factory = _author_candidate_id if is_author else _candidate_id_from_digest
+    candidate_id = id_factory(
         book_id=payload["book_id"],
         chapter_index=payload["chapter_index"],
         idempotency_key_sha256=payload["idempotency_key_sha256"],
@@ -1308,7 +1393,6 @@ def _validate_candidate_intent(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ChapterCandidateIntegrityError("chapter candidate id binding mismatch")
     source = payload["source"]
     read_set = source["story_project_read_set"]
-    author_confirmation = payload["author_confirmation"]
     if (
         read_set["book_id"] != payload["book_id"]
         or read_set["chapter_index"] != payload["chapter_index"]
@@ -1317,6 +1401,63 @@ def _validate_candidate_intent(value: Mapping[str, Any]) -> dict[str, Any]:
         or payload["authority"]["identity_revision"] != read_set["identity_revision"]
     ):
         raise ChapterCandidateIntegrityError("chapter candidate source binding mismatch")
+    if payload['schema_version']=='1.2':
+        from core.engine.reviewed_policy_generation import validate_policy_generation_authorization,generation_input_sha256
+        from core.engine.reviewed_batch_control import BatchControlError
+        try:policy=validate_policy_generation_authorization(payload['policy_authorization'])
+        except BatchControlError as exc:raise ChapterCandidateIntegrityError(str(exc)) from exc
+        if (policy['book_id']!=payload['book_id'] or policy['chapter']!=payload['chapter_index']
+                or policy['execution_id']!=payload['execution']['execution_id']
+                or policy['context_sha256']!=source['context_sha256']
+                or policy['chapter_intent_sha256']!=canonical_json_hash(payload['chapter_intent'],exclude_environment_fields=False)
+                or policy['input_sha256']!=generation_input_sha256(dict(chapter_index=payload['chapter_index'],
+                    identity={'book_id':payload['book_id']},authority=payload['authority'],source=source,
+                    chapter_intent=payload['chapter_intent'],input_sha256=payload['input']['sha256']))):
+            raise ChapterCandidateIntegrityError('policy candidate original source binding mismatch')
+    else:
+        _validate_candidate_author_confirmation(payload,source)
+    event_authority = payload["authority"]["mode"] == AUTHORITY_MODE_EVENT
+    projection_sha256 = source["authority_projection_sha256"]
+    if (event_authority and projection_sha256 is None) or (
+        not event_authority and projection_sha256 is not None
+    ):
+        raise ChapterCandidateIntegrityError(
+            "chapter candidate authority projection binding mismatch"
+        )
+    expected_request = _candidate_request_hash(
+        book_id=payload["book_id"],
+        chapter_index=payload["chapter_index"],
+        input_sha256=payload["input"]["sha256"],
+        source=source,
+        authority=payload["authority"],
+        author_confirmation=payload.get("author_confirmation"),
+        policy_authorization=payload.get('policy_authorization'),
+        chapter_intent=payload["chapter_intent"],
+    )
+    if expected_request != payload["request_sha256"]:
+        raise ChapterCandidateIntegrityError("chapter candidate request hash mismatch")
+    if is_author:
+        return payload
+    execution_id = _execution_id(payload["candidate_id"])
+    execution = payload["execution"]
+    if (
+        execution["execution_id"] != execution_id
+        or execution["provenance_artifact_ref"]
+        != f"executions/{execution_id}/provenance.json"
+        or execution["model_calls_ref"] != f"executions/{execution_id}/model_calls"
+    ):
+        raise ChapterCandidateIntegrityError("chapter candidate execution reference mismatch")
+    expected_operation = canonical_json_hash(
+        {"candidate_id": payload["candidate_id"],"request_sha256": payload["request_sha256"],"stage": "chapter_candidate_generation"},
+        exclude_environment_fields=False,
+    )
+    if payload["execution"]["operation_key"] != expected_operation:
+        raise ChapterCandidateIntegrityError("chapter candidate operation key mismatch")
+    return payload
+
+
+def _validate_candidate_author_confirmation(payload,source):
+    author_confirmation=payload['author_confirmation']
     if author_confirmation["context_sha256"] != source["context_sha256"]:
         raise ChapterCandidateIntegrityError(
             "chapter candidate author confirmation context binding mismatch"
@@ -1337,55 +1478,21 @@ def _validate_candidate_intent(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ChapterCandidateIntegrityError(
             "chapter candidate author confirmation hash binding mismatch"
         )
-    event_authority = payload["authority"]["mode"] == AUTHORITY_MODE_EVENT
-    projection_sha256 = source["authority_projection_sha256"]
-    if (event_authority and projection_sha256 is None) or (
-        not event_authority and projection_sha256 is not None
-    ):
-        raise ChapterCandidateIntegrityError(
-            "chapter candidate authority projection binding mismatch"
-        )
-    expected_request = _candidate_request_hash(
-        book_id=payload["book_id"],
-        chapter_index=payload["chapter_index"],
-        input_sha256=payload["input"]["sha256"],
-        source=source,
-        authority=payload["authority"],
-        author_confirmation=author_confirmation,
-        chapter_intent=payload["chapter_intent"],
-    )
-    if expected_request != payload["request_sha256"]:
-        raise ChapterCandidateIntegrityError("chapter candidate request hash mismatch")
-    execution_id = _execution_id(payload["candidate_id"])
-    execution = payload["execution"]
-    if (
-        execution["execution_id"] != execution_id
-        or execution["provenance_artifact_ref"]
-        != f"executions/{execution_id}/provenance.json"
-        or execution["model_calls_ref"] != f"executions/{execution_id}/model_calls"
-    ):
-        raise ChapterCandidateIntegrityError("chapter candidate execution reference mismatch")
-    expected_operation = canonical_json_hash(
-        {
-            "candidate_id": payload["candidate_id"],
-            "request_sha256": payload["request_sha256"],
-            "stage": "chapter_candidate_generation",
-        },
-        exclude_environment_fields=False,
-    )
-    if payload["execution"]["operation_key"] != expected_operation:
-        raise ChapterCandidateIntegrityError("chapter candidate operation key mismatch")
-    return payload
 
 
 def _validate_candidate_record(value: Mapping[str, Any]) -> dict[str, Any]:
     payload = copy.deepcopy(dict(value))
     try:
-        validate_schema(payload, "chapter_candidate_record.schema.json")
+        validate_schema(payload, 'author_chapter_candidate_record.schema.json' if
+            payload.get('schema_version') == AUTHOR_CANDIDATE_VERSION else "chapter_candidate_record.schema.json")
     except (SchemaValidationError, TypeError) as exc:
         raise ChapterCandidateIntegrityError(str(exc)) from exc
     if _record_hash(payload, "record_hash") != payload["record_hash"]:
         raise ChapterCandidateIntegrityError("chapter candidate record hash mismatch")
+    if payload.get('schema_version') == AUTHOR_CANDIDATE_VERSION:
+        if any(not isinstance(payload['source_verification'][phase],dict) or
+                payload['source_verification'][phase].get('ok') is not True for phase in ('before','after')):
+            raise ChapterCandidateIntegrityError('author import sources were not verified')
     for digest in [
         *payload["evidence"]["intent_hashes"],
         *payload["evidence"]["receipt_hashes"],
@@ -1463,6 +1570,7 @@ def _require_record_links_intent(
     intent: Mapping[str, Any],
 ) -> None:
     for field in (
+        "schema_version",
         "candidate_id",
         "book_id",
         "chapter_index",
@@ -1625,6 +1733,11 @@ def _candidate_id_from_digest(
         exclude_environment_fields=False,
     )
     return f"candidate_{digest[:40]}"
+
+
+def _author_candidate_id(**binding):
+    digest = canonical_json_hash({'kind': AUTHOR_CANDIDATE_VERSION, **binding}, exclude_environment_fields=False)
+    return 'candidate_' + digest[:40]
 
 
 def _validate_candidate_id(candidate_id: str) -> str:

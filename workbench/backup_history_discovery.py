@@ -4,7 +4,7 @@ The runtime tree and control marker filenames are reserved. Elsewhere, a
 namespace name alone is insufficient: recognizable persistence evidence must
 identify its owner. Recognition only selects records for strict verification.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path, PurePosixPath
 
@@ -21,9 +21,10 @@ class HistoryLayout:
     v2_controls: set
     children: dict
     files: dict
+    flat_legacy_journals: set = field(default_factory=set)
 
     def journals(self, controls, namespace):
-        result = set()
+        result = set(self.flat_legacy_journals) if namespace == 'transactions' else set()
         for control in controls:
             directory = below(control, namespace)
             if directory in self.files:
@@ -97,4 +98,13 @@ def discover_history_layout(root, tree, *, read_bytes=None):
             recognized = version in ('2.0', '2.1') and 'journal_relative_path' in value and 'manifest_digest' in value
         if recognized:
             known.add(control)
-    return HistoryLayout(legacy, newer, children, files)
+    # StoryProject's v1 writer explicitly supplied transactions_dir=runtime /
+    # 'persistence', so its journals are direct children, not /transactions/.
+    # This is a reserved writer namespace. Include orphan directories too:
+    # discovering a journal must not certify its missing or damaged manifest.
+    # The v2 namespaces are checked independently by read_v2_transactions.
+    flat_root = '.novelagent/runtime/persistence'
+    flat = {name for name in children.get(flat_root, ())
+            if name not in files and PurePosixPath(name).name not in
+            {'journals', 'registry', 'staging', 'transactions'}}
+    return HistoryLayout(legacy, newer, children, files, flat)

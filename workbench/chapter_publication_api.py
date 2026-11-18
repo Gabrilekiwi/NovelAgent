@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from core.engine.reviewed_candidate_context import ReviewedChapterCandidateContextBuilder
 from core.story_project.read_set import StoryProjectSourceDriftError
+from core.quality.reviewed_disposition import ReviewedDispositionError
 from workbench.book_ownership import BookOwnershipError
 from workbench.chapter_candidates import CandidateDraftStore
 from workbench.chapter_commits import (
@@ -42,7 +43,7 @@ def install_chapter_publication_routes(app, *, database, allowed_workspaces, mac
         return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
 
     for error_type in (ChapterCommitConflict, ChapterCommitIntegrityError, ChapterCommitRecoveryRequired,
-                       BookOwnershipError, InstanceAlreadyRunning, StoryProjectSourceDriftError):
+                       BookOwnershipError, InstanceAlreadyRunning, StoryProjectSourceDriftError,ReviewedDispositionError):
         app.add_exception_handler(error_type, publication_error)
 
     def request_values(project_id, chapter, payload, key, *, commit=False):

@@ -368,6 +368,7 @@ def recover_locked_chapter(
 
 
 
+
 def _recover_unbound_uncertain_executions(
     unresolved: list[dict[str, Any]],
     *,
@@ -2977,6 +2978,7 @@ def _content_sha256(text: str) -> str:
 
 __all__ = [
     "LockedChapterRecoveryError",
+    "list_unbound_uncertain_executions",
     "load_verified_locked_chapter_pipeline",
     "recover_locked_chapter",
     "verified_final_recovery_draft",

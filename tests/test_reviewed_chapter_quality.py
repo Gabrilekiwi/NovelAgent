@@ -119,7 +119,9 @@ def test_rehashed_wrong_context_or_acceptance_is_rejected(case, field, value):
     prepared = prepare_reviewed_chapter(**case["inputs"])
     prepared["binding"][field] = value
     _rehash(prepared)
-    with pytest.raises(ReviewedChapterQualityError, match="different facts, context, state or authority"):
+    reason = ("chapter acceptance source is invalid" if field == "acceptance_kind"
+              else "chapter preparation belongs to different facts, context, state or authority")
+    with pytest.raises(ReviewedChapterQualityError, match=f"^{reason}$"):
         prepare_reviewed_chapter_quality(
             trusted_context=case["inputs"]["trusted_context"], chapter_preparation=prepared,
         )

@@ -72,7 +72,8 @@ def validate_stored_openai_billing_plan(plan):
         raise BillingRequestError('持久金额请求计划不完整。')
     expected=_stored_plan(plan['request_digest'],plan['max_billable_output_tokens'],
         endpoint_fingerprint('openai','https://api.openai.com/v1'))
-    if plan!=expected:raise BillingRequestError('持久金额请求计划与已核对能力不同。')
+    if plan!=expected or _hash(plan)!=_hash(expected):
+        raise BillingRequestError('持久金额请求计划与已核对能力不同。')
     return expected
 
 
@@ -108,7 +109,8 @@ def plan_openai_text_billing(request,*,base_url):
             or not 0<=request['temperature']<=2 or not isfinite(request['temperature'])):
         raise BillingRequestError('temperature不是有效的有限数值。')
     if 'stream_options' in request and (not isinstance(request['stream_options'],dict)
-            or set(request['stream_options'])!={'include_usage'} or request['stream_options']['include_usage'] is not True):
+            or request['stream'] is not True or set(request['stream_options'])!={'include_usage'}
+            or request['stream_options']['include_usage'] is not True):
         raise BillingRequestError('流式金额请求必须保留实际用量。')
     if request['stream'] and request.get('stream_options')!={'include_usage':True}:
         raise BillingRequestError('流式金额请求缺少实际用量选项。')
@@ -120,5 +122,6 @@ def plan_openai_text_billing(request,*,base_url):
 def validate_openai_billing_plan(plan,request,*,base_url):
     """Re-derive, so a rehashed caller plan cannot adopt a changed request."""
     expected=plan_openai_text_billing(request,base_url=base_url)
-    if plan!=expected:raise BillingRequestError('金额请求计划与实际请求或受信契约不同。')
+    if plan!=expected or _hash(plan)!=_hash(expected):
+        raise BillingRequestError('金额请求计划与实际请求或受信契约不同。')
     return expected
