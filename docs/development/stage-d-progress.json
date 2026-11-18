@@ -1,12 +1,19 @@
 {
-  "date": "2026-11-03",
+  "date": "2026-11-11",
   "stage": "D",
-  "stage_status": "in_progress",
-  "current_task": "T5.2_trusted_provider_monetary_admission",
+  "stage_status": "D_real_validation_pending_E_independent_engineering_in_progress",
+  "current_task": "T7.3_full_release_regression",
   "task_complete": false,
   "goal_complete": false,
   "completed_tasks": [],
-  "active_processes": [],
+  "active_processes": [
+    {
+      "session_id": 34438,
+      "runner_pid": 20668,
+      "log": ".tmp/t73-full-release-corrected.log",
+      "journal": ".tmp/t73-full-release-corrected-events.jsonl"
+    }
+  ],
   "activation_in_progress": {
     "status": "accepted_internal_activation_target_scope_and_next_chapter",
     "checkpoint": ".tmp/t72-activation-progress.json",
@@ -14,7 +21,7 @@
     "complete_restore_product": false
   },
   "previous_stage": "docs/development/stage-c-progress.json",
-  "next_action": "Join reviewed request plan to versioned frozen tariff including explicit tier and 30m cache-write dimensions; persist original capability/request plan with each physical reservation; SDK revalidates exact final payload before dispatch. Preserve actual response model/tier/cache evidence and hold unknown/mismatch reservations. No raw input_bound or self-hash may substitute for verified persisted evidence. Keep legacy records immutable, no automatic model change. Then default generation/extraction monetary integration and UI/browser.",
+  "next_action": "Reconcile current HEAD/working tree and fixed acceptance scope before scheduling current-version validation; do not poll or restart original34438, overwrite its evidence, or treat old pin as current.",
   "paid_provider_authorized": false,
   "real_book_writes_authorized": false,
   "investigation": "docs/development/t52-budget-investigation.md",
@@ -3570,7 +3577,7 @@
     "related_existing_checks_passed": 9,
     "report": "docs/development/t71-auxiliary-control-history.md"
   },
-  "current_checkpoint": ".tmp\\author-baseline-service-progress.json",
+  "current_checkpoint": ".tmp/t63-stage-recovery-progress.json",
   "outline_completion_history": {
     "status": "component_internal_verification_passed",
     "checkpoint": ".tmp\\t71-outline-completion-progress.json",
@@ -3638,11 +3645,374 @@
     "audit": ".tmp/author-baseline-public-browser-second-after.json",
     "file_upload_limitation": "Chrome upload_file rejected repository report path outside tool-configured workspace roots; no bypass attempted."
   },
-  "current_production_fingerprint_sha256": "f28d1116119515f5054303880efda58c36b5d7776992fb7b6694b1b5eae37e91",
+  "current_production_fingerprint_sha256": "1f1c67ca44af429e53d392682a612ae13a86acdd7b09aed8b0393be3b0f90b9f",
   "onboarding_upgrade_checkpoint": ".tmp/onboarding-upgrade-progress.json",
   "public_upgrade_ui_installed": true,
   "public_upgrade_ui_core_browser_verified": true,
   "public_upgrade_checkpoint": ".tmp/onboarding-upgrade-progress.json",
   "t71_final_audit_checkpoint": ".tmp/t71-final-audit-progress.json",
-  "monetary_checkpoint": ".tmp/t52-monetary-progress.json"
+  "monetary_checkpoint": ".tmp/t52-monetary-progress.json",
+  "monetary_current_checkpoint": ".tmp/t52-monetary-progress.json",
+  "monetary_browser_status": "partial_interaction_not_verified",
+  "monetary_component_current": {
+    "status": "monetary_sdk_api_ui_locally_verified_browser_partial",
+    "new_accepted": 0,
+    "checkpoint": ".tmp/t52-monetary-progress.json",
+    "source_manifest": ".tmp/t52-monetary-current-source.json",
+    "browser_verified": false,
+    "paid_provider_authorized": false
+  },
+  "quality_budget_checkpoint": ".tmp/t52-quality-time-progress.json",
+  "quality_time_component": {
+    "status": "local_quality_publication_time_component_verified",
+    "component_complete": true,
+    "new_accepted": 0,
+    "first_result_passed": 44,
+    "final_result_passed": 84,
+    "browser_quality_flow_verified": true,
+    "checkpoint": ".tmp/t52-quality-time-progress.json"
+  },
+  "parallel_stage_foundation": "Independent E foundation; D remains incomplete",
+  "quality_disposition_component": {
+    "status": "evidence_and_disposition_component_verified",
+    "task_complete": false,
+    "new_accepted": 0,
+    "checkpoint": ".tmp/t24-quality-disposition-progress.json",
+    "final_checks": 81,
+    "browser_verified": true,
+    "repair_execution_implemented": false
+  },
+  "repair_cycle_consumption_component": {
+    "status": "cycle_consumption_and_restore_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "verified_distinct_nodes": 94,
+    "new_cycle_checks": 19,
+    "related_store_runtime_checks": 70,
+    "restore_activation_checks": 5,
+    "repair_execution_installed": false,
+    "batch_authorization_installed": false,
+    "checkpoint": ".tmp/t62-repair-cycle-progress.json"
+  },
+  "batch_budget_component": {
+    "status": "batch_financial_scope_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_verified_nodes": 168,
+    "batch_execution_authorization_installed": false,
+    "public_batch_routes_installed": false
+  },
+  "batch_author_grant_component": {
+    "status": "owned_original_grant_and_restore_isolation_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "verified_distinct_nodes": 50,
+    "grant_execution_permit": false,
+    "public_batch_routes_installed": false,
+    "policy_fact_acceptance_installed": false,
+    "automated_driver_installed": false,
+    "checkpoint": ".tmp/t61-batch-grant-progress.json"
+  },
+  "policy_review_component": {
+    "status": "typed_policy_review_formal_transition_and_cold_recovery_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "verified_distinct_nodes": 159,
+    "actual_synthetic_formal_policy_commit_verified": true,
+    "actual_process_death_recovery_verified": true,
+    "historical_policy_version_separation_verified": true,
+    "public_routes_installed": false,
+    "automated_batch_driver_installed": false,
+    "checkpoint": ".tmp/t61-policy-review-progress.json"
+  },
+  "batch_controls_component": {
+    "status": "explicit_controls_and_scoped_runtime_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_historical_nodes": 92,
+    "final_build_rerun_nodes": 6,
+    "public_routes_installed": false,
+    "automated_batch_driver_installed": false,
+    "checkpoint": ".tmp/t63-batch-controls-progress.json"
+  },
+  "policy_generation_component": {
+    "status": "genuine_policy_generation_and_typed_stage_result_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_historical_nodes": 81,
+    "final_build_rerun_nodes": 62,
+    "browser_source_label_flow_verified": true,
+    "public_batch_routes_installed": false,
+    "automatic_batch_driver_installed": false,
+    "policy_extraction_installed": false,
+    "checkpoint": ".tmp/t61-policy-generation-progress.json"
+  },
+  "policy_extraction_component": {
+    "status": "genuine_full_policy_extraction_and_typed_result_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_historical_nodes": 64,
+    "final_build_rerun_nodes": 45,
+    "browser_completed_read_and_stale_source_verified": true,
+    "public_batch_routes_installed": false,
+    "automatic_batch_driver_installed": false,
+    "policy_extraction_installed": true,
+    "checkpoint": ".tmp/t61-policy-extraction-progress.json"
+  },
+  "policy_quality_stage_component": {
+    "status": "durable_policy_quality_disposition_and_cold_finish_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_historical_pytest_nodes": 49,
+    "final_build_rerun_nodes": 28,
+    "actual_original_finish_mirror_recovery_verified": true,
+    "unknown_time_preserved": true,
+    "public_batch_routes_installed": false,
+    "automatic_batch_driver_installed": false,
+    "policy_publication_installed": false,
+    "checkpoint": ".tmp/t61-policy-quality-progress.json"
+  },
+  "policy_publication_component": {
+    "status": "publication_readback_and_original_finish_recovery_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "active_processes": [],
+    "checkpoint": ".tmp/t61-policy-publication-progress.json",
+    "historical_distinct_nodes": 45,
+    "latest_verified_build_rerun_nodes": 6,
+    "full_three_chapter_flow_verified": true,
+    "public_batch_routes_installed": false,
+    "latest_verified_build": "11c57c39499d6ff5496af4be3673af5b773ed71b5bbf9ef53f5b4ba84c767d69",
+    "original_finish_mirror_recovery_verified": true,
+    "commit_marker_pause_verified": true,
+    "automatic_batch_driver_installed": false
+  },
+  "batch_driver_component": {
+    "status": "finite_synchronous_driver_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "checkpoint": ".tmp/t61-batch-driver-progress.json",
+    "public_batch_routes_installed": false,
+    "synchronous_internal_driver_installed": true,
+    "prior_verified_build_nodes": 22,
+    "prior_verified_build": "5239c5817816a6568ba49320e1e707d2bca12faf7ef133fb5990ba79ec428f7f",
+    "latest_verified_build_rerun_nodes": 7,
+    "latest_verified_build": "70ad7b653db868e329be5a4a6db857b9d1f596376c2065aa67463e5a90ad6adc",
+    "actual_driver_three_chapters_verified": true,
+    "actual_driver_process_exit_recovery_verified": true,
+    "same_service_new_resume_preserved_verified": true,
+    "public_jobs_installed": false
+  },
+  "full_policy_repair_component": {
+    "status": "full_single_repair_internal_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "checkpoint": ".tmp/t62-full-repair-progress.json",
+    "public_routes_installed": false,
+    "prior_build_verified_nodes": 24,
+    "prior_build": "d140f033b3309b5d14bdc99a0bdaab7269897973e57514214e378bf02b250ace",
+    "hardening_verified_nodes": 28,
+    "hardening_verified_build": "d37ff7b1c74197d25a4258510667c2e857e433ab7e7175e29bcb2a2333fe1056",
+    "begin_recovery_verified_nodes": 4,
+    "begin_recovery_build": "1fced95c536bf2d6d2f25c61a45318b70a594fe140fc9d7fe952b3d225a01d80",
+    "active_processes": [],
+    "latest_verified_build_rerun_nodes": 7,
+    "latest_verified_build": "5b1d2a1225599282a7e3b2d83130cbfb2bccb61e3ef75602973c33a86bb5d64f",
+    "historical_distinct_nodes": 36,
+    "real_repair_process_exit_verified": true,
+    "claim_begin_process_exit_verified": true,
+    "original_clock_uncertainty_preserved": true,
+    "author_edits_preserved": true,
+    "missing_evidence_zero_dispatch_verified": true
+  },
+  "author_takeover_component": {
+    "status": "original_author_takeover_internal_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "checkpoint": ".tmp/t63-author-takeover-progress.json",
+    "public_routes_installed": false,
+    "prior_verified_build_nodes": 20,
+    "prior_verified_build": "986ab8f234a575e0287bd278813ff483c2fb353e1b4179255e315facdb00c574",
+    "recovery_verified_nodes": 8,
+    "recovery_verified_build": "71a82c0065901304d1f9c47a29ab8c14d7b503d8d27aa33acedba2f3e13e9345",
+    "hardening_verified_nodes": 6,
+    "hardening_verified_build": "d5e714923131b15cb9f2b49ce9688a3d9d9228bc3735d63b6619468479e2bd37",
+    "active_processes": [],
+    "latest_verified_build_rerun_nodes": 14,
+    "latest_verified_build": "d5e714923131b15cb9f2b49ce9688a3d9d9228bc3735d63b6619468479e2bd37",
+    "historical_distinct_nodes": 32,
+    "actual_author_commit_readback_resume_verified": true,
+    "failed_repair_draft_takeover_verified": true,
+    "original_cycle_and_drafts_preserved_verified": true,
+    "actual_author_process_exit_boundaries_verified": 6,
+    "old_request_retry_preserves_new_run_verified": true
+  },
+  "typed_stage_recovery_component": {
+    "status": "author_edit_preservation_and_final_matrix_verification_running",
+    "component_internal_verified": false,
+    "task_complete": false,
+    "checkpoint": ".tmp/t63-stage-recovery-progress.json",
+    "public_routes_installed": false,
+    "first_verified_nodes": 3,
+    "actual_matrix_process_exits": 12,
+    "first_verified_build": "2535ce7d7d5a2a975fd4d192b893ac44e95263ff4f5ae47a4df79eb37b24f324"
+  },
+  "previous_engineering_task": "T7.2_restored_batch_execution_integration",
+  "full_release_evidence": "docs/development/release-validation-progress.json",
+  "quality_cli_runner_encoding_issue": {
+    "original_full_suite_failure_retained": true,
+    "reproduction_audit": ".tmp/t73-quality-cli-reproduction-audit.json",
+    "cause": "Runtime-only PYTHONUTF8 changed children to UTF8 but original parent subprocess reader remained GBK;UnicodeDecodeError led to stdout None.",
+    "same_source_test_module_utf8_verification": ".tmp/t73-quality-cli-utf8-verification-audit.json",
+    "passed": 9,
+    "production_and_tests_changed": false,
+    "whole_suite_verified": false
+  },
+  "next_full_runner_command": ".venv/Scripts/python.exe -X utf8 -B .tmp/t73-full-release-corrected-run.py",
+  "current_full_regression": {
+    "runner": ".tmp/t73-full-release-corrected-run.py",
+    "auditor": ".tmp/t73-full-release-corrected-audit.py",
+    "status": "interrupted_not_terminal_current_tree_changed",
+    "session_id": 34438,
+    "runner_pid": 20668,
+    "started_at_utc": "2026-11-09T05:28:08.077401+00:00",
+    "log": ".tmp/t73-full-release-corrected.log",
+    "journal": ".tmp/t73-full-release-corrected-events.jsonl",
+    "inventory": ".tmp/t73-release-collection-final-r3-result.json",
+    "result": "not_terminal_not_full_pass",
+    "production_and_tests_frozen": false,
+    "compact_monitor": ".tmp/t73-full-release-progress.py --run corrected",
+    "compact_snapshot": ".tmp/t73-full-release-corrected-current-snapshot.json",
+    "python_utf8_at_startup": true,
+    "windows_spawn_guard": true,
+    "node_count": 4125,
+    "source_sha256": "34a1dfb288f3d1bd1a7fbdc3ff8b57ff5a3ecbc3966929a726cd86e7ec9e50ce",
+    "freeze_note": "Current source and 12 pinned test assets differ; this assessment does not infer when or by whom they changed.",
+    "interruption_audit": ".tmp/t73-corrected-interruption-audit-2026-11-11.json"
+  },
+  "original_interrupted_full_regression": {
+    "session_id": 44778,
+    "status": "interrupted_handle_missing_no_terminal_event_or_xml",
+    "audit": ".tmp/t73-interrupted-full-run-audit.json",
+    "finished": 2578,
+    "passed": 2567,
+    "failed": 6,
+    "skipped": 5,
+    "unfinished": 1546,
+    "source_and_old_tests_verified_before_fixture_edit": true,
+    "exit_code": null
+  },
+  "fixture_correction": {
+    "audit": ".tmp/t73-fixture-correction-audit.json",
+    "changed_test": "tests/test_memory_writeback.py",
+    "production_changed": false,
+    "related_passed": 75,
+    "all_original_memory_assertions_retained": true
+  },
+  "last_complete_full_regression": {
+    "session_id": 76707,
+    "runner_pid": 22960,
+    "status": "terminal_failed_two_stale_test_expectations",
+    "audit": ".tmp/t73-full-release-spawn-safe-audit.json",
+    "collected": 4124,
+    "passed": 4114,
+    "failed": 2,
+    "skipped": 8,
+    "exit_code": 1,
+    "source_and_old_430_assets_verified_before_test_edits": true,
+    "production_and_tests_frozen": false,
+    "full_release_verified": false
+  },
+  "terminal_expectation_correction": {
+    "changed_tests": [
+      "tests/test_reviewed_chapter_quality.py",
+      "tests/test_workbench_static_contract.py"
+    ],
+    "preserved_originals": ".tmp/t73-terminal-failure-before-tests/",
+    "production_changed": false,
+    "related_session_id": 39197,
+    "related_result": ".tmp/t73-terminal-corrections-v1-result.json",
+    "new_behavior_checks": 1,
+    "expected_next_collection_nodes": 4125,
+    "whole_goal_complete": false
+  },
+  "next_full_collection": {
+    "status": "collected_not_executed",
+    "evidence": ".tmp/t73-release-collection-final-r3-result.json",
+    "nodes": 4125,
+    "test_assets": 430,
+    "all_previous_nodes_retained": true,
+    "changed_tests": [
+      "tests/test_reviewed_chapter_quality.py",
+      "tests/test_workbench_static_contract.py"
+    ]
+  },
+  "prepared_next_full_runner": {
+    "runner": ".tmp/t73-full-release-corrected-run.py",
+    "auditor": ".tmp/t73-full-release-corrected-audit.py",
+    "monitor": ".tmp/t73-full-release-progress.py --run corrected",
+    "started": true,
+    "gate": "passed103 and verified XML/source/test hashes",
+    "session_id": 34438,
+    "runner_pid": 20668
+  },
+  "related103_regression": {
+    "session_id": 39197,
+    "exit_code": 0,
+    "passed": 103,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 2283.42,
+    "audit": ".tmp/t73-terminal-corrections-audit.json",
+    "source_and_all430_current_test_assets_verified": true
+  },
+  "current_full_collection": {
+    "status": "collected_not_executed",
+    "evidence": ".tmp/t73-release-collection-final-r3-result.json",
+    "nodes": 4125,
+    "test_assets": 430,
+    "all_previous_nodes_retained": true,
+    "changed_tests": [
+      "tests/test_reviewed_chapter_quality.py",
+      "tests/test_workbench_static_contract.py"
+    ]
+  },
+  "approval_session_followup": {
+    "date": "2026-11-09",
+    "user_answer": "尚未处理，先继续完整回归",
+    "session_repaired": false,
+    "retry_blocked_actions_authorized": false,
+    "continue_original_full_regression": 34438,
+    "original_browser_install_gates_retained": true
+  },
+  "progress_assessment_2026_11_11": {
+    "date": "2026-11-11",
+    "original_goal_complete": false,
+    "goal_system_status_observed": "usageLimited",
+    "historic_accepted_phases": [
+      "A",
+      "B",
+      "C"
+    ],
+    "historic_accepted_task_count": 15,
+    "original_task_count": 26,
+    "D_E_F_fully_accepted": false,
+    "current_head": "8a63778",
+    "current_source_sha256": "1f1c67ca44af429e53d392682a612ae13a86acdd7b09aed8b0393be3b0f90b9f",
+    "current_full_suite_pass_proven": false,
+    "interrupted_regression_audit": ".tmp/t73-corrected-interruption-audit-2026-11-11.json",
+    "other_execution_latest_snapshot": ".tmp/pm-patrol-projects-20261111-1456.json",
+    "other_execution_reported_formal_chapters": 63,
+    "other_execution_reported_mode": "strict",
+    "other_execution_reported_pending_count": 0,
+    "other_execution_reported_idle": true,
+    "other_execution_evidence_limit": "Stored workbench API snapshot and execution notes; not a fresh browser verification or original T8 paired/continuous acceptance. Reported waiver of literary scoring is not independently confirmed in this chat and does not mark original T8 passed.",
+    "remaining": [
+      "Reconcile current source/test baseline and evidence, then complete candidate regression",
+      "Complete final workflow browser acceptance including console/network",
+      "Clean Windows installation, doubleclick, matching rollback, remote CI",
+      "Verify remaining strict review-producer boundary (P.4)",
+      "Resolve original T8 quality/cost/time acceptance or explicitly agree a revised goal; generation success alone is insufficient"
+    ]
+  }
 }

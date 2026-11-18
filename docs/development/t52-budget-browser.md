@@ -1,5 +1,30 @@
 # T5.2 预算页面验证
 
+## 2026-11-12 金额原生交互与同库重启已验证
+
+用户明确要求自行确认此前审批问题。本次 Chrome 原生填表、点击均实际执行，没有再出现 `thin_wrong_thread_or_session`。隔离合成作品与替身 SDK、无 worker、禁止外部连接，真实模型调用和真实作品写入均为零。构建为 `ebf279c14add23c42c63967010326ada9a0dbead8955f1ee8b5a0f998683bf83`，本轮后续空间连续性修复属于另一构建，不能据此声称完整新构建已验收。
+
+1. 原生填写并确认 1 次调用、1000000 输入、50000 输出、900 主动秒，以及 1 USD 金额上限；三项测试价格为输入 1、缓存 0.1、输出 2 USD/百万 token。POST budget req21 为200，冻结 `openai/gpt-5.4-mini-2026-03-17/official/default`。这些是合成算术测试价格，不是实际供应商报价。
+2. 原生确认章意图 req22、生成候选 req23 均200。唯一替身 SDK 调用发出前已预留 0.400256 USD；回执输入100、输出20、缓存40，对应估算0.000104 USD。页面明确标示估算及预留，不当作账单。调用1/1后新事实提取禁用，1108字符草稿及保存按钮可用。
+3. 刷新后候选、草稿、冻结价格和占用保留，无自动重发。仅在隔离作品损坏账本后原生点击重新读取：req50 GET budget 为409，旧合计清空，新调用禁用，草稿仍可编辑。已按原字节恢复合成账本。
+4. 同源、同数据库停止PID6828，重启PID15856后刷新：req62–73共11条GET均200，调用仍1、金额0.000104、主动3.609秒，作者等待单列增加，无POST。最终Console无error/warn。两次服务均已明确停止，进程句柄87110及17944终态exit1来自主动Ctrl-C。
+
+状态、指标及浏览器原始读回保存在 `.tmp/resume-20261112-browser-{state,metrics}.json`、`.tmp/resume-20261112-money-{after-generation,after-refresh,corrupt-ledger,after-restart,restart-network}.json`。本次未做截图布局验收，也不替代T5.2其他路径、完整T7.3或真实收益验证。以下旧审批阻断记录作为历史保留，当前金额原生交互不再被该问题阻断。
+
+## 2026-11-04 金额页面：partial，原生交互尚未验收
+
+同日再次复核：工具会话切换后，DevTools命名空间及Chrome上下文已重新建立，旧进程句柄失效。使用相同原生`fill_form`入口在新合成夹具`.tmp/iu3/0d5327f6957a/b`重试，仍返回`409 thin_wrong_thread_or_session`，没有执行或采用其他工具绕过。新状态/指标为`.tmp/t52-money-browser-final-state.json`及`-final-metrics.json`，构建21b6f863162f4f417f98a880439c06dc43193b9978b243a4fd5781970f15e88e；session70121明确Ctrl-C停止、observed exit1、SDK调用0。金额交互验收继续partial，后续应先修复审批会话或取得用户指导，不无条件重复同一失败动作。独立质量预览按钮的浏览器验证通过见`t52-quality-time.md`，不替代金额填表。
+
+使用browser-change-verifier技能，Chrome DevTools page2、isolatedContext`t52-money`；实际URL为`http://127.0.0.1:8893/#/projects/project_d5e5482724674559abdd845bca92dcb9/chapters/2`，夹具`.tmp/t52-money-browser.py`，独立合成作品`.tmp/iu3/b1f8b3e51eac/b`。工作台默认服务、替身SDK、禁worker/Anthropic，无实际Provider或真实作品写入。
+
+已核对的页面基线显示：精确模型快照、官方标准端点、default档位、400000输入保守预留，金额启用选择、币种/金额和三项价格；选择前价格输入禁用。初始req20 GET budget返回200，初始八项API读取均200。Console只有此前已有的表单id/name issue，没有未捕获运行时异常。
+
+尝试原生`fill_form`填写调用/token/秒和启用金额时，工具返回自动审批复核失败`409 thin_wrong_thread_or_session`，明确操作未执行。随后只读snapshot确认表单仍空；没有换用JS、API或其他工具实现被阻断的表单动作。该错误是审批会话错误，不是已判定动作不安全。
+
+**浏览器结果：partial。** 当前没有原生确认冻结、生成、错误路径、刷新或同库重启交互的通过证据，不能用Node/UI/API测试替代。待审批会话恢复后按这些原动作续验。页面基线构建aa284bf7d75f28fa78b67e7c1141d8aab2391c3a233059e42a7455c2bbd3c48a；其后首次冻结配置复核和纯请求校验有修改，须按最终构建准备新的验证记录，不伪称旧夹具与新代码同构建重启。
+
+`.tmp/t52-money-browser-metrics.json`记录SDK调用0；原服务session39342/PID26808明确Ctrl-C停止，observed exit1，没有遗留本轮服务。截图/视觉布局未验证。相关自动检查330项/5子测试、配置复核19项和最终请求/UI/SDK86项分别通过，证据见`t52-budget-implementation.md`。T5.2、D阶段和全目标仍未完成。下文是早期调用/token页面的历史验收，不覆盖新金额页面。
+
 日期：2026-09-10。结果：调用/token 限额页面通过；金额配置和未知主动时间恢复仍未验收。T5.2 及完整 A–F 目标未完成。
 
 ## 变更与环境

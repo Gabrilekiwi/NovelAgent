@@ -1,5 +1,15 @@
 # T5.2 Provider 预算依据
 
+## 当前校正（2026-11-04）
+
+再次按OpenAI Docs检索并实际打开[模型对应的缓存指南](https://developers.openai.com/api/docs/guides/prompt-caching)及[Chat Completions参考](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)：`prompt_cache_options`适用于GPT-5.6及以后模型；较早模型使用自动缓存和`prompt_cache_retention`，无额外缓存写入收费。此前纯请求计划v1把新参数用于GPT-5.4 Mini是错误的，组件测试未验证这一模型适用性。该计划当时未接SDK、没有真实调用或金额记录。v2明确拒绝原v1，不改写历史，也不换模型。
+
+当前可选精确快照仍为`gpt-5.4-mini-2026-03-17`，使用官方标准端点、单份纯文本、`max_completion_tokens`、`service_tier=default`和`prompt_cache_retention=in_memory`。冻结价格必须含版本化能力/档位/缓存policy以及输入、缓存命中、输出三种费率；不能套用30m/12h或5m/1h写入费率。这里不包含实价或账户资格证明。使用者配置的费率必须覆盖实际适用范围；系统不核对账单或保证作者输入的价格正确。
+
+新账本预留保存原请求计划、完整能力快照与费率；只保存请求摘要，不复制提示词。SDK发送前复验最终逻辑请求与实际base_url。原Receipt 1.0不变，实际响应模型/档位以独立版本化adapter观察对象存入其可扩展usage并受原Receipt哈希保护。原始Provider usage不得伪造这一保留键；缺元数据、跨流片段矛盾、缓存规则漂移或超能力上界时保留占用。该模型无额外写费是经核对的能力语义，不能泛化为所有OpenAI模型写缓存免费；必需的输入/输出/缓存命中计数缺失仍拒绝结算。
+
+第一轮专项及相关回归263项、5子测试通过（`.tmp/t52-reviewed-monetary-first.log/.xml`，session53685 exit0）。公开默认生成/事实/费用接口与真实安装SDK typed响应检查session56383 exit0、120通过；后续相关回归330项/5子测试、配置门禁19项及最终请求/UI/SDK86项分别通过，具体构建与证据见`t52-budget-implementation.md`。金额UI已实现；Chrome初始页面、console和GET核对完成，原生填写因自动审批会话错误409未执行，浏览器交互尚未验收，也未绕过。整个T5.2仍未完成。下文为历史调查，不能覆盖本节校正。
+
 2026-09-10查询并实际打开 [OpenAI Chat Completions 官方请求文档](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。未查询或使用账户密钥，未调用 Provider。
 
 官方文档说明 `max_completion_tokens` 覆盖可见输出和 reasoning tokens；`max_tokens` 已弃用且不适用于 o 系列。service_tier 默认 auto，响应实际档位可能不同于请求。当前文档还包含 `prompt_tokens_details.cache_write_tokens`，以及默认 implicit、30m TTL 的 prompt_cache_options。不能沿用“OpenAI 不存在缓存写费”的旧假设。

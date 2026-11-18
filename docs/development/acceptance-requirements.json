@@ -1,0 +1,223 @@
+{
+  "schema_version": "development_acceptance_inventory_v1",
+  "date": "2026-11-09",
+  "source_plan": "docs/development-plan-final-2026-09-08.md",
+  "source_plan_sha256": "1a3e556abf257c9c8363f9e723a59475dffc7c7a1dca82fcd41b36ad50ab896f",
+  "requirements_count": 26,
+  "phase_requirements": {
+    "A": [
+      "T0.1",
+      "T0.2",
+      "T1.1",
+      "T1.2"
+    ],
+    "B": [
+      "T2.1",
+      "T8.0",
+      "T3.0",
+      "T3.1",
+      "T7.0"
+    ],
+    "C": [
+      "T3.2",
+      "T2.2",
+      "T2.3",
+      "T4.1",
+      "T5.1",
+      "T4.2"
+    ],
+    "D": [
+      "T5.2",
+      "T7.1",
+      "T8.1"
+    ],
+    "E": [
+      "T2.4",
+      "T5.3",
+      "T6.1",
+      "T6.2",
+      "T6.3"
+    ],
+    "F": [
+      "T7.2",
+      "T7.3",
+      "T8.2"
+    ]
+  },
+  "requirements": {
+    "T0.1": {
+      "deliverable": "保存现有修改清单，按候选、事实、界面等功能整理基线；记录实际commit、文件差异和证据路径，命名为B0",
+      "acceptance": "原有修改没有丢失；不混入密钥、正式书稿、运行数据库；未提交内容仍有清单与哈希可追溯",
+      "plan_line": 59,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T0.2": {
+      "deliverable": "项目虚拟环境与可重复依赖清单；开发/测试启动文档；任务记录模板",
+      "acceptance": "相关检查可用项目环境执行，不依赖开发者全局Python；另一轮仅读交接即可继续",
+      "plan_line": 60,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T1.1": {
+      "deliverable": "数据目录单实例约束、实际执行子进程的生命周期归属、可验证实例元数据",
+      "acceptance": "两进程并发启动只有一个worker；重复启动打开首实例，不改变running任务；假Provider运行中强制结束父进程后重启，无双重写入者",
+      "plan_line": 68,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T1.2": {
+      "deliverable": "保存父目录等预期输入错误转为结构化4xx及中文提示，保留表单输入",
+      "acceptance": "不存在或非法父目录不再500；合法目录正常建书",
+      "plan_line": 69,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T2.1": {
+      "deliverable": "七类事实同源契约、必填字段、操作值、模型示例和本地校验；before值、数量和依赖由程序计算",
+      "acceptance": "七类混合样例可解析；重复、无来源数量、歧义顺序和被拒事件的依赖被拦截；本项不提前声称下章可读",
+      "plan_line": 77,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T2.2": {
+      "deliverable": "角色/地点/物品的最小稳定身份声明、已有别名复用、基线缺失处理",
+      "acceptance": "同章新实体可引用；未知/重名/缺基线进入明确处理；接入T3.2后验证下章读回",
+      "plan_line": 78,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T2.3": {
+      "deliverable": "作者接受、修改、拒绝、补充及显式批量决定；正文与事实对照界面",
+      "acceptance": "原始模型建议不被覆盖；作者补充独立记来源；改稿使旧证据/决定过期；无需编辑JSON",
+      "plan_line": 79,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T2.4": {
+      "deliverable": "可版本化的质量策略与离线样例结果",
+      "acceptance": "确定性阻断、语义风险、普通建议分开；每个语义问题附原文证据；误报、漏检和额外调用有记录",
+      "plan_line": 80,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T3.0": {
+      "deliverable": "旧书来源规则的有限试验和一页设计决议D1",
+      "acceptance": "七类变化、人工基线冲突、持久化冲突决定、改稿失效、清缓存重启、下章读回及再改原来源均有确定性结果",
+      "plan_line": 90,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T3.1": {
+      "deliverable": "格式与支持版本决议D2；升级预检、兼容入口矩阵及回退条件",
+      "acceptance": "用实际B0程序验证不支持的新格式在写入前拒绝；新版本CLI/工作台/恢复入口执行一致检查；在途任务处理明确",
+      "plan_line": 91,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T3.2": {
+      "deliverable": "有限共享的准备、提交与核验服务；工作台提交预览和提交入口",
+      "acceptance": "幂等、过期拒绝、正式事务、崩溃恢复、凭证核验与DB索引重建通过；EA已有行为相关回归通过",
+      "plan_line": 92,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T4.1": {
+      "deliverable": "章意图、生成、编辑、事实审核、预览、确认提交和下一章统一入口",
+      "acceptance": "草稿/生成中/检查中/正式稿状态清晰；异常显示原因与下一操作；作者批准稿不会被后台覆盖",
+      "plan_line": 108,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T4.2": {
+      "deliverable": "真实浏览器的两章确定性演练及断点恢复证据",
+      "acceptance": "生成后、编辑后、检查后、提交中分别重启；无需搬文件、查看JSON或使用恢复CLI完成流程；检查console/network",
+      "plan_line": 109,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T5.1": {
+      "deliverable": "每个物理attempt的阶段、模型/端点、用量与来源；actual/estimated/unknown费用展示",
+      "acceptance": "旧无依据零值显示未知而不改历史；失败和重放不漏记、不重复记",
+      "plan_line": 117,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T5.2": {
+      "deliverable": "冻结单章价格与金额预留/结算；执行耗时与人工等待分离",
+      "acceptance": "超限在发请求前阻断；修复/提取/检查共用预算；恢复不清零；人工等待不触发模型执行超时",
+      "plan_line": 118,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T5.3": {
+      "deliverable": "自动批次统一币种、单章与批次金额/调用/token上限",
+      "acceptance": "下一调用可能超限即暂停；缺可解释价格不启用金额受控自动批次；同批次修复计入总额",
+      "plan_line": 119,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T6.1": {
+      "deliverable": "有限章号批次、冻结章纲/模型/预算/策略、policy审核来源",
+      "acceptance": "正常三章依次提交；下一章在前章正式提交和readback后开始；与人工相同最终输入产生相同领域结果",
+      "plan_line": 131,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T6.2": {
+      "deliverable": "持久化的一次修复周期、重新提取和重检",
+      "acceptance": "第二章首检失败修复通过后续写；修复失败则第三章零调用；修复中重启不新增一次额度",
+      "plan_line": 132,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T6.3": {
+      "deliverable": "原位人工接管、明确继续批次、暂停/停止与恢复",
+      "acceptance": "作者可处理并继续原批次；重启零自动付费调用；作者稿不被自动覆盖；不确定调用不自动重发",
+      "plan_line": 133,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T7.0": {
+      "deliverable": "最小恢复试验和恢复决议D3",
+      "acceptance": "一个已提交章、一个作者草稿复制到同机新空目录；不改旧不可变历史，建立可验证的新物理绑定；重启后用假Provider提交下一章",
+      "plan_line": 149,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T7.1": {
+      "deliverable": "升级前归档、目标作品可恢复备份、维护状态与预检清单",
+      "acceptance": "数据库与目标文件在受控停写期间取得一致快照；缺必要根或证据时不标记可恢复；失败现场仍可保存诊断归档",
+      "plan_line": 150,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T7.2": {
+      "deliverable": "将D3方案用于最终新流程的完整恢复入口",
+      "acceptance": "正文、状态、作者草稿、批次位置、预算与凭证核验一致；恢复后零自动调用；可继续确定性下一章；损坏归档拒绝启用",
+      "plan_line": 151,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T7.3": {
+      "deliverable": "Windows发布检查、依赖锁、安装/升级/回退文档和CI",
+      "acceptance": "干净Windows按文档启动；中文/空格路径、双击、重复启动、重启、匹配版本回退均通过",
+      "plan_line": 152,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T8.0": {
+      "acceptance_section": "### T8.0：现在即可准备的离线证据\n\n使用已有正文、保存响应和合成材料，建立小型版本化检查集：七类混合事实、漏事实、身份歧义、数量变化、重复/连贯性缺陷和正常章节。真实材料只读取证，研发产物在隔离目录；记录每个样本来源与人工判定依据。测试集不冒充新模型效果评估，不从单章推断全书质量。",
+      "plan_line": 178,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T8.1": {
+      "acceptance_section": "### T8.1：早期同模型配对验证\n\n前提：T4.2、相关T5.2和T7.1完成；验证作品具备真实有效Strict/契约资格。用户独立明确Provider、金额上限和阅读安排后才调用。\n\n先做有限Provider兼容检查及一章完整验证，再做三个配对章节任务。每对固定章意图和上下文材料、模型/端点及计费配置，分别采用作者手工管理同模型与工作台逐章流程；记录允许的调用/输出边界和实际总消耗。首轮集中比较逐章模式，不混入强制故障或自动接管样本。兼容检查如纳入配对，必须在运行前声明。\n\n保留原稿与修改稿，阅读时隐藏来源、随机顺序；实际操作者无法盲化，记录操作顺序。统计章意图准备、正文编辑、事实核对、排错恢复等总主动时间，等待时间单列。正常重复操作也计入，不只记录编辑器停留时间。\n\n早期通过方向：无严重事实缺陷；三对样本的人工九维均分及总体可用性汇总不低于对照；工作台三任务的总主动用时低于对照三任务之和；费用在授权范围内。同步报告每对差异，不用汇总掩盖严重个例。三个样本只用于发现方向和瓶颈，不证明长期稳定。30%节时是观察目标，不是已经由用户确定的硬门；若收益不清楚，明确记录结果并先改造成额外负担的环节。\n\n没有本阶段授权时，完成样本、流程、计时表和预算预检即可继续独立工程；不得自动调用，也不得标记收益验证通过。",
+      "plan_line": 182,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    },
+    "T8.2": {
+      "acceptance_section": "### T8.2：两模式正式连续生产验收\n\n工程候选版通过后，独立安排本阶段预算与阅读。T8.1授权不能自动延伸至本阶段；缺少早期结果时先补T8.1，再决定是否启动长批次。\n\n冻结代码、依赖、模型、端点、价格、预算、策略、章纲与评分口径。以当时最新正式状态准备经过验证的验收工作区，保留既有失败证据，不固定使用过时章号。十章逐章审核、十章连续自动分别计分；可按正常剧情顺序推进，但不能把前后两批当作严格模式因果对照，也不能合并声称二十章自动可靠。\n\n| 指标 | 本版验收口径 |\n|---|---|\n| 正式完成 | 每批预定10章全部正式提交并readback；停滞、放弃、预算耗尽不能删掉或替换样本后算通过 |\n| 首次通过 | 首次生产尝试中原始第一候选在正文修复或人工实质修改前通过规定检查的章数 / 预定10章，至少70%；首次生成失败或没有候选即不计首过，后续恢复不追改；模型/系统失败原因另列 |\n| 严重问题 | 无严重事实缺陷、草稿丢失、重复逻辑提交、未解释内部错误或不确定调用自动重发 |\n| 修复与接管 | 每章自动修复至多一次；自动批次至少8/10章无需额外人工接管完成，故障演练不混入该自然批次 |\n| 人工质量 | 九维均分至少3.8，至少8/10章总体可用性不低于4；模型分与人工分分开；评分前固定锚点与严重缺陷定义 |\n| 用时 | 保留原有编辑时间中位数≤20分钟、P90≤30分钟的目标，同时报告全部主动时间、原始逐章用时和最大值；小样本P90只作描述 |\n| 连续性趋势 | 后3章人工均分相对前3章下降不超过0.3，并逐项阅读核对事实连续性；该差值不证明长期无退化 |\n| 成本与收益 | 两批均不超冻结预算；配对验证的质量与主动时间收益成立；费用未知不能填零冒充达标 |\n\n上述量化值作为本版沿用的工作验收标准，在开始真实批次前固定到记录；若需调整，只能用于随后新批次并说明依据，不能在看到结果后追改本批通过线。30%节时仍非硬门。\n\n正式试验全程保留预定、启动、提交、失败、放弃数量及所有调用/主动时间。代码、模型、章纲等冻结条件改变时本批失效，原费用和失败仍保留；重新验收建新批次，不覆盖记录。常规人工审读不算异常接管，但全部计入主动时间。\n\n**只有工程候选版和T8.1/T8.2均通过，才标记“稳定自用生产版”。** 未通过时按实际状态称工程候选版或待验版。",
+      "plan_line": 200,
+      "current_requirement_proof": "not_evaluated_by_this_inventory"
+    }
+  },
+  "scope": "inventory of original task gates;does not reopen previously accepted work or prove any current completion",
+  "historic_phase_acceptance": [
+    "A",
+    "B",
+    "C"
+  ],
+  "active_phases": [
+    "D",
+    "E",
+    "F"
+  ],
+  "completion_rules": [
+    "Match full requirement to original authoritative evidence,current source and relevant test coverage",
+    "Do not replace complete recovered continuation with preparation/history/HTTP409 tests",
+    "Report full pytest failures/skips and actual browser/network/console evidence separately",
+    "Keep independent T8.1/T8.2 real-provider budgets and reading authorization;neither inferred from development goal",
+    "Do not mark stable production or whole goal complete until all original gates are proven"
+  ],
+  "whole_goal_complete": false,
+  "engineering_candidate_gate": "### 工程候选版\n\n必须完成本版T0–T7的全部任务与T8.0，D1–D3有结论；目标旧书两模式闭环、七类事实冷读、Windows执行所有权、预算、一次修复、可写恢复和安装验证均通过。EA已有功能相关回归通过，但不要求新流程完整对等。\n\n在T3.2完成、T6完整集成及最终发布候选点运行全套pytest与本地smoke；其他小任务运行相关检查即可。无新改动或未解决问题时不重复同一套测试。跳过项、平台限制与未做的真实验证单列。所有浏览器演练使用隔离DB/作品和确定性Provider，并查看实际页面、console、network及重启结果。",
+  "limitations": "This machine index covers numbered task rows and T8 sections;all surrounding original-plan prose/invariants/decision conditions remain authoritative and must be reviewed directly at completion."
+}

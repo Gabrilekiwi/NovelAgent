@@ -1,5 +1,17 @@
 # T3.2：新版作品提交 API 与发布页
 
+## 2026-11-12 整合回归与浏览器验证
+
+修复范围：空间回退原先在上一场景缺失时任选人物位置，将稳定地点ID变成必须写入正文的开场桥，导致已审章节预览和正式提交误失败。当前只修复非空且不可用的地点词；没有声明的场景保持未知，不降低已声明连续性或正式提交的证据要求。增加未知场景不被推测、原快照不被改写的检查，原“最后”伪地点回归继续保留。
+
+浏览器状态：该准备完成的合成发布路径通过；完整工作台与恢复验收仍为partial。当前源码 `085a92a54177e9e8839f3b9fcbeb30040ebef34c4057266387f7fbacd047b984`，Chrome DevTools page3，隔离上下文 `resume-20261112-publication`。地址 `http://127.0.0.1:8898/publication?project_id=project_00762b427e5a459fbb4f94cd039a215d&chapter=2&review_id=fact_review_bcec9373015a9089b6c066ed2056bd4e`。独立合成作品、预先准备且确认的草稿/事实、默认应用服务、无worker、外部连接被拒绝；不是从空作品开始，也未使用真实模型或真实作品。
+
+实际点击生成提交预览：req10 POST publication-preview 为200，质量覆盖完整且本地通过；仍显示作者需核对的前后衔接提醒，没有隐去非阻断问题。实际勾选作者确认并点击发布：req11 POST publication 为200，`publication_verified=true`，凭证 `commit_f4abc6c277a6834b605eed22159fcf06`；正文、事实及凭证同时核验。刷新后req16 POST publication-status与req18 GET publication-input均200，页面仍显示原凭证及已发布，未重复提交；点击下一章进入第3章，八条读取请求均200且未自动生成。最终Console无error/warn。合成夹具的第三章复制第二章标题，不据此声称标题展示或真实章节内容质量已验收。
+
+自动化负向范围覆盖来源变更、伪造结果、缺失所有权、恢复标记和证据损坏等拒绝，见当前202项专项；本次浏览器未再注入这些发布故障，也未做截图布局验收。原生金额预算故障交互是另一个构建，单独记录于`t52-budget-browser.md`。原始浏览器快照/响应在`.tmp/resume-20261112-publication-{preview,after-commit,after-refresh,next-chapter,refresh-network,response-10,response-11}.json`。服务52149/PID24128已停止。全套回归、完整恢复流程和真实收益门槛保持待验。
+
+当前补充（2026-11-04）：POST `publication-preview`的本地检查和新发布的复检/准备/完成已接原冻结章的主动计时，新增时间未知/耗尽门禁；它只会写原预算的执行区间，纯准备函数仍只读。GET input/budget不开始检查；原请求查询/恢复仍可用，不因新时间门禁丢失原发布结果。发布页增加当前预算读取、暂停状态与只读重读。见[质量检查计时证据](t52-quality-time.md)。下文为T3.2历史设计，“只读预览”指不改正式正文/事实/发布凭证，不能据此认定当前明确检查不计时。
+
 2026-09-09；组件检查点，T3.2 与总计划仍未完成。
 
 `workbench/app.py` 装配独立的 `chapter_publication_api`。仅这些路由持有显式 `ReviewedProjectRegistry`、真实新版上下文及 `ChapterPublicationService`；旧项目导入、章节卡、Candidate、worker 的格式限制没有放开。已完成真实升级与本机登记的作品，可以用实际 SQLite 草稿和作者确认审核调用本接口。没有自动升级或自动登记。

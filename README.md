@@ -1,5 +1,7 @@
 # NovelAgent
 
+Windows 本地自用候选版（2026-11-18）：[下载当前验收包，查看已通过和待验证的范围](deliverables/release-candidate/README.md)。
+
 Version: 2.0.1 stabilization release
 
 NovelAgent 2.0.1 stabilizes the 2.0 feature set without expanding the novel-creation surface. It hardens final-artifact integrity, sequential scene evidence, authoritative character/relationship/roster/numeric state, chapter-scoped recovery, context working sets, and byte-for-byte StoryProject writeback while retaining the v1.5-compatible agent loop and opt-in reliable semantic production path.
@@ -49,9 +51,11 @@ On Linux, use `python3.12 scripts/setup_environment.py` and `.venv/bin/python` f
 
 完成上述项目环境安装后，双击仓库根目录的 `启动创作工作台.bat`。启动器使用并检查本项目`.venv`，缺失或版本不符时提示修复命令。工作台会自动打开浏览器；关闭启动窗口即可停止服务。作者日常使用不需要进入运行目录、查看 JSON 或输入恢复命令。
 
+试用当前开发改动（包括受控一次续试）请先关闭旧工作台，再双击 [`试用当前工作台.bat`](试用当前工作台.bat)。此入口明确使用当前目录版本，避免默认启动器打开已提交的旧界面；使用原本的工作台数据目录。已有实例运行时仍会打开原实例，因此切换版本前需要先关闭旧窗口。这是当前版本试用入口，不代表稳定版发布。续试和草稿保存的验证范围见[工作台日常操作验证](docs/development/workbench-continuation-20261117.md)。
+
 重复启动会验证并打开已有工作台，不再启动第二个任务执行器。若原窗口异常退出，但执行子进程仍在运行，新启动会提示等待或检查原进程，并保留任务现场。默认端口被其他程序占用时自动选择可用端口；以启动窗口显示的地址为准。创建作品时，“保存父目录”需要选择已存在的文件夹，路径错误可直接修改后重试，已填写内容会保留。
 
-隔离开发验证可使用 `.venv\Scripts\python.exe run_workbench.py --data-dir .tmp\workbench-test --workspace .tmp\workbench-books --no-active-import --no-browser --port 0`，先创建该 workspace 文件夹。数据目录决定本实例的所有权边界；它不等于跨数据目录的作品副本写入协调，后者由后续恢复工作实现。
+隔离开发验证可使用 `.venv\Scripts\python.exe run_workbench.py --data-dir .tmp\workbench-test --workspace .tmp\workbench-books --no-active-import --no-browser --port 0`，先创建该 workspace 文件夹。工作台实例资格与本机作品写资格分别核对；恢复副本需经过受控交接后才能写入，直接复制目录不会获得写资格。完整恢复及Windows发布验收仍在进行，安装、升级保全和回退说明见[环境与维护文档](docs/development/environment.md)。
 
 工作台固定为五个主区域：
 

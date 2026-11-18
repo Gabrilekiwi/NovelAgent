@@ -1,0 +1,113 @@
+{
+  "status": "windows_candidate_start_save_restart_recovery_verified_with_separate_writable_sample",
+  "candidate_fingerprint": "da1d0208210a869339d1bf814103a8ce8795ed57203b304c78164a9eceeade78",
+  "zip_sha256": "53db57e8653385919d808f52a075fe707a1d38a0b271be4aac7228f52bfeeb01",
+  "archive_members_verified": 600,
+  "fresh_install": {
+    "python": "3.12.4",
+    "locked_runtime_packages": 30,
+    "pip_check": true,
+    "wheel_source": "local cache"
+  },
+  "entry": "packaged Windows BAT via cmd, Git absent from PATH, fresh install",
+  "real_book": {
+    "candidate": "da1d0208210a869339d1bf814103a8ce8795ed57203b304c78164a9eceeade78",
+    "source_archive": "backup_44d5b078e82d4a0ca1a836976bdbe37b",
+    "title": "三分钟之外",
+    "receipt_hash": "336e7be9ab7c4b26eb82b8418a50521643e4a81d5aeed6281e0ccd592bf1297c",
+    "chapter65": "不能带回的样水",
+    "card_status": "ready",
+    "read_only_write_rejection": 409,
+    "protected_files": {
+      "source": 4429,
+      "restored": 4429
+    },
+    "archive_accounting": {
+      "正文/": 64,
+      ".novelagent/runtime/budgets/": 0,
+      ".novelagent/runtime/runs/": 4365
+    },
+    "new_prose_or_budget_or_run_files": 0
+  },
+  "real_restored_prose_sha256": "2f00c3c6c844e9cb8cf37652983316aaafd9d397cc973d3549ccc865e2f52309",
+  "real_restored_draft_sha256": "c6027167d39002947d24a4f370a21fa93a55e387699703a59d2695c80c503ed8",
+  "new_event_count": 6,
+  "verbatim_quotes": 15,
+  "real_book_writer_handoff": false,
+  "real_provider_calls": 0,
+  "quality_stall": {
+    "concrete_action": "warning",
+    "question_repeated": "pass",
+    "unrelated": "warning"
+  },
+  "separate_synthetic_certified_writable_restore_test": "passed, after-upgrade archive, genuine handoff, two reopenings",
+  "startup_and_restore_launcher_tests": 20,
+  "stable_release": false,
+  "writable_browser_sample": {
+    "qualified_restore": true,
+    "synthetic": true,
+    "chapter": 2,
+    "revision": 2,
+    "draft_sha256": "72250a8461cca94bcc81aa83619127eaaa3f91b7aeb257a7c58747438ee4fe23",
+    "restart_editor_visible": true,
+    "new_model_calls": 0,
+    "import_http": 200,
+    "save_http": 200,
+    "restart_candidate_http": 200,
+    "console_errors": 0
+  },
+  "backup_restore_elapsed_seconds": {
+    "plan": 81.5,
+    "copy": 260.0,
+    "rebind_roots": 152.3,
+    "rebind_database": 179.3
+  },
+  "known_failure": {
+    "test": "tests/test_final_batch_restore.py::test_final_policy_book_paused_author_draft_and_unused_frozen_budget_restore_then_continue",
+    "reproductions": 2,
+    "chapter": 2,
+    "stage": "quality",
+    "expected_chapter_before_restore": 3,
+    "checked_examples": {
+      "concrete_action": {
+        "text": "周岚发现闸门控制器刚被人从内部使用。控制室日志显示顾言在十分钟前刷卡进入封闭区。闸门后的声音准确叫出了林澈的名字。",
+        "status": "warning",
+        "evidence": {
+          "candidate_terms": [
+            "顾言为何拥有封闭区权限",
+            "闸门后的求救者如何知道林澈的名字"
+          ]
+        }
+      },
+      "question_repeated": {
+        "text": "顾言为何拥有封闭区权限？",
+        "status": "pass",
+        "evidence": {
+          "matched_terms": [
+            "顾言为何拥有封闭区权限"
+          ],
+          "candidate_terms": [
+            "顾言为何拥有封闭区权限",
+            "闸门后的求救者如何知道林澈的名字"
+          ]
+        }
+      },
+      "unrelated": {
+        "text": "院子里下起了雨。",
+        "status": "warning",
+        "evidence": {
+          "candidate_terms": [
+            "顾言为何拥有封闭区权限",
+            "闸门后的求救者如何知道林澈的名字"
+          ]
+        }
+      }
+    }
+  },
+  "limitations": [
+    "real chapter 64 restored read-only, original remains sole writer",
+    "actual Windows BAT invoked through cmd; no claim of Explorer double-click or internet install",
+    "source snapshot and physical restore invoked with production services; no end-to-end GUI restore wizard claim",
+    "no new real model generation or T8.1/T8.2 result"
+  ]
+}

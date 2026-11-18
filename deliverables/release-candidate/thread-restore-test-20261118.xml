@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="532.144" timestamp="2026-11-18T16:12:28.732717+08:00"><testcase classname="tests.test_final_batch_restore" name="test_final_policy_book_paused_author_draft_and_unused_frozen_budget_restore_then_continue" time="530.766"><failure message="AssertionError: {&quot;error&quot;:{&quot;code&quot;:&quot;reviewed_batch_invalid&quot;,&quot;message&quot;:&quot;原批次冻结来源、模型、策略或软件发生变化。&quot;}}&#10;assert 409 == 200&#10; +  where 409 = &lt;Response [409 Conflict]&gt;.status_code">tests\test_final_batch_restore.py:193: in test_final_policy_book_paused_author_draft_and_unused_frozen_budget_restore_then_continue
+    exercise_final_restore(web)
+tests\test_final_batch_restore.py:177: in exercise_final_restore
+    completed=post(restored_client,path+'/complete-author',{'chapter':3,'request':body,
+tests\test_final_batch_restore.py:45: in post
+    assert response.status_code==200,response.text
+E   AssertionError: {"error":{"code":"reviewed_batch_invalid","message":"原批次冻结来源、模型、策略或软件发生变化。"}}
+E   assert 409 == 200
+E    +  where 409 = &lt;Response [409 Conflict]&gt;.status_code</failure></testcase></testsuite></testsuites>
