@@ -1935,7 +1935,7 @@ def test_unsettled_paid_draft_uncertain_copy_discloses_chars_and_keeps_classify_
     assert "也不要先结束失败尝试来隐藏已付费正文。请先做无模型恢复分类。" in spa
     assert "上次调用结果不确定，已保留 ${retainedUnsettledPaidDraft({ latest_run: latestRecoveryRun }).chapterChars} 字候选，等待无模型恢复分类" in spa
     # The no-run wording must remain, and must not be used as the paid-draft next step.
-    assert "上次模型调用结果不确定，没有完整回执。不要盲目重试；请先结束本章失败尝试，再开始新的一次写作。" in spa
+    assert "服务商可能已计费。请先核对使用记录和本地保留的正文，不要直接重试。" in spa
     assert "没有完整回执和章节运行记录。不要盲目重试。" in spa
     assert 'forceResetForm.dataset.recoveryMode = uncertainWithoutRun ? "force-reset-without-run" : "force-reset"' in spa
     assert spa.count("请先做无模型恢复分类") >= 1
@@ -2021,7 +2021,8 @@ process.stdout.write(JSON.stringify(output));
     assert "没有完整回执" not in paid
     without_run = result["withoutRun"]
     assert "没有完整回执" in without_run
-    assert "请先结束本章失败尝试" in without_run
+    assert "可能已计费" in without_run and "不要直接重试" in without_run
+    assert "请先结束本章失败尝试" not in without_run
     assert result["noChars"] is None
     assert result["settled"] is None
     assert result["committed"] is None

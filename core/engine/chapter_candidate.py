@@ -491,6 +491,14 @@ class ChapterCandidateExecutor:
             with execution_activity(self.paths.run_dir, _execution_id(candidate_id)):
                 return self._execute_prepared(prepared, idempotency_key=idempotency_key)
 
+    def prepare_generation_estimate(self, *, chapter_index, confirmation):
+        """Run the normal confirmation and prompt checks, stopping before any execution."""
+        from modules.chapter_generator.generator import prepare_chapter_messages
+
+        prepared = self._prepare_request(chapter_index=chapter_index, confirmation=confirmation)
+        _, report = prepare_chapter_messages(prepared["input_pack"])
+        return report["budgeted_input_tokens"]
+
     def prepare_policy_request(self, *, chapter_index, chapter_intent):
         """Read-only preparation; this does not create execution permission."""
         trusted=self.context_builder.build(chapter_index)

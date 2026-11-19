@@ -8584,8 +8584,8 @@ def _provider_uncertain_user_message(stderr_tail: Any) -> str | None:
     if "ProviderCallUncertainError" not in text and "provider_call_uncertain" not in text:
         return None
     return (
-        "上次模型调用结果不确定，没有完整回执。不要盲目重试；"
-        "请先结束本章失败尝试，再开始新的一次写作。"
+        "上次模型调用结果不确定，没有完整回执，服务商可能已计费。不要盲目重试；"
+        "请先核对服务商使用记录和本地保留的正文。"
     )
 
 

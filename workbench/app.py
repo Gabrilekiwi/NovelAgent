@@ -572,6 +572,12 @@ def _create_app_owned(
             "message": "章节意图已在当前工作台会话中确认；尚未创建正文候选。",
         }
 
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/generation-estimate")
+    async def estimate_generation(project_id: str, chapter: int, payload: dict[str, Any] = Body(...)):
+        estimate = await asyncio.to_thread(chapter_candidates.generation_estimate, project_id, chapter,
+                                           confirmation=payload.get("confirmation"))
+        return {"estimate": estimate}
+
     @app.get("/api/projects/{project_id}/chapters/{chapter}/candidates")
     async def project_chapter_candidates(
         project_id: str,
@@ -2884,7 +2890,7 @@ def _candidate_result_message(candidate: Mapping[str, Any]) -> str:
             return "正文候选已生成并复制为可编辑工作台草稿；正式正文和权威状态仍未修改。"
         return "正文候选已生成；确认后可复制为可编辑工作台草稿，正式正文和权威状态仍未修改。"
     if status == "provider_uncertain":
-        return "Provider 结果不确定；系统已停止自动调用，正式正文和权威状态均未修改。"
+        return "模型调用结果不确定，服务商可能已计费；请先核对使用记录，不要直接重试。"
     if status == "stale":
         return "生成期间可信输入发生变化；候选已隔离保留，正式正文和权威状态均未修改。"
     if status == "failed":

@@ -290,6 +290,20 @@ class ChapterCandidateService:
                 builder=self.chapter_cards.context_builder_factory(project.root))
             return self._public_candidate(project.id,project.root,record['candidate_id'],import_completed=True,include_text=True)
 
+    def generation_estimate(self, project_id, chapter_index, *, confirmation):
+        from core.context_budget import ContextBudgetError
+        from workbench.generation_price import generation_quote
+
+        project = self.projects.get(project_id)
+        verified = self.chapter_cards.verify_confirmation(project_id, chapter_index, confirmation)
+        with _candidate_error_boundary():
+            try:
+                tokens = self.executor_factory(project.root).prepare_generation_estimate(
+                    chapter_index=chapter_index, confirmation=verified)
+            except ContextBudgetError as exc:
+                raise ChapterCandidateWorkbenchConflict("当前章节输入超过限制或无法计量；没有发送模型请求。") from exc
+        return generation_quote(tokens)
+
     def generate(
         self,
         project_id: str,
@@ -828,7 +842,7 @@ def _public_error(
     if raw_status == "provider_uncertain":
         code = "provider_call_uncertain"
         message = (
-            "Provider 结果不确定；系统已停止新的模型调用。正式正文和权威状态均未修改。"
+            "没有收到完整回执，服务商可能已计费；请先核对服务商使用记录，不要直接重试。"
         )
     elif raw_status == "needs_recovery":
         code = "candidate_needs_recovery"

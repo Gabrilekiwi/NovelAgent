@@ -260,6 +260,10 @@
                 <p class="chapter-candidate-message" data-candidate-message>模型只生成可隔离、可恢复的正文候选；不会自动提交正式正文，也不会写入权威状态。</p>
                 <div class="chapter-candidate-binding" data-candidate-binding hidden><span>候选记录</span><code data-candidate-id></code><span>正文 SHA</span><code data-candidate-prose-sha></code></div>
                 <div class="notice notice-warning" data-candidate-old-binding hidden><strong>候选与当前确认不一致</strong><p>草稿和运行证据会继续保留；如要新生成，请以当前章节卡重新确认意图。</p></div>
+                <div data-chapter-estimate-panel>
+                  <button type="button" class="button button-secondary" data-chapter-estimate disabled>估算这次正文费用</button>
+                  <p data-chapter-estimate-result aria-live="polite">请先确认本章意图。估算本身不调用模型。</p>
+                </div>
                 <div class="button-row chapter-candidate-actions">
                   <button class="button button-primary" type="button" data-candidate-generate disabled>生成正文候选</button>
                   <button class="button button-secondary" type="button" data-author-draft-open disabled>导入已有稿件</button>

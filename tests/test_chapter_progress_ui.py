@@ -86,6 +86,7 @@ let listener, accept, observedButton;
 const button = { disabled:false }, draft = {id:'draft-a'};
 const sandbox = {
   one: selector => selector === `[data-${control}]` ? { addEventListener:(_, fn)=>listener=fn } : {classList:{contains:()=>false}},
+  quoteKey:()=> 'same-chapter',
   UI:{confirmAction:()=>new Promise(resolve=>accept=resolve)},
   state:{chapterCandidate:{draft},chapterConfirmation:{confirmation_sha256:'a'.repeat(64)}},
   currentConfirmationMatchesCard:()=>true,

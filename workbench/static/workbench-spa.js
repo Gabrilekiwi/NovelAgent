@@ -1097,7 +1097,7 @@
     const error = issue?.error || {};
     const pieces = [error.user_message, error.message, error.reason, error.stderr_tail, issue?.reason, issue?.summary].filter(Boolean).join("\n");
     if (issue?.uncertain_without_run === true || /ProviderCallUncertainError|provider_call_uncertain|without a durable receipt|没有耐久回执|没有完整回执/.test(pieces)) {
-      return "上次模型调用结果不确定，没有完整回执。不要盲目重试；请先结束本章失败尝试，再开始新的一次写作。";
+      return "上次模型调用没有完整回执，服务商可能已计费。请先核对使用记录和本地保留的正文，不要直接重试。";
     }
     return null;
   };
@@ -1655,9 +1655,53 @@
     try { window.sessionStorage.removeItem(candidateOperationStorageKey(projectId, chapter, confirmationSha)); }
     catch { /* A blocked session store must not change Candidate safety. */ }
   };
+  let displayedQuote = null, pendingQuote = null;
+  const quoteKey = () => state.route?.area === "chapter" && currentConfirmationMatchesCard()
+    ? JSON.stringify([state.routeRevision, state.projectId, state.route.chapter, state.chapterConfirmation.confirmation_sha256]) : null;
+  const quoteText = (quote) => {
+    const n = v => Number(v).toLocaleString("zh-CN");
+    const p = quote.price;
+    const basis = `${quote.model}：预计输入 ${n(quote.input_tokens_estimate)} token。`;
+    if (!p) return basis + "当前模型、渠道或输入档位没有可用报价，金额未知。请核对服务商单价并按作者指南登记。";
+    const example = p.example_output_tokens === quote.output_token_limit ? "" : `若输出 ${n(p.example_output_tokens)} token，约 $${p.example_usd}；`;
+    return basis + `${example}若输出达到设置的 ${n(quote.output_token_limit)} token，约 $${p.at_output_limit_usd}。` +
+      `按 ${p.as_of} 的普通输入/输出单价（美元）估算，仅含一次正文生成；未计缓存差价、续试或事实提取。实际以账单为准，这不是扣费上限。`;
+  };
+  const renderQuote = () => {
+    const key = quoteKey();
+    if (displayedQuote?.key !== key) displayedQuote = null;
+    const button = one("[data-chapter-estimate]");
+    if (button) button.disabled = !key || pendingQuote?.key === key;
+    setText("[data-chapter-estimate-result]", !key ? "请先确认本章意图。估算本身不调用模型。"
+      : pendingQuote?.key === key ? "正在本地核对本章输入…"
+      : displayedQuote?.text || "估算本身不调用模型，也不占用预算。");
+  };
+  const estimateForCurrentChapter = async () => {
+    const key = quoteKey();
+    if (!key) return null;
+    if (pendingQuote?.key === key) return pendingQuote.promise;
+    const url = `/api/projects/${encodeURIComponent(state.projectId)}/chapters/${state.route.chapter}/generation-estimate`;
+    const confirmation = state.chapterConfirmation;
+    const promise = api(url, {method: "POST", json: {confirmation}}).then(({payload}) => {
+      if (quoteKey() !== key) return null;
+      const text = quoteText(payload.estimate);
+      displayedQuote = {key, text};
+      return text;
+    }).catch(error => {
+      if (quoteKey() === key) displayedQuote = {key, text: `未能估算：${UI.errorMessage(error?.payload, error?.status)} 没有发送模型请求。`};
+      return null;
+    }).finally(() => {
+      if (pendingQuote?.promise === promise) pendingQuote = null;
+      renderQuote();
+    });
+    pendingQuote = {key, promise};
+    renderQuote();
+    return promise;
+  };
   const candidateStatusPresentation = (candidate, errorMessage = "") => {
     if (!candidate) {
       if (errorMessage) return { status: "failed", label: "状态不可用", title: "无法恢复正文候选状态", message: `${errorMessage} 为避免重复调用模型，状态恢复前不能生成新的候选。` };
+      if (currentConfirmationMatchesCard() && state.chapterBudgetBlocked) return { status: "warning", label: "预算待处理", title: "章节意图已确认", message: "现在可以估算正文费用；预算允许后才能调用模型。" };
       if (currentConfirmationMatchesCard()) return { status: "ready", label: "可生成", title: "章节意图已确认", message: "可以调用模型生成一份隔离正文候选；结果不会自动提交正式正文，也不会写入权威状态。" };
       return { status: "idle", label: "等待确认", title: "确认本章意图后生成", message: "模型只生成可隔离、可恢复的正文候选；不会自动提交正式正文，也不会写入权威状态。" };
     }
@@ -1667,7 +1711,7 @@
       completed: { status: "pass", label: "候选已生成", title: candidate.draft ? "可编辑草稿已准备" : "正文候选已生成", message: candidate.draft ? "候选已复制为独立工作台草稿。请编辑并保存；正式正文和权威状态仍未修改。" : "不可变候选已安全保留。建立可编辑副本后再修改；正式正文和权威状态仍未修改。" },
       stale: { status: "warning", label: "输入已变化", title: "候选已隔离保留", message: "生成期间可信输入发生变化；该候选不能作为当前草稿采用。请核对最新章节卡并重新确认。" },
       failed: { status: "failed", label: "生成失败", title: "正文候选生成失败", message: candidate.error?.message || "失败记录已保留；正式正文和权威状态均未修改。" },
-      provider_uncertain: { status: "blocked", label: "结果不确定", title: "Provider 结果需要作者处理", message: "Provider 是否完成无法确认；系统没有自动重试，正式正文和权威状态均未修改。" },
+      provider_uncertain: { status: "blocked", label: "结果不确定", title: "Provider 结果需要作者处理", message: "系统没有自动重试。没有收到完整回执，模型服务可能已计费。请按时间、模型和请求方式核对服务商使用记录；不要直接重试。原记录和预算占用保留。" },
       cancelled: { status: "cancelled", label: "已取消", title: "正文候选已取消", message: "取消记录已保留；正式正文和权威状态均未修改。" },
       abandoned: { status: "warning", label: "已放弃采用", title: "不确定结果已放弃采用", message: "原请求的证据和预算占用仍保留。请按下方续试状态继续；放弃采用不代表请求免费，也不会自动重新生成。" }
     };
@@ -1796,6 +1840,7 @@
     if (oldBinding) oldBinding.hidden = !candidate || (bindingCurrent && (!currentConfirmationMatchesCard() || confirmationCurrent));
 
     const confirmed = currentConfirmationMatchesCard();
+    renderQuote();
     const blocksNewCandidate = ["running", "needs_recovery", "provider_uncertain"].includes(candidate?.status);
     const currentCompleted = candidate?.status === "completed" && confirmationCurrent;
     const generate = one("[data-candidate-generate]", panel);
@@ -2465,6 +2510,7 @@
     } : null, (blocked, message) => {
       state.chapterBudgetBlocked = blocked;
       state.chapterBudgetMessage = message || '';
+      if (!state.chapterCandidate && !state.chapterCandidateError) renderChapterCandidate(null, '');
       const generate = one('[data-candidate-generate]');
       if (generate) generate.disabled = blocked || !currentConfirmationMatchesCard() || Boolean(state.chapterCandidateError)
         || ['running', 'needs_recovery', 'provider_uncertain'].includes(state.chapterCandidate?.status) || generate.classList.contains('is-busy');
@@ -4376,6 +4422,7 @@
     } finally { finishCandidateAction(button,action); }
   });
 
+  one("[data-chapter-estimate]")?.addEventListener("click", estimateForCurrentChapter);
   one("[data-candidate-generate]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
@@ -4383,8 +4430,9 @@
       UI.showToast(state.chapterCandidateError ? "Candidate 状态尚未恢复，不能重复调用模型。" : "请先确认当前章节卡。", "error");
       return;
     }
-    const accepted = await UI.confirmAction("这一步会调用 Provider 生成正文候选。结果只保存为隔离候选和工作台草稿，不会提交正式正文或写入权威状态。确认继续吗？");
-    if (!accepted || !currentConfirmationMatchesCard()) return;
+    const key = quoteKey();
+    const accepted = await UI.confirmAction("这一步会调用你当前配置的模型服务，按该服务的实际用量和单价计费。费用估算可选；超时也可能计费。结果只保存为正文候选，不会正式入稿。确认继续吗？");
+    if (!accepted || !key || quoteKey() !== key || button.disabled) return;
     const confirmation = JSON.parse(JSON.stringify(state.chapterConfirmation));
     const action = beginCandidateAction({ requireCardBinding: true, requireConfirmation: true });
     const operationKey = candidateOperationKey(action.project_id, action.chapter, confirmation.confirmation_sha256);

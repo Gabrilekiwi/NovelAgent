@@ -783,6 +783,7 @@ def test_provider_uncertain_abandon_gate(
             factory.physical_calls,
             raw_uncertain_record["error"],
         )
+        assert "可能已计费" in uncertain["error"]["message"]
         assert uncertain["raw_status"] == "provider_uncertain"
         assert uncertain["draft"] is None
         assert uncertain["uncertainty"]["count"] == 1

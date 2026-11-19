@@ -34,26 +34,21 @@ def _load_scene_prompt() -> str:
     )
 
 
+def prepare_chapter_messages(input_pack: str) -> tuple[list[dict[str, str]], dict]:
+    """Compile and measure the exact pair of messages used for a whole chapter."""
+    prompt = _load_prompt()
+    budget = default_context_budget()
+    compiled = compile_prompt_contexts(
+        input_pack, budget=budget, stage_protocol_texts={"plan": (prompt,)},
+    ).plan.text
+    report = budget.require_input(compiled, stage="chapter_generation", protocol_texts=(prompt,))
+    return [{"role": "system", "content": prompt}, {"role": "user", "content": compiled}], report
+
+
 def generate_chapter(input_pack: str, *, dry_run: bool = False) -> str:
     if dry_run:
         output = _DRY_RUN_CHAPTER
     else:
-        prompt = _load_prompt()
-        budget = default_context_budget()
-        compiled = compile_prompt_contexts(
-            input_pack, budget=budget, stage_protocol_texts={"plan": (prompt,)},
-        ).plan.text
-        budget.require_input(
-            compiled,
-            stage="chapter_generation",
-            protocol_texts=(prompt,),
-        )
-        output = chat_completion(
-            [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": compiled},
-            ],
-            stage="chapter_generation",
-        )
-
+        messages, _ = prepare_chapter_messages(input_pack)
+        output = chat_completion(messages, stage="chapter_generation")
     return validate_text_output(output, CHAPTER_CONTRACT)

@@ -18,6 +18,7 @@ data/memory_v2/
 data/memory_outbox.jsonl
 data/memory_outbox*.jsonl
 /.active-book
+/.novelagent-chapter-price.local.json
 /books/
 /pytest-cache-files-*/
 pytest-cache-files-*/

@@ -40,7 +40,7 @@
     let blocked=true;
     if(t.active_status==='running')message='本章正在执行，当前区间结束后更新已测耗时。';
     else if(t.active_status==='unknown')message='上次执行未留下完整计时，请先处理恢复。原调用和时间证据仍保留。';
-    else if(u.unresolved_attempts.length)message='有调用尚未结算或结果不确定，请先处理原执行；预留额度继续保留。';
+    else if(u.unresolved_attempts.length)message='有调用尚未结算，服务商可能已计费。请先核对使用记录，原预留继续保留。';
     else if(t.active_limit_reached || u.exceeded.length || u.charged.calls>=b.max_provider_calls
       || u.charged.input_tokens>=b.max_input_tokens || u.charged.output_tokens>=b.max_output_tokens)message='本章限额已用尽，已暂停新的模型请求。已有草稿仍可阅读和编辑。';
     else { blocked=false; }
