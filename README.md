@@ -1,5 +1,7 @@
 # NovelAgent
 
+**Windows 本地作者从这里开始：[下载已验收的候选 ZIP](https://github.com/Gabrilekiwi/NovelAgent/releases/download/windows-self-use-cf5fa25/NovelAgent-Windows-cf5fa25.zip) · [安装与日常使用](docs/windows-author.md) · [自用上线标准](docs/product-validation.md)。** 候选包来自已验证的 `cf5fa25`。本页下方的开发说明针对默认分支；GitHub 的 “Code → Download ZIP” 是该分支的源码归档。
+
 Version: 2.0.1 stabilization release
 
 NovelAgent 2.0.1 stabilizes the 2.0 feature set without expanding the novel-creation surface. It hardens final-artifact integrity, sequential scene evidence, authoritative character/relationship/roster/numeric state, chapter-scoped recovery, context working sets, and byte-for-byte StoryProject writeback while retaining the v1.5-compatible agent loop and opt-in reliable semantic production path.
@@ -54,7 +56,7 @@ pip install -r requirements.txt
 - **待处理**：处理异常恢复、草稿修订、重验证和作者确认提交；不确定的 Provider 调用不会自动重试。
 - **历史**：追溯生成、警告、恢复、提交、Receipt/readback 和成本摘要。
 
-第 20 章隔离异常恢复以及第 23–42 章真实生产验收的作者操作清单见 [产品验证与自用上线标准](docs/product-validation.md)。第 21、22 章是既有 Shadow 预热历史，不计入两个正式十章 Cohort。完整测试门负责保护代码和数据，真实模型连续写作与人工阅读负责证明小说是否可用；两者都必须通过。
+当前候选版按[作者独立写作和入稿](docs/product-validation.md)验收。两个十章批次与九维打分是可选试验，旧方法留在[历史记录](docs/development/product-validation-history.md)。
 
 工作台只监听 `127.0.0.1`，并校验 Host、Origin 和启动令牌。Provider 凭据继续由本机环境变量或 `.env` 管理；网页和工作台 SQLite 只显示脱敏就绪状态，不接收、不回显也不保存 API Key。
 
