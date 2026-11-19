@@ -214,8 +214,12 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
             story_project_context, event_authority
         ),
     }
+    opening = []
     if reviewed is not None:
-        payload["approved_static_references"] = copy.deepcopy(reviewed["static_references"])
+        if "genesis" in story_project_context["project_identity"].get("reviewed_state", {}):
+            opening = [ref["text"] for ref in reviewed["static_references"]]
+        else:
+            payload["approved_static_references"] = copy.deepcopy(reviewed["static_references"])
         payload["structured_foreshadowing"] = copy.deepcopy(
             (story_project_context.get("semantic_state") or {}).get("foreshadowing") or [])
         payload["current_state_authority"] = {
@@ -231,6 +235,9 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
                          "reason": "confirmed_chapter_state_bound_to_project_sources"}],
         }
     section = "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+    if opening:
+        # The blueprint can be compacted independently. Keep explicit author settings whole.
+        section += "\n\n# Author Confirmed Opening Settings\n" + json.dumps(opening, ensure_ascii=False, separators=(",", ":"))
     if reviewed and "previous_chapter_facts" in reviewed:
         # Keep the accepted meaning and its original quotations together, outside
         # the independently ranked, cumulative authority and blueprint sections.
