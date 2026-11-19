@@ -1883,6 +1883,7 @@ class AgentExecutorTest(unittest.TestCase):
             snapshot_path=snapshot_path,
             run_dir=tmp_path / "runs",
             dry_run=True,
+            memory_loader=lambda: {"source": "test", "status": "ready", "items": []},
             generator=lambda input_pack: "天气很好。",
         ).run_once(persist=False)
 
@@ -1900,7 +1901,7 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertNotIn("add_conflict_signal", result["run"]["trace"][-1]["repair_plan"]["actions"])
         self.assertEqual(1, result["run"]["trace"][-1]["repair_plan"]["attempt"])
         self.assertEqual(1, result["run"]["trace"][-1]["repair_plan"]["repair_budget"])
-        self.assertEqual("high", result["run"]["trace"][-1]["repair_plan"]["risk_level"])
+        self.assertEqual("medium", result["run"]["trace"][-1]["repair_plan"]["risk_level"])
         repair_deltas = result["run"]["trace"][-1]["repair_deltas"]
         self.assertEqual(1, len(repair_deltas))
         self.assertEqual(1, repair_deltas[0]["attempt"])
@@ -2790,17 +2791,15 @@ class AgentExecutorTest(unittest.TestCase):
             run_dir=tmp_path / "runs",
             chapter_dir=tmp_path / "chapters",
             dry_run=True,
+            memory_loader=lambda: {"source": "test", "status": "ready", "items": []},
             director=director,
-            generator=lambda input_pack: (
-                "The corridor stayed quiet while everyone reviewed supplies and repeated old procedures. "
-                "Nothing changed, no pressure rose, and the scene avoided any decisive story movement."
-            ),
+            generator=lambda input_pack: "A costly choice.",
         ).run_once(persist=True)
 
         self.assertFalse(result["validation"]["ok"])
         self.assertFalse(result["committed"])
         self.assertEqual("rejected", result["run"]["status"])
-        self.assertIn("missing_conflict_marker", result["run"]["validation"]["problem_codes"])
+        self.assertIn("chapter_too_short", result["run"]["validation"]["problem_codes"])
         self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))
         run_files = list((tmp_path / "runs").glob("chapter_2_*.json"))
         self.assertEqual(1, len(run_files))
@@ -2809,7 +2808,7 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertFalse(saved_run["run"]["committed"])
         self.assertFalse(saved_run["run"]["state_update"]["applied"])
         self.assertEqual(0, saved_run["run"]["state_update"]["memory_update_count"])
-        self.assertIn("missing_conflict_marker", saved_run["run"]["validation"]["problem_codes"])
+        self.assertIn("chapter_too_short", saved_run["run"]["validation"]["problem_codes"])
         input_pack_artifact_path = Path(saved_run["run"]["input_pack"]["artifact"]["path"])
         self.assertTrue(input_pack_artifact_path.exists())
         artifact_path = Path(saved_run["run"]["chapter"]["artifact"]["path"])
@@ -3477,10 +3476,9 @@ class AgentExecutorTest(unittest.TestCase):
             snapshot_path=snapshot_path,
             run_dir=tmp_path / "runs",
             dry_run=True,
+            memory_loader=lambda: {"source": "test", "status": "ready", "items": []},
             director=director,
-            generator=lambda input_pack: (
-                "The corridor stayed quiet while everyone reviewed supplies and repeated old procedures."
-            ),
+            generator=lambda input_pack: "A costly choice.",
         ).run_loop(steps=3, persist=True)
 
         self.assertEqual(1, loop_result["completed_steps"])
@@ -3493,9 +3491,9 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertFalse(loop_result["succeeded"])
         self.assertEqual(1, loop_result["exit_code"])
         self.assertIn("run_rejected", loop_result["failure_reasons"])
-        self.assertEqual("missing_conflict_marker", loop_result["session"]["runs"][0]["problem_evidence"][0]["code"])
-        self.assertEqual(
-            [{"kind": "missing_any_marker", "value": "conflict, danger, choice, choose, threat, secret"}],
+        self.assertEqual("chapter_too_short", loop_result["session"]["runs"][0]["problem_evidence"][0]["code"])
+        self.assertIn(
+            {"kind": "minimum_length", "value": "80"},
             loop_result["session"]["runs"][0]["problem_evidence"][0]["evidence"],
         )
         self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))

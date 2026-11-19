@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.platform_requirements import require_windows_recovery
 from tests.test_legacy_registration import registration_case,contents
 from tests.test_legacy_restore_identity import legacy
 from tests.test_registration_upgrade_archive import tmp_path,old_package
@@ -20,6 +21,7 @@ from core.story_project.reviewed_state_document import digest
 
 @pytest.fixture
 def upgrade_case(registration_case,request):
+    require_windows_recovery()
     c=registration_case;old=old_package(c);store,review=seed(c)
     mode=getattr(request,'param',None)
     if mode=='draft':

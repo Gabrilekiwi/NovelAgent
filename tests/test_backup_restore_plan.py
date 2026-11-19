@@ -1,9 +1,11 @@
 """Plan from real archive proofs; inspect new parents without creating a restore."""
 from pathlib import Path
 import uuid
+import os
 
 import pytest
 
+from tests.platform_requirements import require_windows_recovery
 from tests.test_backup_archive import capture, software_tree
 from tests.test_backup_archive_auxiliary import tmp_path
 from tests.test_backup_archive_database import private_temporary_directory
@@ -17,6 +19,7 @@ from workbench.backup_restore_plan import plan_archived_restore, _target_layout
 
 
 def plan(c, package, destination, scratch):
+    require_windows_recovery()
     return plan_archived_restore(package, project_id=c['project'].id, book_id=c['project'].book_id,
         destination=destination, temporary_root=scratch)
 
@@ -47,6 +50,7 @@ def test_mixed_reviewed_plan_is_stable_and_preserves_historical_bindings(
 
 
 def test_parent_identity_and_destination_changes_invalidate_layout(execution_archive):
+    require_windows_recovery()
     c = execution_archive
     package = Path(capture(c)['path'])
     parent = Path('.tmp').resolve() / ('p-' + uuid.uuid4().hex[:6])
@@ -86,6 +90,7 @@ def test_unsafe_restore_destinations_are_rejected_before_creation(execution_arch
 
 
 def test_configured_in_book_job_runtime_keeps_its_relative_binding(execution_archive):
+    require_windows_recovery()
     c = execution_archive
     runtime = c['root'] / '.novelagent/runtime/jobs'
     c['service'].task_runtime_root = runtime
@@ -94,4 +99,12 @@ def test_configured_in_book_job_runtime_keeps_its_relative_binding(execution_arc
     with verified_archive_view(package) as view:
         layout = _target_layout(view, destination, package, registered_roots=[str(c['root'])])
     assert layout['task_runtime_root'] == str(destination / 'book/.novelagent/runtime/jobs')
+    assert not destination.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX host refusal")
+def test_posix_restore_destination_is_refused_without_creating_files(tmp_path):
+    destination = tmp_path / "new-book"
+    with pytest.raises(BackupArchiveError, match="本机盘符"):
+        _target_layout(None, destination, tmp_path, registered_roots=[])
     assert not destination.exists()

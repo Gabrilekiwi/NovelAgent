@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import re
 import shutil
@@ -8,6 +7,12 @@ from typing import Iterator
 import uuid
 
 import pytest
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    # A fresh checkout (or an independent CI group) has no preceding test
+    # that can be relied on to create the shared parent for short test paths.
+    (session.config.rootpath / ".tmp").mkdir(exist_ok=True)
 
 
 def _case_name(node_name: str) -> str:
@@ -18,12 +23,8 @@ def _case_name(node_name: str) -> str:
 @pytest.fixture
 def tmp_path(
     request: pytest.FixtureRequest,
-    tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[Path]:
-    if os.name != "nt":
-        yield tmp_path_factory.mktemp(_case_name(request.node.name), numbered=True)
-        return
-
+    # Offline source-loss tests may move only disposable roots inside .tmp.
     # Python 3.12 can translate pytest's mode=0o700 temporary directories into
     # a private Windows DACL that managed child operations cannot traverse.
     # A unique directory under the workspace inherits the usable parent ACL.

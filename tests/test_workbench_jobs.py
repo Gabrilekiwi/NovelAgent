@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
+import os
 import json
 
 import pytest
@@ -382,6 +383,7 @@ def test_result_uncertainty_requires_current_structured_evidence() -> None:
     assert _result_is_uncertain(unsettled) is True
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows PATH/PATHEXT semantics")
 def test_provider_environment_merges_case_variants_and_drops_unrelated_secrets() -> None:
     environment = _provider_environment(
         {
@@ -405,6 +407,7 @@ def test_provider_environment_merges_case_variants_and_drops_unrelated_secrets()
     assert "DATABASE_PASSWORD" not in environment
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows Git installation and PATH semantics")
 def test_provider_environment_puts_trusted_absolute_git_first(tmp_path: Path) -> None:
     program_files = tmp_path / "Program Files"
     git_executable = program_files / "Git" / "cmd" / "git.exe"
@@ -423,6 +426,14 @@ def test_provider_environment_puts_trusted_absolute_git_first(tmp_path: Path) ->
     assert environment["NOVELAGENT_GIT_EXECUTABLE"] == str(git_executable.resolve())
     assert environment["PATH"].split(";")[0] == str(git_executable.resolve().parent)
     assert environment["OPENAI_API_KEY"] == "provider-key"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX path semantics")
+def test_provider_environment_keeps_native_search_order_and_filters_secrets():
+    env = _provider_environment({"PATH": "/usr/bin:/bin:/usr/bin:/Bin",
+                                 "UNRELATED_SECRET": "private", "OPENAI_API_KEY": "fixture"})
+    assert env["PATH"].split(os.pathsep) == ["/usr/bin", "/bin", "/Bin"]
+    assert "UNRELATED_SECRET" not in env and env["OPENAI_API_KEY"] == "fixture"
 
 
 def test_git_preflight_uses_absolute_git_and_no_provider_credentials(
@@ -2248,6 +2259,10 @@ def test_mismatched_manual_draft_stays_blocked_when_latest_run_produced_prose(
         ),
         encoding="utf-8",
     )
+    # Restored files and coarse clocks may have identical times. Never use the
+    # alphabetically last filename (the old draft here) to authorize a resume.
+    for run_id in (source_run_id, latest_run_id):
+        os.utime(run_dir / f"{run_id}.json", ns=(1_700_000_000_000_000_000,) * 2)
     manual_text = "旧稿不能在后续已经写出新正文后直接当作恢复证据。" * 20
     draft = store.upsert_draft(
         project_id=project_id,

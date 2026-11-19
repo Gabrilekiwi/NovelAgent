@@ -181,8 +181,18 @@ def prepare_official_worktree(source_repo: Path, worktree: Path | None = None) -
     if dest.exists():
         current = _git(dest, "rev-parse", "HEAD")
         current_sha = (current.stdout or "").strip()
-        if current.returncode != 0:
-            raise OfficialLaunchError(f"官方界面目录存在但不是可用的 git 工作树：{dest}")
+        # Git discovers parent repositories even in an ordinary directory. Never
+        # checkout there or in a foreign repository selected by an override.
+        top = _git(dest, "rev-parse", "--show-toplevel")
+        common = _git(dest, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        source_common = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if (dest == repo or any(r.returncode for r in (current, top, common, source_common))
+                or Path(top.stdout.strip()).resolve() != dest
+                or Path(common.stdout.strip()).resolve() != Path(source_common.stdout.strip()).resolve()):
+            raise OfficialLaunchError(f"官方界面目录不是本仓库的独立工作树，不会改用未提交工作区界面：{dest}")
+        if (_git(dest, "symbolic-ref", "-q", "HEAD").returncode != 1
+                or workbench_sources_differ_from_head(dest)):
+            raise OfficialLaunchError(f"官方工作树已有分支或未提交界面修改，不会改用未提交工作区界面：{dest}")
         if current_sha != sha:
             updated = _git(dest, "checkout", "--detach", sha)
             if updated.returncode != 0:

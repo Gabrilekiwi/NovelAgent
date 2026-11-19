@@ -6,6 +6,7 @@ import uuid
 from fastapi.testclient import TestClient
 import pytest
 
+from tests.platform_requirements import require_windows_recovery
 from tests.test_backup_archive_auxiliary import tmp_path
 from tests.test_backup_restore_database import logical
 from tests.test_restore_budget_preparation import make_financial_source
@@ -34,6 +35,7 @@ def controller(c, directory):
 
 
 def start(client, c, target):
+    require_windows_recovery()
     client.get('/')
     gate = client.post('/api/maintenance/begin',json={'purpose':'restore'})
     assert gate.status_code == 200,gate.text

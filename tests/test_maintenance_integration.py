@@ -37,6 +37,8 @@ def test_every_product_write_route_uses_admission_and_reads_remain_available(tmp
             '/api/projects/{project_id}/backups/{archive_id}/certification',
             '/api/projects/{project_id}/backups/{archive_id}/certification/preview',
             '/api/projects/{project_id}/backups/{archive_id}/certification/verify',
+            '/api/projects/{project_id}/memory-revisions/preview',
+            '/api/projects/{project_id}/memory-revisions/confirm',
             '/api/projects/{project_id}/onboarding/baselines',
             '/api/projects/{project_id}/onboarding/baselines/preview',
             '/api/projects/{project_id}/onboarding/baselines/proposal',

@@ -166,6 +166,20 @@ def test_prepare_failure_does_not_fall_back_to_dirty_tree(tmp_path: Path) -> Non
     ) == DIRTY_INDEX
 
 
+def test_existing_parent_or_foreign_repository_is_never_checked_out(tmp_path):
+    repo = _init_repo(tmp_path)
+    other_root = tmp_path / "another"
+    other_root.mkdir()
+    other = _init_repo(other_root)
+    nested = other / "ordinary-folder"
+    nested.mkdir()
+    before = _git(other, "symbolic-ref", "HEAD").stdout
+    for destination in (repo, other, nested):
+        with pytest.raises(OfficialLaunchError, match="不会改用未提交工作区界面"):
+            prepare_official_worktree(repo, destination)
+    assert _git(other, "symbolic-ref", "HEAD").stdout == before
+
+
 def test_launch_from_official_plan_runs_head_worktree_script(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

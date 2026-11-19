@@ -7,6 +7,7 @@ import sqlite3
 
 import pytest
 
+from tests.platform_requirements import require_windows_recovery
 from tests.test_legacy_restore_identity import legacy
 from tests.test_legacy_registration import registration_case,contents
 from tests.test_registration_upgrade_archive import old_package,tmp_path
@@ -36,6 +37,7 @@ def seed(c):
 
 
 def test_author_confirmed_history_requires_new_backup_and_survives_actual_restore_read_only(registration_case,tmp_path):
+    require_windows_recovery()
     c=registration_case;old=old_package(c);original_book=contents(c['root'])
     store,confirmed=seed(c);history=store.history(confirmed['id'],project_id=c['project'].id)
     certifier=RecoveryCertification(c['app'].state.backups)

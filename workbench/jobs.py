@@ -4177,7 +4177,7 @@ def _latest_strict_chapter_run_id(
         return False, None
     if not fingerprints:
         return True, None
-    candidates: list[tuple[int, str, str]] = []
+    candidates: list[tuple[int, datetime | None, str]] = []
     for relative, expected_sha256 in fingerprints.items():
         try:
             path = (root / relative).resolve(strict=True)
@@ -4192,10 +4192,20 @@ def _latest_strict_chapter_run_id(
             run_id = str(run.get("id") or "").strip() if isinstance(run, Mapping) else ""
             if not run_id or int(run.get("chapter_index") or 0) != int(chapter):
                 return False, None
-            candidates.append((path.stat().st_mtime_ns, relative, run_id))
+            finished = run.get("finished_at")
+            timestamp = datetime.fromisoformat(finished) if finished is not None else None
+            if timestamp is not None and timestamp.utcoffset() is None:
+                return False, None
+            candidates.append((path.stat().st_mtime_ns, timestamp, run_id))
         except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
             return False, None
-    return True, max(candidates, key=lambda item: (item[0], item[1]))[2]
+    # A restore/copy can give several records the same filesystem timestamp.
+    # Prefer recorded chronology for complete histories. For legacy manifests
+    # use a unique file time only; a filename cannot prove which draft is newer.
+    position = 1 if all(item[1] is not None for item in candidates) else 0
+    newest = max(item[position] for item in candidates)
+    ids = [item[2] for item in candidates if item[position] == newest]
+    return (True, ids[0]) if len(ids) == 1 else (False, None)
 
 
 def _strict_model_call_artifact_fingerprints(
@@ -8443,7 +8453,7 @@ def _empty_pre_provider_context_failure(value: Mapping[str, Any], *, chapter: in
     return True
 
 
-def _latest_run_is_empty_pre_provider_failure(project_root: Path, chapter: int) -> bool:
+def _latest_run_is_empty_pre_provider_failure(project_root: Path, chapter: int, expected_run_id: str) -> bool:
     try:
         run_manifest_ok, latest_run_id = _latest_strict_chapter_run_id(
             project_root,
@@ -8451,7 +8461,7 @@ def _latest_run_is_empty_pre_provider_failure(project_root: Path, chapter: int) 
         )
     except (OSError, RuntimeError, ValueError, TypeError):
         return False
-    if not run_manifest_ok or not isinstance(latest_run_id, str) or not latest_run_id:
+    if not run_manifest_ok or latest_run_id != expected_run_id:
         return False
     try:
         run_path = _safe_project_file(
@@ -8478,7 +8488,7 @@ def _source_run_covers_empty_pre_provider_latest(
         return True
     if not source_run_id or not latest_run_id:
         return False
-    return _latest_run_is_empty_pre_provider_failure(project_root, int(chapter))
+    return _latest_run_is_empty_pre_provider_failure(project_root, int(chapter), latest_run_id)
 
 
 def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:

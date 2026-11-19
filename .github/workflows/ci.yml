@@ -6,11 +6,13 @@ on:
 
 jobs:
   test:
-    name: Tests (${{ matrix.os }})
+    name: Tests (${{ matrix.os }}, group ${{ matrix.group }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
+        group: [0, 1, 2, 3, 4, 5, 6, 7]
         include:
           - os: ubuntu-latest
             project_python: .venv/bin/python
@@ -21,10 +23,14 @@ jobs:
       PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Historical replay verifies the original blob, not a copy in HEAD.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: python scripts/setup_environment.py
       - run: ${{ matrix.project_python }} -B scripts/check_environment.py --dev
-      - run: ${{ matrix.project_python }} -B -m pytest -q
-      - run: ${{ matrix.project_python }} -B scripts/smoke_v1.py --skip-tests
+      - run: ${{ matrix.project_python }} -B .github/ci/run_tests.py ${{ matrix.group }} 8
+      - if: matrix.group == 0
+        run: ${{ matrix.project_python }} -B scripts/smoke_v1.py --skip-tests

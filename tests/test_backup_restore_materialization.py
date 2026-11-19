@@ -12,6 +12,7 @@ import pytest
 
 from core.story_project.identity import LEGACY_AUTHORITY_PROJECTION
 from core.story_project.reviewed_state_document import digest
+from tests.platform_requirements import require_windows_recovery
 from tests.test_backup_archive import capture, software_tree
 from tests.test_backup_archive_auxiliary import tmp_path
 from tests.test_backup_archive_database import private_temporary_directory
@@ -37,6 +38,7 @@ def new_target():
 
 
 def prepare(c, package, target, scratch):
+    require_windows_recovery()
     plan = plan_archived_restore(package, project_id=c['project'].id, book_id=c['project'].book_id,
         destination=target, temporary_root=scratch)
     assert plan['plan_ready'], plan['blockers']
@@ -249,6 +251,7 @@ def test_control_changed_between_publication_and_readback_is_rejected(tmp_path, 
 
 
 def test_control_filename_path_budget_is_checked_before_extraction(execution_archive):
+    require_windows_recovery()
     c = execution_archive
     package = Path(capture(c)['path'])
     parent = REPO/'.tmp'

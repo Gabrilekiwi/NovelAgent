@@ -1,8 +1,10 @@
 """Public routes retain the real source, archive, maintenance and auth gates."""
 from pathlib import Path
 
+import os
 import pytest
 
+from tests.platform_requirements import require_windows_recovery
 from tests.test_legacy_restore_identity import legacy
 from tests.test_legacy_registration import registration_case,contents
 from tests.test_registration_upgrade_archive import old_package,tmp_path
@@ -23,7 +25,15 @@ def test_public_actual_certificate_confirmation_stale_preview_and_offline_reveri
     body={'operation_id':c['op']};original=contents(package);book=contents(c['root']);sql=logical(c['app'].state.database.path)
     value=client.post(route+'/preview',json=body)
     assert value.status_code==200,value.text
-    preview=value.json();assert preview['can_certify'],preview['blockers']
+    preview=value.json()
+    if os.name!='nt':
+        assert not preview['can_certify']
+        assert 'unsupported_certification_host' in {b['code'] for b in preview['blockers']}
+        refused=client.post(route,json={**body,'expected_assessment_sha256':preview['assessment_sha256'],'confirmed':True})
+        assert refused.status_code==409 and not (package/CERTIFICATE).exists()
+        assert contents(package)==original and contents(c['root'])==book
+        return
+    assert preview['can_certify'],preview['blockers']
     assert not preview['write_activation_allowed'] and not preview['automatic_provider_calls_allowed']
     assert contents(package)==original and contents(c['root'])==book
     issue={**body,'expected_assessment_sha256':preview['assessment_sha256']}
@@ -68,6 +78,7 @@ def test_public_certification_keeps_session_origin_intent_and_maintenance_guards
 
 
 def test_source_change_after_public_preview_refuses_issuance_without_sidecar(registration_case):
+    require_windows_recovery()
     c=registration_case;package=old_package(c);route=url(c,package.name)
     response=c['client'].post(route+'/preview',json={'operation_id':c['op']})
     assert response.status_code==200 and response.json()['can_certify'],response.text
