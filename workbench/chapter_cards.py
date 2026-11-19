@@ -294,6 +294,12 @@ def _chapter_card_context_failure(exc: BaseException, chapter_index: int) -> Cha
             code="chapter_card_already_written",
         )
     if code == "chapter_candidate_context_not_strict":
+        if chapter_index == 1:
+            return ChapterCardError(
+                "这本书还没有经过核验的故事起点，第一章暂不支持逐章审阅入稿。"
+                "可先准备并确认第一章章纲，再到生产页按章纲试写。",
+                code="chapter_card_first_chapter_shadow",
+            )
         return ChapterCardError(
             "项目的可信状态尚未激活；请先在健康检查中完成校准并激活，再确认章节卡。",
             code="chapter_card_context_not_ready",

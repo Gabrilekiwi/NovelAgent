@@ -5,7 +5,7 @@ import pytest
 
 from core.engine.reviewed_candidate import ReviewedChapterCandidateExecutor
 from core.story_project.paths import infer_next_chapter
-from tests.test_chapter_publication_api import case, ready, service_case, api_case
+from tests.test_chapter_publication_api import case, ready, service_case, api_case, open_workbench
 from tests.test_reviewed_candidate_context import _fixed_provenance
 from tests.test_workbench_chapter_fact_extractions import FactExtractionExecutorFactory
 
@@ -23,45 +23,72 @@ def new_candidate(c):
     return response.json()["candidate"]
 
 
-def test_app_candidate_extraction_author_review_and_publication_use_reviewed_state(api_case):
-    c = api_case
-    candidate = new_candidate(c)
-    draft = candidate["draft"]
-    factory = FactExtractionExecutorFactory(json.dumps({"schema_version":"1.0", "facts": [f
-        for f in c["example"]["proposal"]["facts"] if f["kind"] in {"event", "counter"}]}, ensure_ascii=False))
-    c["app"].state.chapter_fact_extractions.reviewed.executor_factory = factory
-    response = c["client"].post(f"/api/candidate-drafts/{draft['id']}/fact-extractions",
-        json={"expected_draft_revision":draft["revision"], "expected_draft_sha256":draft["sha256"], "author_confirmed":True},
-        headers={"Idempotency-Key":"main-reviewed-extraction"})
-    assert response.status_code == 200, response.text
-    extraction = response.json()["fact_extraction"]
-    assert extraction["status"] == "completed", response.text
-    review = extraction["fact_review"]
-    for fact in review["facts"]:
-        fact["review"]["decision"] = "accepted"
-    response = c["client"].put(f"/api/fact-reviews/{review['id']}",
-        json={"facts":review["facts"], "expected_revision":review["revision"]})
-    assert response.status_code == 200, response.text
-    review = response.json()["fact_review"]
-    response = c["client"].post(f"/api/fact-reviews/{review['id']}/confirm", json={
-        "expected_revision":review["revision"], "expected_facts_sha256":review["facts_sha256"],
-        "expected_draft_revision":draft["revision"], "expected_draft_sha256":draft["sha256"], "author_confirmed":True})
-    assert response.status_code == 200, response.text
-    review = response.json()["fact_review"]
-    assert review["state"] == "confirmed"
-    assert review["publication_url"].startswith("/publication?")
-    body = {"review_id":review["id"], "expected_draft_revision":draft["revision"],
-        "expected_draft_sha256":draft["sha256"], "expected_review_revision":review["revision"],
-        "expected_facts_sha256":review["facts_sha256"]}
-    preview = c["client"].post(c["path"] + "/publication-preview", json=body,
-        headers={"Idempotency-Key":"main-reviewed-publish"})
-    assert preview.status_code == 200, preview.text
-    assert preview.json()["quality"]["local_quality_passed"]
-    published = c["client"].post(c["path"] + "/publication", json={**body,"author_confirmed":True},
-        headers={"Idempotency-Key":"main-reviewed-publish"})
-    assert published.status_code == 200, published.text
-    assert published.json()["publication"]["publication_verified"] and infer_next_chapter(c["root"]) == 3
-    assert factory.calls == 1
+def test_app_candidate_extraction_author_review_and_publication_use_reviewed_state(service_case):
+    with open_workbench(service_case) as c:
+        candidate = new_candidate(c)
+        draft = candidate["draft"]
+        edited = draft['text'].rstrip() + "\n\n他把那封信重新折好，放回靠近胸口的衣袋。"
+        saved = c["client"].put(f"/api/candidate-drafts/{draft['id']}", json={"text": edited, "expected_revision": draft["revision"]})
+        assert saved.status_code == 200, saved.text
+        assert infer_next_chapter(c["root"]) == 2
+        assert saved.json()["draft"]["revision"] == draft["revision"] + 1
+        draft = saved.json()["draft"]
+        factory = FactExtractionExecutorFactory(json.dumps({"schema_version":"1.0", "facts": [f
+            for f in c["example"]["proposal"]["facts"] if f["kind"] in {"event", "counter"}]}, ensure_ascii=False))
+        c["app"].state.chapter_fact_extractions.reviewed.executor_factory = factory
+        response = c["client"].post(f"/api/candidate-drafts/{draft['id']}/fact-extractions",
+            json={"expected_draft_revision":draft["revision"], "expected_draft_sha256":draft["sha256"], "author_confirmed":True},
+            headers={"Idempotency-Key":"main-reviewed-extraction"})
+        assert response.status_code == 200, response.text
+        extraction = response.json()["fact_extraction"]
+        assert extraction["status"] == "completed", response.text
+        review = extraction["fact_review"]
+        for fact in review["facts"]:
+            fact["review"]["decision"] = "accepted"
+        response = c["client"].put(f"/api/fact-reviews/{review['id']}",
+            json={"facts":review["facts"], "expected_revision":review["revision"]})
+        assert response.status_code == 200, response.text
+        review = response.json()["fact_review"]
+        response = c["client"].post(f"/api/fact-reviews/{review['id']}/confirm", json={
+            "expected_revision":review["revision"], "expected_facts_sha256":review["facts_sha256"],
+            "expected_draft_revision":draft["revision"], "expected_draft_sha256":draft["sha256"], "author_confirmed":True})
+        assert response.status_code == 200, response.text
+        review = response.json()["fact_review"]
+        assert review["state"] == "confirmed"
+        assert review["publication_url"].startswith("/publication?")
+        body = {"review_id":review["id"], "expected_draft_revision":draft["revision"],
+            "expected_draft_sha256":draft["sha256"], "expected_review_revision":review["revision"],
+            "expected_facts_sha256":review["facts_sha256"]}
+        preview = c["client"].post(c["path"] + "/publication-preview", json=body,
+            headers={"Idempotency-Key":"main-reviewed-publish"})
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["quality"]["local_quality_passed"]
+        published = c["client"].post(c["path"] + "/publication", json={**body,"author_confirmed":True},
+            headers={"Idempotency-Key":"main-reviewed-publish"})
+        assert published.status_code == 200, published.text
+        assert published.json()["publication"]["publication_verified"] and infer_next_chapter(c["root"]) == 3
+        assert factory.calls == 1
+
+    # Discard the app, session and injected generators; reopen the persisted book.
+    with open_workbench(service_case) as reopened:
+        client = reopened["client"]
+        chapter = client.get(reopened["path"]).json()
+        assert chapter["publication"]["publication_verified"]
+        assert edited in chapter["current_prose"]
+        project = f"/api/projects/{reopened['project'].id}"
+        assert client.get(project).json()["project"]["next_chapter"] == 3
+        card = client.get(project + "/chapters/3/card").json()["chapter_card"]
+        assert card["readiness"]["can_generate"]
+        # Inspect the actual messages prepared for chapter 3 without dispatching them.
+        from modules.chapter_generator.generator import prepare_chapter_messages
+        executor = ReviewedChapterCandidateExecutor(story_project_root=reopened["root"])
+        request = executor.prepare_policy_request(chapter_index=3, chapter_intent=card["intent_defaults"])
+        messages, _ = prepare_chapter_messages(request["input_pack"])
+        prompt = "\n".join(message["content"] for message in messages)
+        assert "Previous Chapter Confirmed Facts" in prompt and review["facts"]
+        for fact in review["facts"]:
+            assert fact["summary"] in prompt
+            assert all(span["quote"] in prompt for span in fact["evidence_spans"])
 
 
 def test_app_views_use_verified_publication_without_a_browser_request_key(api_case):

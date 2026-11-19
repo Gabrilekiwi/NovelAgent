@@ -17,6 +17,7 @@
   };
   const state = {
     projects: [],
+    providerReady: false,
     projectId: null,
     project: null,
     detail: null,
@@ -1423,12 +1424,12 @@
     const start = Number(remaining?.start_chapter || 0);
     const end = Number(remaining?.end_chapter || 0);
     const count = Number(remaining?.chapter_count || 0);
-    setText("[data-outlines-heading]", covered ? "剩余章纲" : "未来 10 章");
+    setText("[data-outlines-heading]", covered ? "剩余章纲" : "准备章纲");
     setText("[data-outlines-lede]", covered ? "这些章纲已经批准并冻结，可直接用于生产。不必再生成重叠的新提案。" : "先调整整体节奏，再一次性确认。确认后章纲冻结，成为连续生产的唯一依据。");
-    setText("[data-outline-action-title]", covered ? "查看剩余章纲" : "规划未来 10 章");
-    setText("[data-outline-action-detail]", covered ? (count === 1 ? `已批准章纲还可写第 ${start} 章，确认后即可去生产页续写。` : `已批准章纲还可写第 ${start}–${end} 章，确认后即可去生产页续写。`) : "先生成提案，编辑确认后才发布。");
+    setText("[data-outline-action-title]", covered ? "查看剩余章纲" : "准备下一章章纲");
+    setText("[data-outline-action-detail]", covered ? (count === 1 ? `已批准章纲还可写第 ${start} 章，确认后即可去生产页续写。` : `已批准章纲还可写第 ${start}–${end} 章，确认后即可去生产页续写。`) : "自己写一章，或让模型起草提案。");
     const planButton = one("[data-outline-plan-button]");
-    if (planButton) planButton.textContent = covered ? "查看剩余章纲" : "规划未来 10 章";
+    if (planButton) planButton.textContent = covered ? "查看剩余章纲" : "准备章纲";
   }
 
   const renderOverview = (payload) => {
@@ -1445,6 +1446,20 @@
     const latestBatch = overview.latest_outline_batch || {};
     const approvedOutlineCount = overview.outline_ready_count ?? (latestBatch.status === "approved" ? arrayFrom(latestBatch.items || latestBatch.proposal, "items").length : 0);
     setText("[data-overview-outlines]", `${numberLabel(approvedOutlineCount)} 章`);
+    const needsOutline = !project.reviewed_format && overview.outline_remaining?.covered === false && !Number(overview.pending_count ?? project.pending_count ?? 0) && !overview.current_tasks?.length;
+    if (continueLink) {
+      continueLink.textContent = needsOutline ? `准备第 ${nextChapter} 章章纲` : "继续写作";
+      if (needsOutline) continueLink.href = projectHash("outlines");
+    }
+    if (needsOutline) {
+      one('[data-spa-view="overview"] .action-card[data-project-route="outlines"]').hidden = true;
+      const action = one('[data-spa-view="overview"] .primary-action[data-project-route="production"]');
+      if (action) {
+        action.href = projectHash("outlines");
+        setText("strong", `准备第 ${nextChapter} 章章纲`, action);
+        setText("p", "这章还没有可用章纲。先写下将发生的事，再开始写正文。", action);
+      }
+    }
     updateOutlinePlanningCopy(overview.outline_remaining);
     const pendingTotal = Number(overview.pending_count ?? project.pending_count ?? 0);
     setText("[data-overview-pending]", numberLabel(pendingTotal));
@@ -1486,10 +1501,13 @@
     one("[data-provider-light]")?.classList.toggle("is-ready", ready);
     setText("[data-provider-name]", provider.name || provider.provider_name || "模型服务");
     setText("[data-provider-state]", ready ? "配置就绪" : "待配置");
-    const providerButtons = [...all("[data-requires-provider]"), one('[data-session-form] button[type="submit"]')].filter(Boolean);
+    state.providerReady = ready;
+    one("[data-production-model-help]").hidden = ready;
+    updateSessionLaunchButton(one("[data-session-form]"));
+    const providerButtons = all("[data-requires-provider]");
     providerButtons.forEach((button) => {
       button.disabled = !ready;
-      button.title = ready ? "" : "请先在本地环境中配置 Provider 凭据";
+      button.title = ready ? "" : "请先配置模型，方法见「如何配置模型」";
     });
   };
   const pendingChapterNumber = (issue) => {
@@ -2384,14 +2402,22 @@
       if (unavailable) {
         const alreadyWritten = errorCode === "chapter_card_already_written";
         const previousMissing = errorCode === "chapter_card_previous_chapter_missing";
+        const firstChapter = errorCode === "chapter_card_first_chapter_shadow";
+        const nextStep = one("[data-card-first-chapter-next]", unavailable);
+        nextStep.hidden = !firstChapter;
+        if (firstChapter) {
+          const covered = state.detail?.overview?.outline_remaining?.covered === true;
+          nextStep.href = projectHash(covered ? "production" : "outlines");
+          nextStep.textContent = covered ? "去生产页试写" : "准备第一章章纲";
+        }
         unavailable.hidden = false;
-        unavailable.classList.toggle("notice-danger", !alreadyWritten && !previousMissing);
-        unavailable.classList.toggle("notice-warning", previousMissing);
+        unavailable.classList.toggle("notice-danger", !alreadyWritten && !previousMissing && !firstChapter);
+        unavailable.classList.toggle("notice-warning", previousMissing || firstChapter);
         const heading = unavailable.querySelector("strong");
         if (heading) {
           heading.textContent = alreadyWritten
             ? "本章已提交正文"
-            : previousMissing
+            : firstChapter ? "第一章可先按章纲试写" : previousMissing
               ? "还不能开始这一章"
               : "章节卡暂不可用";
         }
@@ -2642,9 +2668,12 @@
   };
 
   const renderOutlineBatch = (batch) => {
+    const editor = one("[data-outline-editor]");
+    if (batch && state.batch?.id === batch.id && editor.classList.contains("is-dirty")) return;
+    editor.classList.remove("is-dirty");
+    setText("[data-save-state]", "所有修改已保存", editor);
     state.batch = batch;
     const createPanel = one("[data-outline-create-panel]");
-    const editor = one("[data-outline-editor]");
     const nextChapter = Number(state.project?.next_chapter || 0);
     const approvedRemaining = Boolean(batch) && batch.status === "approved" && Number(batch.start_chapter || 0) <= nextChapter && nextChapter <= Number(batch.end_chapter || 0);
     const remainingCount = approvedRemaining ? Number(batch.end_chapter) - nextChapter + 1 : 0;
@@ -2653,6 +2682,12 @@
     editor.hidden = !batch;
     const createForm = one("[data-create-outline-form]");
     createForm.action = `/api/projects/${encodeURIComponent(state.projectId)}/outline-batches`;
+    const manual = one("[data-manual-outline]");
+    if (manual.dataset.project !== state.projectId || manual.dataset.chapter !== String(nextChapter)) manual.reset();
+    manual.dataset.project = state.projectId;
+    manual.dataset.chapter = String(nextChapter);
+    manual.action = createForm.action;
+    manual.elements.namedItem("chapters.0.chapter_index").value = nextChapter;
     const savebar = one(".sticky-savebar", editor);
     if (savebar) savebar.hidden = approvedRemaining;
     const remainingNote = one("[data-outline-remaining-note]", editor);
@@ -2679,12 +2714,12 @@
     const items = arrayFrom(batch.items || batch.proposal, "items");
     const start = batch.start_chapter || items[0]?.chapter_index || state.project?.next_chapter || 1;
     setText("[data-batch-range]", approvedRemaining
-      ? (remainingCount === 1 ? `已批准第 ${start}–${batch.end_chapter || start} 章，还可写第 ${nextChapter} 章` : `已批准第 ${start}–${batch.end_chapter || start} 章，还可写第 ${nextChapter}–${batch.end_chapter} 章`)
-      : `第 ${start}–${batch.end_chapter || start + 9} 章`);
+      ? (Number(start) === Number(batch.end_chapter) ? `已批准第 ${start} 章` : `已批准第 ${start}–${batch.end_chapter || start} 章，还可写第 ${nextChapter}–${batch.end_chapter} 章`)
+      : items.length === 1 ? `第 ${start} 章` : `第 ${start}–${batch.end_chapter || start + items.length - 1} 章`);
     const stack = one("[data-outline-stack]"); clear(stack);
     const template = one("#outline-card-template");
-    const cardCount = approvedRemaining ? Math.max(items.length, 0) : 10;
-    for (let index = 0; index < cardCount; index += 1) {
+    setText("[data-spa-approve-outline]", `确认并发布 ${items.length} 章章纲`, editor);
+    for (let index = 0; index < items.length; index += 1) {
       const item = items[index] || {};
       const number = item.chapter_index || start + index;
       const fragment = template.content.cloneNode(true);
@@ -2712,6 +2747,8 @@
   };
 
   const loadOutlines = async () => {
+    const projectId = state.projectId;
+    const routeRevision = state.routeRevision;
     const { payload } = await api(`/api/projects/${encodeURIComponent(state.projectId)}/outline-batches`);
     const batches = arrayFrom(payload, "items", "batches");
     const nextChapter = Number(state.project?.next_chapter || 0);
@@ -2734,7 +2771,7 @@
       const detail = await api(`/api/outline-batches/${encodeURIComponent(batch.id)}`);
       batch = detail.payload.batch || detail.payload;
     }
-    renderOutlineBatch(batch);
+    if (projectId === state.projectId && routeRevision === state.routeRevision && state.route?.area === "outlines") renderOutlineBatch(batch);
   };
 
   const renderCohortEvaluation = (chapter) => {
@@ -2908,28 +2945,36 @@
     };
   };
 
+  function updateSessionLaunchButton(form) {
+    const submit = one('button[type="submit"]', form);
+    submit.disabled = !state.providerReady || form.dataset.outlineAvailable !== "true";
+    submit.title = !state.providerReady ? "请先配置模型" : form.dataset.outlineAvailable !== "true" ? "请先确认本章章纲" : "";
+  }
+
+  one("[data-open-model-help]")?.addEventListener("click", () => {
+    const help = one(".provider-help");
+    help.open = true;
+    one("summary", help).focus();
+    help.scrollIntoView({ block: "center" });
+  });
+
   const applySessionOutlineWindow = (form, payload, startOverride) => {
     const startInput = one('input[name="start_chapter"]', form);
     const start = Number(
       startOverride
-      || startInput?.value
       || payload.session_defaults?.start_chapter
       || payload.project?.next_chapter
       || payload.next_chapter
       || state.project?.next_chapter
       || 1
     );
-    if (startInput && startOverride == null && !startInput.dataset.windowBound) {
-      startInput.value = String(payload.session_defaults?.start_chapter || start);
-      startInput.addEventListener("input", () => applySessionOutlineWindow(form, payload, Number(startInput.value) || start));
-      startInput.dataset.windowBound = "true";
-    } else if (startInput && startOverride != null) {
+    if (startInput && startOverride == null) {
       startInput.value = String(start);
+      startInput.oninput = () => applySessionOutlineWindow(form, payload, Number(startInput.value) || start);
     }
     const defaults = approvedBatchWindow(payload.approved_batches, start);
     const select = one('select[name="chapter_count"]', form);
     const note = one("[data-session-window-note]", form);
-    const submit = one('button[type="submit"]', form);
     const maxCount = Number(defaults.max_chapter_count || 0);
     if (select) {
       const options = [];
@@ -2942,7 +2987,8 @@
       if (maxCount > 0) select.value = String(maxCount);
       select.disabled = maxCount < 1;
     }
-    if (submit) submit.disabled = maxCount < 1;
+    form.dataset.outlineAvailable = String(maxCount >= 1);
+    updateSessionLaunchButton(form);
     if (note) {
       note.textContent = maxCount < 1
         ? "下一章还没有已批准且冻结的章纲，不能开始生产。"
@@ -2962,6 +3008,7 @@
     const sessionPanel = one("[data-production-session]");
     const form = one("[data-session-form]");
     form.action = `/api/projects/${encodeURIComponent(state.projectId)}/sessions`;
+    updateProvider(payload.provider || {});
     applySessionOutlineWindow(form, payload);
     await renderCohorts(payload);
     const jobId = session?.job_id || session?.id;
@@ -3135,7 +3182,6 @@
       setText("[data-live-title]", "原始运行记录已保留");
       setText("[data-live-detail]", incompatibleJobMessage);
     }
-    updateProvider(payload.provider || {});
   };
 
   const loadProduction = async () => {
@@ -5122,11 +5168,13 @@
   one("[data-spa-approve-outline]")?.addEventListener("click", async () => {
     const batch = state.batch;
     if (!batch) return;
-    if (!await UI.confirmAction("确认发布这 10 章章纲？发布后将冻结，用于连续生产。")) return;
+    if (one("[data-outline-editor]").classList.contains("is-dirty")) { UI.showToast("请先保存改动，再确认章纲。", "error"); return; }
+    const count = arrayFrom(batch.items || batch.proposal, "items").length;
+    if (!await UI.confirmAction(`确认发布这 ${count} 章章纲？确认后将使用当前已保存的内容写作。`)) return;
     try {
       const expected = batch.proposal_sha256 || batch.sha256 || "";
       const { payload } = await api(`/api/outline-batches/${encodeURIComponent(batch.id)}/approve`, { method: "POST", headers: { "X-Expected-Revision": String(batch.revision || 1), "X-Expected-SHA256": expected, "If-Match": `"${expected}"` }, json: { expected_revision: batch.revision || 1, expected_sha256: expected, source_state_sha: batch.source_state_sha || "" } });
-      UI.showToast(payload.message || "10 章章纲已确认并冻结。");
+      UI.showToast(payload.message || `${count} 章章纲已确认并冻结。`);
       await loadOutlines();
     } catch (error) { showError(error); UI.showToast(UI.errorMessage(error.payload, error.status), "error"); }
   });
@@ -5134,6 +5182,7 @@
   one("[data-spa-adopt-existing-outline]")?.addEventListener("click", async () => {
     const batch = state.batch;
     if (!batch) return;
+    if (one("[data-outline-editor]").classList.contains("is-dirty")) { UI.showToast("请先保存改动，再确认章纲。", "error"); return; }
     if (!await UI.confirmAction("将保留格式一致的已有细纲，并只发布缺失章节；所有文件会写入同一冻结回执。确认继续吗？")) return;
     try {
       const expected = batch.proposal_sha256 || batch.sha256 || "";
@@ -5167,7 +5216,7 @@
       if (id) window.location.hash = `#/projects/${encodeURIComponent(id)}/overview`;
       return;
     }
-    if (form.matches("[data-create-outline-form], [data-outline-editor]")) await loadOutlines();
+    if (form.matches("[data-create-outline-form], [data-manual-outline], [data-outline-editor]")) await loadOutlines();
     else if (form.matches("[data-session-form], [data-cohort-create-form], [data-close-paused-job-form]")) await loadProduction();
     else if (form.matches("[data-cohort-evaluation-form]")) await loadCohort(state.cohort.id);
     else if (form.matches("[data-recover-form]")) {
@@ -5306,6 +5355,11 @@
   document.addEventListener('workbench:restore-scope',event => applyRestoreScope(event.detail));
   api("/api/bootstrap").then(({ payload }) => {
     updateProvider(payload.provider || {});
+    const roots = payload.allowed_workspaces || [];
+    const location = one('#create-project-dialog input[name="root_path"]');
+    if (location && !location.value && roots.length) location.defaultValue = roots[0];
+    const folders = one("#author-workspaces");
+    if (folders) folders.replaceChildren(...roots.map(value => new Option(value, value)));
     bootstrapReady = true;
     document.dispatchEvent(new CustomEvent('workbench:restore-scope',{detail:payload.restore_scope}));
     return route();

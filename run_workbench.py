@@ -91,7 +91,6 @@ def main() -> int:
         except OfficialLaunchError as exc:
             print(f"工作台未启动：{exc}", file=sys.stderr)
             return 2
-    workspaces = [Path(value).resolve(strict=True) for value in args.workspace] or [repository]
     directory = Path(args.restore_dir or args.data_dir or _local_app_root()).expanduser().absolute()
     try:
         database_path, restored = _launch_database(directory, require_restore=args.restore_dir is not None)
@@ -116,6 +115,20 @@ def main() -> int:
     try:
         listener = _bound_listener(args.port)
         port = listener.getsockname()[1]
+        if args.workspace:
+            workspaces = [Path(value).resolve(strict=True) for value in args.workspace]
+        elif restored:
+            workspaces = [repository]  # The verified restore scope supplies its own root.
+        else:
+            # Keep new manuscripts outside a replaceable program/ZIP directory.
+            configured = [Path(v.strip()).expanduser().resolve(strict=True) for v in
+                          os.environ.get("NOVELAGENT_WORKSPACES", "").split(os.pathsep) if v.strip()]
+            if configured:
+                workspaces = configured
+            else:
+                books = _local_app_root() / "books"
+                books.mkdir(parents=True, exist_ok=True)
+                workspaces = [books, repository]
         app = create_app(
             repo_root=repository, allowed_workspaces=workspaces, start_worker=not restored,
             database_path=database_path, runtime_root=directory / "jobs",

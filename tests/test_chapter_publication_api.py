@@ -1,6 +1,8 @@
 """Actual app routes on isolated, upgraded and explicitly enrolled books."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -10,9 +12,8 @@ from tests.test_chapter_publication_service import case, ready, service_case, Po
 from workbench.app import create_app
 
 
-@pytest.fixture
-def api_case(service_case):
-    c = service_case
+@contextmanager
+def open_workbench(c):
     app = create_app(database_path=c["db"].path, allowed_workspaces=[c["root"].parent],
         runtime_root=c["root"].parent / "jobs", start_worker=False, auto_import_active=False,
         chapter_publication_machine_store=c["machine"])
@@ -23,6 +24,12 @@ def api_case(service_case):
         yield {**c, "client": client, "app": app, "body": body,
             "headers": {"Idempotency-Key": route["idempotency_key"]},
             "path": f"/api/projects/{route['project_id']}/chapters/{route['chapter']}"}
+
+
+@pytest.fixture
+def api_case(service_case):
+    with open_workbench(service_case) as c:
+        yield c
 
 
 def send(c, suffix, *, commit=False, **kwargs):
