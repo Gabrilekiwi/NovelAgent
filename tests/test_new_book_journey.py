@@ -12,9 +12,9 @@ from workbench.app import create_app
 
 
 @contextmanager
-def open_desk(base):
+def open_desk(base, *, machine_store=None):
     app = create_app(database_path=base/'data/w.db', runtime_root=base/'jobs', allowed_workspaces=[base],
-                     chapter_publication_machine_store=base/'owner', start_worker=False, auto_import_active=False)
+                     chapter_publication_machine_store=machine_store or base/'owner', start_worker=False, auto_import_active=False)
     with TestClient(app) as client:
         client.get('/')
         yield client
@@ -48,7 +48,11 @@ def messages(root, number, card):
 
 def test_new_book_first_publication_and_cold_next_chapter(tmp_path):
     root = tmp_path/'book'
-    with open_desk(tmp_path) as c:
+    # Machine store + book digest + transient lease filename exceed MAX_PATH.
+    machine_store = tmp_path / 'owner'
+    while len(str(machine_store)) < 210:
+        machine_store /= 'nested-machine-records'
+    with open_desk(tmp_path, machine_store=machine_store) as c:
         project=create(c,tmp_path,SETTING)
         assert project['chapter_count']==0 and project['capabilities']['new_book_outline']
         base='/api/projects/'+project['id'];path=base+'/chapters/1'
@@ -80,7 +84,7 @@ def test_new_book_first_publication_and_cold_next_chapter(tmp_path):
         preview=response(c.post(path+'/publication-preview',json=body,headers=headers));assert preview['quality']['local_quality_passed'], preview['quality']
         assert not list((root/'正文').iterdir())
         result=response(c.post(path+'/publication',json={**body,'author_confirmed':True},headers=headers));assert result['publication']['publication_verified'], result
-    with open_desk(tmp_path) as c:
+    with open_desk(tmp_path, machine_store=machine_store) as c:
         assert response(c.get(path))['current_prose']==edited
         assert response(c.get(base))['project']['next_chapter']==2
         second=base+'/chapters/2';outline(c,second,{**OUTLINE,'title':'回声'})

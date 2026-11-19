@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from core.local_file_io import local_io_path
 from core.engine.persistence import (
     PersistenceLockError,
     _atomic_create_from_bytes,
@@ -740,9 +741,10 @@ def directory_identity(path: str | Path) -> dict[str, int]:
     """Return the stable directory identity required for rename-only remaps."""
 
     candidate = assert_safe_local_tree(path)
-    if not candidate.is_dir():
+    native = local_io_path(candidate)
+    if not native.is_dir():
         raise RootRegistryError(f"logical root is not an existing directory: {candidate}")
-    info = os.lstat(candidate)
+    info = os.lstat(native)
     if (
         not stat.S_ISDIR(info.st_mode)
         or stat.S_ISLNK(info.st_mode)

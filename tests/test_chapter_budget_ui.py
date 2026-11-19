@@ -52,7 +52,9 @@ assert(view.lines.some(x=>x.includes('金额未受控')));
 report.time.active_status='unknown';assert(ui.presentation(report).blocked);
 assert(ui.presentation(report).message.includes('计时'));
 report.time.active_status='settled';report.usage.unresolved_attempts=[['e','a']];
-assert(ui.presentation(report).message.includes('预留额度'));
+view=ui.presentation(report);assert(view.blocked);
+assert.match(view.message,/可能.*计费/);assert.match(view.message,/核对.*记录/);
+assert.match(view.message,/预留.*(保留|继续占用|不释放)/);
 report.usage.unresolved_attempts=[];report.usage.charged.calls=2;
 assert(ui.presentation(report).message.includes('限额已用尽'));
 ''')

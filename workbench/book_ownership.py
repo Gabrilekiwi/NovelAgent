@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 
+from core.local_file_io import local_io_path
 from core.engine.persistence import atomic_create_json, atomic_write_json, persistence_state_lock, PersistenceLockError, PersistenceLockBusy
 from core.engine.root_registry import directory_identity
 from core.engine.safe_paths import FILE_ATTRIBUTE_REPARSE_POINT, assert_safe_local_tree
@@ -67,7 +68,7 @@ def _lineage(path):
 
 def _file_identity(path):
     assert_safe_local_tree(path.parent)
-    info = path.lstat()
+    info = local_io_path(path).lstat()
     if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
             or getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT):
         raise BookOwnershipError("unsafe database file")
@@ -115,10 +116,10 @@ def _machine_gate(book_id, store, *, wait_timeout=0):
 
 def _record(directory, book_id):
     path = directory/'ownership.json'
-    if not os.path.lexists(path):
+    if not os.path.lexists(local_io_path(path)):
         return None
     _file_identity(path)
-    if path.stat().st_size > 1024**2:
+    if local_io_path(path).stat().st_size > 1024**2:
         raise BookOwnershipError('machine ownership record exceeds supported size')
     try:
         value = json.loads(read_project_bytes(directory, path.name))
@@ -155,10 +156,10 @@ def _registration_id(value):
 
 def _witness(root, book_id):
     path = root / WITNESS_PATH
-    if not os.path.lexists(path):
+    if not os.path.lexists(local_io_path(path)):
         return None
     _file_identity(path)
-    if path.stat().st_size > 64 * 1024:
+    if local_io_path(path).stat().st_size > 64 * 1024:
         raise BookOwnershipError('book registration witness exceeds supported size')
     try:
         value = json.loads(read_project_bytes(root, WITNESS_PATH))
@@ -214,12 +215,12 @@ def _output_books(paths):
         assert_safe_local_tree(path.parent)
         for parent in (path, *path.parents):
             marker = parent/'.novelagent/project.json'
-            if not os.path.lexists(marker):
-                if os.path.lexists(parent / WITNESS_PATH):
+            if not os.path.lexists(local_io_path(marker)):
+                if os.path.lexists(local_io_path(parent / WITNESS_PATH)):
                     raise BookOwnershipError('registered output book identity is missing')
                 continue
             _file_identity(marker)
-            if marker.stat().st_size > 1024**2:
+            if local_io_path(marker).stat().st_size > 1024**2:
                 raise BookOwnershipError('output project identity exceeds supported size')
             try:
                 value = json.loads(read_project_bytes(parent, '.novelagent/project.json'))
@@ -314,7 +315,7 @@ class BookOwnership:
         with _ownership_machine_gate(self.book_id, self.store, self.directory, wait_timeout=wait_timeout):
             if self._lease is not None:
                 raise BookOwnershipError("nested book ownership lock")
-            assert_safe_local_tree(self.directory).mkdir(parents=True, exist_ok=True)
+            local_io_path(assert_safe_local_tree(self.directory)).mkdir(parents=True, exist_ok=True)
             lineage = _lineage(self.directory)
             lease = InstanceLease(self.directory).acquire()
             self._lease, self._locked_lineage = lease, lineage

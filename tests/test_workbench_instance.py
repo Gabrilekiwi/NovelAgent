@@ -31,6 +31,38 @@ def _wait(predicate, *, seconds=15):
     raise AssertionError("Timed out waiting for isolated test process")
 
 
+def test_deep_instance_directory_keeps_exclusive_lock_and_live_address(tmp_path):
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from threading import Thread
+
+    directory = tmp_path
+    while len(str(directory)) < 265:
+        directory = directory / ('nested-' + 'x' * 24)
+    lease = InstanceLease(directory).acquire()
+    try:
+        class IdentityHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200 if self.path == '/api/instance' else 404)
+                self.end_headers()
+                self.wfile.write(json.dumps({'instance_id': lease.instance_id}).encode())
+
+        with HTTPServer(('127.0.0.1', 0), IdentityHandler) as server:
+            url = f'http://127.0.0.1:{server.server_port}/'
+            lease.publish(url)
+            server.timeout = 2
+            serving = Thread(target=server.handle_request)
+            serving.start()
+            try:
+                assert existing_instance_url(directory, timeout=0) == url
+            finally:
+                serving.join(3)
+        with pytest.raises(InstanceAlreadyRunning):
+            InstanceLease(directory).acquire()
+    finally:
+        lease.close()
+    InstanceLease(directory).acquire().close()
+
+
 def test_second_app_is_rejected_before_database_initialization(tmp_path, monkeypatch):
     kwargs = dict(database_path=tmp_path / "workbench.db", runtime_root=tmp_path / "jobs",
                   allowed_workspaces=[tmp_path], auto_import_active=False, start_worker=False)

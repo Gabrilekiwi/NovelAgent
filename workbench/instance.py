@@ -12,6 +12,8 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 import uuid
 
+from core.local_file_io import local_io_path
+
 
 class InstanceAlreadyRunning(RuntimeError):
     def __init__(self, directory: Path) -> None:
@@ -34,7 +36,7 @@ class InstanceLease:
         with self._mutex:
             if self.held:
                 raise RuntimeError("Instance lease already acquired")
-            self.directory.mkdir(parents=True, exist_ok=True)
+            local_io_path(self.directory).mkdir(parents=True, exist_ok=True)
             path = self.directory / "workbench.lock"
             if os.name == "nt":
                 self._fd = _windows_open_exclusive(path)
@@ -60,8 +62,8 @@ class InstanceLease:
     def publish(self, url: str | None) -> None:
         with self._mutex:
             self.require_held()
-            target = self.directory / "workbench-instance.json"
-            temporary = self.directory / f".instance-{self.instance_id}.tmp"
+            target = local_io_path(self.directory / "workbench-instance.json")
+            temporary = local_io_path(self.directory / f".instance-{self.instance_id}.tmp")
             data = {"instance_id": self.instance_id, "pid": os.getpid(), "url": url}
             try:
                 temporary.write_text(json.dumps(data), encoding="utf-8")
@@ -110,7 +112,7 @@ def _windows_open_exclusive(path: Path) -> int:
     create.restype = wintypes.HANDLE
     # READ|WRITE access, sharing READ only; the restriction survives in each
     # inherited child handle until its process closes that handle/exits.
-    handle = create(str(path), 0xC0000000, 1, None, 4, 0x80, None)
+    handle = create(str(local_io_path(path)), 0xC0000000, 1, None, 4, 0x80, None)
     if handle == ctypes.c_void_p(-1).value:
         error = ctypes.get_last_error()
         if error in {32, 33}:
@@ -133,7 +135,7 @@ def existing_instance_url(directory: Path, *, timeout: float = 5.0) -> str | Non
     while True:
         connection = None
         try:
-            data = json.loads((directory / "workbench-instance.json").read_text(encoding="utf-8"))
+            data = json.loads(local_io_path(directory / "workbench-instance.json").read_text(encoding="utf-8"))
             address = urlsplit(data.get("url") or "")
             if (isinstance(data.get("instance_id"), str) and len(data["instance_id"]) == 32
                     and address.scheme == "http" and address.hostname == "127.0.0.1"
