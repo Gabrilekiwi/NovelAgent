@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-19",
+  "zip": "NovelAgent-Windows-cf5fa25.zip",
+  "sha256": "1d6b777123961cb92dff5331b02914ac2f904aa96acc87c90b1619c90e536cfd",
+  "source_commit": "cf5fa25717785fcad8098bc0818472b215d09993",
+  "guide_commit": "61410341d9388cc3c1ebdbeba121f9576e496cfe",
+  "source_ci_run": 44435477123,
+  "source_ci_jobs_passed": 16,
+  "source_fingerprint_sha256": "b673a432193d274b2dd278ff162f9ea5e7f607d1809dfb950a5e120175e9e73e",
+  "fingerprinted_files": 593,
+  "zip_entries": 601,
+  "fresh_windows_install": {
+    "python": "3.12.4",
+    "runtime_packages": 30,
+    "pip_check": true,
+    "install_source": "local wheel cache"
+  },
+  "launch": "Extracted official Windows BAT invoked through cmd, no Git on PATH, separate .venv and local data",
+  "restore": {
+    "synthetic_book": true,
+    "certification_issued_and_verified": true,
+    "original_book_and_database_unchanged_during_restore": true,
+    "restored_copy_enabled": true,
+    "retained_earlier_author_draft": true
+  },
+  "browser": {
+    "chapter": 2,
+    "intent_confirm_http": 200,
+    "import_http": 200,
+    "save_http": 200,
+    "read_candidate_after_process_restart_http": 200,
+    "saved_revision": 2,
+    "reopened_editor_and_database_sha256": "ec93a89857ad9bc52a143f3f630b22d4fd19a7c888a01e99db1009fbe2b33206",
+    "console_warnings_or_errors": 0
+  },
+  "real_model_calls": 0,
+  "stable_release": false,
+  "scope": "Tested same-version recovery through product services, then import, edit, save and cold restart through Chrome. No claim of clean OS, cross-version recovery, a paid writing trial, or the entire recovery wizard by mouse."
+}

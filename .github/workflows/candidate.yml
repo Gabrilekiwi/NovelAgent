@@ -1,0 +1,24 @@
+name: Windows candidate download
+on:
+  push:
+    paths:
+      - 'README.md'
+      - 'docs/windows-author.md'
+      - 'docs/product-validation.md'
+      - 'deliverables/release-candidate/**'
+      - '.github/release/**'
+      - '.github/workflows/candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -X utf8 .github/release/verify_download.py

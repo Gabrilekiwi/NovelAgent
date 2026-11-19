@@ -1,12 +1,9 @@
-# Windows 本地自用候选版 · 2026-11-18
+# Windows 本地自用候选版
 
-当前候选是 [NovelAgent-c360b5099585.zip](NovelAgent-c360b5099585.zip)。包内含源码和依赖锁，不含真实书稿、账户配置或 Python 环境。解压后按包内 `docs/development/environment.md` 配置环境，再运行 `启动创作工作台.bat`。备份恢复会核对软件文件的原始字节；需要重现该候选时使用这个 ZIP，普通 Git 检出可能转换文本换行。
+[下载 NovelAgent-Windows-cf5fa25.zip](NovelAgent-Windows-cf5fa25.zip)（2026-11-19）。解压后先读包内 `README.md`，按[Windows 作者使用指南](../../docs/windows-author.md)安装。旧版请保留在另一目录，已有备份需要使用制作备份时对应的版本。
 
-| 校验项 | 值 |
-| --- | --- |
-| ZIP SHA-256 | `7c350d5295af45cb12236485984c97d456ddbdf7153ec281d519edab0a674b7f` |
-| 软件指纹 | `c360b50995855224422d965dd44b0245b81265a2bfb2160d3823a9e1eb0b8076` |
+本包的程序来自提交 `cf5fa25717785fcad8098bc0818472b215d09993`，含草稿恢复和官方启动修复。解压所得 593 个程序及依赖文件逐一与清单核对，Windows 新环境的安装、官方入口启动、归档恢复、网页编辑草稿和重启读回已实际通过。[本包验收记录及校验值](windows-cf5fa25.json) · [程序源码的 Windows / Linux 检查](https://github.com/Gabrilekiwi/NovelAgent/actions/runs/44435477123)。
 
-本版修复中文线索推进误判。48 项相关检查通过；此前在第 2 章误停的场景，已实际跑到第 3 章暂停、归档恢复、作者接手并正式入稿，再显式续写至第 4 章。使用真实工作台接口和本地模型替身。另用测试小说第 64 章的正式正文检查了线索判断，核实其 6 项事实、15 处引文进入第 65 章输入；没有生成第 65 章，也没有据此认定稳定版或长期改稿收益。
+这是候选包。当前正式自用门槛是作者独立用工作台完成写作、审阅和入稿，见[自用上线标准](../../docs/product-validation.md)。本次演练是本地测试书与作者稿件，没有调用付费模型或生成下一章。
 
-[包清单和摘要](thread-candidate-20261118.json) · [线索、原书与恢复证据](thread-progress-evidence-20261118.json) · [48 项专项结果](thread-progress-tests-20261118.xml) · [最终恢复演练](thread-restore-final-20261118.xml) · [旧版 Windows 启动和浏览器验收的适用范围](Windows候选版验收.md)。完整测试书稿、模型试用账务与本机检查点不属于公开分发内容。
+历史备份需要旧程序时，可取回 [2026-11-18 的 c360b5099585 版本](NovelAgent-c360b5099585.zip)、[旧版包清单](thread-candidate-20261118.json)、[线索验证](thread-progress-evidence-20261118.json)和[旧版 Windows 验收记录](Windows候选版验收.md)。旧包不是新安装的推荐下载。
