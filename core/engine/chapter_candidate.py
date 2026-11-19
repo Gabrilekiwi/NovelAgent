@@ -26,6 +26,7 @@ from core.engine.chapter_candidate_resolution import (
     load_candidate_provider_resolution,
     publish_candidate_provider_resolution,
 )
+from core.local_file_io import local_io_path
 from core.engine.persistence import atomic_create_json, atomic_create_text
 from core.engine.provider_safety import (
     list_unresolved_provider_calls,
@@ -496,8 +497,12 @@ class ChapterCandidateExecutor:
         from modules.chapter_generator.generator import prepare_chapter_messages
 
         prepared = self._prepare_request(chapter_index=chapter_index, confirmation=confirmation)
-        _, report = prepare_chapter_messages(prepared["input_pack"])
-        return report["budgeted_input_tokens"]
+        from api.openai_client import estimate_chapter_request
+        messages, _ = prepare_chapter_messages(prepared["input_pack"])
+        from core.chapter_budget_freeze import ChapterBudgetFreezeRegistry
+        budget = ChapterBudgetFreezeRegistry(self.story_project_root, book_id=prepared['identity']['book_id']).status(chapter_index)['budget']
+        monetary = budget is not None and budget['amount_limit'] is not None
+        return estimate_chapter_request(messages, monetary=monetary)
 
     def prepare_policy_request(self, *, chapter_index, chapter_intent):
         """Read-only preparation; this does not create execution permission."""
@@ -1668,7 +1673,7 @@ def _successful_candidate_responses(store):
             )
         artifact_path = _resolve_relative_artifact(store.root, artifact_ref)
         try:
-            content = artifact_path.read_bytes()
+            content = local_io_path(artifact_path).read_bytes()
             response_text = content.decode("utf-8")
         except (OSError, UnicodeError) as exc:
             raise ChapterCandidateIntegrityError(
@@ -1839,10 +1844,10 @@ def _load_json(path: Path, label: str) -> dict[str, Any]:
 
 
 def _assert_safe_artifact_file(path: Path) -> None:
-    if not os.path.lexists(path):
+    if not os.path.lexists(local_io_path(path)):
         return
     try:
-        info = os.lstat(path)
+        info = os.lstat(local_io_path(path))
     except OSError as exc:
         raise ChapterCandidateIntegrityError(f"cannot inspect candidate artifact: {path}: {exc}") from exc
     if stat.S_ISLNK(info.st_mode) or (
@@ -1854,11 +1859,11 @@ def _assert_safe_artifact_file(path: Path) -> None:
 
 
 def _safe_artifact_file_exists(path: Path) -> bool:
-    if not os.path.lexists(path):
+    if not os.path.lexists(local_io_path(path)):
         return False
     _assert_safe_artifact_file(path)
     try:
-        info = os.lstat(path)
+        info = os.lstat(local_io_path(path))
     except OSError as exc:
         raise ChapterCandidateIntegrityError(
             f"cannot inspect candidate artifact: {path}: {exc}"
@@ -1872,7 +1877,7 @@ def _safe_artifact_file_exists(path: Path) -> bool:
 
 def _assert_safe_artifact_directory(path: Path) -> None:
     try:
-        info = os.lstat(path)
+        info = os.lstat(local_io_path(path))
     except OSError as exc:
         raise ChapterCandidateIntegrityError(
             f"cannot inspect candidate directory: {path}: {exc}"

@@ -46,6 +46,24 @@ _SAFE_LABEL = re.compile(r"[^A-Za-z0-9._-]+")
 _FaultInjector = Callable[[str, str, Path | None], None]
 
 
+def estimate_provider_request_tokens(request, *, provider, model, endpoint_type):
+    """Offline reservation for the same complete request the runtime records."""
+    canonical_request = canonical_json_bytes(
+        request, exclude_environment_fields=False
+    ).decode("utf-8")
+    if provider and model and endpoint_type:
+        counter = model_token_counter(
+            provider=provider,
+            model=model,
+            endpoint_type=endpoint_type,
+        )
+        if counter is not None:
+            return counter.count(canonical_request)
+    # This remains a pre-provider reservation, never a claim of exact
+    # provider usage. Unknown tokenizers use the calibrated fallback.
+    return conservative_calibrated_token_estimate(canonical_request)
+
+
 class ProviderCallUncertainError(ModelCallEvidenceError):
     """A physical call crossed its durable Intent boundary without a Receipt."""
 
@@ -247,20 +265,7 @@ class ModelCallRuntimeContext:
                     "model-call input_token_counter returned an invalid value"
                 )
             return value
-        canonical_request = canonical_json_bytes(
-            request, exclude_environment_fields=False
-        ).decode("utf-8")
-        if provider and model and endpoint_type:
-            counter = model_token_counter(
-                provider=provider,
-                model=model,
-                endpoint_type=endpoint_type,
-            )
-            if counter is not None:
-                return counter.count(canonical_request)
-        # This remains a pre-provider reservation, never a claim of exact
-        # provider usage. Unknown tokenizers use the calibrated fallback.
-        return conservative_calibrated_token_estimate(canonical_request)
+        return estimate_provider_request_tokens(request, provider=provider, model=model, endpoint_type=endpoint_type)
 
     def remaining_output_tokens(self) -> int | None:
         """Return the tracker's currently available output reservation capacity."""

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 from api.contracts import CHAPTER_CONTRACT, validate_text_output
@@ -34,6 +36,23 @@ def _load_scene_prompt() -> str:
     )
 
 
+def _compact_context_json(compiled: str) -> str:
+    # Only reserialize complete, multi-line machine-owned JSON sections. Leave
+    # prose, quotations inside strings and the selection manifest unchanged.
+    sections = re.split(r"(?m)(^# [^\r\n]+\n)", compiled)
+    headers = {"# Authoritative State\n", "# Timeline\n", "# Memory Index\n", "# StoryProject Chapter Blueprint\n"}
+    for i in range(1, len(sections), 2):
+        body = sections[i + 1].rstrip("\n")
+        if sections[i] not in headers or "\n" not in body or not body.startswith(("{", "[")):
+            continue
+        try:
+            value = json.loads(body)
+        except ValueError:
+            continue
+        sections[i + 1] = json.dumps(value, ensure_ascii=False, separators=(",", ":")) + sections[i + 1][len(body):]
+    return "".join(sections)
+
+
 def prepare_chapter_messages(input_pack: str) -> tuple[list[dict[str, str]], dict]:
     """Compile and measure the exact pair of messages used for a whole chapter."""
     prompt = _load_prompt()
@@ -41,6 +60,7 @@ def prepare_chapter_messages(input_pack: str) -> tuple[list[dict[str, str]], dic
     compiled = compile_prompt_contexts(
         input_pack, budget=budget, stage_protocol_texts={"plan": (prompt,)},
     ).plan.text
+    compiled = _compact_context_json(compiled)
     report = budget.require_input(compiled, stage="chapter_generation", protocol_texts=(prompt,))
     return [{"role": "system", "content": prompt}, {"role": "user", "content": compiled}], report
 

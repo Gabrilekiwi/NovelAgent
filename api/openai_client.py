@@ -25,6 +25,30 @@ from core.config import get_config
 from core.model_call_runtime import ModelCallRuntimeContext, resolve_model_call_runtime
 
 
+def _request_payload(messages, resolved_model, temperature, resolved_max_tokens, stream, endpoint_type, monetary):
+    payload = {"model": resolved_model, "messages": copy.deepcopy(messages), "temperature": temperature,
+               "stream": bool(stream)}
+    if resolved_max_tokens > 0:
+        payload["max_tokens"] = resolved_max_tokens
+    if stream and (endpoint_type == MODEL_ENDPOINT_OFFICIAL or monetary):
+        payload["stream_options"] = {"include_usage": True}
+    if monetary:
+        payload.pop("max_tokens", None)
+        payload.update(max_completion_tokens=resolved_max_tokens, service_tier="default",
+                       prompt_cache_retention="in_memory", n=1)
+    return payload
+
+
+def estimate_chapter_request(messages, *, monetary=False):
+    from core.model_call_runtime import estimate_provider_request_tokens
+    config = get_config()
+    endpoint = MODEL_ENDPOINT_OPENAI_COMPATIBLE if config.openai_base_url else MODEL_ENDPOINT_OFFICIAL
+    payload = _request_payload(messages, config.openai_model, 0.8, config.openai_max_output_tokens,
+                               config.openai_stream, endpoint, monetary)
+    return estimate_provider_request_tokens(payload, provider='openai', model=config.openai_model,
+                                           endpoint_type=MODEL_ENDPOINT_OFFICIAL if monetary else endpoint)
+
+
 def chat_completion(
     messages: list[dict[str, str]],
     *,
@@ -79,14 +103,6 @@ def chat_completion(
     client_kwargs["max_retries"] = 0
 
     resolved_max_tokens = max_tokens if max_tokens is not None else config.openai_max_output_tokens
-    request_kwargs: dict[str, Any] = {
-        "model": resolved_model,
-        "messages": messages,
-        "temperature": temperature,
-    }
-    if resolved_max_tokens > 0:
-        request_kwargs["max_tokens"] = resolved_max_tokens
-
     runtime = resolve_model_call_runtime(model_call_runtime)
     endpoint_type = (
         MODEL_ENDPOINT_OPENAI_COMPATIBLE
@@ -111,16 +127,8 @@ def chat_completion(
         raise ValueError(
             "durable model calls require a positive OpenAI max output token reservation"
         )
-    stream_request_kwargs = dict(request_kwargs)
-    if config.openai_stream and (endpoint_type == MODEL_ENDPOINT_OFFICIAL or monetary):
-        stream_request_kwargs["stream_options"] = {"include_usage": True}
-    evidence_request = dict(stream_request_kwargs)
-    evidence_request["stream"] = bool(config.openai_stream)
-    evidence_request = copy.deepcopy(evidence_request)
-    if monetary:
-        evidence_request.pop('max_tokens', None)
-        evidence_request.update(max_completion_tokens=resolved_max_tokens,
-            service_tier='default',prompt_cache_retention='in_memory',n=1)
+    evidence_request = _request_payload(messages, resolved_model, temperature, resolved_max_tokens,
+                                        config.openai_stream, endpoint_type, monetary)
     client_holder: dict[str, Any] = {}
     physical_attempt = 0
     deadline = (RequestExecutionDeadline(runtime,policy,configured_timeout=config.openai_timeout_seconds,

@@ -14,6 +14,7 @@ import re
 import stat
 from typing import Any
 
+from core.local_file_io import local_io_path
 from core.engine.chapter_fact_support import normalize_fact_support, prepare_supported_fact_changes
 from core.engine.safe_paths import FILE_ATTRIBUTE_REPARSE_POINT, RootBinding, SafePathResolver, assert_safe_local_tree
 from core.memory_v2.canonical import canonical_json_hash
@@ -108,7 +109,7 @@ def read_project_bytes(root: Path, relative: str) -> bytes:
     # verification separately checks the persisted registry's actual UUIDs.
     resolver = SafePathResolver({"story_project": RootBinding("story_project", "00000000-0000-4000-8000-000000000000", root)})
     resolved = resolver.resolve({"root_id": "story_project", "relative_path": relative})
-    path = resolved.path
+    path = local_io_path(resolved.path)
     before = _ordinary(path)
     if not stat.S_ISREG(before.st_mode):
         fail("reviewed_source_type_invalid")

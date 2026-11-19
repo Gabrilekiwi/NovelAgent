@@ -6,6 +6,7 @@ import re
 
 from core.engine.execution_activity import execution_is_active
 from core.engine.safe_paths import assert_safe_local_tree
+from core.local_file_io import local_io_path
 from core.model_calls import ModelCallIntegrityError
 from core.model_call_usage import project_model_attempt, summarize_model_attempts
 from core.story_project.reviewed_state_document import read_project_bytes
@@ -64,14 +65,14 @@ def read_project_model_usage(root, *, book_id=None):
             def read(directory):
                 path = directory / (name + '.json')
                 return json.loads(read_project_bytes(root,path.relative_to(root).as_posix()))
-            if not (intents/(name+'.json')).exists() and binding is not None and name in binding['attempts']:
+            if not local_io_path(intents/(name+'.json')).exists() and binding is not None and name in binding['attempts']:
                 original,_=binding['attempts'][name]
-                if not original['dispatch_claimed'] and original['receipt'] is None and not (receipts/(name+'.json')).exists():
+                if not original['dispatch_claimed'] and original['receipt'] is None and not local_io_path(receipts/(name+'.json')).exists():
                     continue  # Durable reservation before Intent publication.
             intent = read(intents)
             if intent.get('attempt_id') != name:
                 raise ModelCallIntegrityError('model-call filename does not match its attempt identity')
-            receipt = read(receipts) if (receipts / (name+'.json')).exists() else None
+            receipt = read(receipts) if local_io_path(receipts/(name+'.json')).exists() else None
             item=project_model_attempt(identity,intent,receipt,active=observed)
             rows.append(budgets.project(binding,store,name,intent,receipt,item))
     rows.sort(key=lambda item:(item['created_at'],item['execution_id'],item['attempt_id']),reverse=True)

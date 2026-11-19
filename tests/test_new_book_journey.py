@@ -58,6 +58,9 @@ def test_new_book_first_publication_and_cold_next_chapter(tmp_path):
         assert SETTING in messages(root,1,card)
         confirm=response(c.post(path+'/card/confirm',json={'confirmed':True,'expected_card_sha256':card['confirmation']['card_sha256'],
             'goal':OUTLINE['core_event'],'validation_focus':['continuity','logic'],'notes_text':''}))['confirmation']
+        assert response(c.get(path+'/budget'))['state']=='not_configured'
+        assert response(c.post(path+'/generation-estimate',json={'confirmation':confirm}))['estimate']['input_tokens_estimate']>0
+        assert response(c.get(path+'/budget'))['state']=='not_configured' and not response(c.get(path+'/candidates'))['items']
         initial=Path('tests/fixtures/chapter_quality/good_chapter.md').read_text(encoding='utf8')
         draft=response(c.post(path+'/author-drafts',json={'confirmation':confirm,'origin_label':'作者手稿','text':initial,'idempotency_key':'first-draft'}))['candidate']['draft']
         edited=initial.replace('她咬住牙，继续往下。',QUOTE+'她咬住牙，继续往下。')

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from core.local_file_io import local_io_path
 from core.path_refs import PathRef, PathRefError, validate_path_ref
 
 
@@ -110,7 +111,7 @@ class SafePathResolver:
         _assert_lexically_within(candidate, binding.path)
         lineage = _directory_lineage(binding.path, parts[:-1])
         self._assert_bound_root(binding)
-        if candidate.exists() or os.path.lexists(candidate):
+        if os.path.lexists(local_io_path(candidate)):
             _assert_not_link_or_reparse(candidate)
         guard = {
             "root_id": ref.root_id,
@@ -139,14 +140,14 @@ class SafePathResolver:
         parts = tuple(resolved.path_ref.relative_path.replace("\\", "/").split("/"))
         for part in parts[:-1]:
             current = current / part
-            if os.path.lexists(current):
+            if os.path.lexists(local_io_path(current)):
                 _assert_existing_directory(current, label="PathRef parent")
             else:
                 _run_durability_operation(
                     durability_hook,
                     "directory_mkdir",
                     current,
-                    current.mkdir,
+                    local_io_path(current).mkdir,
                 )
                 _fsync_directory(
                     current.parent,
@@ -211,7 +212,7 @@ def _directory_lineage(root: Path, parent_parts: tuple[str, ...]) -> list[dict[s
     for part in parent_parts:
         current = current / part
         relative.append(part)
-        if not os.path.lexists(current):
+        if not os.path.lexists(local_io_path(current)):
             break
         _assert_existing_directory(current, label="PathRef parent")
         result.append(_identity(current, relative_path="/".join(relative)))
@@ -219,7 +220,7 @@ def _directory_lineage(root: Path, parent_parts: tuple[str, ...]) -> list[dict[s
 
 
 def _identity(path: Path, *, relative_path: str) -> dict[str, Any]:
-    info = os.lstat(path)
+    info = os.lstat(local_io_path(path))
     return {
         "relative_path": relative_path,
         "device": int(info.st_dev),
@@ -253,7 +254,7 @@ def _compare_guard(
 
 def _assert_existing_directory(path: Path, *, label: str) -> None:
     _assert_not_link_or_reparse(path)
-    info = os.lstat(path)
+    info = os.lstat(local_io_path(path))
     if not stat.S_ISDIR(info.st_mode):
         raise UnsafePathComponentError(f"{label} is not a directory: {path}")
 
@@ -266,13 +267,13 @@ def _assert_directory_lineage(
 ) -> None:
     anchor = Path(path.anchor)
     current = anchor
-    if os.path.lexists(current):
+    if os.path.lexists(local_io_path(current)):
         _assert_existing_directory(current, label=f"{label} anchor")
     relative_parts = path.parts[1:] if path.anchor else path.parts
     missing = False
     for part in relative_parts:
         current = current / part
-        if not os.path.lexists(current):
+        if not os.path.lexists(local_io_path(current)):
             missing = True
             break
         _assert_existing_directory(current, label=label)
@@ -282,7 +283,7 @@ def _assert_directory_lineage(
 
 def _assert_not_link_or_reparse(path: Path) -> None:
     try:
-        info = os.lstat(path)
+        info = os.lstat(local_io_path(path))
     except OSError as exc:
         raise UnsafePathComponentError(f"cannot inspect path component: {path}: {exc}") from exc
     if stat.S_ISLNK(info.st_mode):
