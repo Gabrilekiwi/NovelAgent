@@ -19,6 +19,7 @@ from core.context_budget import (
     conservative_calibrated_token_estimate,
     model_token_counter,
 )
+from core.local_file_io import local_io_path
 from core.engine.persistence import atomic_create_json, atomic_create_text
 from core.engine.safe_paths import assert_safe_local_tree
 from core.story_project.reviewed_state_document import read_project_bytes
@@ -304,14 +305,16 @@ class ModelCallRuntimeContext:
 
         hydrated: list[str] = []
         receipts: dict[str, dict[str, Any]] = {}
-        if self.store.receipts_dir.is_dir():
-            for path in sorted(self.store.receipts_dir.glob("*.json")):
+        receipts_dir = local_io_path(self.store.receipts_dir)
+        intents_dir = local_io_path(self.store.intents_dir)
+        if receipts_dir.is_dir():
+            for path in sorted(receipts_dir.glob("*.json")):
                 receipt = self.store.load_receipt(path.stem)
                 receipts[receipt["attempt_id"]] = receipt
-        if not self.store.intents_dir.is_dir():
+        if not intents_dir.is_dir():
             return hydrated
 
-        for path in sorted(self.store.intents_dir.glob("*.json")):
+        for path in sorted(intents_dir.glob("*.json")):
             intent = self.store.load_intent(path.stem)
             receipt = receipts.get(intent["attempt_id"])
             if (
@@ -450,12 +453,13 @@ class ModelCallRuntimeContext:
         originals = {row['plan']['intent']['attempt_id']: row for row in rows}
         for directory in (self.store.intents_dir,self.store.receipts_dir):
             assert_safe_local_tree(directory)
-            if not directory.exists():
+            io_dir = local_io_path(directory)
+            if not io_dir.exists():
                 continue
-            for path in directory.iterdir():
+            for path in io_dir.iterdir():
                 if path.suffix != '.json' or path.stem not in originals:
                     raise ChapterBudgetError('physical model evidence has no original chapter reservation')
-                read_project_bytes(self.store.root,path.relative_to(self.store.root).as_posix())
+                read_project_bytes(self.store.root, f"{directory.name}/{path.name}")
         for row in rows:
             intent = row['plan']['intent']
             attempt_id = intent['attempt_id']
@@ -1212,7 +1216,7 @@ def _resolve_artifact(root: Path, relative_ref: str) -> Path:
         raise ModelCallIntegrityError(
             "model response artifact reference escapes its store"
         ) from exc
-    return candidate
+    return local_io_path(candidate)
 
 
 def _safe_label(value: str) -> str:

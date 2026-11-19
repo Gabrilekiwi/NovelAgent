@@ -478,6 +478,7 @@
         "chapter.local_budget_after_provider": "本地预算在已有调用后中断，已保留已付费内容，任务已安全暂停",
         "chapter.context_budget_after_provider": "已付费调用后上下文预算中断，已保留已付费内容，任务已安全暂停",
         "chapter.structured_context_after_provider": "已付费调用后结构化上下文装配中断，已保留已付费内容，任务已安全暂停",
+        "chapter.execution_stopped": "写作已停止，未取得完整执行结果",
         "chapter.needs_revision": "章节需要作者修订",
         "chapter.needs_recovery": "章节已安全暂停，等待恢复",
         "draft.source_upgrade_conflict": "作者草稿已保留，发现更新恢复源",
@@ -508,6 +509,7 @@
         "chapter.local_budget_after_provider": "awaiting_input",
         "chapter.context_budget_after_provider": "awaiting_input",
         "chapter.structured_context_after_provider": "awaiting_input",
+        "chapter.execution_stopped": "awaiting_input",
         "chapter.needs_revision": "awaiting_input",
         "chapter.needs_recovery": "needs_recovery",
         "recovery.completed": "completed"
@@ -656,7 +658,7 @@
       "status", "progress", "stage", "event", "queue", "metrics", "attention", "complete",
       "job.queued", "job.starting", "job.pause_requested", "job.paused", "job.completed",
       "job.failed", "job.needs_recovery", "job.cancel_requested", "job.cancelled_provider_uncertain",
-       "job.author_confirmed_resume", "chapter.started", "chapter.committed", "chapter.needs_revision",
+       "job.author_confirmed_resume", "chapter.started", "chapter.committed", "chapter.execution_stopped", "chapter.needs_revision",
        "chapter.pre_provider_context_budget_exceeded", "chapter.pre_provider_provenance_unavailable", "chapter.repair_not_converging", "chapter.stale_scene_evidence", "chapter.scene_boundary_validation", "chapter.scene_schema_validation", "chapter.bridge_prevalidation", "chapter.provider_partial_response", "chapter.local_budget_after_provider", "chapter.context_budget_after_provider", "chapter.structured_context_after_provider",
         "chapter.needs_recovery", "draft.source_upgrade_conflict", "recovery.completed", "loop_start", "step_start", "step_end",
       "step_failed", "loop_end", "engine.progress"

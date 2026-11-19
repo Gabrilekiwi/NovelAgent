@@ -1617,7 +1617,9 @@ class JobStore:
                 if _is_context_budget_after_provider_error(error)
                 else "chapter.structured_context_after_provider"
                 if _is_structured_context_after_provider_error(error)
-                else "chapter.needs_recovery" if uncertain else "chapter.needs_revision"
+                else "chapter.needs_recovery" if uncertain
+                else "chapter.execution_stopped" if error.get("code") == "engine_result_unreadable"
+                else "chapter.needs_revision"
             )
             self._append_event_in_transaction(
                 connection,

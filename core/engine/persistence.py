@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from core.local_file_io import local_io_path
 from core.engine.safe_paths import FILE_ATTRIBUTE_REPARSE_POINT, assert_safe_local_tree
 
 
@@ -1262,6 +1263,7 @@ def _atomic_replace_from_bytes(
     *,
     durability_hook: _DurabilityHook | None = None,
 ) -> None:
+    path = local_io_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # The target name can itself be a 64-character content hash. Repeating it
     # in the temporary name needlessly crosses classic Windows MAX_PATH limits
@@ -1307,6 +1309,7 @@ def _atomic_create_from_bytes(
     durability_hook: _DurabilityHook | None = None,
 ) -> None:
     """Durably publish a new file without ever replacing an existing one."""
+    path = local_io_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         raise FileExistsError(f"atomic create target already exists: {path}")
@@ -1389,7 +1392,7 @@ def _windows_move_file(source: Path, destination: Path, *, replace_existing: boo
     move = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
     move.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong]
     move.restype = ctypes.c_int
-    if move(str(source), str(destination), flags):
+    if move(str(local_io_path(source)), str(local_io_path(destination)), flags):
         return
     error_code = ctypes.get_last_error()
     raise OSError(error_code, f"MoveFileExW failed: {source} -> {destination}")
