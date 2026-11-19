@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-20",
+  "zip": "NovelAgent-Windows-0e364f9.zip",
+  "sha256": "feede496a8624cd5f051d975d5eebcba4815ab64245d403edb2bf5ff739d5ccf",
+  "source_commit": "0e364f93f96bebb868f85cf6f6a4af80b30246c0",
+  "guide_commit": "c83bd79698f154387e6084b706a3ef9343e4f26e",
+  "zip_entries": 606,
+  "stable_release": false,
+  "verification": {
+    "host": "Windows",
+    "long_paths_enabled": false,
+    "executed_from_extracted_archive": true,
+    "deep_machine_store_first_chapter_published": true,
+    "reopened_prose_and_next_chapter_facts_verified": true,
+    "deep_instance_lock_contention_and_live_address_verified": true,
+    "real_generation_requests": 0
+  },
+  "previous_paid_generation_evidence": "windows-3d16f15.json",
+  "scope": "Verified existing manuscript through review, publication, restart and chapter 2 context with long Windows machine record paths. This build did not repeat a paid generation or assess long-form writing quality."
+}
