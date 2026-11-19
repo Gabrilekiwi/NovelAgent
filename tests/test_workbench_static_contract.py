@@ -468,7 +468,8 @@ def test_production_view_renders_paused_jobs_as_attention_not_running() -> None:
     assert '["awaiting_input", "needs_recovery"].includes(job.state)' in spa
     assert 'project_recovery: !pausedRecoveryJob' in spa
     assert 'job_id: pausedRecoveryJob?.job_id || pausedRecoveryJob?.id || null' in spa
-    assert "先执行无模型分类" in spa
+    assert "尚未确认有可恢复的正文" in spa
+    assert "这一步不会调用模型或提交章节" in spa
     assert "先执行无模型恢复分类，核对已结算回执和可复用场景" in spa
     assert "不会重新生成场景；将调用真实模型重新运行导演决策与语义校验" in spa
     assert 'issue.checkpoint?.reason === "complete_scene_sequence_requires_revalidation"' in spa
