@@ -101,6 +101,12 @@ def test_actual_v3_chapter_commits_and_next_context_cold_reads_full_state(ready)
     assert verified["history"]["value"]["current_state"] == ready["preparation"]["fact_preparation"]["state_after"]
     next_context = ReviewedChapterCandidateContextBuilder(root).build(3)
     assert next_context.story_project_context["reviewed_state"]["authoritative_state"] == verified["history"]["value"]["current_state"]
+    actual = next_context.story_project_context["reviewed_state"]["previous_chapter_facts"]
+    reviewed = verified["history"]["value"]["last_transition"]["facts"]
+    assert actual == {"chapter": 2, "facts": [
+        {"summary": f["summary"], "quotes": [s["quote"] for s in f["evidence_spans"]]}
+        for f in reviewed if f["review"]["decision"] == "accepted"]}
+    assert actual["facts"]
     code = "import json,sys; from pathlib import Path; from core.engine.reviewed_candidate_context import ReviewedChapterCandidateContextBuilder; print(json.dumps(ReviewedChapterCandidateContextBuilder(Path(sys.argv[1])).build(3).to_dict(),ensure_ascii=True))"
     child = subprocess.run([sys.executable, "-B", "-c", code, str(root)], capture_output=True, text=True, timeout=40, check=True)
     assert json.loads(child.stdout) == next_context.to_dict()

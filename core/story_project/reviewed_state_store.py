@@ -194,8 +194,19 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
             _verify_typed_chapter_checkpoint(item, previous_document=parent["document"], roots=root_map, read_bytes=evidence.read)
     if evidence.read(root, RELATIVE_PATH) != observed_document:
         fail("reviewed_source_changed_during_read")
-    return ({"value": copy.deepcopy(current), "document_sha256": digest(current_document),
-             "receipt_count": len(records), "receipt_hash": tip["receipt"]["receipt_hash"]}, records)
+    result = {"value": copy.deepcopy(current), "document_sha256": digest(current_document),
+              "receipt_count": len(records), "receipt_hash": tip["receipt"]["receipt_hash"]}
+    # Source-resolution receipts can follow a chapter without advancing the cursor.
+    # Use only the matching chapter in the verified chain; a baseline has no such receipt.
+    for item in records.values():
+        v = item["value"]
+        if v["head"]["kind"] == "chapter" and v["committed_through"] == current["committed_through"]:
+            accepted = [{"summary": f["summary"], "quotes": [s["quote"] for s in f["evidence_spans"]]}
+                        for f in v["last_transition"]["facts"] if f["review"]["decision"] == "accepted"]
+            if accepted:
+                result["previous_chapter_facts"] = {"chapter": v["committed_through"], "facts": accepted}
+            break
+    return result, records
 
 
 def _verify_typed_chapter_checkpoint(item, *, previous_document, roots, read_bytes=None):
@@ -353,4 +364,5 @@ def load_runtime_view(context: dict, *, root_map: dict, baseline_document_sha256
     return build_reviewed_state_context(context, authoritative_state=value["current_state"],
         source_relative_path=RELATIVE_PATH, source_sha256=result["document_sha256"],
         manual_sources_sha256=value["source_revision"]["sha256"], committed_through=value["committed_through"],
-        static_references=value["static_references"])
+        static_references=value["static_references"],
+        previous_chapter_facts=result.get("previous_chapter_facts"))

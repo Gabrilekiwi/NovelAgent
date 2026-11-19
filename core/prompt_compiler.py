@@ -218,7 +218,7 @@ def compile_prompt_contexts(
         require_query_references=True,
         require_open_events=True,
         stage="plan",
-        required=mandatory,
+        required=mandatory | {"Previous Chapter Confirmed Facts"},
         preferred={name for name, _ in plan_sections},
         digest=digest,
         budget=effective_budget,

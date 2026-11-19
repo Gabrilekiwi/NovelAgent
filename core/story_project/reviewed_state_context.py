@@ -31,7 +31,8 @@ def _hash(value: dict) -> str:
 def build_reviewed_state_context(context: dict, *, authoritative_state: dict,
                                  source_relative_path: str, source_sha256: str,
                                  manual_sources_sha256: str, committed_through: int,
-                                 static_references: list[dict] | None = None) -> dict:
+                                 static_references: list[dict] | None = None,
+                                 previous_chapter_facts: dict | None = None) -> dict:
     value = {
         "schema_version": "1.0", "book_id": context["project_identity"]["book_id"],
         "chapter_index": context["chapter_index"], "committed_through": committed_through,
@@ -42,6 +43,8 @@ def build_reviewed_state_context(context: dict, *, authoritative_state: dict,
         "authoritative_state": copy.deepcopy(authoritative_state),
         "static_references": copy.deepcopy(static_references or []),
     }
+    if previous_chapter_facts is not None:
+        value["previous_chapter_facts"] = copy.deepcopy(previous_chapter_facts)
     value["payload_sha256"] = _hash(value)
     return validated_reviewed_state_context({**context, "reviewed_state": value})
 
@@ -54,7 +57,7 @@ def validated_reviewed_state_context(context: dict | None) -> dict | None:
               "source_relative_path", "source_sha256", "manual_sources_sha256",
               "semantic_source_digest", "read_set_context_digest", "authoritative_state", "payload_sha256",
               "static_references"}
-    if not isinstance(value, dict) or set(value) != fields or value["schema_version"] != "1.0":
+    if not isinstance(value, dict) or set(value) not in (fields, fields | {"previous_chapter_facts"}) or value["schema_version"] != "1.0":
         raise ReviewedStateContextError("reviewed runtime view has an unsupported shape")
     identity = context.get("project_identity") or {}
     authority = identity.get("authority") or {}
@@ -74,6 +77,17 @@ def validated_reviewed_state_context(context: dict | None) -> dict | None:
             or any(item != chapter for item in (context.get("chapter_index"),
                                                 semantic.get("chapter_index"), read_set.get("chapter_index")))):
         raise ReviewedStateContextError("reviewed runtime view is bound to another chapter")
+    if "previous_chapter_facts" in value:
+        packet = value["previous_chapter_facts"]
+        if (not isinstance(packet, dict) or set(packet) != {"chapter", "facts"}
+                or type(packet["chapter"]) is not int or packet["chapter"] != chapter - 1
+                or not isinstance(packet["facts"], list) or not packet["facts"]
+                or any(not isinstance(f, dict) or set(f) != {"summary", "quotes"}
+                       or not isinstance(f["summary"], str) or not f["summary"].strip()
+                       or not isinstance(f["quotes"], list) or not f["quotes"]
+                       or any(not isinstance(q, str) or not q.strip() for q in f["quotes"])
+                       for f in packet["facts"])):
+            raise ReviewedStateContextError("previous chapter facts do not match the reviewed chapter")
     for name in ("source_sha256", "manual_sources_sha256", "semantic_source_digest",
                  "read_set_context_digest", "payload_sha256"):
         if not isinstance(value[name], str) or re.fullmatch(r"[0-9a-f]{64}", value[name]) is None:

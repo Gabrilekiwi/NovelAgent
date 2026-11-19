@@ -230,7 +230,13 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
             "entries": [{"field": "authoritative_state", "chosen_source": "legacy_reviewed_state",
                          "reason": "confirmed_chapter_state_bound_to_project_sources"}],
         }
-    return "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+    section = "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+    if reviewed and "previous_chapter_facts" in reviewed:
+        # Keep the accepted meaning and its original quotations together, outside
+        # the independently ranked, cumulative authority and blueprint sections.
+        section += "\n\n# Previous Chapter Confirmed Facts\n" + json.dumps(
+            reviewed["previous_chapter_facts"], ensure_ascii=False, separators=(",", ":"))
+    return section
 
 
 def _prompt_chapter_blueprint(

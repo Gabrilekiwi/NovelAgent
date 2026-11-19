@@ -38,15 +38,19 @@ def generate_chapter(input_pack: str, *, dry_run: bool = False) -> str:
     if dry_run:
         output = _DRY_RUN_CHAPTER
     else:
-        compiled = compile_prompt_contexts(input_pack).plan.text
-        default_context_budget().require_input(
+        prompt = _load_prompt()
+        budget = default_context_budget()
+        compiled = compile_prompt_contexts(
+            input_pack, budget=budget, stage_protocol_texts={"plan": (prompt,)},
+        ).plan.text
+        budget.require_input(
             compiled,
             stage="chapter_generation",
-            protocol_texts=(_load_prompt(),),
+            protocol_texts=(prompt,),
         )
         output = chat_completion(
             [
-                {"role": "system", "content": _load_prompt()},
+                {"role": "system", "content": prompt},
                 {"role": "user", "content": compiled},
             ],
             stage="chapter_generation",

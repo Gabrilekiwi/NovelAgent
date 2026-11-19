@@ -132,7 +132,8 @@ class ReviewedChapterCandidateContextBuilder(ChapterCandidateContextBuilder):
         context["reviewed_state"] = build_reviewed_state_context(context, authoritative_state=value["current_state"],
             source_relative_path=RELATIVE_PATH, source_sha256=history["document_sha256"],
             manual_sources_sha256=value["source_revision"]["sha256"], committed_through=value["committed_through"],
-            static_references=value["static_references"])
+            static_references=value["static_references"],
+            previous_chapter_facts=history.get("previous_chapter_facts"))
         self._validate_context_binding(context, identity=identity, chapter_index=chapter_index)
         validated_reviewed_state_context(context)
         after_identity, after_history = _current(root, chapter=chapter_index)
