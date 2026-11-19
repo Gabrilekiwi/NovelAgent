@@ -1,5 +1,7 @@
 # 开发环境与B0基线
 
+作者安装下载包请看[Windows 作者指南](../windows-author.md)。以下是维护者说明；历史运行记录只对应当时的版本。
+
 本轮执行入口：[最终计划](D:/Pycharm/PythonProject/NovelAgent/docs/development-plan-final-2026-09-08.md)。进度入口：[开发交接](D:/Pycharm/PythonProject/NovelAgent/docs/development-handoff.md)。
 
 ## B0
@@ -34,7 +36,7 @@ Windows测试前在同一PowerShell窗口设置上述UTF-8环境，再启动Pyth
 
 `requirements.txt`和`requirements-dev.txt`保留顶层允许范围；`requirements.lock`和`requirements-dev.lock`为安装入口。更新依赖时在隔离Python 3.12环境中按允许范围解析，检查直接及传递依赖，更新两个锁及原因，执行`pip check`、相关测试和smoke，再通过CI验证。不要将整个开发者全局环境的`pip freeze`原样覆盖项目锁。
 
-CI配置已接入Ubuntu和Windows，均使用相同锁与项目环境，并执行环境检查、全套测试和离线smoke；Windows输出使用UTF-8。该配置的远端执行结果尚未验收。Windows发布及平台场景完整验收属于T7.3，不能用本机环境检查代替尚未运行的远端CI。
+CI配置已接入Ubuntu和Windows，均使用相同锁与项目环境，并执行环境检查、全套测试和离线smoke；Windows输出使用UTF-8。提交 `cf5fa25` 已通过 Windows 和 Ubuntu 的远端检查。Windows发布及平台场景完整验收属于T7.3，不能用本机环境检查代替尚未运行的远端CI。
 
 ## Windows候选版安装与日常启动
 

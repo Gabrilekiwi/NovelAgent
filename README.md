@@ -1,6 +1,8 @@
 # NovelAgent
 
-Windows 本地自用候选版（2026-11-18）：[下载当前验收包，查看已通过和待验证的范围](deliverables/release-candidate/README.md)。
+Windows 作者从这里开始：[下载当前自用候选版](deliverables/release-candidate/README.md) · [安装与日常使用](docs/windows-author.md) · [自用上线标准](docs/product-validation.md)。
+
+以下为开发仓库的技术说明；历史版本的验证结论只对应当时的构建。
 
 Version: 2.0.1 stabilization release
 
@@ -65,7 +67,7 @@ On Linux, use `python3.12 scripts/setup_environment.py` and `.venv/bin/python` f
 - **待处理**：处理异常恢复、草稿修订、重验证和作者确认提交；不确定的 Provider 调用不会自动重试。
 - **历史**：追溯生成、警告、恢复、提交、Receipt/readback 和成本摘要。
 
-第 20 章隔离异常恢复以及第 23–42 章真实生产验收的作者操作清单见 [产品验证与自用上线标准](docs/product-validation.md)。第 21、22 章是既有 Shadow 预热历史，不计入两个正式十章 Cohort。完整测试门负责保护代码和数据，真实模型连续写作与人工阅读负责证明小说是否可用；两者都必须通过。
+自用上线按[作者独立完成一章的标准](docs/product-validation.md)验收。两个十章批次和九维打分都是可选实验；早期验证方法留在[历史记录](docs/development/product-validation-history.md)。
 
 工作台只监听 `127.0.0.1`，并校验 Host、Origin 和启动令牌。Provider 凭据继续由本机环境变量或 `.env` 管理；网页和工作台 SQLite 只显示脱敏就绪状态，不接收、不回显也不保存 API Key。
 
