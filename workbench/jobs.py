@@ -4190,7 +4190,9 @@ def _eligible_recovery_run_ids(
             value = json.loads(raw.decode("utf-8"))
             run = value.get("run") if isinstance(value, Mapping) else None
             run_id = str(run.get("id") or "").strip() if isinstance(run, Mapping) else ""
-            if path.name != f"{run_id}.json" or not run_id or int(run.get("chapter_index") or 0) != int(chapter):
+            # Older manifests use filenames distinct from the embedded ID. The
+            # validated bytes above, not the filename, bind the recovery source.
+            if not run_id or int(run.get("chapter_index") or 0) != int(chapter):
                 return None
             finished = run.get("finished_at")
             timestamp = datetime.fromisoformat(finished) if finished is not None else None
@@ -4204,7 +4206,7 @@ def _eligible_recovery_run_ids(
     # Copy time and filename do not establish order. An older source is usable
     # only when *every* newer run is proven to have stopped before model use.
     times = {timestamp for timestamp, _, _ in candidates}
-    if None in times or len(times) != len(candidates):
+    if None in times or len(times) != len(candidates) or len({run_id for _, run_id, _ in candidates}) != len(candidates):
         return None
     eligible = []
     for _, run_id, empty in sorted(candidates, reverse=True):
