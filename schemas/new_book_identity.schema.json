@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NewBookReviewedIdentity",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "book_id",
+    "created_at",
+    "root_hint",
+    "story_state_mode",
+    "activation",
+    "ephemeral",
+    "authority",
+    "reviewed_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "3.0"
+      ]
+    },
+    "book_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "root_hint": {
+      "type": "string",
+      "enum": [
+        "."
+      ]
+    },
+    "story_state_mode": {
+      "type": "string",
+      "enum": [
+        "strict"
+      ]
+    },
+    "activation": {
+      "type": "null"
+    },
+    "ephemeral": {
+      "type": "boolean",
+      "enum": [
+        false
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "mode",
+        "authority_epoch",
+        "head_event_hash",
+        "activation_receipt",
+        "minimum_writer_contract"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "legacy_markdown_v1",
+            "event_v1"
+          ]
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head_event_hash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 64
+        },
+        "activation_receipt": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "schema_version",
+            "receipt_type",
+            "book_id",
+            "from_mode",
+            "to_mode",
+            "authority_epoch",
+            "expected_identity_sha256",
+            "head_event_hash",
+            "genesis_receipt_sha256",
+            "minimum_writer_contract",
+            "activated_at",
+            "receipt_sha256"
+          ],
+          "properties": {
+            "schema_version": {
+              "type": "string",
+              "enum": [
+                "1.0"
+              ]
+            },
+            "receipt_type": {
+              "type": "string",
+              "enum": [
+                "authority_activation"
+              ]
+            },
+            "book_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "from_mode": {
+              "type": "string",
+              "enum": [
+                "legacy_markdown_v1"
+              ]
+            },
+            "to_mode": {
+              "type": "string",
+              "enum": [
+                "event_v1"
+              ]
+            },
+            "authority_epoch": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "expected_identity_sha256": {
+              "type": "string",
+              "minLength": 64
+            },
+            "head_event_hash": {
+              "type": "string",
+              "minLength": 64
+            },
+            "genesis_receipt_sha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 64
+            },
+            "minimum_writer_contract": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "activated_at": {
+              "type": "string",
+              "minLength": 1
+            },
+            "receipt_sha256": {
+              "type": "string",
+              "minLength": 64
+            }
+          },
+          "additionalProperties": false
+        },
+        "minimum_writer_contract": {
+          "type": "integer",
+          "minimum": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "reviewed_state": {
+      "type": "object",
+      "required": [
+        "format",
+        "relative_path",
+        "baseline_document_sha256",
+        "genesis"
+      ],
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "reviewed_legacy_state_v1"
+          ]
+        },
+        "relative_path": {
+          "type": "string",
+          "enum": [
+            "追踪/已审核事实.md"
+          ]
+        },
+        "baseline_document_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "genesis": {
+          "type": "string",
+          "enum": [
+            "author_created_empty_book_v1"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "description": "Reviewed chapter workflow for a book created empty with an explicit author starting point."
+}

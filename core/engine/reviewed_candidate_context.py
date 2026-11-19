@@ -112,7 +112,9 @@ class ReviewedChapterCandidateContextBuilder(ChapterCandidateContextBuilder):
         mapped = build_story_project_runtime_context(root, chapter_index, snapshot=snapshot, memory_context=memory,
                                                      previous_chapter_fail_closed=True)
         semantic = parse_story_project_semantic_state(root, chapter_index, project_identity=identity)
-        activation = evaluate_story_state_activation(identity, semantic)
+        activation = ({"configured_mode": "strict", "effective_mode": "strict", "authoritative": True,
+            "profile_match": None, "downgraded": False, "ready_for_next_step": True, "blockers": []}
+            if "genesis" in identity.payload["reviewed_state"] else evaluate_story_state_activation(identity, semantic))
         read_set = capture_story_project_read_set(root, chapter_index, project_identity=identity,
             parser_version=SEMANTIC_PARSER_VERSION, parse_status="warning" if mapped.warnings or semantic["parse_warnings"] else "ok")
         runtime = RuntimePaths.for_story_project(root)

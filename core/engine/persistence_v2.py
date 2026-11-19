@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from core.local_file_io import local_io_path
 from core.engine.persistence import (
     PersistenceLockError,
     _atomic_create_from_bytes,
@@ -734,7 +735,7 @@ class PersistenceV2Transaction:
             before_exists = path.exists()
             if before_exists and not path.is_file():
                 raise PersistenceV2PreparationError(f"target is not a regular file: {path}")
-            before = path.read_bytes() if before_exists else b""
+            before = local_io_path(path).read_bytes() if before_exists else b""
             before_hash = _sha256(before) if before_exists else None
             if target.phase == "apply":
                 _verify_expected_before(target, path, before_exists, before_hash)
@@ -867,7 +868,7 @@ class PersistenceV2Transaction:
                     target["_before"] = b""
                     if target.get("phase") == "apply" and target.get("before_exists"):
                         backup = _safe_journal_child(self.journal_dir, str(target["backup_relative_path"]))
-                        before = backup.read_bytes()
+                        before = local_io_path(backup).read_bytes()
                         if _sha256(before) != target["before_sha256"] or len(before) != target["before_size"]:
                             raise PersistenceV2IntegrityError("reviewed chapter staged before-image changed")
                         target["_before"] = before
@@ -1043,7 +1044,7 @@ def verify_publication_receipt(
         if final_binding != expected_final_binding:
             raise PersistenceV2IntegrityError("receipt Final RunRecord binding mismatch")
         final_path = resolver.resolve(final_binding["path_ref"]).path
-        final_bytes = final_path.read_bytes()
+        final_bytes = local_io_path(final_path).read_bytes()
         _verify_file_binding(final_path, final_bytes, final_binding)
         final_record = json.loads(final_bytes.decode("utf-8"))
         _validate_final_run_receipt_pointer(
@@ -1057,7 +1058,7 @@ def verify_publication_receipt(
         artifact_summaries: list[dict[str, Any]] = []
         for artifact in validated["artifacts"]:
             artifact_path = resolver.resolve(artifact["path_ref"]).path
-            content = artifact_path.read_bytes()
+            content = local_io_path(artifact_path).read_bytes()
             _verify_file_binding(artifact_path, content, artifact)
             artifact_summaries.append(_artifact_digest_summary(artifact))
         actual_bundle = canonical_json_hash(sorted(artifact_summaries, key=lambda item: item["target_id"]))
@@ -1442,7 +1443,7 @@ def _gc_persistence_v2(transaction_root, *, dry_run, completed_keep, rolled_back
     )
     for path in unique:
         _assert_internal_path_safe(root, path)
-    reclaimed = sum(path.stat().st_size for path in unique if path.exists())
+    reclaimed = sum(local_io_path(path).stat().st_size for path in unique if path.exists())
     if not dry_run:
         for path in unique:
             path.unlink(missing_ok=True)
@@ -1483,7 +1484,7 @@ def _build_publication_receipt(manifest: dict[str, Any], marker: dict[str, Any])
     immutable = manifest["immutable"]
     resolver = _safe_resolver_from_manifest_root_map(manifest)
     marker_path = resolver.resolve(immutable["marker_path_ref"]).path
-    marker_size = marker_path.stat().st_size
+    marker_size = local_io_path(marker_path).stat().st_size
     manifest_path = resolver.resolve(immutable["manifest_path_ref"]).path
     final_run = copy.deepcopy(immutable["final_run"])
     artifacts = [
@@ -1505,7 +1506,7 @@ def _build_publication_receipt(manifest: dict[str, Any], marker: dict[str, Any])
         "manifest": {
             "path_ref": copy.deepcopy(immutable["manifest_path_ref"]),
             "sha256": manifest["manifest_digest"],
-            "size": manifest_path.stat().st_size,
+            "size": local_io_path(manifest_path).stat().st_size,
         },
         "marker": {
             "path_ref": copy.deepcopy(immutable["marker_path_ref"]),
@@ -1753,7 +1754,7 @@ def _rollback_pre_marker(
                 backup = _safe_journal_child(
                     journal_dir, str(target["backup_relative_path"])
                 )
-                content = backup.read_bytes()
+                content = local_io_path(backup).read_bytes()
                 if _sha256(content) != target["before_sha256"]:
                     raise PersistenceV2IntegrityError(f"rollback backup hash mismatch: {backup}")
                 if resolver is not None:
@@ -2600,7 +2601,7 @@ def _assert_before_image(path: Path, target: Mapping[str, Any]) -> None:
 
 def _load_staged_content(journal_dir: Path, target: Mapping[str, Any]) -> bytes:
     path = _safe_journal_child(journal_dir, str(target["staged_relative_path"]))
-    content = path.read_bytes()
+    content = local_io_path(path).read_bytes()
     if _sha256(content) != target["after_sha256"] or len(content) != target["after_size"]:
         raise PersistenceV2IntegrityError(f"staged target hash mismatch: {path}")
     return content
@@ -2623,7 +2624,7 @@ def _validate_complete_staged_journal(
             backup = _safe_journal_child(
                 staging_dir, str(target.get("backup_relative_path"))
             )
-            content = backup.read_bytes()
+            content = local_io_path(backup).read_bytes()
             if (
                 _sha256(content) != target.get("before_sha256")
                 or len(content) != target.get("before_size")
@@ -2763,7 +2764,7 @@ def _publish_immutable(
 def _validate_pending_candidate(journal_dir: Path, manifest: Mapping[str, Any]) -> None:
     candidate = manifest["immutable"]["candidate"]
     path = _safe_journal_child(journal_dir, str(candidate["journal_relative_path"]))
-    content = path.read_bytes()
+    content = local_io_path(path).read_bytes()
     if _sha256(content) != candidate["digest"] or len(content) != candidate["size"]:
         raise PersistenceV2IntegrityError("pending candidate hash mismatch")
 
@@ -2977,7 +2978,7 @@ def _write_new_file(
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(local_io_path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise PersistenceV2IntegrityError(f"cannot read JSON {path}: {exc}") from exc
     if not isinstance(payload, dict):
@@ -2994,7 +2995,7 @@ def _path_sha256(path: Path) -> str | None:
         return None
     if not path.is_file():
         return "not-a-regular-file"
-    return _sha256(path.read_bytes())
+    return _sha256(local_io_path(path).read_bytes())
 
 
 def _sha256(content: bytes) -> str:

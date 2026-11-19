@@ -92,6 +92,10 @@ def validate_managed_projection(value: Any, *, verify_hash: bool = True) -> dict
         projection = validate_schema(value, "story_project_managed_projection.schema.json")
     except SchemaValidationError as exc:
         raise ManagedBlockError("managed_projection_schema_invalid", str(exc)) from exc
+    if projection["chapter"] == 0 and not (projection["scope"] == "context"
+            and projection["parser_version"] == "reviewed_legacy_state_v1"
+            and projection["owned_fields"] == ["reviewed_state"]):
+        raise ManagedBlockError("managed_projection_schema_invalid", "only a reviewed book start may precede chapter one")
     if len(set(projection["owned_fields"])) != len(projection["owned_fields"]):
         raise ManagedBlockError("managed_projection_owned_fields_duplicate", "owned_fields must be unique")
     if set(projection.get("field_sources", {})) - set(projection["values"]):

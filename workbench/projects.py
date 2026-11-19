@@ -200,6 +200,7 @@ class ProjectRegistry:
             (staging / ".novelagent").mkdir()
             atomic_create_json(staging / ".novelagent" / "project.json", identity.to_dict())
 
+            self._initialize_staged_book(staging, identity)
             if target_was_empty:
                 canonical_target.rmdir()
                 removed_empty_target = True
@@ -310,6 +311,7 @@ class ProjectRegistry:
                     row = connection.execute(
                         "SELECT * FROM projects WHERE id = ?", (project_id,)
                     ).fetchone()
+                    self._on_new_registration(connection, row)
         except sqlite3.IntegrityError as exc:
             raise ProjectRegistryError(f"project registry conflict: {exc}") from exc
         if row is None:
@@ -339,6 +341,12 @@ class ProjectRegistry:
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )
+
+    def _initialize_staged_book(self, staging, identity):
+        pass
+
+    def _on_new_registration(self, connection, row):
+        pass
 
     def _load_registered_identity(self, root: Path):
         return load_project_identity(root)

@@ -54,8 +54,9 @@ class ReviewedIdentityMetadata:
 
 
 def validate_reviewed_identity(value: Any) -> ReviewedIdentityMetadata:
+    native = isinstance(value, dict) and isinstance(value.get("reviewed_state"), dict) and "genesis" in value["reviewed_state"]
     try:
-        validate_schema(value, "reviewed_project_identity.schema.json")
+        validate_schema(value, "new_book_identity.schema.json" if native else "reviewed_project_identity.schema.json")
     except SchemaValidationError as exc:
         raise ReviewedIdentityError(str(exc)) from exc
     value = copy.deepcopy(value)
@@ -63,8 +64,14 @@ def validate_reviewed_identity(value: Any) -> ReviewedIdentityMetadata:
     legacy_projection["schema_version"] = "2.0"
     # Reuse the exact identity/activation/legacy-authority validation; do not
     # duplicate or relax it merely to introduce a storage format boundary.
+    if native:
+        legacy_projection["story_state_mode"] = "shadow"  # Validate common metadata without claiming legacy calibration.
     legacy = validate_project_identity(legacy_projection)
     expected = {**LEGACY_AUTHORITY_PROJECTION, "minimum_writer_contract": value["authority"]["minimum_writer_contract"]}
+    if native:
+        if legacy.authority != expected or value["authority"]["minimum_writer_contract"] != REVIEWED_WRITER_CONTRACT:
+            raise ReviewedIdentityError("invalid new book authority")
+        return ReviewedIdentityMetadata(value)
     if legacy.authority != expected or legacy.story_state_mode != "strict" or legacy.activation is None:
         raise ReviewedIdentityError("reviewed identity requires persisted legacy Strict authority")
     if value["authority"]["minimum_writer_contract"] < REVIEWED_WRITER_CONTRACT:
@@ -86,7 +93,7 @@ def build_reviewed_identity(*, old_identity_bytes: bytes, baseline_document: byt
         raise ReviewedIdentityError("only a supported persisted legacy Strict identity may be upgraded")
     state = decode_document(baseline_document, book_id=old.book_id)
     confirmation = state["initial_baseline"]["confirmation"]
-    if state["head"]["kind"] != "baseline" or confirmation["old_identity_sha256"] != digest(old_identity_bytes):
+    if state["committed_through"] < 1 or state["head"]["kind"] != "baseline" or confirmation["old_identity_sha256"] != digest(old_identity_bytes):
         raise ReviewedIdentityError("upgrade requires a baseline bound to the exact old identity bytes")
     head = state["head"]
     value = old.to_dict()
@@ -242,12 +249,13 @@ def _load_verified_reviewed_identity(root: Path, *, _parent_document: bytes | No
     identity = validate_reviewed_identity(json.loads(identity_bytes.decode("utf-8-sig")))
     runtime = Path(root) / ".novelagent/runtime"
     binding = identity.payload["reviewed_state"]
-    receipt = json.loads(read_project_bytes(runtime, binding["upgrade"]["receipt_relative_path"]).decode("utf-8"))
-    targets = [t for t in receipt.get("apply_targets", []) if t.get("target_id") == "reviewed_identity"]
-    if (len(targets) != 1 or targets[0].get("sha256") != digest(identity_bytes)
-            or receipt.get("run_id") != binding["upgrade"]["run_id"]
-            or receipt.get("receipt_id") != binding["upgrade"]["receipt_id"]):
-        raise ReviewedIdentityError("identity has no matching atomic upgrade publication")
+    if "upgrade" in binding:
+        receipt = json.loads(read_project_bytes(runtime, binding["upgrade"]["receipt_relative_path"]).decode("utf-8"))
+        targets = [t for t in receipt.get("apply_targets", []) if t.get("target_id") == "reviewed_identity"]
+        if (len(targets) != 1 or targets[0].get("sha256") != digest(identity_bytes)
+                or receipt.get("run_id") != binding["upgrade"]["run_id"]
+                or receipt.get("receipt_id") != binding["upgrade"]["receipt_id"]):
+            raise ReviewedIdentityError("identity has no matching atomic upgrade publication")
     result, _ = _read_reviewed_history(root=root, book_id=identity.book_id,
         root_map={"story_project": root, "runtime": runtime}, baseline_document_sha256=binding["baseline_document_sha256"],
         _parent_document=_parent_document)

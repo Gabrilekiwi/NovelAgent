@@ -98,6 +98,9 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
     current_document = observed_document if _parent_document is None else _parent_document
     current = decode_document(current_document, book_id=book_id)
     directory = evidence.directory(runtime / RECEIPT_DIRECTORY)
+    identity_bytes = evidence.read(root, ".novelagent/project.json")
+    identity_payload = json.loads(identity_bytes.decode("utf-8-sig"))
+    native = "genesis" in identity_payload.get("reviewed_state", {})
     records = {}
     revisions = set()
     # This namespace contains only these transactions for this book. Looking
@@ -108,6 +111,13 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         if path.suffix != ".json":
             fail("reviewed_receipt_namespace_invalid")
         receipt = json.loads(raw.decode("utf-8"))
+        if native and relative == f"{RECEIPT_DIRECTORY}/start.json":
+            from core.story_project.new_book import verify_start
+            document = evidence.read(runtime, f"{STATE_DIRECTORY}/start.md")
+            value = verify_start(identity_bytes, receipt, document, book_id=book_id)
+            records[relative] = {"document": document, "value": value, "receipt": receipt, "final": {}, "prose": None}
+            revisions.add(1)
+            continue
         result = evidence.receipt(receipt, root_map=root_map)
         if not result["valid"] or receipt["schema_version"] != "2.1" or receipt["book_id"] != book_id:
             fail("reviewed_publication_invalid")
@@ -116,6 +126,8 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         _path(state_binding, "runtime", f"{STATE_DIRECTORY}/{run_id}.md")
         document = _content(state_binding, root_map, read_bytes=evidence.read)
         value = decode_document(document, book_id=book_id)
+        if value["initial_baseline"]["confirmation"]["chapter"] == 0 and not native:
+            fail("reviewed_new_book_identity_required")
         head = value["head"]
         checkpoint = source_revision_after(document, book_id=book_id)
         if any(t["target_id"] == "reviewed_identity" for t in receipt["apply_targets"]):
@@ -154,6 +166,8 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         revisions.add(value["revision"])
         records[relative] = {"document": document, "value": value, "prose": prose,
                              "receipt": receipt, "final": final}
+    if native and f"{RECEIPT_DIRECTORY}/start.json" not in records:
+        fail("reviewed_new_book_start_missing")
     if not records:
         fail("reviewed_publication_missing")
     archives = evidence.directory(runtime / STATE_DIRECTORY)
@@ -184,7 +198,8 @@ def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
         pending = before
     if len(visited) != len(records) or len(records) != current["revision"]:
         fail("reviewed_history_fork")
-    identity_payload = json.loads(evidence.read(root, ".novelagent/project.json").decode("utf-8-sig"))
+    if evidence.read(root, ".novelagent/project.json") != identity_bytes:
+        fail("reviewed_identity_changed_during_read")
     from core.story_project.reviewed_chapter_transition import CHAPTER_TRANSITION
     for item in records.values():
         if item["value"]["head"]["kind"] != "chapter":

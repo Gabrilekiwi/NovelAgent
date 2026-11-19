@@ -489,14 +489,25 @@ def _create_app_owned(
             if not parent_value:
                 raise ProjectRegistryError("target or save_location is required")
             target = Path(str(parent_value)) / _safe_directory_name(name)
-        record = projects.create_project(
+        registry = projects
+        if payload.get("writing_mode") == "review_each_chapter":
+            from workbench.reviewed_projects import NewBookRegistry
+            registry = NewBookRegistry(database, allowed_workspaces=workspaces,
+                settings=payload.get("initial_settings", ""), publication=chapter_publication)
+        record = registry.create_project(
             target,
             name=name,
             genre=str(payload.get("genre") or ""),
             synopsis=str(payload.get("synopsis") or payload.get("summary") or ""),
             language=str(payload.get("language") or "zh-CN"),
         )
-        return {"project": _catalog_project_item(record, jobs, reviewed_views, outlines)}
+        return {"project": _catalog_project_item(record, jobs, reviewed_views, outlines, reviewed=registry is not projects)}
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/author-outline")
+    def save_author_outline(project_id: str, chapter: int, payload: dict[str, Any] = Body(...)):
+        from workbench.new_book_outline import save_next_outline
+        workflow = app.state.reviewed_workflow
+        return workflow.mutate(project_id, lambda: save_next_outline(workflow.registration(project_id), chapter, payload))
 
     @app.post("/api/projects/import", status_code=201)
     async def import_project(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

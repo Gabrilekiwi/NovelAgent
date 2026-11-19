@@ -194,13 +194,18 @@ def _prepare_quality(*, trusted_context, chapter_preparation, quality_policy, ca
     # author's current seven-state baseline and continuity constraints.
     snapshot = reviewed_state_snapshot(context)
     previous = context.get("previous_chapter_context")
-    if not isinstance(previous, dict):
-        _reject("reviewed continuation requires a verified previous chapter context")
-    validate_schema(previous, "previous_chapter_context.schema.json")
-    previous_text = previous["review_tail"]["text"]
-    if (previous["chapter_index"] != trusted_context.chapter_index - 1
-            or previous["committed_verified"] is not True or not previous_text.strip()):
-        _reject("previous chapter review tail is missing, unverified or from another chapter")
+    first_chapter = (trusted_context.chapter_index == 1 and view["committed_through"] == 0
+                     and "genesis" in context["project_identity"]["reviewed_state"])
+    if first_chapter and previous is None:
+        previous_text = None  # The normal quality pipeline marks only prior-ending continuity inapplicable.
+    else:
+        if not isinstance(previous, dict):
+            _reject("reviewed continuation requires a verified previous chapter context")
+        validate_schema(previous, "previous_chapter_context.schema.json")
+        previous_text = previous["review_tail"]["text"]
+        if (previous["chapter_index"] != trusted_context.chapter_index - 1
+                or previous["committed_verified"] is not True or not previous_text.strip()):
+            _reject("previous chapter review tail is missing, unverified or from another chapter")
 
     blueprint = candidate_evidence["chapter_blueprint"] if candidate_evidence is not None else None
     coverage = build_text_blueprint_coverage(blueprint, final_prose) if blueprint is not None else None
@@ -259,8 +264,8 @@ def _prepare_quality(*, trusted_context, chapter_preparation, quality_policy, ca
             "request_sha256": prepared["request_sha256"],
             "idempotency_scope_sha256": prepared["idempotency_scope_sha256"],
             "quality_policy": policy.to_dict(), "snapshot_sha256": _hash(snapshot),
-            "previous_chapter_context_sha256": _hash(previous),
-            "previous_review_tail_sha256": _text_hash(previous_text),
+            "previous_chapter_context_sha256": _hash(previous) if previous is not None else None,
+            "previous_review_tail_sha256": _text_hash(previous_text) if previous_text is not None else None,
             "rule_pack_sha256": _hash(rule_pack),
             "state_after_sha256": _hash(fact_preparation["state_after"]),
         },

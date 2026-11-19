@@ -101,19 +101,20 @@ def verify_archived_reviewed_state(package, *, project_id, book_id):
             raise ReviewedIdentityError('归档 reviewed 身份属于其他作品。')
         binding = identity.payload['reviewed_state']
         runtime = reader.root/'.novelagent/runtime'
-        receipt = json.loads(reader.read(runtime,binding['upgrade']['receipt_relative_path']))
-        targets = [t for t in receipt.get('apply_targets',[]) if t.get('target_id') == 'reviewed_identity']
-        if (len(targets) != 1 or targets[0].get('sha256') != digest(raw)
-                or receipt.get('run_id') != binding['upgrade']['run_id']
-                or receipt.get('receipt_id') != binding['upgrade']['receipt_id']):
-            raise ReviewedIdentityError('归档身份缺少对应的原子升级凭据。')
+        if "upgrade" in binding:
+            receipt = json.loads(reader.read(runtime,binding['upgrade']['receipt_relative_path']))
+            targets = [t for t in receipt.get('apply_targets',[]) if t.get('target_id') == 'reviewed_identity']
+            if (len(targets) != 1 or targets[0].get('sha256') != digest(raw)
+                    or receipt.get('run_id') != binding['upgrade']['run_id']
+                    or receipt.get('receipt_id') != binding['upgrade']['receipt_id']):
+                raise ReviewedIdentityError('归档身份缺少对应的原子升级凭据。')
         roots = {'story_project':reader.root,'runtime':runtime}
         history,records = _read_reviewed_history(root=reader.root,book_id=book_id,root_map=roots,
             baseline_document_sha256=binding['baseline_document_sha256'],_evidence=reader)
         result = {'schema_version':'archived_reviewed_state_v1','archive_id':view.verified['archive_id'],
             'archive_receipt_sha256':view.verified['receipt_sha256'],'project_id':project_id,'book_id':book_id,
             'identity':identity.to_dict(),'history':history,'persistence_history_sha256':reader.persistence['history_sha256'],
-            'reviewed_state_verified':True,'coverage':'reviewed_identity_upgrade_and_typed_chapter_chain',
+            'reviewed_state_verified':True,'coverage':('reviewed_new_book_start_and_typed_chapter_chain' if 'genesis' in binding else 'reviewed_identity_upgrade_and_typed_chapter_chain'),
             'retained_receipts':[{'path':name,'sha256':item['receipt']['receipt_hash']} for name,item in sorted(records.items())],
             'chapter_publications':[{'receipt_hash':item['receipt']['receipt_hash'],
                 'chapter':item['value']['committed_through'],'prose_hash':digest(item['prose'])}

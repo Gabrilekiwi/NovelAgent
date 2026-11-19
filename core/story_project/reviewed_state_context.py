@@ -73,7 +73,7 @@ def validated_reviewed_state_context(context: dict | None) -> dict | None:
         raise ReviewedStateContextError("reviewed runtime view requires the same persisted legacy Strict identity")
     chapter = value["chapter_index"]
     if (type(chapter) is not int or type(value["committed_through"]) is not int
-            or value["committed_through"] < 1 or chapter != value["committed_through"] + 1
+            or value["committed_through"] < (0 if "genesis" in identity.get("reviewed_state", {}) else 1) or chapter != value["committed_through"] + 1
             or any(item != chapter for item in (context.get("chapter_index"),
                                                 semantic.get("chapter_index"), read_set.get("chapter_index")))):
         raise ReviewedStateContextError("reviewed runtime view is bound to another chapter")

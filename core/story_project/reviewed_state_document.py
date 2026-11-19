@@ -191,7 +191,11 @@ def _verify_reference_content(ref, raw: bytes):
 
 def baseline_request(*, book_id: str, chapter: int, state: dict, sources: dict,
                      old_identity_sha256: str, static_references: list[dict]) -> dict:
-    _positive(chapter)
+    genesis = type(chapter) is int and chapter == 0
+    if not genesis:
+        _positive(chapter)
+    elif state != empty_authoritative_state():
+        fail("reviewed_new_book_requires_empty_state")
     _sha(old_identity_sha256)
     if not isinstance(book_id, str) or not book_id.strip():
         fail("reviewed_book_id_invalid")
@@ -200,7 +204,7 @@ def baseline_request(*, book_id: str, chapter: int, state: dict, sources: dict,
     _references(static_references)
     return {"book_id": book_id, "chapter": chapter, "state_sha256": digest(state),
             "source_sha256": sources["sha256"], "static_references_sha256": digest(static_references),
-            "old_identity_sha256": old_identity_sha256, "decision": "accept_baseline_as_of_chapter"}
+            "old_identity_sha256": old_identity_sha256, "decision": "confirm_new_book_start" if genesis else "accept_baseline_as_of_chapter"}
 
 
 def publication_head(*, run_id: str, kind: str, request_sha256: str,
@@ -275,7 +279,8 @@ def decode_document(document: bytes, *, book_id: str) -> dict:
     if value["format"] != FORMAT:
         fail("reviewed_format_invalid")
     _positive(value["revision"])
-    _positive(value["committed_through"])
+    if type(value["committed_through"]) is not int or value["committed_through"] < 0:
+        fail("reviewed_revision_or_chapter_invalid")
     _state(value["current_state"])
     _sources(value["source_revision"])
     _references(value["static_references"])

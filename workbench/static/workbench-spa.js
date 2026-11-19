@@ -2410,7 +2410,7 @@
           nextStep.href = projectHash(covered ? "production" : "outlines");
           nextStep.textContent = covered ? "去生产页试写" : "准备第一章章纲";
         }
-        unavailable.hidden = false;
+        unavailable.hidden = errorCode === "new_book_outline_needed";
         unavailable.classList.toggle("notice-danger", !alreadyWritten && !previousMissing && !firstChapter);
         unavailable.classList.toggle("notice-warning", previousMissing || firstChapter);
         const heading = unavailable.querySelector("strong");
@@ -2496,6 +2496,24 @@
     const number = Number(chapter.number ?? chapter.chapter ?? chapter.chapter_index ?? 0);
     const title = chapter.chapter_card?.blueprint?.title || chapter.title || "未命名章节";
     const hasProse = chapter.has_prose ?? Boolean(chapter.content || chapter.prose || chapter.current_prose || chapter.formal_prose);
+    const memory = chapter.chapter_memory, panel = one("[data-next-memory]");
+    if (panel) {
+      panel.hidden = !memory;
+      for (const [selector, lines, empty] of [
+        ["[data-next-settings]", memory?.settings, "没有填写开篇设定。"],
+        ["[data-next-facts]", memory?.previous_facts?.map(f => `${f.summary}　正文：${f.quotes.map(q => `“${q}”`).join("；")}`),
+          number === 1 ? "这是第一章，没有前章事实。" : "上一章没有接受的事实。"]]) {
+        const list = one(selector, panel); clear(list);
+        for (const line of lines?.length ? lines : [empty]) list.append(el("li", "", line));
+      }
+    }
+    const outlineForm = one("[data-next-author-outline]");
+    if (outlineForm) {
+      const scope = `${state.projectId}:${number}`;
+      if (outlineForm.dataset.scope !== scope) { outlineForm.reset(); one("[data-outline-start-error]").textContent = ""; }
+      outlineForm.dataset.scope = scope;
+      outlineForm.hidden = !(state.project?.capabilities?.new_book_outline && number === state.project.next_chapter && !chapter.has_outline && !hasProse);
+    }
     state.chapterHasFormalProse = Boolean(hasProse);
     state.chapterRecoveryRequired = chapter.reviewed_status?.state === "needs_recovery";
     setText("[data-chapter-kicker]", `第 ${number} 章`);
@@ -2594,6 +2612,19 @@
     return detail.payload?.candidate || detail.payload;
   };
 
+  one("[data-next-author-outline]")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget, project = state.projectId, number = Number(state.route.chapter);
+    const button = form.querySelector("button"), error = one("[data-outline-start-error]");
+    button.disabled = true; error.textContent = "";
+    const data = Object.fromEntries(new FormData(form));
+    data.required_beats = data.required_beats.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    try {
+      await api(`/api/projects/${encodeURIComponent(project)}/chapters/${number}/author-outline`, {method:"POST", json:data});
+      if (state.projectId === project && Number(state.route?.chapter) === number) await loadChapter(number);
+    } catch (e) { error.textContent = UI.errorMessage(e.payload, e.status); }
+    finally { button.disabled = false; }
+  });
   const loadChapter = async (number, expectedRouteRevision = null) => {
     const projectId = state.projectId;
     const chapterNumber = Number(number);
@@ -2607,6 +2638,11 @@
       const chapters = arrayFrom(payload, "items", "chapters");
       chapter = chapters.find((item) => Number(item.number ?? item.chapter ?? item.chapter_index) === chapterNumber);
       if (!chapter) throw error;
+    }
+    if (state.project?.capabilities?.new_book_outline && !chapter.has_outline && !chapter.has_prose && chapterNumber === state.project.next_chapter) {
+      if (state.projectId === projectId && state.route?.area === "chapter" && Number(state.route.chapter) === chapterNumber)
+        renderChapter({...chapter, chapter_card_error_code:"new_book_outline_needed", chapter_card_error:"请先填写上方的本章章纲。"});
+      return;
     }
     if (chapter.reviewed_format && (chapter.reviewed_status?.state === "needs_recovery" || chapter.has_prose)) {
       if (state.projectId === projectId && state.route?.area === "chapter" && Number(state.route.chapter) === chapterNumber) {

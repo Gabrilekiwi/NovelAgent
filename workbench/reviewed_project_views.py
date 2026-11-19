@@ -67,11 +67,11 @@ class ReviewedProjectViews:
             "synopsis":record.metadata.get("synopsis") or "", "summary":record.metadata.get("synopsis") or "",
             "chapter_count":count, "last_chapter":count, "next_chapter":inspection["next_chapter"],
             "story_state_mode":"strict", "reviewed_format":True, "experimental":False,
-            "capabilities":{"author_review":True, "automatic_generation":False, "outline_planning":False,
+            "capabilities":{"new_book_outline":ready and "genesis" in inspection["verified"]["identity"]["reviewed_state"], "author_review":True, "automatic_generation":False, "outline_planning":False,
                 "prose_amendment":False, "job_history":False},
             "status":"idle" if ready else "needs_recovery", "status_label":"已审核事实" if ready else "需要处理",
             "active_job":None, "pending_count":0 if ready else 1, "has_attention":not ready,
-            "progress_label":f"已写至第 {count} 章" if count is not None else "待核验章节进度",
+            "progress_label":("准备第一章" if count == 0 else f"已写至第 {count} 章") if count is not None else "待核验章节进度",
             "reviewed_status":{k:v for k,v in inspection.items() if k != "verified"}}
 
     def detail(self, record):
@@ -142,7 +142,14 @@ class ReviewedProjectViews:
         published = publications.get(chapter)
         if published and (raw is None or digest(raw) != published["prose_sha256"]):
             raise ChapterCommitRecoveryRequired("published prose changed during display")
-        return {"project":{"id":record.id,"title":record.name}, "chapter":chapter, "title":_display_title(record.root,chapter,outline,prose),
+        memory = None
+        verified = inspection["verified"]
+        if (inspection["state"] == "ready" and chapter == inspection["next_chapter"]
+                and "genesis" in verified["identity"]["reviewed_state"]):
+            history = verified["history"]
+            memory = {"settings": [r["text"] for r in history["value"]["static_references"]],
+                      "previous_facts": history.get("previous_chapter_facts", {}).get("facts", [])}
+        return {"chapter_memory":memory, "project":{"id":record.id,"title":record.name}, "chapter":chapter, "title":_display_title(record.root,chapter,outline,prose),
             "reviewed_format":True, "has_prose":raw is not None, "has_outline":outline.path is not None and not outline.conflict,
             "status":"committed" if raw is not None else "draft", "current_prose":None if raw is None else raw.decode("utf-8"),
             "current_sha256":None if raw is None else digest(raw), "publication":published,
