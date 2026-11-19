@@ -2208,6 +2208,26 @@ def test_validated_manual_draft_unblocks_resume_after_empty_pre_provider_rerun(
     supervisor._run_recovery(claimed)
 
     assert store.get_draft(draft.id).state == "validated"
+    # A legitimate empty retry is harmless, including after copying the files
+    # in a different order. A new paid draft in the middle is not harmless.
+    for path in run_dir.glob("chapter_*.json"):
+        os.utime(path, ns=(1_700_000_000_000_000_000,) * 2)
+    assert store.resume_ready(parent.id) is True
+    intervening = json.loads((run_dir / f"{source_run_id}.json").read_text(encoding="utf-8"))
+    intervening_id = "chapter_1_intervening_paid"
+    intervening["run"].update(id=intervening_id, finished_at="2026-11-11T00:30:00+00:00")
+    intervening["chapter"] = "a different paid draft"
+    intervening_file = run_dir / f"{intervening_id}.json"
+    intervening_file.write_text(json.dumps(intervening), encoding="utf-8")
+    assert store.resume_ready(parent.id) is False
+    with pytest.raises(JobError):
+        store.resume(parent.id, confirmed=True)
+    intervening_file.unlink()
+    source_file = run_dir / f"{source_run_id}.json"
+    missing = source_file.with_suffix(".held")
+    source_file.rename(missing)
+    assert store.resume_ready(parent.id) is False
+    missing.rename(source_file)
     assert store.resume_ready(parent.id) is True
     assert store.resume(parent.id, confirmed=True).state == "queued"
 

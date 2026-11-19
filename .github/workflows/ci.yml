@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# Only the latest revision of a given branch or PR needs the long regression run.
+concurrency:
+  group: novelagent-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Tests (${{ matrix.os }}, group ${{ matrix.group }})
@@ -22,11 +27,11 @@ jobs:
       PYTHONUTF8: "1"
       PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Historical replay verifies the original blob, not a copy in HEAD.
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: python scripts/setup_environment.py

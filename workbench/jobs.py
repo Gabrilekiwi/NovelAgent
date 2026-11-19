@@ -4165,47 +4165,53 @@ def _strict_chapter_run_artifact_fingerprints(
     return result
 
 
-def _latest_strict_chapter_run_id(
+def _eligible_recovery_run_ids(
     project_root: Path,
     chapter: int,
-) -> tuple[bool, str | None]:
-    """Return the newest validated run id, preserving invalid/absent distinction."""
+) -> tuple[str, ...] | None:
+    """Newest first through the first nonempty run; None means insufficient proof."""
 
     root = Path(project_root).resolve(strict=True)
     fingerprints = _strict_chapter_run_artifact_fingerprints(root, chapter)
     if fingerprints is None:
-        return False, None
+        return None
     if not fingerprints:
-        return True, None
-    candidates: list[tuple[int, datetime | None, str]] = []
+        return ()
+    candidates: list[tuple[datetime | None, str, bool]] = []
     for relative, expected_sha256 in fingerprints.items():
         try:
             path = (root / relative).resolve(strict=True)
             path.relative_to(root)
             if _is_reparse_or_link(path) or not path.is_file():
-                return False, None
+                return None
             raw = path.read_bytes()
             if hashlib.sha256(raw).hexdigest() != expected_sha256:
-                return False, None
+                return None
             value = json.loads(raw.decode("utf-8"))
             run = value.get("run") if isinstance(value, Mapping) else None
             run_id = str(run.get("id") or "").strip() if isinstance(run, Mapping) else ""
-            if not run_id or int(run.get("chapter_index") or 0) != int(chapter):
-                return False, None
+            if path.name != f"{run_id}.json" or not run_id or int(run.get("chapter_index") or 0) != int(chapter):
+                return None
             finished = run.get("finished_at")
             timestamp = datetime.fromisoformat(finished) if finished is not None else None
             if timestamp is not None and timestamp.utcoffset() is None:
-                return False, None
-            candidates.append((path.stat().st_mtime_ns, timestamp, run_id))
+                return None
+            candidates.append((timestamp, run_id, _empty_pre_provider_context_failure(value, chapter=chapter)))
         except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
-            return False, None
-    # A restore/copy can give several records the same filesystem timestamp.
-    # Prefer recorded chronology for complete histories. For legacy manifests
-    # use a unique file time only; a filename cannot prove which draft is newer.
-    position = 1 if all(item[1] is not None for item in candidates) else 0
-    newest = max(item[position] for item in candidates)
-    ids = [item[2] for item in candidates if item[position] == newest]
-    return (True, ids[0]) if len(ids) == 1 else (False, None)
+            return None
+    if len(candidates) == 1:
+        return (candidates[0][1],)
+    # Copy time and filename do not establish order. An older source is usable
+    # only when *every* newer run is proven to have stopped before model use.
+    times = {timestamp for timestamp, _, _ in candidates}
+    if None in times or len(times) != len(candidates):
+        return None
+    eligible = []
+    for _, run_id, empty in sorted(candidates, reverse=True):
+        eligible.append(run_id)
+        if not empty:
+            break
+    return tuple(eligible)
 
 
 def _strict_model_call_artifact_fingerprints(
@@ -8320,7 +8326,7 @@ def _manual_recovery_draft_matches(
     project_root: Path,
     project_id: str,
     chapter: int,
-    latest_run_id: str | None,
+    eligible_run_ids: tuple[str, ...],
 ) -> bool:
     """Verify the exact validated author draft behind a manual recovery receipt."""
 
@@ -8357,12 +8363,7 @@ def _manual_recovery_draft_matches(
     ):
         return False
     draft_source_run_id = str(draft["source_run_id"] or "").strip() or None
-    if not _source_run_covers_empty_pre_provider_latest(
-        project_root,
-        chapter=chapter,
-        latest_run_id=latest_run_id,
-        source_run_id=draft_source_run_id,
-    ):
+    if draft_source_run_id not in (eligible_run_ids or (None,)):
         return False
     try:
         archive_path = Path(manual_path_value).resolve(strict=True)
@@ -8453,44 +8454,6 @@ def _empty_pre_provider_context_failure(value: Mapping[str, Any], *, chapter: in
     return True
 
 
-def _latest_run_is_empty_pre_provider_failure(project_root: Path, chapter: int, expected_run_id: str) -> bool:
-    try:
-        run_manifest_ok, latest_run_id = _latest_strict_chapter_run_id(
-            project_root,
-            int(chapter),
-        )
-    except (OSError, RuntimeError, ValueError, TypeError):
-        return False
-    if not run_manifest_ok or latest_run_id != expected_run_id:
-        return False
-    try:
-        run_path = _safe_project_file(
-            Path(project_root),
-            Path(project_root) / ".novelagent" / "runtime" / "runs" / f"{latest_run_id}.json",
-        )
-        value = json.loads(run_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
-        return False
-    return isinstance(value, Mapping) and _empty_pre_provider_context_failure(
-        value,
-        chapter=int(chapter),
-    )
-
-
-def _source_run_covers_empty_pre_provider_latest(
-    project_root: Path,
-    *,
-    chapter: int,
-    latest_run_id: str | None,
-    source_run_id: str | None,
-) -> bool:
-    if source_run_id == latest_run_id:
-        return True
-    if not source_run_id or not latest_run_id:
-        return False
-    return _latest_run_is_empty_pre_provider_failure(project_root, int(chapter), latest_run_id)
-
-
 def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
     if parent["execution_contract"] != CURRENT_JOB_EXECUTION_CONTRACT:
         return False
@@ -8520,14 +8483,15 @@ def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
     if parent_updated_at is None:
         return False
     try:
-        run_manifest_ok, latest_run_id = _latest_strict_chapter_run_id(
+        eligible_run_ids = _eligible_recovery_run_ids(
             project_root,
             int(parent["next_chapter"]),
         )
     except (OSError, RuntimeError, ValueError, TypeError):
         return False
-    if not run_manifest_ok:
+    if eligible_run_ids is None:
         return False
+    latest_run_id = eligible_run_ids[0] if eligible_run_ids else None
     for candidate in candidates:
         if candidate["execution_contract"] != parent["execution_contract"]:
             continue
@@ -8569,19 +8533,9 @@ def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
             if checkpoint_run_id is not None or configured_run_id is not None:
                 continue
         else:
-            if not _source_run_covers_empty_pre_provider_latest(
-                project_root,
-                chapter=int(parent["next_chapter"]),
-                latest_run_id=latest_run_id,
-                source_run_id=checkpoint_run_id,
-            ):
+            if checkpoint_run_id not in eligible_run_ids:
                 continue
-            if "source_run_id" in config and not _source_run_covers_empty_pre_provider_latest(
-                project_root,
-                chapter=int(parent["next_chapter"]),
-                latest_run_id=latest_run_id,
-                source_run_id=configured_run_id,
-            ):
+            if "source_run_id" in config and configured_run_id not in eligible_run_ids:
                 continue
         complete_draft = payload.get("complete_draft")
         if payload.get("reason") == "manual_repaired_draft_provided":
@@ -8593,7 +8547,7 @@ def _has_completed_recovery_evidence(connection: Any, parent: Any) -> bool:
                 project_root=project_root,
                 project_id=str(parent["project_id"]),
                 chapter=int(parent["next_chapter"]),
-                latest_run_id=latest_run_id,
+                eligible_run_ids=eligible_run_ids,
             ):
                 continue
         elif isinstance(complete_draft, dict):
