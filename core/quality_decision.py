@@ -124,7 +124,8 @@ def build_quality_decision(
         if isinstance(rule_validation_report, dict):
             review_producers.add("narrative_rules")
             executed_producers.add("narrative_rules")
-            candidates.extend(_rule_report_candidates(rule_validation_report, chapter_index=chapter_index))
+            candidates.extend(_rule_report_candidates(rule_validation_report, chapter_index=chapter_index,
+                chapter_quality_report=chapter_quality_report))
         upstream_added = False
         for decision in upstream_decisions:
             if not isinstance(decision, dict):
@@ -311,12 +312,25 @@ def _quality_report_candidates(report: dict[str, Any], *, chapter_index: int | N
     return result
 
 
-def _rule_report_candidates(report: dict[str, Any], *, chapter_index: int | None) -> list[dict[str, Any]]:
+def _rule_report_candidates(report: dict[str, Any], *, chapter_index: int | None,
+                            chapter_quality_report: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for violation in report.get("violations") or []:
         if not isinstance(violation, dict):
             continue
         code = str(violation.get("rule_code") or "narrative_rule")
+        evidence = _evidence({"quality_check_codes": violation.get("quality_check_codes") or []},
+                             message=violation.get("message"))
+        # Rule findings map explicitly to the evaluated checks. Carry only
+        # those producers' opt-in source excerpts, never a rule explanation
+        # or generated summary. Final reviewed disposition revalidates ranges.
+        for check in (chapter_quality_report or {}).get("checks") or []:
+            if (not isinstance(check, dict) or check.get("status") not in {"warning", "fail"}
+                    or check.get("code") not in (violation.get("quality_check_codes") or [])):
+                continue
+            excerpt = (check.get("evidence") or {}).get("prose_excerpt")
+            if excerpt is not None:
+                evidence.extend(item for item in _evidence({"prose_excerpt": excerpt}) if item not in evidence)
         result.append(
             _candidate(
                 producer="narrative_rules",
@@ -326,10 +340,7 @@ def _rule_report_candidates(report: dict[str, Any], *, chapter_index: int | None
                 subject="chapter",
                 predicate=_code_family(code),
                 time_range=_chapter_time_range(chapter_index),
-                evidence=_evidence(
-                    {"quality_check_codes": violation.get("quality_check_codes") or []},
-                    message=violation.get("message"),
-                ),
+                evidence=evidence,
                 source_artifact="rule_validation_report",
                 repair_action="manual_review",
                 repair_parameters={},

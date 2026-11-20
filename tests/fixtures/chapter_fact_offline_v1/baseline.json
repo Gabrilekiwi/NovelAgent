@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "source_precedence": [
+    "story_project_standard",
+    "chapter_event",
+    "model_inference"
+  ],
+  "characters": {
+    "char_lin_che": {
+      "character_id": "char_lin_che",
+      "canonical_name": "林澈",
+      "aliases": [
+        "林澈"
+      ],
+      "current_goal": "赶路"
+    },
+    "char_zhou_lan": {
+      "character_id": "char_zhou_lan",
+      "canonical_name": "周岚",
+      "aliases": [
+        "周岚"
+      ]
+    }
+  },
+  "relationships": {
+    "rel_lin_zhou": {
+      "relationship_id": "rel_lin_zhou",
+      "source_character_id": "char_lin_che",
+      "target_character_id": "char_zhou_lan",
+      "type": "teammate",
+      "trust": "谨慎"
+    }
+  },
+  "roster": {
+    "roster_station_guards": {
+      "roster_id": "roster_station_guards",
+      "name": "旧城站守卫队",
+      "members": [
+        {
+          "member_id": "char_zhou_lan"
+        }
+      ],
+      "unresolved_count": 0,
+      "declared_count": 1
+    }
+  },
+  "numeric_counters": {
+    "alert_level": {
+      "counter_id": "alert_level",
+      "current_value": 0,
+      "minimum": 0,
+      "maximum": 100
+    }
+  },
+  "inventory": {
+    "beacon_ledger": {
+      "inventory_id": "beacon_ledger",
+      "owner_id": "char_lin_che",
+      "item_id": "item_beacon",
+      "quantity": 0
+    }
+  },
+  "locations": {
+    "char_lin_che": {
+      "entity_id": "char_lin_che",
+      "location_id": "location_warehouse"
+    },
+    "char_zhou_lan": {
+      "entity_id": "char_zhou_lan",
+      "location_id": "location_old_station"
+    }
+  },
+  "events": {}
+}

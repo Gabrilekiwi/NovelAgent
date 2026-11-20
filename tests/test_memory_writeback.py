@@ -18,6 +18,7 @@ from core.state.memory_writer import (
     validate_memory_writeback_result,
     write_memory_updates,
 )
+from modules.chapter_generator import generate_chapter
 
 
 class MemoryWritebackTest(unittest.TestCase):
@@ -505,7 +506,9 @@ class MemoryWritebackTest(unittest.TestCase):
 
         def generator(input_pack: str) -> str:
             captured_input.append(input_pack)
-            return "At the shelter, danger forced a serum choice and created conflict with a visible cost."
+            # Keep the outbox round trip focused on memory reuse: this existing
+            # offline sample also carries the location/bridge the outbox restores.
+            return generate_chapter(input_pack, dry_run=True)
 
         result = AgentExecutor(
             snapshot_path=second_snapshot_path,

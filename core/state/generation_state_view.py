@@ -675,6 +675,53 @@ def filter_scene_state_for_generation(
     return projected
 
 
+
+def project_bookkeeping_for_generation(
+    view: dict[str, Any],
+    *,
+    project_profile: Mapping[str, Any] | None = None,
+    spatial_state: Mapping[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Project growing Project Profile and Spatial State onto one working set.
+
+    These two living documents accumulate every known name and space as the
+    book advances. Scene generation already has a Generation State View; the
+    complete ledgers must not stay required-complete under the per-section
+    cap. The projection keeps language, working-set character names, and
+    only the spaces, positions, and transitions that belong to that set.
+    """
+
+    checked = _validated_view(view)
+    current = checked["current_state"]
+    relevant_location_ids = _working_location_ids(checked)
+    profile_source = project_profile if isinstance(project_profile, Mapping) else {}
+    spatial_source = spatial_state if isinstance(spatial_state, Mapping) else {}
+    return {
+        "project_profile": {
+            "language": str(
+                profile_source.get("language")
+                or profile_source.get("language_code")
+                or ""
+            ).strip(),
+            "known_characters": _working_character_names(
+                current["characters"],
+                continuity=checked["continuity"],
+            ),
+            "known_locations": sorted(relevant_location_ids),
+        },
+        "spatial_state": _project_spatial_state(
+            dict(spatial_source),
+            character_ids=set(current["characters"]),
+            location_entity_ids={
+                entity_id
+                for entity_id, record in current["locations"].items()
+                if isinstance(record, dict) and _location_is_confirmed(record)
+            },
+            relevant_location_ids=relevant_location_ids,
+        ),
+    }
+
+
 def project_snapshot_for_generation(
     snapshot: dict[str, Any],
     view: dict[str, Any],
@@ -704,15 +751,7 @@ def project_snapshot_for_generation(
                 record["current_location"] = current_location
         characters[character_id] = record
 
-    relevant_location_ids = {
-        str(record.get("location_id") or "").strip()
-        for record in current["locations"].values()
-        if isinstance(record, dict)
-    }
-    relevant_location_ids.add(
-        str(checked["continuity"].get("last_scene_location") or "").strip()
-    )
-    relevant_location_ids.discard("")
+    relevant_location_ids = _working_location_ids(checked)
     world_state_source = (
         aligned.get("world_state")
         if isinstance(aligned.get("world_state"), dict)
@@ -730,38 +769,21 @@ def project_snapshot_for_generation(
         },
     }
 
-    spatial_source = (
-        aligned.get("spatial_state")
-        if isinstance(aligned.get("spatial_state"), dict)
-        else {}
-    )
-    spatial_state = _project_spatial_state(
-        spatial_source,
-        character_ids=set(current["characters"]),
-        location_entity_ids={
-            entity_id
-            for entity_id, record in current["locations"].items()
-            if isinstance(record, dict) and _location_is_confirmed(record)
-        },
-        relevant_location_ids=relevant_location_ids,
-    )
-    project_profile_source = (
-        snapshot.get("project_profile")
-        if isinstance(snapshot.get("project_profile"), dict)
-        else {}
-    )
-    project_profile = {
-        "language": str(
-            project_profile_source.get("language")
-            or project_profile_source.get("language_code")
-            or ""
-        ).strip(),
-        "known_characters": _working_character_names(
-            current["characters"],
-            continuity=checked["continuity"],
+    bookkeeping = project_bookkeeping_for_generation(
+        checked,
+        project_profile=(
+            snapshot.get("project_profile")
+            if isinstance(snapshot.get("project_profile"), dict)
+            else {}
         ),
-        "known_locations": sorted(relevant_location_ids),
-    }
+        spatial_state=(
+            aligned.get("spatial_state")
+            if isinstance(aligned.get("spatial_state"), dict)
+            else {}
+        ),
+    )
+    project_profile = bookkeeping["project_profile"]
+    spatial_state = bookkeeping["spatial_state"]
     timeline = snapshot.get("timeline")
     timeline_items = timeline if isinstance(timeline, list) else []
     story_project = (
@@ -1459,6 +1481,21 @@ def _bounded_world_scalars(value: dict[str, Any]) -> dict[str, Any]:
     return projected
 
 
+
+def _working_location_ids(checked: dict[str, Any]) -> set[str]:
+    current = checked["current_state"]
+    relevant_location_ids = {
+        str(record.get("location_id") or "").strip()
+        for record in current["locations"].values()
+        if isinstance(record, dict)
+    }
+    relevant_location_ids.add(
+        str(checked["continuity"].get("last_scene_location") or "").strip()
+    )
+    relevant_location_ids.discard("")
+    return relevant_location_ids
+
+
 def _project_spatial_state(
     value: dict[str, Any],
     *,
@@ -1504,7 +1541,7 @@ def _project_spatial_state(
         "blocked_paths": blocked_paths,
         "last_transition": (
             copy.deepcopy(last_transition)
-            if _connection_within_locations(
+            if _last_transition_within_locations(
                 last_transition,
                 relevant_location_ids=relevant_location_ids,
             )
@@ -1525,6 +1562,34 @@ def _connection_within_locations(
         for key in ("from", "to", "source", "target")
         if str(value.get(key) or "").strip()
     }
+    return bool(endpoints) and endpoints.issubset(relevant_location_ids)
+
+
+def _last_transition_within_locations(
+    value: Any,
+    *,
+    relevant_location_ids: set[str],
+) -> bool:
+    """Keep a last transition whose location endpoints sit in the working set.
+
+    Connection records use `source`/`target` as endpoints. Some Spatial
+    State ledgers instead store provenance in `source` (for example
+    `chapter_analysis`) and only `to` as the destination. Treat
+    `source`/`target` as locations only when they already belong to the
+    working set, so a provenance tag cannot drop a relevant arrival.
+    """
+
+    if not isinstance(value, dict):
+        return False
+    endpoints = {
+        str(value.get(key) or "").strip()
+        for key in ("from", "to")
+        if str(value.get(key) or "").strip()
+    }
+    for key in ("source", "target"):
+        item = str(value.get(key) or "").strip()
+        if item and item in relevant_location_ids:
+            endpoints.add(item)
     return bool(endpoints) and endpoints.issubset(relevant_location_ids)
 
 
@@ -1639,6 +1704,7 @@ __all__ = [
     "build_generation_state_view",
     "filter_scene_state_for_generation",
     "generation_state_view_from_markdown",
+    "project_bookkeeping_for_generation",
     "project_snapshot_for_generation",
     "scene_generation_state_reference_from_markdown",
     "validate_plan_generation_state_projection",

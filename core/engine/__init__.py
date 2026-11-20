@@ -4,6 +4,11 @@ from typing import Any
 
 __all__ = [
     "AgentExecutor",
+    "ChapterCandidateExecutor",
+    "ChapterCandidateContextBuilder",
+    "ChapterCandidateStore",
+    "ChapterFactExtractionExecutor",
+    "ChapterFactExtractionStore",
     "DeliveryCoordinator",
     "PersistenceCoordinator",
     "PersistenceBackend",
@@ -27,6 +32,30 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
+    if name in {
+        "ChapterCandidateContextBuilder",
+        "ChapterCandidateExecutor",
+        "ChapterCandidateStore",
+        "ChapterFactExtractionExecutor",
+        "ChapterFactExtractionStore",
+    }:
+        from core.engine.chapter_candidate_context import ChapterCandidateContextBuilder
+        from core.engine.chapter_candidate import (
+            ChapterCandidateExecutor,
+            ChapterCandidateStore,
+        )
+        from core.engine.chapter_fact_extraction import (
+            ChapterFactExtractionExecutor,
+            ChapterFactExtractionStore,
+        )
+
+        return {
+            "ChapterCandidateContextBuilder": ChapterCandidateContextBuilder,
+            "ChapterCandidateExecutor": ChapterCandidateExecutor,
+            "ChapterCandidateStore": ChapterCandidateStore,
+            "ChapterFactExtractionExecutor": ChapterFactExtractionExecutor,
+            "ChapterFactExtractionStore": ChapterFactExtractionStore,
+        }[name]
     if name in {"AgentExecutor", "run_loop", "run_once"}:
         from core.engine.executor import AgentExecutor, run_loop, run_once
 

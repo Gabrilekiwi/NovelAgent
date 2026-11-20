@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterFactProposal",
+  "type": "object",
+  "required": ["schema_version", "facts"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["local_key", "kind", "summary", "evidence_quotes", "proposal"],
+        "properties": {
+          "local_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "event",
+              "character_state",
+              "relationship",
+              "roster",
+              "location",
+              "inventory",
+              "counter"
+            ]
+          },
+          "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+          "evidence_quotes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+          },
+          "proposal": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

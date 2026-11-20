@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterCandidateRecord",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "record_type",
+    "candidate_id",
+    "book_id",
+    "chapter_index",
+    "status",
+    "started_at",
+    "finished_at",
+    "intent_hash",
+    "request_sha256",
+    "input",
+    "authority",
+    "source_verification",
+    "execution",
+    "prose",
+    "evidence",
+    "error",
+    "record_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.1", "1.2"]},
+    "record_type": {"type": "string", "enum": ["chapter_candidate_record"]},
+    "candidate_id": {"type": "string", "pattern": "^candidate_[0-9a-f]{40}$"},
+    "book_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "status": {
+      "type": "string",
+      "enum": ["completed", "stale", "failed", "provider_uncertain", "cancelled"]
+    },
+    "started_at": {"type": "string", "minLength": 1},
+    "finished_at": {"type": "string", "minLength": 1},
+    "intent_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "input": {"type": "object"},
+    "authority": {"type": "object"},
+    "source_verification": {
+      "type": "object",
+      "required": ["before", "after"],
+      "properties": {
+        "before": {"type": "object"},
+        "after": {"type": ["object", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "execution": {"type": "object"},
+    "prose": {
+      "type": "object",
+      "required": ["artifact_ref", "sha256", "chars"],
+      "properties": {
+        "artifact_ref": {"type": ["string", "null"]},
+        "sha256": {"type": ["string", "null"]},
+        "chars": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "intent_hashes",
+        "receipt_hashes",
+        "receipt_statuses",
+        "unresolved_calls",
+        "selected_response",
+        "budget"
+      ],
+      "properties": {
+        "intent_hashes": {"type": "array", "items": {"type": "string"}},
+        "receipt_hashes": {"type": "array", "items": {"type": "string"}},
+        "receipt_statuses": {"type": "array", "items": {"type": "string"}},
+        "unresolved_calls": {"type": "array", "items": {"type": "object"}},
+        "selected_response": {
+          "type": ["object", "null"],
+          "required": [
+            "call_id",
+            "attempt_id",
+            "receipt_hash",
+            "response_artifact_hash",
+            "response_artifact_ref",
+            "normalization",
+            "prose_sha256"
+          ],
+          "properties": {
+            "call_id": {"type": "string", "minLength": 1},
+            "attempt_id": {"type": "string", "minLength": 1},
+            "receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "response_artifact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "response_artifact_ref": {"type": "string", "minLength": 1},
+            "normalization": {"type": "string", "enum": ["utf8-strip-v1"]},
+            "prose_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          },
+          "additionalProperties": false
+        },
+        "budget": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "error": {"type": ["object", "null"]},
+    "record_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

@@ -6,6 +6,8 @@ from collections import Counter
 from typing import Any
 
 from core.schema import validate_schema
+from core.location_names import is_usable_location_name
+from core.quality.thread_progress import chinese_thread_witness, is_chinese_thread
 from core.state.snapshot import SnapshotError, validate_snapshot
 
 
@@ -43,14 +45,27 @@ WARNING_DEDUCTIONS = {
 META_MARKERS = (
     "作为AI",
     "作为 AI",
-    "以下是",
     "本章分析",
     "章节分析",
-    "分析：",
-    "总结：",
     "```json",
     "# Chapter",
     "## ",
+)
+
+# These words also occur naturally in dialogue. Only output-style line
+# prefixes qualify; a substring inside a character's sentence is not proof.
+META_PREFIX_RE = re.compile(
+    r"^[ \t]*(?:以下是[^\n\r]{0,30}(?:正文|章节|故事|小说|续写|改写|分析|总结)"
+    r"[^\n\r]{0,15}[：:]|(?:分析|总结)[：:])",
+    flags=re.MULTILINE,
+)
+
+# Provenance phrased in chapter numbers can leak planning context into prose.
+# This is a suspicion, not proof: a story may intentionally discuss a book.
+# Do not reject the chapter or trigger automatic rewriting for this match.
+CHAPTER_PROVENANCE_RE = re.compile(
+    r"第[ \t]*[零〇一二两三四五六七八九十百千0-9]+[ \t]*章[ \t]*"
+    r"(?:中)?(?:留下|埋下|设置|设定|交代)(?:过的|的|了)"
 )
 
 PREMATURE_THREAD_MARKERS = (
@@ -84,6 +99,7 @@ def evaluate_chapter_quality(
     snapshot: dict,
     previous_chapter_text: str | None = None,
     language: str | None = None,
+    include_prose_evidence: bool = False,
 ) -> dict:
     snapshot_copy = copy.deepcopy(snapshot)
     text = str(chapter_text or "")
@@ -102,6 +118,20 @@ def evaluate_chapter_quality(
         _check_chapter_length_reasonable(text, target_language),
     ]
     checks = sorted(checks, key=lambda check: CHECK_ORDER.index(check["code"]))
+    if include_prose_evidence and text:
+        from core.quality.prose_evidence import prose_excerpt
+        for check in checks:
+            if check['status'] not in {'warning','fail'} or check['code'] in {'snapshot_compatibility','chapter_length_reasonable'}:
+                continue
+            # This excerpt is review evidence, not a proof that a heuristic
+            # semantic suspicion is a fact. Keep that distinction in policy.
+            start=0
+            for key in ('matched_markers','resolution_markers','repeated_paragraphs','repeated_lines'):
+                markers=check['evidence'].get(key)
+                if isinstance(markers,list) and markers and isinstance(markers[0],str):
+                    position=text.find(markers[0])
+                    if position>=0:start=max(0,position-80);break
+            check['evidence']['prose_excerpt']=prose_excerpt(text,start_char=start)
     score = _score_checks(checks)
     report = {
         "schema_version": "1.0",
@@ -153,6 +183,13 @@ def _check_continues_previous_ending(text: str, snapshot: dict, previous_chapter
     last_ending = _clean_text(story_state.get("last_chapter_ending"))
     previous_tail = _previous_tail(previous_chapter_text)
     terms = _terms([bridge, last_ending, previous_tail])
+    # Cast overlap alone proves presence, not continuity of the situation.
+    cast = set(_string_items(story_state.get("last_scene_characters")))
+    for entity_id, record in _dict(snapshot.get("characters")).items():
+        cast.add(str(entity_id))
+        if isinstance(record, dict):
+            cast.add(str(record.get("name") or record.get("canonical_name") or ""))
+    terms = [term for term in terms if term not in cast and is_usable_location_name(term)]
     if not terms:
         return _check(
             "continues_previous_ending",
@@ -191,6 +228,12 @@ def _check_preserves_last_scene_location(text: str, snapshot: dict) -> dict[str,
             "high",
             "No last-scene location is available.",
             {},
+        )
+    if not is_usable_location_name(location):
+        return _check(
+            "preserves_last_scene_location", "warning", "high",
+            "Stored last-scene location is invalid; reconcile memory before judging prose movement.",
+            {"last_scene_location": location, "memory_issue": "invalid_scene_location"},
         )
 
     opening = _opening(text)
@@ -263,26 +306,29 @@ def _check_advances_open_threads_or_conflicts(text: str, snapshot: dict) -> dict
             {},
         )
 
-    matched = _matched_terms(text, terms)
+    chinese = [s for s in thread_sources if is_chinese_thread(s)]
+    cast = set(_string_items(_dict(snapshot.get("story_state")).get("last_scene_characters")))
+    for character in _dict(snapshot.get("characters")).values():
+        if isinstance(character, dict):
+            cast.update(_string_items(character.get("canonical_name") or character.get("name")))
+    witness = chinese_thread_witness(text, chinese, cast)
+    if witness:
+        return _check("advances_open_threads_or_conflicts", "pass", "medium",
+                      "A narrated action or finding touches an open thread.", witness)
+    # Keep the existing word-based behaviour for non-Chinese sources only.
+    other_terms = _terms([s for s in thread_sources if not is_chinese_thread(s)])
+    matched = _matched_terms(text, other_terms)
     if matched:
-        return _check(
-            "advances_open_threads_or_conflicts",
-            "pass",
-            "medium",
-            "Chapter touches current threads or conflicts.",
-            {"matched_terms": matched[:12], "candidate_terms": terms[:16]},
-        )
-    return _check(
-        "advances_open_threads_or_conflicts",
-        "warning",
-        "medium",
-        "Chapter does not clearly touch current threads or conflicts.",
-        {"candidate_terms": terms[:16]},
-    )
+        return _check("advances_open_threads_or_conflicts", "pass", "medium",
+                      "Chapter touches current threads or conflicts.",
+                      {"matched_terms": matched[:12], "candidate_terms": other_terms[:16]})
+    return _check("advances_open_threads_or_conflicts", "warning", "medium",
+                  "No clear narrative evidence of progress on a current thread or conflict.",
+                  {"candidate_terms": terms[:16]})
 
 
 def _check_avoids_premature_resolution(text: str, snapshot: dict) -> dict[str, Any]:
-    thread_sources = _thread_sources(snapshot)
+    thread_sources = _thread_sources(snapshot, include_constraints=True)
     if not thread_sources:
         return _check(
             "avoids_premature_resolution",
@@ -317,6 +363,7 @@ def _check_avoids_premature_resolution(text: str, snapshot: dict) -> dict[str, A
 
 def _check_no_meta_output(text: str) -> dict[str, Any]:
     matched = [marker for marker in META_MARKERS if marker in text]
+    matched.extend(match.group().lstrip() for match in META_PREFIX_RE.finditer(text))
     if matched:
         return _check(
             "no_meta_output",
@@ -324,6 +371,16 @@ def _check_no_meta_output(text: str) -> dict[str, Any]:
             "critical",
             "Chapter includes meta, analysis, JSON, or Markdown-like non-prose output.",
             {"matched_markers": matched},
+        )
+    references = list(dict.fromkeys(CHAPTER_PROVENANCE_RE.findall(text)))
+    if references:
+        return _check(
+            "no_meta_output",
+            "warning",
+            "low",
+            "正文可能混入了以章节编号指代前情的写作痕迹；请核对是否应改为故事内的时间、事件或物件。"
+            "若人物确实在谈论书籍，可保留。此提示不自动改写正文。",
+            {"matched_markers": references[:6]},
         )
     return _check(
         "no_meta_output",
@@ -507,15 +564,17 @@ def _snapshot_language(snapshot: dict) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _thread_sources(snapshot: dict) -> list[str]:
+def _thread_sources(snapshot: dict, *, include_constraints: bool = False) -> list[str]:
     story_state = _dict(snapshot.get("story_state"))
     sources: list[str] = []
     for value in (
         story_state.get("open_threads"),
+        story_state.get("pending_threads"),
         story_state.get("active_conflicts"),
         snapshot.get("open_threads"),
         snapshot.get("active_conflicts"),
-        snapshot.get("active_constraints"),
+        snapshot.get("pending_threads"),
+        snapshot.get("active_constraints") if include_constraints else None,
     ):
         sources.extend(_string_items(value))
     return sources

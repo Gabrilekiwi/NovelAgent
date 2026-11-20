@@ -10,6 +10,7 @@ from typing import Any, Callable
 from api.contracts import REPAIR_CONTRACT, validate_text_output
 from api.openai_client import chat_completion
 from core.config import get_config
+import core.context_budget as context_budget
 from core.context_budget import (
     ContextBudgetError,
     conservative_calibrated_token_estimate,
@@ -36,8 +37,10 @@ from core.structured_context import (
 from modules.scene_repair.envelope import (
     build_repair_envelope,
     generation_state_view_sha256,
+    project_repair_envelope_for_budget,
     repair_validation_sha256,
 )
+from modules.scene_repair.ledger import project_canonical_repair_ledger
 from modules.scene_repair.plan import build_repair_plan
 
 
@@ -79,6 +82,17 @@ Each item in `repair_plan.steps` references exactly one canonical item in
 `problems` by `problem_id`. Read the problem message, repair hint, and evidence
 from that canonical problem; do not expect them to be duplicated in the step.
 Use the single top-level `recovery_context` for prior-attempt evidence.
+""".rstrip()
+_REPAIR_LEDGER_PROMPT_SUFFIX = """
+
+## Projected Problem Ledger
+
+When `problem_types` is present, each problem's `type_id` points at one shared
+type. Read `code`, `message`, `validator`, `severity`, `blocking`, `category`,
+`repair_hint`, `action`, and `strategy` from that type. If the type has
+`shared_evidence` or `parameters`, combine them with the problem's own
+`evidence` and any step-level `parameters`. Missing type-level fields on the
+problem or step object are inherited from the type, not absent facts.
 """.rstrip()
 RepairStrategy = Callable[[str, dict[str, Any], list[dict[str, Any]]], str]
 
@@ -145,9 +159,10 @@ def _repair_with_model(
         max_tokens=max_output_tokens,
     )
     stripped = str(output).strip()
+    repaired_text: str | None = None
     if stripped.startswith("{") and stripped.endswith("}"):
         try:
-            return coerce_repair_patch(
+            patch = coerce_repair_patch(
                 chapter_text,
                 stripped,
                 problem_codes=[
@@ -156,9 +171,14 @@ def _repair_with_model(
                     if isinstance(item, dict)
                 ],
             )
+            from core.quality.repair_patch import apply_repair_patch
+
+            repaired_text, _audit = apply_repair_patch(chapter_text, patch)
         except ValueError:
-            pass
-    return validate_text_output(output, REPAIR_CONTRACT)
+            repaired_text = None
+    if repaired_text is None:
+        repaired_text = validate_text_output(output, REPAIR_CONTRACT)
+    return _finalize_last_scene_anchors(repaired_text, repair_plan, repair_context)
 
 
 def build_repair_messages(
@@ -216,18 +236,34 @@ def build_repair_messages(
         expected_generation_state_view_sha256=bound_view_sha256,
     )
     prompt = _explicit_repair_prompt(repair_context)
-    return [
-        {"role": "system", "content": prompt},
-        {
-            "role": "user",
-            "content": json.dumps(
-                envelope,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-        },
-    ]
+    messages = _repair_messages(
+        prompt,
+        json.dumps(
+            envelope,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+    if _repair_messages_fit_safe_target(messages):
+        return messages
+    projected = project_repair_envelope_for_budget(envelope)
+    projected_prompt = _explicit_repair_prompt(
+        repair_context,
+        include_ledger_projection=True,
+    )
+    projected_messages = _repair_messages(
+        projected_prompt,
+        json.dumps(
+            projected,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
+    if _repair_messages_fit_safe_target(projected_messages):
+        return projected_messages
+    _raise_repair_context_headroom_exceeded(projected_messages)
 
 
 def _build_legacy_repair_messages(
@@ -320,6 +356,22 @@ def _build_legacy_repair_messages(
         if measured_tokens <= safe_target:
             return _repair_messages(prompt, payload)
 
+    projected_messages = _legacy_projected_repair_messages(
+        chapter_text,
+        validation,
+        repair_plan,
+        recovery_context,
+        repair_context,
+        compiled_context,
+        authoritative_state_source,
+        repair_query,
+        prompt,
+        budget,
+        safe_target,
+        last_context_error,
+    )
+    if projected_messages is not None:
+        return projected_messages
     if measured_candidates:
         required_tokens, _payload = min(measured_candidates, key=lambda item: item[0])
         raise ContextBudgetError(
@@ -339,6 +391,122 @@ def _build_legacy_repair_messages(
     )
 
 
+def _repair_messages_fit_safe_target(messages: list[dict[str, str]]) -> bool:
+    budget = context_budget.default_context_budget()
+    safe_target = max(1, budget.hard_input_limit - _REPAIR_INPUT_HEADROOM_TOKENS)
+    report = budget.measure(
+        messages[-1]["content"],
+        stage="repair",
+        protocol_texts=(messages[0]["content"],),
+    )
+    return int(report["budgeted_input_tokens"]) <= safe_target
+
+
+def _raise_repair_context_headroom_exceeded(
+    messages: list[dict[str, str]],
+) -> None:
+    budget = context_budget.default_context_budget()
+    safe_target = max(1, budget.hard_input_limit - _REPAIR_INPUT_HEADROOM_TOKENS)
+    report = budget.measure(
+        messages[-1]["content"],
+        stage="repair",
+        protocol_texts=(messages[0]["content"],),
+    )
+    raise ContextBudgetError(
+        "story_project_repair_context_headroom_exceeded",
+        "repair input requires "
+        f"{int(report['budgeted_input_tokens'])} tokens; safe target is "
+        f"{safe_target}; hard limit is {budget.hard_input_limit}",
+    )
+
+
+def _legacy_projected_repair_messages(
+    chapter_text: str,
+    validation: dict[str, Any],
+    repair_plan: dict[str, Any],
+    recovery_context: dict[str, Any] | None,
+    repair_context: RepairContext,
+    compiled_context: str,
+    authoritative_state_source: dict[str, Any] | None,
+    repair_query: str,
+    prompt: str,
+    budget: Any,
+    safe_target: int,
+    last_context_error: StructuredContextError | None,
+) -> list[dict[str, str]] | None:
+    from modules.scene_repair.envelope import _canonical_problem_contract
+
+    try:
+        canonical_problems, compact_plan = _canonical_problem_contract(
+            validation,
+            repair_plan,
+        )
+        problem_types, problems, projected_plan = project_canonical_repair_ledger(
+            canonical_problems,
+            compact_plan,
+        )
+    except (TypeError, ValueError):
+        return None
+
+    prompt_with_ledger = (
+        prompt + "\n\n" + _REPAIR_LEDGER_PROMPT_SUFFIX
+        if _REPAIR_LEDGER_PROMPT_SUFFIX not in prompt
+        else prompt
+    )
+    lean_validation = _legacy_validation_summary(validation)
+    policies: list[dict[str, int] | None] = [None, *_LEGACY_REPAIR_CONTEXT_POLICIES]
+    best_tokens: int | None = None
+    best_messages: list[dict[str, str]] | None = None
+    for policy in policies:
+        try:
+            if policy is None:
+                compact_context = _compact_repair_context(
+                    compiled_context,
+                    query=repair_query,
+                    authoritative_state_source=authoritative_state_source,
+                )
+            else:
+                compact_context = _compact_repair_context(
+                    compiled_context,
+                    query=repair_query,
+                    authoritative_state_source=authoritative_state_source,
+                    authority_section_chars=policy["authority_section_chars"],
+                    context_chars=policy["context_chars"],
+                    per_section_chars=policy["per_section_chars"],
+                    authority_selection_mode="required_only",
+                    policy="repair_markdown_json_retrieval_required_only_v2",
+                )
+        except StructuredContextError:
+            continue
+        payload = _legacy_repair_payload(
+            chapter_text,
+            validation,
+            projected_plan,
+            recovery_context,
+            repair_context,
+            compact_context,
+            validation_projection=lean_validation,
+            compact_json=True,
+            problem_types=problem_types,
+            problems=problems,
+        )
+        report = budget.measure(
+            payload,
+            stage="repair",
+            protocol_texts=(prompt_with_ledger,),
+        )
+        measured_tokens = int(report["budgeted_input_tokens"])
+        messages = _repair_messages(prompt_with_ledger, payload)
+        if measured_tokens <= safe_target:
+            return messages
+        if best_tokens is None or measured_tokens < best_tokens:
+            best_tokens = measured_tokens
+            best_messages = messages
+    if best_messages is not None:
+        _raise_repair_context_headroom_exceeded(best_messages)
+    return None
+
+
 def _repair_messages(prompt: str, payload: str) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": prompt},
@@ -356,6 +524,8 @@ def _legacy_repair_payload(
     *,
     validation_projection: dict[str, Any] | None = None,
     compact_json: bool = False,
+    problem_types: list[dict[str, Any]] | None = None,
+    problems: list[dict[str, Any]] | None = None,
 ) -> str:
     payload = {
         "chapter": chapter_text,
@@ -388,6 +558,10 @@ def _legacy_repair_payload(
             "fallback": "complete replacement chapter prose",
         },
     }
+    if problem_types is not None:
+        payload["problem_types"] = problem_types
+    if problems is not None:
+        payload["problems"] = problems
     if compact_json:
         return json.dumps(
             payload,
@@ -461,16 +635,23 @@ def _repair_chapter_contract(
     return contract
 
 
-def _explicit_repair_prompt(repair_context: RepairContext) -> str:
+def _explicit_repair_prompt(
+    repair_context: RepairContext,
+    *,
+    include_ledger_projection: bool = False,
+) -> str:
     directives = {
         "language": _normalized_language(repair_context.language),
         "allow_new_facts": bool(repair_context.allow_new_facts),
         "known_conflict_hint": repair_context.known_conflict_hint,
     }
+    suffix = _EXPLICIT_REPAIR_PROMPT_SUFFIX
+    if include_ledger_projection:
+        suffix += "\n\n" + _REPAIR_LEDGER_PROMPT_SUFFIX
     return (
         _load_prompt()
         + "\n\n"
-        + _EXPLICIT_REPAIR_PROMPT_SUFFIX
+        + suffix
         + "\n\nRepair directives:\n"
         + json.dumps(
             directives,
@@ -762,14 +943,22 @@ def _rewrite_spatial_transition(text: str, step: dict[str, Any], steps: list[dic
 
 
 def _anchor_last_scene_state(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
-    location = str(_parameters(step).get("location", "")).strip()
-    character = str(_parameters(step).get("character", "")).strip()
-    parts = [part for part in (location, character) if part]
-    if not parts:
+    location, characters = _last_scene_anchor_targets(step, steps)
+    if not location and not characters:
         return text
+    opening = _opening_window(text)
+    lowered = opening.lower()
+    missing = [name for name in characters if name.lower() not in lowered]
+    location_missing = bool(location) and location.lower() not in lowered
+    if not missing and not location_missing:
+        return text
+    cast = ", ".join(characters) if characters else "the group"
     if location:
-        return _prepend_sentence(text, f"At {location}, {character or 'the group'} is still dealing with the last scene's immediate fallout.")
-    return _prepend_sentence(text, f"{character} is still dealing with the last scene's immediate fallout.")
+        return _prepend_sentence(
+            text,
+            f"At {location}, {cast} is still dealing with the last scene's immediate fallout",
+        )
+    return _prepend_sentence(text, f"{cast} is still dealing with the last scene's immediate fallout")
 
 
 def _repair_character_position(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
@@ -877,16 +1066,21 @@ def _zh_rewrite_spatial_transition(text: str, step: dict[str, Any], steps: list[
 
 
 def _zh_anchor_last_scene_state(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
-    parameters = _parameters(step)
-    location = str(parameters.get("location", "")).strip()
-    character = str(parameters.get("character", "")).strip()
-    if location and character:
-        return _prepend_sentence(text, f"在{location}，{character}仍在承受上一场景的直接后果")
+    location, characters = _last_scene_anchor_targets(step, steps)
+    if not location and not characters:
+        return text
+    opening = _opening_window(text)
+    lowered = opening.lower()
+    missing = [name for name in characters if name.lower() not in lowered]
+    location_missing = bool(location) and location.lower() not in lowered
+    if not missing and not location_missing:
+        return text
+    cast = "、".join(characters)
+    if location and cast:
+        return _prepend_sentence(text, f"在{location}，{cast}仍在承受上一场景的直接后果")
     if location:
         return _prepend_sentence(text, f"在{location}，上一场景的直接后果仍在延续")
-    if character:
-        return _prepend_sentence(text, f"{character}仍在承受上一场景的直接后果")
-    return text
+    return _prepend_sentence(text, f"{cast}仍在承受上一场景的直接后果")
 
 
 def _zh_repair_character_position(text: str, step: dict[str, Any], steps: list[dict[str, Any]]) -> str:
@@ -987,6 +1181,83 @@ def _bridge_sentence(bridge: str, location: str) -> str:
                 return f"From {location or prefix.strip()}, {detail[0].lower()}{detail[1:]}"
         return cleaned
     return f"From {location}, the next moment carries the last scene's consequence forward" if location else ""
+
+
+
+def _split_character_names(raw: str) -> list[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    parts = re.split(r"[,，、;；|/]+", text)
+    names: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        name = part.strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def _last_scene_anchor_targets(
+    step: dict[str, Any],
+    steps: list[dict[str, Any]],
+) -> tuple[str, list[str]]:
+    location = str(_parameters(step).get("location", "")).strip()
+    characters = _split_character_names(str(_parameters(step).get("character", "") or ""))
+    for candidate in steps:
+        if candidate is step:
+            continue
+        if str(candidate.get("action") or "") != "anchor_last_scene_state":
+            continue
+        parameters = _parameters(candidate)
+        if not location:
+            location = str(parameters.get("location", "")).strip()
+        characters.extend(_split_character_names(str(parameters.get("character", "") or "")))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for name in characters:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(name)
+    return location, deduped
+
+
+def _opening_window(text: str, limit: int = 700) -> str:
+    compact = re.sub(r"\s+", " ", str(text or "").strip())
+    return compact[:limit]
+
+
+def _finalize_last_scene_anchors(
+    text: str,
+    repair_plan: dict[str, Any],
+    repair_context: RepairContext,
+) -> str:
+    """Re-apply idempotent last-scene anchors after model repair.
+
+    Surgical model patches that add the reported missing names can drop other
+    required last-scene cast members from the opening window. A deterministic
+    finalize pass restores the full cast without rewriting formal prose body.
+    """
+    steps = [
+        step
+        for step in repair_plan.get("steps", [])
+        if isinstance(step, dict) and str(step.get("action") or "") == "anchor_last_scene_state"
+    ]
+    if not steps:
+        return text
+    return apply_repair_plan(
+        text,
+        {"steps": steps},
+        language=repair_context.language,
+        repair_context=repair_context,
+    )
 
 
 def _parameters(step: dict[str, Any]) -> dict[str, Any]:

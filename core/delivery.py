@@ -6,12 +6,14 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from api.notion_client import create_database_page, query_database_pages
 from api.retry import retry_telemetry_snapshot
 from core.engine.persistence import _atomic_create_from_bytes, _atomic_replace_from_bytes, persistence_run_lock
+from core.engine.project_output import project_output_lock
 from core.engine.safe_paths import RootBinding, SafePathResolver
 from core.memory_v2.canonical import canonical_json_hash
 from core.path_refs import resolve_path_ref, validate_path_ref
@@ -122,6 +124,17 @@ def delivery_outcome_from_legacy(value: Mapping[str, Any]) -> dict[str, Any]:
     return delivery_outcome("retryable_failed", code="legacy_retryable_failure", message="Legacy delivery did not succeed")
 
 
+def _queue_write_boundary(operation):
+    @wraps(operation)
+    def guarded(self, *args, **kwargs):
+        # Cover claim -> adapter -> receipt -> finalization, including failures.
+        # Existing local queue locks/leases retain their own scope. No queue
+        # directory is created until the containing project permits writes.
+        with project_output_lock(self.root / '.delivery-writes', lock_output_paths=False):
+            return operation(self, *args, **kwargs)
+    return guarded
+
+
 class DeliveryQueue:
     def __init__(
         self,
@@ -140,6 +153,7 @@ class DeliveryQueue:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.fault_injector = fault_injector
 
+    @_queue_write_boundary
     def enqueue(
         self,
         *,
@@ -209,8 +223,8 @@ class DeliveryQueue:
         }
         validated = validate_delivery_job(job)
         path = self._job_path(job_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
         with persistence_run_lock(self.root, state_paths=[path]):
+            path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():
                 existing = load_delivery_job(path)
                 immutable_fields = (
@@ -255,6 +269,7 @@ class DeliveryQueue:
                 )
         return {"job": job, "attempts": receipts}
 
+    @_queue_write_boundary
     def attempt(self, job_id: str, *, worker_id: str, adapter: DeliveryAdapter) -> dict[str, Any]:
         worker_id = _validate_id("worker_id", worker_id)
         claim = self._claim(job_id, worker_id)
@@ -362,6 +377,7 @@ class DeliveryQueue:
             ),
         }
 
+    @_queue_write_boundary
     def resolve_confirmed_absent(
         self,
         job_id: str,
@@ -567,6 +583,10 @@ class FileDeliveryAdapter:
         # their historical adapter semantics.  In particular, no UUID is
         # synthesized into their immutable target or attempt evidence.
         path = resolve_path_ref(path_ref, self.root_map)
+        with project_output_lock(path):
+            return self._deliver_legacy(job, path)
+
+    def _deliver_legacy(self, job: Mapping[str, Any], path: Path) -> Mapping[str, Any]:
         encoding = str(job["payload"].get("encoding") or "utf-8")
         content = str(job["payload"]["content"]).encode(encoding)
         expected_hash = hashlib.sha256(content).hexdigest()
@@ -613,6 +633,13 @@ class SafeFileDeliveryAdapter:
         del context
         path_ref = job["target"]["path_ref"]
         resolved = self.resolver.resolve(path_ref)
+        with project_output_lock(resolved.path):
+            # Revalidate the original physical parent identities after locking.
+            self.resolver.resolve(path_ref, expected_guard=resolved.guard)
+            return self._deliver_locked(job, resolved)
+
+    def _deliver_locked(self, job: Mapping[str, Any], resolved) -> Mapping[str, Any]:
+        path_ref = job["target"]["path_ref"]
         path = resolved.path
         encoding = str(job["payload"].get("encoding") or "utf-8")
         content = str(job["payload"]["content"]).encode(encoding)

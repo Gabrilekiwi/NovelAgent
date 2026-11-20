@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import unittest
@@ -13,7 +14,10 @@ from core.chapter_contexts import ChapterContextError
 from core.context_budget import ContextBudgetError, RunBudgetLimits
 from core.director import DirectorDecisionError
 from core.engine.artifacts import save_chapter_artifact
-from core.engine.executor import AgentExecutor, LoopExecutionError
+from core.engine.executor import (
+    AgentExecutor,
+    LoopExecutionError,
+)
 from core.engine.locked_chapter import LockedChapterRecoveryError
 from core.engine.repair_convergence import RepairNotConvergingError
 from core.execution_provenance import validate_execution_provenance
@@ -129,6 +133,102 @@ class AgentExecutorTest(unittest.TestCase):
             [{"code": "llm_timeline_gap"}],
             context["revalidation"]["prior_problems"],
         )
+
+    def test_unverified_manual_complete_draft_is_not_regenerated(self) -> None:
+        generator_calls: list[str] = []
+        executor = AgentExecutor(
+            generator=lambda input_pack: generator_calls.append(input_pack) or "REGENERATED",
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        )
+        checkpoint = {
+            "action": "repair_draft",
+            "reason": "manual_repaired_draft_provided",
+            "complete_draft": {"text": "author revised draft"},
+        }
+
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "no verified accepted final artifact",
+        ):
+            with (
+                patch.object(
+                    executor,
+                    "_locked_chapter_checkpoint",
+                    return_value=checkpoint,
+                ),
+                patch.object(
+                    executor,
+                    "_locked_complete_draft_pipeline",
+                    side_effect=LockedChapterRecoveryError(
+                        "complete-draft source has no verified accepted final artifact"
+                    ),
+                ),
+            ):
+                executor._execute_workflow(
+                    workflow=["generate_chapter"],
+                    workflow_plan={},
+                    snapshot={"language": "en"},
+                    decision={"chapter_index": 2},
+                    input_pack="fresh-input",
+                    recovery_context={},
+                )
+
+        self.assertEqual([], generator_calls)
+
+    def test_validated_manual_revised_draft_is_kept_without_regeneration(self) -> None:
+        generator_calls: list[str] = []
+        revised = (
+            "The author revised the recovered chapter to fix the remaining "
+            "character-route review item, and then revalidated the draft."
+        )
+        pipeline = {
+            "merged_chapter": revised,
+            "scene_drafts": [{"index": 1, "text": revised}],
+        }
+        executor = AgentExecutor(
+            generator=lambda input_pack: generator_calls.append(input_pack) or "REGENERATED",
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+        )
+        checkpoint = {
+            "action": "repair_draft",
+            "reason": "manual_repaired_draft_provided",
+            "expected_scene_count": 1,
+            "complete_draft": {
+                "text": revised,
+                "sha256": hashlib.sha256(revised.encode("utf-8")).hexdigest(),
+                "source_stage": "scene_repair",
+                "problem_codes": [],
+            },
+        }
+
+        with (
+            patch.object(
+                executor,
+                "_locked_chapter_checkpoint",
+                return_value=checkpoint,
+            ),
+            patch.object(
+                executor,
+                "_locked_complete_draft_pipeline",
+                return_value=pipeline,
+            ),
+        ):
+            chapter, validation, *_ = executor._execute_workflow(
+                workflow=["generate_chapter"],
+                workflow_plan={},
+                snapshot={"language": "en"},
+                decision={"chapter_index": 2},
+                input_pack="fresh-input",
+                recovery_context={},
+            )
+
+        self.assertEqual([], generator_calls)
+        self.assertEqual(revised, chapter)
+        self.assertTrue(validation["ok"])
 
     def test_recovered_checkpoint_count_mismatch_is_allowed_for_scope_replay(self) -> None:
         executor = AgentExecutor(
@@ -1783,12 +1883,14 @@ class AgentExecutorTest(unittest.TestCase):
             snapshot_path=snapshot_path,
             run_dir=tmp_path / "runs",
             dry_run=True,
+            memory_loader=lambda: {"source": "test", "status": "ready", "items": []},
             generator=lambda input_pack: "天气很好。",
         ).run_once(persist=False)
 
         self.assertEqual(1, result["repair_attempts"])
         self.assertTrue(result["validation"]["ok"])
-        self.assertIn("conflict", result["chapter"].lower())
+        self.assertGreater(len(result["chapter"]), len("天气很好。"))
+        self.assertTrue(result["chapter"].startswith("天气很好。"))
         self.assertEqual(["generate_chapter", "polish", "validate", "repair_if_needed"], [event["action"] for event in result["run"]["trace"]])
         self.assertGreaterEqual(result["run"]["trace"][-1]["repair_attempts"], 1)
         self.assertIs(
@@ -1796,17 +1898,18 @@ class AgentExecutorTest(unittest.TestCase):
             validate_schema(result["run"]["trace"][-1]["repair_plan"], "repair_plan.schema.json"),
         )
         self.assertIn("expand_scene", result["run"]["trace"][-1]["repair_plan"]["actions"])
-        self.assertIn("add_conflict_signal", result["run"]["trace"][-1]["repair_plan"]["actions"])
+        self.assertNotIn("add_conflict_signal", result["run"]["trace"][-1]["repair_plan"]["actions"])
         self.assertEqual(1, result["run"]["trace"][-1]["repair_plan"]["attempt"])
         self.assertEqual(1, result["run"]["trace"][-1]["repair_plan"]["repair_budget"])
-        self.assertEqual("high", result["run"]["trace"][-1]["repair_plan"]["risk_level"])
+        self.assertEqual("medium", result["run"]["trace"][-1]["repair_plan"]["risk_level"])
         repair_deltas = result["run"]["trace"][-1]["repair_deltas"]
         self.assertEqual(1, len(repair_deltas))
         self.assertEqual(1, repair_deltas[0]["attempt"])
         self.assertFalse(repair_deltas[0]["before_ok"])
         self.assertTrue(repair_deltas[0]["after_ok"])
         self.assertIn("chapter_too_short", repair_deltas[0]["resolved_problem_codes"])
-        self.assertIn("missing_conflict_marker", repair_deltas[0]["resolved_problem_codes"])
+        # Expanding a short scene may incidentally introduce a conflict marker;
+        # it must not be a dedicated automatic repair action (checked above).
         self.assertEqual([], repair_deltas[0]["new_problem_codes"])
         self.assertEqual(
             "controlled_full_text_fallback",
@@ -1921,6 +2024,90 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertEqual(1, saved["repair_attempts"])
         self.assertEqual("ContextBudgetError", saved["run"]["error"]["type"])
         self.assertIn("execution_evidence", saved["run"])
+
+    def test_cross_scene_repair_keeps_generated_chapter_instead_of_crashing(self) -> None:
+        tmp_path = self._case_dir("cross_scene_repair_rejected")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        run_dir = tmp_path / "runs"
+        first = "Alpha enters the corridor."
+        second = "Beta closes the damaged gate."
+        before = f"{first}\n\n{second}"
+        pipeline = {
+            "chapter_index": 1,
+            "plan": {
+                "goal": "cross two scenes",
+                "scenes": [
+                    {"index": 1, "type": "setup", "goal": "enter", "required_beats": ["enter"]},
+                    {"index": 2, "type": "turn", "goal": "close gate", "required_beats": ["close"]},
+                ],
+            },
+            "stages": ["generate"],
+            "merged_chapter": before,
+            "scene_drafts": [
+                {"index": 1, "goal": "enter", "text": first},
+                {"index": 2, "goal": "close gate", "text": second},
+            ],
+            "scene_spans": [
+                {"index": 1, "start_char": 0, "end_char": len(first), "chars": len(first)},
+                {
+                    "index": 2,
+                    "start_char": len(first) + 2,
+                    "end_char": len(before),
+                    "chars": len(second),
+                },
+            ],
+        }
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "keep_chapter_when_repair_crosses_scenes",
+                "actions": ["generate_chapter", "validate", "repair_if_needed"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 1,
+                "notes": [],
+            }
+
+        def generate_with_pipeline(self, state, input_pack, snapshot):
+            state["chapter"] = before
+            state["chapter_pipeline"] = copy.deepcopy(pipeline)
+
+        def validator(snapshot, chapter, decision):
+            return self._problem_validation("missing_conflict_marker")
+
+        with patch.object(AgentExecutor, "_handle_generate", generate_with_pipeline):
+            result = AgentExecutor(
+                snapshot_path=snapshot_path,
+                run_dir=run_dir,
+                chapter_dir=tmp_path / "chapters",
+                dry_run=True,
+                director=director,
+                generator=lambda input_pack: before,
+                validator=validator,
+                repairer=lambda chapter, validation, input_pack, repair_plan: (
+                    "A completely different single-scene chapter."
+                ),
+            ).run_once(persist=True)
+
+        self.assertEqual(before, result["chapter"])
+        self.assertEqual(1, result["repair_attempts"])
+        self.assertFalse(result["validation"]["ok"])
+        self.assertFalse(result["committed"])
+        repair_event = next(
+            event
+            for event in result["run"]["trace"]
+            if event["action"] == "repair_if_needed"
+        )
+        rejected_patch = repair_event["repair_deltas"][0]["patch"]
+        self.assertTrue(rejected_patch["rejected"])
+        self.assertEqual("stale_scene_evidence", rejected_patch["rejected_code"])
+        self.assertEqual(before, result["run"]["chapter"] if isinstance(result["run"].get("chapter"), str) else result["chapter"])
+        saved_path = max(run_dir.glob("chapter_*.json"), key=lambda path: path.stat().st_mtime_ns)
+        saved = json.loads(saved_path.read_text(encoding="utf-8"))
+        self.assertEqual(before, saved["chapter"])
+        self.assertEqual(1, saved["repair_attempts"])
+        self.assertNotEqual("SceneEvidenceAlignmentError", saved["run"].get("error", {}).get("type"))
 
     def test_executor_passes_trace_repair_plan_to_repairer(self) -> None:
         tmp_path = self._case_dir("repair_plan_passthrough")
@@ -2272,6 +2459,72 @@ class AgentExecutorTest(unittest.TestCase):
             [record["stage"] for record in result["run"]["chapter"]["integrity_records"]],
         )
 
+    def test_duplicate_only_polish_falls_back_to_verified_merge(self) -> None:
+        tmp_path = self._case_dir("duplicate_polish_fallback")
+        snapshot_path = tmp_path / "snapshot.json"
+        self._write_snapshot(snapshot_path)
+        opening = (
+            "Mara braced the flooded gate while the alarm rose behind the team, "
+            "keeping the service corridor clear for the injured scout."
+        )
+        first = (
+            "Jian counted the remaining filter cartridges and assigned the least damaged "
+            "ones to the rear vehicle before the patrol reached the plaza."
+        )
+        repeated_scene = (
+            "When the outer lock released, they chose the narrow service route instead "
+            "of the exposed plaza, accepting a slower escape to keep the group together."
+        )
+        fourth = (
+            "The scout marked a submerged cable trench that would hide their tracks, "
+            "while Mara kept the gate from slamming shut behind them."
+        )
+        ending = (
+            "The pursuing patrol turned toward the plaza, leaving the team one narrow "
+            "window to reach the waiting transport."
+        )
+        source = "\n\n".join((opening, first, repeated_scene, fourth, ending))
+        duplicated = "\n\n".join(
+            (opening, first, repeated_scene, repeated_scene, fourth, ending)
+        )
+        repair_calls: list[str] = []
+
+        def director(snapshot, memory_context):
+            return {
+                "chapter_index": snapshot["chapter_index"],
+                "goal": "discard_duplicate_polish",
+                "actions": ["generate_chapter", "polish", "validate", "repair_if_needed"],
+                "validation_focus": ["logic"],
+                "max_repair_attempts": 1,
+                "notes": [],
+            }
+
+        result = AgentExecutor(
+            snapshot_path=snapshot_path,
+            run_dir=tmp_path / "runs",
+            dry_run=True,
+            director=director,
+            generator=lambda _input_pack: source,
+            polisher=lambda _chapter: duplicated,
+            repairer=lambda *_args: repair_calls.append("called") or source,
+            validator=self._ok_validation,
+            analyzer=self._analysis,
+        ).run_once(persist=False)
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(source, result["chapter"])
+        self.assertEqual([], repair_calls)
+        records = result["run"]["chapter"]["integrity_records"]
+        self.assertEqual(
+            ["merge", "polish", "final_gate"],
+            [record["stage"] for record in records],
+        )
+        self.assertFalse(records[1]["accepted"])
+        self.assertEqual(
+            hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            records[-1]["output_sha256"],
+        )
+
     def test_director_actions_skip_polish_handler(self) -> None:
         tmp_path = self._case_dir("skip_polish")
         snapshot_path = tmp_path / "snapshot.json"
@@ -2538,17 +2791,15 @@ class AgentExecutorTest(unittest.TestCase):
             run_dir=tmp_path / "runs",
             chapter_dir=tmp_path / "chapters",
             dry_run=True,
+            memory_loader=lambda: {"source": "test", "status": "ready", "items": []},
             director=director,
-            generator=lambda input_pack: (
-                "The corridor stayed quiet while everyone reviewed supplies and repeated old procedures. "
-                "Nothing changed, no pressure rose, and the scene avoided any decisive story movement."
-            ),
+            generator=lambda input_pack: "A costly choice.",
         ).run_once(persist=True)
 
         self.assertFalse(result["validation"]["ok"])
         self.assertFalse(result["committed"])
         self.assertEqual("rejected", result["run"]["status"])
-        self.assertIn("missing_conflict_marker", result["run"]["validation"]["problem_codes"])
+        self.assertIn("chapter_too_short", result["run"]["validation"]["problem_codes"])
         self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))
         run_files = list((tmp_path / "runs").glob("chapter_2_*.json"))
         self.assertEqual(1, len(run_files))
@@ -2557,7 +2808,7 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertFalse(saved_run["run"]["committed"])
         self.assertFalse(saved_run["run"]["state_update"]["applied"])
         self.assertEqual(0, saved_run["run"]["state_update"]["memory_update_count"])
-        self.assertIn("missing_conflict_marker", saved_run["run"]["validation"]["problem_codes"])
+        self.assertIn("chapter_too_short", saved_run["run"]["validation"]["problem_codes"])
         input_pack_artifact_path = Path(saved_run["run"]["input_pack"]["artifact"]["path"])
         self.assertTrue(input_pack_artifact_path.exists())
         artifact_path = Path(saved_run["run"]["chapter"]["artifact"]["path"])
@@ -3225,10 +3476,9 @@ class AgentExecutorTest(unittest.TestCase):
             snapshot_path=snapshot_path,
             run_dir=tmp_path / "runs",
             dry_run=True,
+            memory_loader=lambda: {"source": "test", "status": "ready", "items": []},
             director=director,
-            generator=lambda input_pack: (
-                "The corridor stayed quiet while everyone reviewed supplies and repeated old procedures."
-            ),
+            generator=lambda input_pack: "A costly choice.",
         ).run_loop(steps=3, persist=True)
 
         self.assertEqual(1, loop_result["completed_steps"])
@@ -3241,9 +3491,9 @@ class AgentExecutorTest(unittest.TestCase):
         self.assertFalse(loop_result["succeeded"])
         self.assertEqual(1, loop_result["exit_code"])
         self.assertIn("run_rejected", loop_result["failure_reasons"])
-        self.assertEqual("missing_conflict_marker", loop_result["session"]["runs"][0]["problem_evidence"][0]["code"])
-        self.assertEqual(
-            [{"kind": "missing_any_marker", "value": "conflict, danger, choice, choose, threat, secret"}],
+        self.assertEqual("chapter_too_short", loop_result["session"]["runs"][0]["problem_evidence"][0]["code"])
+        self.assertIn(
+            {"kind": "minimum_length", "value": "80"},
             loop_result["session"]["runs"][0]["problem_evidence"][0]["evidence"],
         )
         self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))

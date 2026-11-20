@@ -11,8 +11,8 @@
 <section class="metrics-grid history-metrics" aria-label="历史摘要">
   {{ ui.metric('运行总数', stats.total_runs|default(0), stats.range_label|default('全部时间')) }}
   {{ ui.metric('首次通过率', stats.first_pass_rate|default('—'), stats.first_pass_note|default(''), 'jade') }}
-  {{ ui.metric('人工介入', stats.manual_interventions|default(0), stats.intervention_note|default('')) }}
-  {{ ui.metric('估算总费用', stats.cost_label|default('—'), stats.token_label|default('')) }}
+  {{ ui.metric('安全恢复', stats.recoveries|default(0), stats.intervention_note|default('')) }}
+  {{ ui.metric('用量与费用', stats.cost_label|default('—'), stats.token_label|default('')) }}
 </section>
 
 <section class="panel history-panel">
@@ -25,7 +25,7 @@
   </div>
   <div class="table-scroll">
     <table class="data-table" id="history-table">
-      <thead><tr><th>时间</th><th>章节 / 操作</th><th>结果</th><th>用时</th><th>Tokens</th><th>费用</th><th><span class="sr-only">详情</span></th></tr></thead>
+      <thead><tr><th>时间</th><th>章节 / 操作</th><th>结果</th><th>运行耗时</th><th>Tokens</th><th>费用</th><th><span class="sr-only">详情</span></th></tr></thead>
       <tbody>
       {% for run in runs|default([]) %}
         <tr data-filter-status="{{ run.status|default('idle') }}" data-filter-kind="{{ run.kind|default('generation') }}" data-search-value="{{ run.chapter|default('') }} {{ run.id }} {{ run.title|default('') }}">

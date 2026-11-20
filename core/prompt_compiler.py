@@ -49,6 +49,7 @@ MANDATORY_SECTIONS = frozenset(
         "Spatial State",
         "Authoritative State",
         "StoryProject Chapter Blueprint",
+        "Author Confirmed Opening Settings",
         "Requirements",
         "小说生成规则契约",
     }
@@ -57,7 +58,7 @@ SCENE_SECTIONS = MANDATORY_SECTIONS | {"Memory Index"}
 REPAIR_SECTIONS = frozenset(
     {"Project Profile", "Story State", "Spatial State", "StoryProject Chapter Blueprint", "Requirements", "小说生成规则契约"}
 )
-REPAIR_SECTIONS = REPAIR_SECTIONS | {"Authoritative State"}
+REPAIR_SECTIONS = REPAIR_SECTIONS | {"Authoritative State", "Author Confirmed Opening Settings"}
 
 
 @dataclass(frozen=True)
@@ -218,7 +219,7 @@ def compile_prompt_contexts(
         require_query_references=True,
         require_open_events=True,
         stage="plan",
-        required=mandatory,
+        required=mandatory | {"Previous Chapter Confirmed Facts"},
         preferred={name for name, _ in plan_sections},
         digest=digest,
         budget=effective_budget,

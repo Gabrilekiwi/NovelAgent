@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.location_names import is_usable_location_name
 from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
 
@@ -161,14 +162,143 @@ def _extract_world_changes(text: str) -> list[dict[str, str]]:
     return changes
 
 
-def _extract_candidate_locations(text: str, known_locations: list[str] | None = None) -> list[str]:
-    lowered = text.lower()
-    candidates = [
-        (text.find(term) if term in text else lowered.find(term.lower()), term)
-        for term in (known_locations or _KNOWN_LOCATION_TERMS)
-        if term in text or term.lower() in lowered
+def _location_mention_index(text: str, term: str) -> int:
+    """Return the rightmost mention index of ``term`` in ``text``, or -1.
+
+    Chinese prose often inserts 的 between a place qualifier and its head noun
+    (``人防医院支线外侧的隔离撤回口`` vs canonical ``人防医院支线外侧隔离撤回口``).
+    Treat those as the same location mention so ending continuity can resolve.
+    """
+
+    clean = str(term or "").strip()
+    if not clean:
+        return -1
+    body = str(text or "")
+    lowered = body.lower()
+    idx = body.rfind(clean)
+    if idx < 0:
+        idx = lowered.rfind(clean.lower())
+    if idx >= 0:
+        return idx
+    if len(clean) >= 4 and any("一" <= ch <= "鿿" for ch in clean):
+        best = -1
+        for split_at in range(2, len(clean) - 1):
+            variant = f"{clean[:split_at]}的{clean[split_at:]}"
+            found = body.rfind(variant)
+            if found > best:
+                best = found
+        return best
+    return -1
+
+
+_MOVEMENT_VERBS = (
+    "撤进",
+    "撤入",
+    "转入",
+    "转到",
+    "进入",
+    "进了",
+    "退到",
+    "退入",
+    "抵达",
+    "来到",
+    "走到",
+    "回到",
+    "迁入",
+    "搬进",
+    "守在",
+    "留在",
+    "留到",
+    "待在",
+    "待到",
+)
+_MOVEMENT_NEGATION_PREFIXES = (
+    "算不上",
+    "谈不上",
+    "没有",
+    "没能",
+    "未能",
+    "无法",
+    "不能",
+    "不是",
+    "并非",
+    "并未",
+    "绝不",
+    "还未",
+    "还没",
+    "并不",
+    "不再",
+    "未",
+)
+_LOCATION_TRAILING_PARTICLES = (
+    "外侧",
+    "内侧",
+    "门口",
+    "门边",
+    "门后",
+    "标线",
+    "附近",
+    "旁边",
+    "一侧",
+    "方向",
+)
+_MOVEMENT_DEST_RE = re.compile(
+    "(?:" + "|".join(sorted(_MOVEMENT_VERBS, key=len, reverse=True)) + ")"
+    + r"([A-Za-z0-9\u4e00-\u9fff_-]{2,24})"
+)
+
+
+def _extract_movement_destinations(text: str) -> list[str]:
+    """Collect destinations of actual movement, including places not yet registered."""
+
+    body = str(text or "")
+    found: list[str] = []
+    for match in _MOVEMENT_DEST_RE.finditer(body):
+        prefix = body[max(0, match.start() - 8) : match.start()]
+        if any(prefix.endswith(negation) for negation in _MOVEMENT_NEGATION_PREFIXES):
+            continue
+        location = _trim_movement_destination(match.group(1))
+        if location and is_usable_location_name(location) and location not in found:
+            found.append(location)
+    return found
+
+
+def _trim_movement_destination(value: str) -> str:
+    location = str(value or "").strip(" ,.;:!?，。；：！？、")
+    if not location:
+        return ""
+    cut_points = [
+        location.find(particle)
+        for particle in _LOCATION_TRAILING_PARTICLES
+        if particle in location
     ]
-    return [term for _position, term in sorted(candidates, key=lambda item: item[0])]
+    valid_cuts = [point for point in cut_points if point >= 2]
+    if valid_cuts:
+        location = location[: min(valid_cuts)]
+    location = location.rstrip("的了着过")
+    if len(location) < 2:
+        return ""
+    return location
+
+
+def _extract_candidate_locations(text: str, known_locations: list[str] | None = None) -> list[str]:
+    mentions = {
+        term: _location_mention_index(text, term)
+        for term in (known_locations or _KNOWN_LOCATION_TERMS)
+    }
+    for destination in _extract_movement_destinations(text):
+        mentions.setdefault(destination, _location_mention_index(text, destination))
+    return [
+        term
+        for term, position in sorted(
+            (
+                (item, index)
+                for item, index in mentions.items()
+                if index >= 0 and is_usable_location_name(item)
+            ),
+            key=lambda item: item[1],
+        )
+    ]
 
 
 def _extract_story_state(
@@ -276,23 +406,48 @@ def _extract_character_changes(
     return changes[:10]
 
 
+def _canonical_location_name(location: str, locations: list[str]) -> str:
+    longer = [
+        candidate
+        for candidate in locations
+        if candidate != location and candidate.endswith(location)
+    ]
+    return max(longer, key=len) if longer else location
+
+
+def _location_family_index(text: str, location: str, locations: list[str]) -> int:
+    best = _location_mention_index(text, location)
+    for alias in locations:
+        if alias == location:
+            continue
+        if alias.endswith(location) or location.endswith(alias):
+            best = max(best, _location_mention_index(text, alias))
+    return best
+
+
 def _last_known_location(
     text: str,
     character_changes: list[dict[str, str]],
     new_locations: list[str],
 ) -> str:
     mentioned_locations = [
-        (text.rfind(location), location)
+        (_location_family_index(text, location, new_locations), location)
         for location in new_locations
-        if location and text.rfind(location) >= 0
+        if is_usable_location_name(location)
+        and _location_family_index(text, location, new_locations) >= 0
     ]
     if mentioned_locations:
-        return max(mentioned_locations, key=lambda item: item[0])[1]
+        _, raw_location = max(mentioned_locations, key=lambda item: (item[0], len(item[1])))
+        canonical = _canonical_location_name(raw_location, new_locations)
+        if is_usable_location_name(canonical):
+            return canonical
+        return raw_location
     for change in reversed(character_changes):
-        location = change.get("current_location")
-        if location:
+        location = str(change.get("current_location") or "").strip()
+        if is_usable_location_name(location):
             return location
-    return new_locations[-1] if new_locations else ""
+    usable = [item for item in new_locations if is_usable_location_name(item)]
+    return usable[-1] if usable else ""
 
 
 def _required_opening_bridge(last_location: str, last_sentence: str, characters: list[str]) -> str:
@@ -359,9 +514,11 @@ def _clean_location(value: str, known_locations: list[str] | None = None) -> str
     if location.startswith("the "):
         location = location[4:]
     for known_location in sorted(known_locations or _KNOWN_LOCATION_TERMS, key=len, reverse=True):
+        if not is_usable_location_name(known_location):
+            continue
         if known_location.lower() in location or known_location in raw_location:
             return known_location
-    return location
+    return location if is_usable_location_name(location) else ""
 
 
 def _is_known_location(value: str, known_locations: list[str] | None = None) -> bool:

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from core.local_file_io import local_io_path
 from core.engine.persistence import (
     PersistenceLockError,
     _atomic_create_from_bytes,
@@ -72,6 +73,23 @@ class RootRegistryService:
         roots = _validate_physical_roots(
             root_map, require_runtime=require_runtime
         )
+        with self._machine_write_scope(roots):
+            return self._ensure_owned(roots, require_runtime=require_runtime)
+
+    @contextmanager
+    def _machine_write_scope(self, roots):
+        from core.engine.persistence_v2_ownership import _registry
+        from workbench.book_ownership import book_output_write_lock
+        registry, checksum = _registry(self.transaction_root)
+        paths = [self.transaction_root, *roots.values()]
+        if registry is not None:
+            paths.extend(Path(binding["path"]) for binding in registry["roots"].values())
+        with book_output_write_lock(*paths):
+            if _registry(self.transaction_root) != (registry, checksum):
+                raise RootRegistryCasError("root registry changed while acquiring machine ownership")
+            yield registry
+
+    def _ensure_owned(self, roots, *, require_runtime):
         self.transaction_root.mkdir(parents=True, exist_ok=True)
         _arm_persistence_lock(self.transaction_root)
         fence_attestation = _arm_main_project_fence(self.transaction_root, roots)
@@ -185,6 +203,8 @@ class RootRegistryService:
         # their own state locks, closing the scan->replace race.
         try:
             with ExitStack() as locks:
+                initial = locks.enter_context(self._machine_write_scope(
+                    _validate_physical_roots(remaps, require_runtime=False)))
                 if _is_event_authority_home(self.transaction_root):
                     # Event-authority writers own the EA-global lock before the
                     # dependency fence.  Match that order so remap cannot hold
@@ -196,6 +216,8 @@ class RootRegistryService:
                     locks.enter_context(persistence_run_lock(self.transaction_root))
                 _assert_remap_idle(self.transaction_root, active_sessions=active_sessions)
                 registry = self.load()
+                if registry != initial:
+                    raise RootRegistryCasError("root registry changed before remap")
                 story_binding = registry.get("roots", {}).get("story_project")
                 if isinstance(story_binding, Mapping) and _is_path_beneath(
                     self.transaction_root,
@@ -719,9 +741,10 @@ def directory_identity(path: str | Path) -> dict[str, int]:
     """Return the stable directory identity required for rename-only remaps."""
 
     candidate = assert_safe_local_tree(path)
-    if not candidate.is_dir():
+    native = local_io_path(candidate)
+    if not native.is_dir():
         raise RootRegistryError(f"logical root is not an existing directory: {candidate}")
-    info = os.lstat(candidate)
+    info = os.lstat(native)
     if (
         not stat.S_ISDIR(info.st_mode)
         or stat.S_ISLNK(info.st_mode)

@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from api.contracts import MODEL_ENDPOINT_UNKNOWN, ModelResponse
+from core.local_file_io import local_io_path
 from core.engine.persistence import atomic_create_json
 from core.memory_v2.canonical import CANONICAL_JSON_ALGORITHM, canonical_json_hash
 from core.schema import SchemaValidationError, validate_schema
@@ -547,7 +548,8 @@ class ModelCallStore:
 
     def list_uncertain_calls(self) -> list[dict[str, Any]]:
         uncertain: list[dict[str, Any]] = []
-        paths = sorted(self.intents_dir.glob("*.json")) if self.intents_dir.exists() else []
+        directory = local_io_path(self.intents_dir)
+        paths = sorted(directory.glob("*.json")) if directory.exists() else []
         for path in paths:
             intent = load_model_call_intent(path)
             receipt_path = self.receipt_path(intent["attempt_id"])
@@ -577,10 +579,10 @@ class ModelCallStore:
     enumerate_uncertain = list_uncertain_calls
 
     def intent_path(self, attempt_id: str) -> Path:
-        return self.intents_dir / f"{_validate_id('attempt_id', attempt_id)}.json"
+        return local_io_path(self.intents_dir / f"{_validate_id('attempt_id', attempt_id)}.json")
 
     def receipt_path(self, attempt_id: str) -> Path:
-        return self.receipts_dir / f"{_validate_id('attempt_id', attempt_id)}.json"
+        return local_io_path(self.receipts_dir / f"{_validate_id('attempt_id', attempt_id)}.json")
 
 
 # A descriptive alias for callers that prefer the evidence-log terminology.
@@ -646,7 +648,7 @@ def _mapping_copy(value: Mapping[str, Any], name: str) -> dict[str, Any]:
 
 def _load_json(path: Path, name: str) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(local_io_path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ModelCallEvidenceError(f"cannot read {name} JSON {path}: {exc}") from exc
     if not isinstance(value, dict):

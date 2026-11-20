@@ -85,6 +85,17 @@ def init_runtime_state(
     memory_target: str | Path = DEFAULT_MEMORY_PATH,
     overwrite: bool = False,
 ) -> dict[str, Any]:
+    from core.engine.persistence import persistence_run_lock
+
+    # Force initialization is a writer too. Keep the existing run/state lock
+    # contract so backup and generation stay out for the whole copy operation.
+    runtime_dir = Path(snapshot_target).parent
+    with persistence_run_lock(runtime_dir / 'runs', state_paths=(snapshot_target, memory_target)):
+        return _init_runtime_state_locked(snapshot_source=snapshot_source, memory_source=memory_source,
+            snapshot_target=snapshot_target, memory_target=memory_target, overwrite=overwrite)
+
+
+def _init_runtime_state_locked(*, snapshot_source, memory_source, snapshot_target, memory_target, overwrite):
     runtime_dir = Path(snapshot_target).parent
     runtime_dir.mkdir(parents=True, exist_ok=True)
     (runtime_dir / "runs").mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterCandidateProviderResolution",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "record_type",
+    "resolution_id",
+    "created_at",
+    "action",
+    "book_id",
+    "chapter_index",
+    "candidate_id",
+    "execution_id",
+    "candidate_intent_hash",
+    "candidate_record_hash",
+    "uncertainty_sha256",
+    "unresolved_calls",
+    "author_confirmation",
+    "resolution_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "record_type": {"type": "string", "enum": ["chapter_candidate_provider_resolution"]},
+    "resolution_id": {"type": "string", "pattern": "^resolution_candidate_[0-9a-f]{40}$"},
+    "created_at": {"type": "string", "minLength": 1},
+    "action": {"type": "string", "enum": ["abandon_uncertain_provider_result"]},
+    "book_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "candidate_id": {"type": "string", "pattern": "^candidate_[0-9a-f]{40}$"},
+    "execution_id": {"type": "string", "pattern": "^execution_candidate_[0-9a-f]{32}$"},
+    "candidate_intent_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "candidate_record_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "uncertainty_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "unresolved_calls": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["call_id", "attempt_id", "intent_hash", "request_digest"],
+        "properties": {
+          "call_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
+          "attempt_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$"},
+          "intent_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "request_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "author_confirmation": {
+      "type": "object",
+      "required": ["confirmed", "warning_version"],
+      "properties": {
+        "confirmed": {"type": "boolean", "enum": [true]},
+        "warning_version": {
+          "type": "string",
+          "enum": ["candidate-provider-uncertain-abandon-v1"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "resolution_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

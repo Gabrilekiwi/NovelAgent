@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import uuid
 from contextlib import contextmanager
@@ -11,11 +12,17 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator
 
 from api.contracts import ModelResponse, coerce_model_response
+from core.chapter_budget_store import ChapterBudgetError, ChapterBudgetConflict, ChapterBudgetExceeded
+from core.chapter_model_budget import BINDING_FILE, ChapterModelCallBudget
+from core.chapter_execution_time import ActiveChapterInterval, ChapterTimeError
 from core.context_budget import (
     conservative_calibrated_token_estimate,
     model_token_counter,
 )
+from core.local_file_io import local_io_path
 from core.engine.persistence import atomic_create_json, atomic_create_text
+from core.engine.safe_paths import assert_safe_local_tree
+from core.story_project.reviewed_state_document import read_project_bytes
 from core.memory_v2.canonical import canonical_json_bytes
 from core.model_calls import (
     PROVIDER_PARTIAL_RESPONSE_FAILED,
@@ -37,6 +44,24 @@ _ACTIVE_MODEL_CALL_RUNTIME: ContextVar["ModelCallRuntimeContext | None"] = Conte
 )
 _SAFE_LABEL = re.compile(r"[^A-Za-z0-9._-]+")
 _FaultInjector = Callable[[str, str, Path | None], None]
+
+
+def estimate_provider_request_tokens(request, *, provider, model, endpoint_type):
+    """Offline reservation for the same complete request the runtime records."""
+    canonical_request = canonical_json_bytes(
+        request, exclude_environment_fields=False
+    ).decode("utf-8")
+    if provider and model and endpoint_type:
+        counter = model_token_counter(
+            provider=provider,
+            model=model,
+            endpoint_type=endpoint_type,
+        )
+        if counter is not None:
+            return counter.count(canonical_request)
+    # This remains a pre-provider reservation, never a claim of exact
+    # provider usage. Unknown tokenizers use the calibrated fallback.
+    return conservative_calibrated_token_estimate(canonical_request)
 
 
 class ProviderCallUncertainError(ModelCallEvidenceError):
@@ -173,6 +198,11 @@ class ModelCallRuntimeContext:
         default=lambda: datetime.now(timezone.utc)
     )
     fault_injector: _FaultInjector | None = None
+    chapter_budget: ChapterModelCallBudget | None = None
+    active_interval: ActiveChapterInterval | None = None
+    local_recovery_requested: bool = False
+    dispatch_forbidden: bool = False
+    local_recovery_response: ModelResponse | None = None
     _operation_scope: ModelCallOperationScope | None = field(
         default=None, init=False, repr=False
     )
@@ -235,20 +265,7 @@ class ModelCallRuntimeContext:
                     "model-call input_token_counter returned an invalid value"
                 )
             return value
-        canonical_request = canonical_json_bytes(
-            request, exclude_environment_fields=False
-        ).decode("utf-8")
-        if provider and model and endpoint_type:
-            counter = model_token_counter(
-                provider=provider,
-                model=model,
-                endpoint_type=endpoint_type,
-            )
-            if counter is not None:
-                return counter.count(canonical_request)
-        # This remains a pre-provider reservation, never a claim of exact
-        # provider usage. Unknown tokenizers use the calibrated fallback.
-        return conservative_calibrated_token_estimate(canonical_request)
+        return estimate_provider_request_tokens(request, provider=provider, model=model, endpoint_type=endpoint_type)
 
     def remaining_output_tokens(self) -> int | None:
         """Return the tracker's currently available output reservation capacity."""
@@ -293,14 +310,16 @@ class ModelCallRuntimeContext:
 
         hydrated: list[str] = []
         receipts: dict[str, dict[str, Any]] = {}
-        if self.store.receipts_dir.is_dir():
-            for path in sorted(self.store.receipts_dir.glob("*.json")):
+        receipts_dir = local_io_path(self.store.receipts_dir)
+        intents_dir = local_io_path(self.store.intents_dir)
+        if receipts_dir.is_dir():
+            for path in sorted(receipts_dir.glob("*.json")):
                 receipt = self.store.load_receipt(path.stem)
                 receipts[receipt["attempt_id"]] = receipt
-        if not self.store.intents_dir.is_dir():
+        if not intents_dir.is_dir():
             return hydrated
 
-        for path in sorted(self.store.intents_dir.glob("*.json")):
+        for path in sorted(intents_dir.glob("*.json")):
             intent = self.store.load_intent(path.stem)
             receipt = receipts.get(intent["attempt_id"])
             if (
@@ -327,6 +346,16 @@ class ModelCallRuntimeContext:
                 hydrated.append(receipt["receipt_hash"])
         return hydrated
 
+    def remaining_active_seconds(self):
+        if self.active_interval is None:
+            return None
+        if self.chapter_budget is not None:
+            expected = self.chapter_budget.binding
+            if any(self.active_interval.owner.binding[key] != expected[key]
+                    for key in ('book_id','chapter','budget_sha256')):
+                raise ChapterTimeError('active interval belongs to a different frozen chapter budget')
+        return self.active_interval.remaining_seconds()
+
     def execute_attempt(
         self,
         *,
@@ -340,6 +369,163 @@ class ModelCallRuntimeContext:
         max_output_tokens: int,
         operation: Callable[[], ModelResponse | str],
         input_tokens: int | None = None,
+        endpoint_fingerprint: str | None = None,
+        input_bound: dict[str, Any] | None = None,
+        billing_plan: dict[str, Any] | None = None,
+        billing_base_url: str | None = None,
+        before_dispatch: Callable[[], None] | None = None,
+    ) -> ModelResponse:
+        from workbench.restore_execution_policy import require_restored_execution_paths
+        require_restored_execution_paths(self.store.root, require_active=True)
+        from core.engine.reviewed_batch_control import current_policy_step
+        policy_step=current_policy_step()
+        if policy_step is not None:
+            policy_step.require(self.chapter_budget,provider=provider,model=model,stage=stage,
+                endpoint_fingerprint=endpoint_fingerprint)
+        from core.chapter_execution_budget import current_chapter_operation
+        chapter_operation=current_chapter_operation()
+        if chapter_operation is not None and (chapter_operation.local_only or chapter_operation.closed
+                or not chapter_operation.provider_dispatch_allowed):
+            raise ChapterBudgetError('local or closed chapter operation cannot invoke a model attempt')
+        if chapter_operation is not None:
+            binding=self.chapter_budget
+            expected=chapter_operation.budget
+            if (binding is None or binding.store.root!=expected.root
+                    or binding.execution_id!=chapter_operation.execution_id
+                    or self.active_interval is not chapter_operation.interval
+                    or any(binding.binding[key]!=expected.time_clock.binding[key]
+                           for key in ('book_id','chapter','budget_sha256'))):
+                raise ChapterBudgetConflict('model runtime is outside the current chapter service operation')
+            chapter_operation.require_target(expected,binding.execution_id)
+        if self.dispatch_forbidden:
+            raise ChapterBudgetError('local recovery cannot invoke a model attempt')
+        if billing_plan is not None:
+            from core.provider_billing_request import validate_openai_billing_plan
+            if self.chapter_budget is None:
+                raise ChapterBudgetError('reviewed monetary plan requires its original chapter ledger')
+            billing_plan=validate_openai_billing_plan(billing_plan,request,base_url=billing_base_url)
+        args = dict(call_id=call_id, attempt_number=attempt_number, provider=provider,
+            model=model, stage=stage, endpoint_type=endpoint_type, request=request,
+            max_output_tokens=max_output_tokens, operation=operation, input_tokens=input_tokens,
+            endpoint_fingerprint=endpoint_fingerprint, input_bound=input_bound,before_dispatch=before_dispatch,
+            billing_plan=billing_plan,billing_base_url=billing_base_url)
+        if self.chapter_budget is None:
+            if os.path.lexists(self.store.root / BINDING_FILE):
+                raise ChapterBudgetError('this execution requires its original chapter budget')
+            return self._execute_attempt(**args)
+        if type(attempt_number) is not int or attempt_number < 1:
+            raise ValueError('attempt_number must be a positive integer')
+        if type(max_output_tokens) is not int or max_output_tokens < 0:
+            raise ValueError('max_output_tokens must be a non-negative integer')
+        if not isinstance(endpoint_fingerprint,str) or not re.fullmatch('[0-9a-f]{64}',endpoint_fingerprint):
+            raise ChapterBudgetError('chapter-budget calls require a frozen endpoint fingerprint')
+        attempt_id = f'{call_id}-a{attempt_number}'
+        self.store.intent_path(attempt_id)
+        with self.chapter_budget.locked(self.store):
+            rows = self.chapter_budget.attempts()
+            for row in rows:
+                plan = row['plan']
+                if plan['intent']['attempt_id'] != attempt_id:
+                    continue
+                self._require_expected_intent(plan['intent'], call_id=call_id, attempt_id=attempt_id,
+                    provider=provider, model=model, stage=stage, request=request,
+                    max_output_tokens=max_output_tokens, explicit_input_tokens=input_tokens)
+                if (plan['endpoint_type'] != endpoint_type or plan['endpoint_fingerprint'] != endpoint_fingerprint
+                        or input_bound is not None and input_bound != plan['input_bound']
+                        or billing_plan != plan.get('billing_request_plan')):
+                    raise ChapterBudgetConflict('replay differs from the original endpoint or input bound')
+            self._reconcile_chapter_receipts(rows)
+            return self._execute_attempt(**args)
+
+    def reconcile_chapter_evidence(self):
+        """Explicit local recovery before an executor's unresolved-call gate.
+
+        Services must already own the book and select the original execution.
+        This neither opens an active interval nor dispatches a model request.
+        """
+        if self.chapter_budget is None:
+            raise ChapterBudgetError('local budget recovery requires the original chapter binding')
+        with self.chapter_budget.locked(self.store):
+            self._reconcile_chapter_receipts(self.chapter_budget.attempts())
+
+    def _reconcile_chapter_receipts(self, rows):
+        """Under the execution lock, reconcile only original physical evidence.
+
+        An unclaimed reservation proves the Provider was never invoked by this
+        protocol. Close it without resending that attempt. A dispatch claim
+        without a Receipt remains uncertain, regardless of response artifacts.
+        """
+        originals = {row['plan']['intent']['attempt_id']: row for row in rows}
+        for directory in (self.store.intents_dir,self.store.receipts_dir):
+            assert_safe_local_tree(directory)
+            io_dir = local_io_path(directory)
+            if not io_dir.exists():
+                continue
+            for path in io_dir.iterdir():
+                if path.suffix != '.json' or path.stem not in originals:
+                    raise ChapterBudgetError('physical model evidence has no original chapter reservation')
+                read_project_bytes(self.store.root, f"{directory.name}/{path.name}")
+        for row in rows:
+            intent = row['plan']['intent']
+            attempt_id = intent['attempt_id']
+            if self.store.intent_path(attempt_id).exists():
+                if self.store.load_intent(attempt_id) != intent:
+                    raise ChapterBudgetConflict('physical Intent differs from the original chapter reservation')
+            elif row['dispatch_claimed'] or row['receipt'] is not None:
+                raise ChapterBudgetError('dispatched or settled attempt has lost its physical Intent')
+            else:
+                self.store.record_intent(intent)
+            if self.store.receipt_path(attempt_id).exists():
+                receipt = self.store.load_receipt(attempt_id)
+                self._settle_chapter_receipt(receipt)
+            elif row['receipt'] is not None:
+                raise ChapterBudgetError('settled attempt has lost its physical Receipt')
+            elif not row['dispatch_claimed']:
+                status = 'budget_rejected' if row['local_rejection'] else PROVIDER_REQUEST_NOT_SENT
+                response = ModelResponse('',usage={},finish_reason=status,
+                    actual_model=intent['model'],endpoint_type=row['plan']['endpoint_type'])
+                relative_ref = f'responses/{attempt_id}.txt'
+                self._persist_response_artifact(relative_ref,response.text)
+                self._record_receipt(build_model_call_receipt(intent,response=response,
+                    response_artifact_ref=relative_ref,status=status,received_at=self.clock()))
+
+    def _settle_chapter_receipt(self, receipt):
+        if self.chapter_budget is None:
+            return
+        # Do not release money on the strength of a copied/forged ledger Receipt.
+        actual = self.store.load_receipt(receipt['attempt_id'])
+        if actual != receipt:
+            raise ChapterBudgetConflict('chapter settlement differs from the published physical Receipt')
+        read_project_bytes(self.store.root,actual['response_artifact_ref'])
+        self._load_response_from_receipt(actual)
+        self.chapter_budget.settle(actual)
+
+    def _record_receipt(self, receipt):
+        persisted = self.store.record_receipt(receipt)
+        if self.chapter_budget is not None:
+            self._inject_fault('after_receipt_before_chapter_settlement',receipt['attempt_id'],
+                self.store.receipt_path(receipt['attempt_id']))
+            self._settle_chapter_receipt(persisted)
+        return persisted
+
+    def _execute_attempt(
+        self,
+        *,
+        call_id: str,
+        attempt_number: int,
+        provider: str,
+        model: str,
+        stage: str,
+        endpoint_type: str,
+        request: Any,
+        max_output_tokens: int,
+        operation: Callable[[], ModelResponse | str],
+        input_tokens: int | None = None,
+        endpoint_fingerprint: str | None = None,
+        input_bound: dict[str, Any] | None = None,
+        billing_plan: dict[str, Any] | None = None,
+        billing_base_url: str | None = None,
+        before_dispatch: Callable[[], None] | None = None,
     ) -> ModelResponse:
         if isinstance(attempt_number, bool) or not isinstance(attempt_number, int) or attempt_number < 1:
             raise ValueError("attempt_number must be a positive integer")
@@ -383,6 +569,7 @@ class ModelCallRuntimeContext:
                 attempt_id=attempt_id,
             )
 
+        self.remaining_active_seconds()
         reserved_input = (
             self.estimate_input_tokens(
                 request,
@@ -409,6 +596,15 @@ class ModelCallRuntimeContext:
             request=request,
             created_at=self.clock(),
         )
+        budget_rejection = None
+        if self.chapter_budget is not None:
+            try:
+                self.chapter_budget.reserve(intent,endpoint_type=endpoint_type,
+                    endpoint_fingerprint=endpoint_fingerprint,input_bound=input_bound,
+                    billing_plan=billing_plan,request=request,base_url=billing_base_url)
+            except ChapterBudgetExceeded as exc:
+                budget_rejection = exc
+            self._inject_fault('after_chapter_reservation_before_intent',attempt_id,intent_path)
         try:
             atomic_create_json(intent_path, intent)
         except OSError as exc:
@@ -436,6 +632,10 @@ class ModelCallRuntimeContext:
                 attempt_id=attempt_id,
             ) from exc
         try:
+            if self.chapter_budget is not None:
+                self._inject_fault('after_intent_before_dispatch',attempt_id,intent_path)
+            if budget_rejection is not None:
+                raise budget_rejection
             self._reserve_tracker(
                 input_tokens=reserved_input,
                 max_output_tokens=max_output_tokens,
@@ -443,6 +643,17 @@ class ModelCallRuntimeContext:
                 attempt_id=attempt_id,
                 stage=stage,
             )
+            self.remaining_active_seconds()
+            if before_dispatch is not None:
+                before_dispatch()
+            from core.engine.reviewed_batch_control import current_policy_step
+            policy_step=current_policy_step()
+            if policy_step is not None:
+                policy_step.require(self.chapter_budget,provider=provider,model=model,stage=stage,
+                    endpoint_fingerprint=endpoint_fingerprint)
+            if billing_plan is not None:
+                from core.provider_billing_request import validate_openai_billing_plan
+                validate_openai_billing_plan(billing_plan,request,base_url=billing_base_url)
         except Exception:
             # The durable Intent exists, but the provider was provably never
             # invoked.  Close the attempt with a terminal Receipt so recovery
@@ -457,7 +668,7 @@ class ModelCallRuntimeContext:
             )
             relative_ref = f"responses/{attempt_id}.txt"
             self._persist_response_artifact(relative_ref, rejected.text)
-            self.store.record_receipt(
+            self._record_receipt(
                 build_model_call_receipt(
                     intent,
                     response=rejected,
@@ -468,6 +679,9 @@ class ModelCallRuntimeContext:
             )
             raise
 
+        if self.chapter_budget is not None:
+            self.chapter_budget.mark_dispatched(intent)
+            self._inject_fault('after_dispatch_claim_before_provider',attempt_id,intent_path)
         try:
             raw_response = operation()
             response = coerce_model_response(
@@ -495,8 +709,10 @@ class ModelCallRuntimeContext:
                 status="succeeded",
                 received_at=self.clock(),
             )
-            self.store.record_receipt(receipt)
+            self._record_receipt(receipt)
         except ProviderCallUncertainError:
+            raise
+        except ChapterBudgetError:
             raise
         except Exception as exc:
             partial_response = getattr(exc, "partial_response", None)
@@ -522,7 +738,7 @@ class ModelCallRuntimeContext:
                         status=PROVIDER_PARTIAL_RESPONSE_FAILED,
                         received_at=self.clock(),
                     )
-                    self.store.record_receipt(failed_receipt)
+                    self._record_receipt(failed_receipt)
                 except Exception as evidence_error:
                     raise ProviderCallUncertainError(
                         call_id=call_id,
@@ -566,7 +782,7 @@ class ModelCallRuntimeContext:
                         status=PROVIDER_REQUEST_NOT_SENT,
                         received_at=self.clock(),
                     )
-                    self.store.record_receipt(failed_receipt)
+                    self._record_receipt(failed_receipt)
                 except Exception as evidence_error:
                     raise ProviderCallUncertainError(
                         call_id=call_id,
@@ -613,7 +829,7 @@ class ModelCallRuntimeContext:
                         status="provider_rejected",
                         received_at=self.clock(),
                     )
-                    self.store.record_receipt(failed_receipt)
+                    self._record_receipt(failed_receipt)
                 except Exception as evidence_error:
                     raise ProviderCallUncertainError(
                         call_id=call_id,
@@ -734,6 +950,9 @@ class ModelCallRuntimeContext:
 
     def _replay_receipt(self, intent: dict[str, Any]) -> ModelResponse:
         receipt = self.store.load_receipt(intent["attempt_id"])
+        if self.chapter_budget is not None and receipt['status']=='budget_rejected':
+            self._load_response_from_receipt(receipt)
+            raise ChapterBudgetExceeded('original physical attempt was rejected before dispatch')
         # Local budget rejection is terminal but never crossed the provider
         # boundary and must remain uncharged.
         if receipt["status"] == PROVIDER_PARTIAL_RESPONSE_FAILED:
@@ -1002,7 +1221,7 @@ def _resolve_artifact(root: Path, relative_ref: str) -> Path:
         raise ModelCallIntegrityError(
             "model response artifact reference escapes its store"
         ) from exc
-    return candidate
+    return local_io_path(candidate)
 
 
 def _safe_label(value: str) -> str:

@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterPolicyCandidateIntent",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "record_type",
+    "candidate_id",
+    "book_id",
+    "chapter_index",
+    "created_at",
+    "idempotency_key_sha256",
+    "request_sha256",
+    "input",
+    "source",
+    "authority",
+    "chapter_intent",
+    "execution",
+    "intent_hash",
+    "policy_authorization"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "1.2"
+      ]
+    },
+    "record_type": {
+      "type": "string",
+      "enum": [
+        "chapter_candidate_intent"
+      ]
+    },
+    "candidate_id": {
+      "type": "string",
+      "pattern": "^candidate_[0-9a-f]{40}$"
+    },
+    "book_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chapter_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotency_key_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "request_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "artifact_ref",
+        "sha256",
+        "chars"
+      ],
+      "properties": {
+        "artifact_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "chars": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "story_project_read_set",
+        "context_digest",
+        "membership_fingerprint",
+        "context_builder_version",
+        "runtime_cache_policy",
+        "context_sha256",
+        "authority_projection_sha256",
+        "generation_state_view_sha256"
+      ],
+      "properties": {
+        "story_project_read_set": {
+          "type": "object"
+        },
+        "context_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "membership_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "context_builder_version": {
+          "type": "string",
+          "enum": [
+            "1.0"
+          ]
+        },
+        "runtime_cache_policy": {
+          "type": "string",
+          "enum": [
+            "bypass"
+          ]
+        },
+        "context_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "authority_projection_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "generation_state_view_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "mode",
+        "authority_epoch",
+        "head_event_hash",
+        "identity_revision"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head_event_hash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "identity_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "chapter_intent": {
+      "type": "object",
+      "required": [
+        "goal",
+        "validation_focus",
+        "notes"
+      ],
+      "properties": {
+        "goal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "validation_focus": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "continuity",
+              "spatial",
+              "logic"
+            ]
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "execution_id",
+        "execution_kind",
+        "operation_key",
+        "provenance_hash",
+        "provenance_artifact_ref",
+        "model_calls_ref"
+      ],
+      "properties": {
+        "execution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_kind": {
+          "type": "string",
+          "enum": [
+            "model",
+            "deterministic"
+          ]
+        },
+        "operation_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "provenance_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "provenance_artifact_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_calls_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "intent_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "policy_authorization": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

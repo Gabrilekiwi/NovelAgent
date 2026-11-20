@@ -10,6 +10,8 @@ from typing import Any, Callable
 import uuid
 
 from core.runtime_paths import RuntimePaths
+from core.engine.persistence import persistence_state_lock
+from core.engine.safe_paths import assert_safe_local_tree
 from core.schema import validate_schema
 from core.story_project.identity import ProjectIdentity, ensure_project_identity, load_project_identity
 
@@ -100,7 +102,16 @@ def migrate_story_project_runtime(
     now: Callable[[], datetime] | None = None,
     migration_id_factory: Callable[[], uuid.UUID] = uuid.uuid4,
 ) -> dict[str, Any]:
-    story_root = Path(story_project_root).resolve()
+    story_root = assert_safe_local_tree(story_project_root).resolve()
+    from workbench.book_ownership import book_output_write_lock
+    # Own the target before inspection, identity creation or staging. A saved
+    # inspection is not permission to publish while a backup has since started.
+    with book_output_write_lock(story_root), persistence_state_lock((story_root,)):
+        return _migrate_story_project_runtime_locked(source_runtime=source_runtime,
+            story_root=story_root, now=now, migration_id_factory=migration_id_factory)
+
+
+def _migrate_story_project_runtime_locked(*, source_runtime, story_root, now, migration_id_factory):
     target = RuntimePaths.for_story_project(story_root).runtime_dir
     inspection = inspect_story_project_runtime_migration(
         source_runtime=source_runtime,
@@ -112,6 +123,14 @@ def migrate_story_project_runtime(
         raise StoryProjectRuntimeMigrationError(f"StoryProject runtime migration blocked: {codes}")
 
     discovered_book_ids = inspection["discovered_book_ids"]
+    from workbench.book_ownership import book_output_write_lock
+    with book_output_write_lock(story_root, book_id=discovered_book_ids[0] if discovered_book_ids else None):
+        return _publish_owned_runtime_migration(inspection=inspection, story_root=story_root,
+            target=target, now=now, migration_id_factory=migration_id_factory)
+
+
+def _publish_owned_runtime_migration(*, inspection, story_root, target, now, migration_id_factory):
+    discovered_book_ids = inspection["discovered_book_ids"]
     identity = ensure_project_identity(
         story_root,
         book_id=discovered_book_ids[0] if discovered_book_ids else None,
@@ -119,7 +138,10 @@ def migrate_story_project_runtime(
     migration_id = f"migration-{migration_id_factory()}"
     source = Path(inspection["source_runtime"])
     target.parent.mkdir(parents=True, exist_ok=True)
-    stage = target.parent / f".{migration_id}.staging"
+    # Repeating the full migration ID above the manifest needlessly exceeds
+    # Windows MAX_PATH even when the final runtime path is supported. The
+    # staging name is private; the full ID remains in the published manifest.
+    stage = target.parent / f".m-{uuid.uuid4().hex[:12]}"
     stage.mkdir()
     try:
         _copy_runtime_contents(source, stage, identity=identity)

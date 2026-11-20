@@ -1,0 +1,20 @@
+{
+  "available": false,
+  "blocking_problem_count": null,
+  "problem_codes": [],
+  "problem_count": 0,
+  "repair_attempts": 0,
+  "repair_budget": null,
+  "repair_budget_exhausted": false,
+  "repair_effective": null,
+  "repair_introduced_new_problems": false,
+  "repair_manual_review_count": 0,
+  "repair_risk_level": null,
+  "repair_stalled": false,
+  "severity_counts": [],
+  "source_chapter_index": null,
+  "source_committed": null,
+  "source_goal": null,
+  "source_run_id": null,
+  "source_status": null
+}

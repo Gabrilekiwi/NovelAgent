@@ -1,2 +1,5 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
+*.zip binary
+# These fixtures are verified as bytes, including after git archive.
+tests/fixtures/chapter_fact_offline_v1/**/*.json text eol=lf

@@ -31,6 +31,32 @@ class MemoryAuthorityMismatchError(MemoryCacheRecoveryError):
         super().__init__(f"memory cache recovery {field} mismatch")
 
 
+def read_event_authority_projection(
+    memory_root: str | Path,
+    *,
+    expected_book_id: str | None = None,
+    expected_authority_epoch: int | None = None,
+    expected_head_event_hash: str | None = None,
+) -> dict[str, Any]:
+    """Replay and validate event authority without inspecting or writing caches.
+
+    This is the read-only boundary for preview/candidate workflows.  It always
+    replays immutable history from genesis, cross-checks any checkpoint-assisted
+    replay, and pins the result to ProjectIdentity before returning it.
+    """
+
+    authoritative, projection = _validated_event_authority_projection(
+        Path(memory_root).absolute(),
+        expected_book_id=expected_book_id,
+        expected_authority_epoch=expected_authority_epoch,
+        expected_head_event_hash=expected_head_event_hash,
+    )
+    return {
+        "projection": projection,
+        "replay_report": authoritative,
+    }
+
+
 def ensure_event_authority_caches(
     memory_root: str | Path,
     *,
@@ -446,5 +472,6 @@ __all__ = [
     "MemoryAuthorityMismatchError",
     "MemoryCacheRecoveryError",
     "ensure_event_authority_caches",
+    "read_event_authority_projection",
     "rebuild_event_authority_caches",
 ]

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>作者基线审核 · NovelAgent</title>
+  <link rel="stylesheet" href="/static/workbench.css">
+  <link rel="stylesheet" href="/static/baseline-review.css">
+  <script src="/static/workbench.js" defer></script>
+  <script src="/static/fact-form.js" defer></script>
+  <script src="/static/baseline-review.js" defer></script>
+  <script src="/static/maintenance.js" defer></script>
+</head>
+<body>
+<main class="baseline-page">
+  <header><a href="/">返回工作台</a><h1>作者基线审核</h1>
+    <p>核对截至上一正式章节的七类事实。先完成作者审核，再生成新备份和认证，最后单独确认升级。</p>
+    <p>基线确认并完成新备份认证后，<a id="open-upgrade" href="/">进入作品升级确认</a>。</p></header>
+  <section class="panel" data-maintenance-controls aria-label="维护状态">
+    <button class="button button-secondary" type="button" data-maintenance-begin hidden>进入维护</button>
+    <div data-maintenance-notice role="status" hidden><p data-maintenance-message></p>
+      <button class="button button-secondary" type="button" data-maintenance-resume hidden>继续原维护</button>
+      <button class="button button-secondary" type="button" data-maintenance-finish hidden>结束维护，恢复使用</button>
+    </div>
+    <button class="button button-light" type="button" data-maintenance-refresh>刷新状态</button>
+    <p data-maintenance-error class="form-error" role="alert" hidden></p>
+  </section>
+  <p id="review-status" class="notice" role="status" aria-live="polite">正在读取审核记录……</p>
+  <p id="review-error" class="form-error" role="alert" hidden></p>
+  <section class="panel"><h2>保存的审核与版本</h2>
+    <p>刷新页面或保存响应丢失后，可从这里找回。历史确认仍须核对当前来源。</p>
+    <label class="field">已保存审核<select id="saved-review"><option value="">请选择审核记录</option></select></label>
+    <div class="button-row"><button id="refresh-reviews" class="button button-secondary">刷新审核列表</button>
+      <button id="more-reviews" class="button button-light" hidden>读取更多审核</button>
+      <button id="load-review" class="button button-secondary" disabled>加载最新版本</button></div>
+    <label class="field">修订版本<select id="saved-revision" disabled><option value="">请先加载审核</option></select></label>
+    <div class="button-row"><button id="load-revision" class="button button-light" disabled>查看所选版本</button>
+      <button id="inspect-review" class="button button-secondary" disabled>核对当前来源</button>
+      <button id="copy-review" class="button button-light" disabled>以此内容新建审核</button></div>
+    <p id="record-summary"></p>
+  </section>
+  <section class="panel"><h2>建立审核内容</h2>
+    <p>自动整理仅覆盖可明确读取的人物、地点和计数。空白类别均为尚未核对，须补充或明确确认没有记录。</p>
+    <button id="proposal" class="button button-secondary" disabled>从当前资料整理建议</button>
+    <label class="field">原 Strict 校准报告文件<input id="calibration-file" type="file" accept=".json,application/json"></label>
+    <p id="calibration-status">新建审核需选择与当前作品匹配的完整原校准报告。</p>
+  </section>
+  <section class="panel"><h2>原始资料核对</h2>
+    <label class="field">设定或追踪资料<select id="source-path"><option value="">请先整理建议或加载审核</option></select></label>
+    <button id="read-source" class="button button-light" disabled>查看原资料</button>
+    <pre id="source-text" class="source-text"></pre>
+    <label class="field">保留的原文摘录<textarea id="source-excerpt" rows="3"></textarea></label>
+    <button id="add-reference" class="button button-light" disabled>保留这段摘录</button>
+    <p>摘录必须来自当前显示的原资料。更改摘录后，需要保存为新的审核记录。</p>
+    <ul id="references"></ul>
+  </section>
+  <section class="panel"><h2>七类事实</h2>
+    <p>先整理人物，再选择关系、名册、位置和物品中的人物。保存后请逐类勾选核对，任何修改都会清除确认。</p>
+    <fieldset id="fact-editors" disabled></fieldset>
+  </section>
+  <section class="panel review-actions">
+    <button id="save-review" class="button button-secondary" disabled>保存审核草稿</button>
+    <label><input id="author-confirmed" type="checkbox" disabled>我已核对七类事实及原始资料，明确确认这份基线。</label>
+    <button id="confirm-review" class="button button-primary" disabled>确认这份作者基线</button>
+    <p>保存或确认后，请回工作台生成新备份。旧备份不会自动包含本次审核。</p>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,68 @@
+{
+  "id": "unexplained_location_contradiction",
+  "category": "continuity",
+  "checker": "fact_prepare",
+  "material": {
+    "chapter_text": "林澈一直守在仓库，没有离开。紧接着，他站在旧城站闸门边，期间没有任何移动。",
+    "proposal": {
+      "schema_version": "1.0",
+      "facts": [
+        {
+          "local_key": "event_1",
+          "kind": "event",
+          "summary": "林澈从仓库抵达旧城站，周岚在站内迎接。",
+          "evidence_quotes": [
+            "他站在旧城站闸门边"
+          ],
+          "proposal": {
+            "event_type": "arrival_and_handover",
+            "status": "completed",
+            "occurrence_location": "location_old_station",
+            "onsite_participants": [
+              {
+                "entity_id": "char_lin_che",
+                "role": "actor"
+              },
+              {
+                "entity_id": "char_zhou_lan",
+                "role": "actor"
+              }
+            ],
+            "remote_participants": [],
+            "transported_items": [],
+            "related_entities": []
+          }
+        },
+        {
+          "local_key": "location_1",
+          "kind": "location",
+          "summary": "林澈从仓库抵达旧城站",
+          "evidence_quotes": [
+            "他站在旧城站闸门边"
+          ],
+          "proposal": {
+            "entity_id": "char_lin_che",
+            "from_location": "location_warehouse",
+            "to_location": "location_old_station",
+            "source_event_key": "event_1"
+          }
+        }
+      ]
+    },
+    "baseline": "baseline.json"
+  },
+  "expected": {
+    "disposition": "review",
+    "policy_code": "location_continuity"
+  },
+  "annotation": {
+    "source": "agent_curated_from_explicit_fixture",
+    "human_review_status": "pending",
+    "rationale": "一直未离开仓库与紧接着在旧城站矛盾；仅构造一条合法位置delta不能解释正文。"
+  },
+  "origin": {
+    "kind": "synthetic_or_existing_repo_fixture",
+    "path": "examples/chapter_fact_review/seven_kinds.json",
+    "sha256": "1e8df44e4e66d247251325eca99e3a7db9f7763d886b018a4c530f85a564ac26"
+  }
+}

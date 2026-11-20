@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,8 +26,24 @@ def test_windows_launcher_keeps_cmd_safe_crlf_and_forwards_arguments() -> None:
     assert b"\r\n" in raw
     assert b"\n" not in raw.replace(b"\r\n", b"")
     script = raw.decode("ascii")
-    assert "%NOVELAGENT_PYTHON% run_workbench.py %*" in script
+    assert '"%NOVELAGENT_PYTHON%" run_workbench.py %*' in script
     assert 'cd /d "%~dp0"' in script
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows cmd launcher")
+def test_windows_launcher_uses_project_environment_from_another_directory(tmp_path: Path) -> None:
+    if not (REPOSITORY / ".venv/Scripts/python.exe").is_file():
+        pytest.skip("Project virtual environment is not installed")
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c",
+         str(REPOSITORY / "启动创作工作台.bat"), "--help"],
+        cwd=tmp_path, capture_output=True, text=True, encoding="utf-8",
+        timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '"ok": true' in result.stdout
+    assert '"lock": "requirements.lock"' in result.stdout
+    assert "usage: run_workbench.py" in result.stdout
 
 
 def _client(tmp_path: Path) -> tuple[TestClient, Path]:
@@ -66,6 +83,36 @@ def _create_project(client: TestClient, workspace: Path, name: str = "测试长�
     )
     assert response.status_code == 201, response.text
     return response.json()["project"]
+
+
+
+def _legacy_display_resolution(fields: dict, project: dict) -> dict:
+    """Valid legacy display fixture, not evidence for resuming model calls."""
+    from core.memory_v2.canonical import canonical_json_hash
+    from core.engine.locked_chapter_state import validate_locked_chapter_resolution
+    value = dict(schema_version="1.0", id="display-" + fields["action"],
+                 created_at="2026-01-01T00:00:00+00:00", book_id=project["book_id"],
+                 resolved_execution_ids=[], resolved_attempt_ids=[], discarded_run_ids=[],
+                 expected_scene_count=1, complete_draft=None, scenes=[])
+    value.update(fields)
+    value["scenes"] = [dict(index=x.get("index", x.get("scene_index")),
+        text="fixture scene", sha256=hashlib.sha256(b"fixture scene").hexdigest(),
+        source_attempt_id="fixture-attempt") for x in value["scenes"]]
+    value["resolution_hash"] = canonical_json_hash(value, exclude_fields=("resolution_hash",), exclude_environment_fields=False)
+    return validate_locked_chapter_resolution(value)
+
+def test_display_resolution_fixture_rejects_tampered_content() -> None:
+    from core.engine.locked_chapter_state import (
+        LockedChapterStateError, validate_locked_chapter_resolution,
+    )
+    value = _legacy_display_resolution({
+        "chapter_index": 1, "action": "resume_scenes",
+        "reason": "contiguous_scene_prefix_available", "source_run_id": "run-test",
+        "scenes": [{"index": 1}],
+    }, {"book_id": "test-book"})
+    value["scenes"][0]["text"] = "tampered scene"
+    with pytest.raises(LockedChapterStateError, match="hash mismatch"):
+        validate_locked_chapter_resolution(value)
 
 
 def _outline(chapter: int, *, title: str | None = None) -> dict:
@@ -214,6 +261,42 @@ def test_job_poll_and_sse_replay_events_from_last_event_id(tmp_path: Path) -> No
     assert "event: job.cancel_requested" in stream.text
     assert "event: job.queued" not in stream.text
     assert "event: test.progress" not in stream.text
+
+
+def test_cancel_paused_job_releases_generation_session_slot(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="close-paused-session")
+    store = client.app.state.jobs
+    paused = store.create_job(
+        project_id=project["id"],
+        kind="generation_session",
+        start_chapter=1,
+        end_chapter=10,
+    )
+    store.chapter_failed(
+        paused.id,
+        chapter=1,
+        error={"code": "scene_boundary_state_mismatch"},
+        uncertain=False,
+    )
+    assert store.get(paused.id).state == "awaiting_input"
+
+    cancelled = client.post(
+        f"/api/jobs/{paused.id}/cancel",
+        headers={"origin": "http://testserver"},
+    )
+
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["job"]["state"] == "cancelled"
+    replacement = store.create_job(
+        project_id=project["id"],
+        kind="generation_session",
+        start_chapter=1,
+        end_chapter=10,
+    )
+    assert replacement.id != paused.id
+    assert replacement.state == "queued"
 
 
 def test_job_api_exposes_reconciled_pre_provider_retry_readiness(
@@ -450,14 +533,14 @@ def test_recovery_summary_marks_missing_current_and_stale_checkpoints(tmp_path: 
     resolution_dir.mkdir()
     (resolution_dir / "resolution_current.json").write_text(
         json.dumps(
-            {
+            _legacy_display_resolution({
                 "chapter_index": 20,
                 "action": "resume_scenes",
-                "reason": "preserve trusted scene prefix",
+                "reason": "preserve_trusted_scene_prefix",
                 "source_run_id": "run-original",
                 "expected_scene_count": 3,
                 "scenes": [{"scene_index": 1}, {"scene_index": 2}],
-            }
+            }, project)
         ),
         encoding="utf-8",
     )
@@ -475,6 +558,26 @@ def test_recovery_summary_marks_missing_current_and_stale_checkpoints(tmp_path: 
     assert stale["checkpoint"]["source_run_id"] == "run-original"
     assert stale["checkpoint_matches_latest_run"] is False
     assert stale["needs_reclassification"] is True
+
+    (resolution_dir / "resolution_reset.json").write_text(
+        json.dumps(
+            _legacy_display_resolution({
+                "chapter_index": 20,
+                "action": "reset",
+                "reason": "operator_requested_reset",
+                "source_run_id": "run-newer-failure",
+                "expected_scene_count": 3,
+                "scenes": [],
+            }, project)
+        ),
+        encoding="utf-8",
+    )
+
+    reset = recovery_summary()
+    assert reset["latest_run"]["id"] == "run-newer-failure"
+    assert reset["checkpoint"]["action"] == "reset"
+    assert reset["recoverable"] is False
+    assert reset["needs_reclassification"] is False
 
 
 def test_existing_chapter_20_recovery_is_only_queued_without_worker_or_model(
@@ -579,14 +682,14 @@ def test_pending_exposes_recovery_for_the_paused_session_chapter(tmp_path: Path)
     resolution_dir.mkdir()
     (resolution_dir / "resolution_chapter_21.json").write_text(
         json.dumps(
-            {
+            _legacy_display_resolution({
                 "chapter_index": 21,
                 "action": "resume_scenes",
                 "reason": "contiguous_scene_prefix_available",
                 "source_run_id": "chapter-21-failed",
                 "expected_scene_count": 4,
                 "scenes": [{"index": 1}],
-            }
+            }, project)
         ),
         encoding="utf-8",
     )
@@ -670,7 +773,7 @@ def test_pending_preserves_author_edit_and_exposes_verified_source_for_compariso
     checkpoint = resolution_dir / "resolution_chapter_22_final.json"
     checkpoint.write_text(
         json.dumps(
-            {
+            _legacy_display_resolution({
                 "chapter_index": 22,
                 "action": "repair_draft",
                 "reason": "durable_repaired_draft_available",
@@ -679,7 +782,7 @@ def test_pending_preserves_author_edit_and_exposes_verified_source_for_compariso
                     "text": source_text,
                     "sha256": source_sha256,
                 },
-            }
+            }, project)
         ),
         encoding="utf-8",
     )
@@ -997,6 +1100,51 @@ def test_pending_resume_requeues_the_same_uncertain_session_without_creating_ano
     assert client.app.state.supervisor._thread is None
 
 
+def test_history_detail_reads_scoped_run_record_and_rejects_invalid_lookup(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="历史详情测试")
+    other_project = _create_project(client, workspace, name="历史详情隔离测试")
+    run_id = "chapter_1_history_detail"
+    run_dir = Path(project["root"]) / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True)
+    (run_dir / f"{run_id}.json").write_text(
+        json.dumps(
+            {
+                "run": {
+                    "id": run_id,
+                    "chapter_index": 1,
+                    "status": "failed",
+                    "committed": False,
+                    "started_at": "2026-08-31T14:00:00+08:00",
+                    "finished_at": "2026-08-31T14:01:00+08:00",
+                    "repair_attempts": 0,
+                    "persistence": {"state": "failed"},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    detail = client.get(
+        f"/api/projects/{project['id']}/history/{run_id}?source=run"
+    )
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["source"] == "run"
+    assert body["run"]["id"] == run_id
+    assert body["run"]["chapter_index"] == 1
+    assert body["verification"] is None
+
+    cross_project = client.get(
+        f"/api/projects/{other_project['id']}/history/{run_id}?source=run"
+    )
+    assert cross_project.status_code == 404
+    assert client.get(f"/api/projects/{project['id']}/history/missing?source=run").status_code == 404
+    assert client.get(f"/api/projects/{project['id']}/history/{run_id}?source=other").status_code == 422
+
+
 def test_health_accepts_browser_selected_report_and_keeps_strict_gate_fail_closed(
     tmp_path: Path,
 ) -> None:
@@ -1073,3 +1221,120 @@ def test_health_accepts_browser_selected_report_and_keeps_strict_gate_fail_close
     assert payload["health"]["production_eligible"] is True
     assert payload["health"]["score"] == 100, payload["health"]["shadow_error"]
     assert all(item["state"] == "pass" for item in payload["health"]["checks"])
+
+
+def _write_chapter_run(project_root: Path, chapter: int, *, committed: bool, run_id: str | None = None) -> None:
+    run_dir = Path(project_root) / ".novelagent" / "runtime" / "runs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run": {
+            "id": run_id or f"chapter-{chapter}-{'committed' if committed else 'failed'}",
+            "chapter_index": chapter,
+            "committed": committed,
+            "status": "completed" if committed else "failed",
+            "error": None if committed else {"type": "ValueError", "message": "test failure"},
+        }
+    }
+    (run_dir / f"chapter_{chapter}_{'committed' if committed else 'failed'}.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
+def _attention_payloads(client: TestClient, project_id: str) -> tuple[dict, dict]:
+    detail = client.get(f"/api/projects/{project_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    pending = client.get(f"/api/projects/{project_id}/pending")
+    assert pending.status_code == 200, pending.text
+    return body, pending.json()
+
+
+def test_overview_pending_count_is_zero_when_author_has_nothing_to_do(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="empty-attention")
+    _write_chapter_run(Path(project["root"]), 20, committed=False)
+
+    body, pending = _attention_payloads(client, project["id"])
+    overview = body["overview"]
+    summary = body["project"]
+
+    assert pending["jobs"] == []
+    assert pending["drafts"] == []
+    assert pending["outline_batches"] == []
+    assert pending["chapter_recovery"]["chapter"] == project["next_chapter"]
+    assert pending["chapter_recovery"]["recoverable"] is False
+    assert overview["pending_count"] == 0
+    assert overview["has_attention"] is False
+    assert summary["pending_count"] == 0
+    assert summary["has_attention"] is False
+    assert overview["chapter_recovery"]["chapter"] == project["next_chapter"]
+    assert "chapter_20_recovery" not in overview
+    # A leftover recoverable chapter 20 run must not bump the official count
+    # when it is not the chapter the author is actually on.
+    assert pending["chapter_20_recovery"]["chapter"] == 20
+    assert pending["chapter_20_recovery"]["recoverable"] is True
+
+
+def test_overview_pending_count_includes_non_chapter_20_recovery(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="next-chapter-recovery")
+    root = Path(project["root"])
+    _write_chapter_run(root, int(project["next_chapter"]), committed=False)
+    _write_chapter_run(root, 20, committed=True)
+
+    body, pending = _attention_payloads(client, project["id"])
+    overview = body["overview"]
+    summary = body["project"]
+    current = int(project["next_chapter"])
+
+    assert pending["jobs"] == []
+    assert pending["chapter_recovery"]["chapter"] == current
+    assert pending["chapter_recovery"]["recoverable"] is True
+    assert pending["chapter_20_recovery"]["chapter"] == 20
+    assert pending["chapter_20_recovery"]["recoverable"] is False
+    assert overview["pending_count"] == 1
+    assert overview["has_attention"] is True
+    assert summary["pending_count"] == 1
+    assert summary["has_attention"] is True
+    assert overview["chapter_recovery"]["chapter"] == current
+    assert overview["chapter_recovery"]["recoverable"] is True
+    assert "chapter_20_recovery" not in overview
+
+
+def test_overview_pending_count_includes_non_chapter_20_paused_job(tmp_path: Path) -> None:
+    client, workspace = _client(tmp_path)
+    _unlock(client)
+    project = _create_project(client, workspace, name="paused-chapter-21")
+    jobs = client.app.state.jobs
+    parent = jobs.create_job(
+        project_id=project["id"],
+        kind="generation_session",
+        start_chapter=21,
+        end_chapter=30,
+        config={},
+    )
+    assert jobs.claim_next().id == parent.id
+    jobs.mark_running(parent.id, chapter=21, command=["python", "main.py"])
+    jobs.chapter_failed(
+        parent.id,
+        chapter=21,
+        error={"code": "engine_result_unreadable"},
+        uncertain=False,
+    )
+    _write_chapter_run(Path(project["root"]), 20, committed=False)
+
+    body, pending = _attention_payloads(client, project["id"])
+    overview = body["overview"]
+    summary = body["project"]
+
+    assert len(pending["jobs"]) == 1
+    assert pending["jobs"][0]["next_chapter"] == 21
+    assert pending["chapter_recovery"]["chapter"] == 21
+    assert pending["chapter_20_recovery"]["recoverable"] is True
+    assert overview["pending_count"] == 1
+    assert summary["pending_count"] == 1
+    assert overview["chapter_recovery"]["chapter"] == 21
+    assert "chapter_20_recovery" not in overview

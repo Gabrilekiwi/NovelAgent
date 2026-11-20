@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChapterFactExtractionIntent",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "record_type",
+    "extraction_id",
+    "book_id",
+    "chapter_index",
+    "created_at",
+    "idempotency_key_sha256",
+    "request_sha256",
+    "candidate",
+    "draft",
+    "context",
+    "authority",
+    "authority_view",
+    "author_confirmation",
+    "execution",
+    "intent_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["1.0"]},
+    "record_type": {"type": "string", "enum": ["chapter_fact_extraction_intent"]},
+    "extraction_id": {"type": "string", "pattern": "^fact_extraction_[0-9a-f]{40}$"},
+    "book_id": {"type": "string", "minLength": 1},
+    "chapter_index": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "idempotency_key_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "candidate": {
+      "type": "object",
+      "required": ["candidate_id", "intent_hash"],
+      "properties": {
+        "candidate_id": {"type": "string", "pattern": "^candidate_[0-9a-f]{40}$"},
+        "intent_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "draft": {
+      "type": "object",
+      "required": ["draft_id", "revision", "artifact_ref", "sha256", "chars"],
+      "properties": {
+        "draft_id": {"type": "string", "pattern": "^candidate_draft_[0-9a-f]{32}$"},
+        "revision": {"type": "integer", "minimum": 1},
+        "artifact_ref": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "chars": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": ["context_sha256"],
+      "properties": {
+        "context_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "authority": {
+      "type": "object",
+      "required": ["mode", "authority_epoch", "head_event_hash", "identity_revision"],
+      "properties": {
+        "mode": {"type": "string", "minLength": 1},
+        "authority_epoch": {"type": "integer", "minimum": 0},
+        "head_event_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "identity_revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "authority_view": {
+      "type": "object",
+      "required": ["artifact_ref", "sha256", "chars"],
+      "properties": {
+        "artifact_ref": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "chars": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "author_confirmation": {
+      "type": "object",
+      "required": ["confirmed", "purpose"],
+      "properties": {
+        "confirmed": {"type": "boolean", "enum": [true]},
+        "purpose": {"type": "string", "enum": ["extract_reviewable_fact_candidates"]}
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "execution_id",
+        "execution_kind",
+        "operation_key",
+        "provenance_hash",
+        "provenance_artifact_ref",
+        "model_calls_ref"
+      ],
+      "properties": {
+        "execution_id": {"type": "string", "pattern": "^execution_fx_[0-9a-f]{24}$"},
+        "execution_kind": {"type": "string", "enum": ["model", "deterministic"]},
+        "operation_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "provenance_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "provenance_artifact_ref": {"type": "string", "minLength": 1},
+        "model_calls_ref": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "intent_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

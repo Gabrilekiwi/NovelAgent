@@ -1,0 +1,4018 @@
+{
+  "date": "2026-11-11",
+  "stage": "D",
+  "stage_status": "D_real_validation_pending_E_independent_engineering_in_progress",
+  "current_task": "T7.3_full_release_regression",
+  "task_complete": false,
+  "goal_complete": false,
+  "completed_tasks": [],
+  "active_processes": [
+    {
+      "session_id": 34438,
+      "runner_pid": 20668,
+      "log": ".tmp/t73-full-release-corrected.log",
+      "journal": ".tmp/t73-full-release-corrected-events.jsonl"
+    }
+  ],
+  "activation_in_progress": {
+    "status": "accepted_internal_activation_target_scope_and_next_chapter",
+    "checkpoint": ".tmp/t72-activation-progress.json",
+    "new_tests": 11,
+    "complete_restore_product": false
+  },
+  "previous_stage": "docs/development/stage-c-progress.json",
+  "next_action": "Reconcile current HEAD/working tree and fixed acceptance scope before scheduling current-version validation; do not poll or restart original34438, overwrite its evidence, or treat old pin as current.",
+  "paid_provider_authorized": false,
+  "real_book_writes_authorized": false,
+  "investigation": "docs/development/t52-budget-investigation.md",
+  "new_test_count": 283,
+  "files": [
+    {
+      "path": "api/budget_endpoint.py",
+      "sha256": "cef7f881004f2c6d9dcc570a7c7002a144e8e8bc5549f1bdba45f0c6d5cdc340"
+    },
+    {
+      "path": "api/claude_client.py",
+      "sha256": "475c3e361c4c311da3d5df59a1355a23ce7384554049afaa817004b5f408f856"
+    },
+    {
+      "path": "api/execution_deadline.py",
+      "sha256": "d26cb0fbfe266a51d13fe80b915b55dc2865d70807c6759f51030a51921cbeeb"
+    },
+    {
+      "path": "api/openai_client.py",
+      "sha256": "bcf5c628aade1d8812a1e9386cc9e5e580f3edd2c2836b80dc0f26201cc98614"
+    },
+    {
+      "path": "core/autonomy/common.py",
+      "sha256": "9490febb58ef854344b261cef3a2d8fd8d1f2d99b26199d477ac2fb3b043e09f"
+    },
+    {
+      "path": "core/chapter_budget_contract.py",
+      "sha256": "b7378d962f48d5f4ca95edaa978fb336f0b50f4d43f6288d21168344f9166b3c"
+    },
+    {
+      "path": "core/chapter_budget_freeze.py",
+      "sha256": "5dffd50a06cf7b99806dbe7cbb82a17770036253fd91d013105bbc3198a9accb"
+    },
+    {
+      "path": "core/chapter_budget_lock.py",
+      "sha256": "f5fdc2892bb1768db1fb36c73464d705f163a92554db0bf7047a29556eef5d3f"
+    },
+    {
+      "path": "core/chapter_budget_store.py",
+      "sha256": "5ce6086e8e6541243c75f6702db40c4ac234a653db667bf35f81afc2a1b85047"
+    },
+    {
+      "path": "core/chapter_execution_budget.py",
+      "sha256": "0c073bba6dd25e731f4f9273f09b272b687e1636962b32043e7c769c6e3d1b53"
+    },
+    {
+      "path": "core/chapter_execution_time.py",
+      "sha256": "c5a08f29002f15d87a61df7e9fe935ac5f4c41e183cc68e93415ed9ee36f0372"
+    },
+    {
+      "path": "core/chapter_model_budget.py",
+      "sha256": "49a176c6f0d916e72f9e68806edbbaa2dcdcc871c7b9aea769198970378d4a92"
+    },
+    {
+      "path": "core/delivery.py",
+      "sha256": "9630df4e4d85f38456f89fd49e0cd4e411a2d0a68bc51c1b489b16b1594868cd"
+    },
+    {
+      "path": "core/engine/chapter_candidate.py",
+      "sha256": "68007dfeb5b2fb8cbfcfed4a5c15b647455e4b29ee246fa4de025d11508c93db"
+    },
+    {
+      "path": "core/engine/chapter_fact_extraction.py",
+      "sha256": "9bf5d2c9cf28f4cadf35b3a7324a5c3a043b7080470f631c27930648614343d7"
+    },
+    {
+      "path": "core/engine/execution_activity.py",
+      "sha256": "38227cd7ff4f07f5d47a18e7d641ba52f229b8dec933a5ee9e194c36959379c9"
+    },
+    {
+      "path": "core/engine/executor.py",
+      "sha256": "6d6364f4d7320acb50fd48d2e4ba75eccfc7bdc68a79be985c2f2b57ed130b2b"
+    },
+    {
+      "path": "core/engine/persistence.py",
+      "sha256": "57f6862ef11cc1f559d442e775f8b6e20adf63dd49f7fed49fb653d1e2f045e0"
+    },
+    {
+      "path": "core/engine/persistence_v2.py",
+      "sha256": "ef0945c55f80c0317d1b750122c7e445d03c193d8940df1fb8268ad9fb2d6e80"
+    },
+    {
+      "path": "core/engine/persistence_v2_ownership.py",
+      "sha256": "737a5e9c1f5bce4705745dcac0c07a81592b4aa372943ad4ef1d56c7ae0bb4f5"
+    },
+    {
+      "path": "core/engine/project_output.py",
+      "sha256": "0392ae74a8a2ef1428c7c8ee6c092dcd58bb677f85781ed71cd9d6990e30dfdc"
+    },
+    {
+      "path": "core/engine/project_root_remap.py",
+      "sha256": "57ef8617acf81dc888c5ab3beeb253e989c3f958c297ba6c26cb4940502e7083"
+    },
+    {
+      "path": "core/engine/recovery.py",
+      "sha256": "cc8c0ed45a052b5e1e7911317dffc5220b42e5fd652bc0a2f401c7eabd63a441"
+    },
+    {
+      "path": "core/engine/root_registry.py",
+      "sha256": "13dabae3c6eb21dbeba888328bcfd3ef9a84cbf32a4a3b1448b44511e3519acc"
+    },
+    {
+      "path": "core/model_call_runtime.py",
+      "sha256": "ebaeabe56166051f0331fce7133d90a3f8342abd2e323dfd6a047915a665fc21"
+    },
+    {
+      "path": "core/model_call_usage.py",
+      "sha256": "be13bfc0d9d7fac868f468035499f80ba38b5ce16d9de300df98f8071b1f82d7"
+    },
+    {
+      "path": "core/review/dashboard.py",
+      "sha256": "fdb73674cc6b38af3d1decf7163520248244d9c80c2f6226a9274aae96bf6d77"
+    },
+    {
+      "path": "core/review/index.py",
+      "sha256": "bf3b07433d5a119d3ec8c123deb65324a17211c44502614c19f5c412ff009a9f"
+    },
+    {
+      "path": "core/review/storage.py",
+      "sha256": "4c5ee84694cae53a097e9d6e13ca5e08322c3139194aa7c09261fa41af707210"
+    },
+    {
+      "path": "core/runtime_paths.py",
+      "sha256": "165f2701d175721ae835381b3166133c706fe635692aabfe748ca2f119b0bd70"
+    },
+    {
+      "path": "core/story_project/authority_persistence.py",
+      "sha256": "67ed0d7b381a52785542195efae7e71b5fc9a0e2136d2831ff24a8231b4cc5d7"
+    },
+    {
+      "path": "core/story_project/migration.py",
+      "sha256": "222868d41da8e5d3d76f61ee4209aaf864effc4c4a57d6227510500f64bd7004"
+    },
+    {
+      "path": "docs/development-handoff.md",
+      "sha256": "ae912c9c997e83d8758a34c85133ee4b596ba201d40cadd8e1a65ae0a52860fa"
+    },
+    {
+      "path": "docs/development/t52-budget-browser.md",
+      "sha256": "c20df9e30bc6439fe31edcfdfc1c9dc0cd31054e25f816aef0bf6161f561053d"
+    },
+    {
+      "path": "docs/development/t52-budget-implementation.md",
+      "sha256": "83e868e8791353b83744c5f920149feafd2d190b80756d9dde48d8469efbf203"
+    },
+    {
+      "path": "docs/development/t52-budget-investigation.md",
+      "sha256": "cad8cb95cd71309b184854cf5bbf6ebde0c92eb992e824cd6d7c3a7203d60886"
+    },
+    {
+      "path": "docs/development/t52-local-recovery.md",
+      "sha256": "c3ac25e28bdf23ae08ec56f7311241089cb133e4ed270c8aac0f7224eec58145"
+    },
+    {
+      "path": "docs/development/t52-provider-budget-evidence.md",
+      "sha256": "a0419a1b1711d0266f183db50dc7de0fa54879b2118915b30b9e3e67215a3193"
+    },
+    {
+      "path": "docs/development/t52-service-time.md",
+      "sha256": "a76aa5397aa7e444156b5c1bd1fb580c1b2c0fe053f321459d2537ee59b254ec"
+    },
+    {
+      "path": "docs/development/t52-usage-projection.md",
+      "sha256": "28f81f7d6ded3a91a1c705db9ebe523fa6cb6f0892e94bdafc121597f5852582"
+    },
+    {
+      "path": "docs/development/t71-archive-executions-sources.md",
+      "sha256": "3a5bc8bb58ed567d74cd11f38c3741b92cdaf511094ecda4c58d0fc11705562b"
+    },
+    {
+      "path": "docs/development/t71-archive-package.md",
+      "sha256": "c84cf8a3ff0a2941ea136897f867b06acfabf056cc103d0f535df3cd36c6f459"
+    },
+    {
+      "path": "docs/development/t71-archive-runtime.md",
+      "sha256": "cee4540d7efbf0cf72c23caeb6de782ecff8242cbec51c365580c189dc429b68"
+    },
+    {
+      "path": "docs/development/t71-archive-verification-plan.md",
+      "sha256": "3d240cca790a7bcedd094717441d18397f3838644ae67908d79120ba1940cecf"
+    },
+    {
+      "path": "docs/development/t71-auxiliary-settlement.md",
+      "sha256": "477f8dea3c411181e247e5af33dcc6b378364bba8f7ed3c6d0df32f3d5d0df52"
+    },
+    {
+      "path": "docs/development/t71-backup-investigation.md",
+      "sha256": "969b3a494db11e3ddf65617a6698ed50aa9ffc1e8490436b4bf9b47bd4678155"
+    },
+    {
+      "path": "docs/development/t71-delivery-autonomy-writers.md",
+      "sha256": "244274a391825713e31f3370900c5e8de6942bc75fb3ad7c1aacda905baf3201"
+    },
+    {
+      "path": "docs/development/t71-external-writers.md",
+      "sha256": "bb36203dc573eef067a1e6f8ac08736b02ce5e08b51210f66a5ee29edca57c38"
+    },
+    {
+      "path": "docs/development/t71-legacy-history.md",
+      "sha256": "5fc8f7c78bd75dac22bcb92fa3d4d02b4e492eba8b31f21ad721869d5a4a4637"
+    },
+    {
+      "path": "docs/development/t71-locked-source.md",
+      "sha256": "78f3ad5766c0109322159be02e14075cbe74d9802e27aa7dd77b597957a8ccc2"
+    },
+    {
+      "path": "docs/development/t71-maintenance-admission.md",
+      "sha256": "843af9b1414d40e844f56f21f0d049132ce6c42c138876de5c8829b4e399d8c1"
+    },
+    {
+      "path": "docs/development/t71-preflight-and-startup.md",
+      "sha256": "3d3acf2dfe2e11735487bf51261947d1515fee91336d73391a3ee02cfa755a72"
+    },
+    {
+      "path": "docs/development/t71-recovery-certification-contract.md",
+      "sha256": "8dc932dcb1bff450ff3f9aeb0395abbea3b9178c5a7a6c85da92e55377b01a1f"
+    },
+    {
+      "path": "docs/development/t71-reference-graph.md",
+      "sha256": "b132f82160806007d422bcf7900e32a06ea3659cc1bbbe69efffab743ecd39d9"
+    },
+    {
+      "path": "docs/development/t71-review-migration-writers.md",
+      "sha256": "d7ed19837cd1f2758f9467174d93fedcf9b33c99e113027b41dd368ead9e6a83"
+    },
+    {
+      "path": "docs/development/t71-snapshot-primitives.md",
+      "sha256": "687bc413ce24c8307e706e63a571c48b1a836b563011138bffaabb03ac6099f6"
+    },
+    {
+      "path": "docs/development/t72-enrollment-witness.md",
+      "sha256": "e03e793687ec26febfd77cf9d97caf4f44a55c16e2eee7c14827f619bfefac9b"
+    },
+    {
+      "path": "docs/development/t72-legacy-write-ownership.md",
+      "sha256": "b5b9b45333742c4f78d48b96e3762ab6ce4a3aa9cef5b450d7fd0060cb73cb87"
+    },
+    {
+      "path": "docs/development/t72-onboarding-preflight.md",
+      "sha256": "e5b40abc4034d77ccddf48783d57ba9790d988de9a27a8ec4ebc0873ccd7af7d"
+    },
+    {
+      "path": "docs/development/t72-registration-write-ownership.md",
+      "sha256": "2678056e18e21654def2687324b37f40609a4be9cdb50bf1ffb6717298911ab9"
+    },
+    {
+      "path": "docs/development/t72-restore-activation-browser.md",
+      "sha256": "9de571051ec26f6967e5a2af6a56b8a591a86553f4895089ec24c354386bca13"
+    },
+    {
+      "path": "docs/development/t72-restore-activation.md",
+      "sha256": "21f0cd6c2bf5ceb16913ed7c71d52eeff17d4c169d7a2d666bbbd77cc789d827"
+    },
+    {
+      "path": "docs/development/t72-restore-budget-preparation.md",
+      "sha256": "07102cfa9efbc4f06eda87fb3412654f36d43c452c69153d8d29ab910c2d7445"
+    },
+    {
+      "path": "docs/development/t72-restore-database.md",
+      "sha256": "b9af9b28ab9c8b115562a68ebd211101f496462369feaf3619b5a9d567b56dd6"
+    },
+    {
+      "path": "docs/development/t72-restore-executions.md",
+      "sha256": "ad7161ae86d111a0ff4adb74271856a6e93d611d7f37328e8e7a9d4acf92aeb6"
+    },
+    {
+      "path": "docs/development/t72-restore-handoff-revocation.md",
+      "sha256": "d29773c043f12a1c720ffc1cb96fa4fa9cd6e02c88b1faefece1643d25bd5867"
+    },
+    {
+      "path": "docs/development/t72-restore-jobs.md",
+      "sha256": "f9df8525e17bdbb3b3bb15f3bac9ed5e2ab97762b1623835f7d52c1d48c34c42"
+    },
+    {
+      "path": "docs/development/t72-restore-materialization.md",
+      "sha256": "b783ed12ab1b46ea0ef2446d24619ae7e50ba417ec50a28bc2d9413426b6cb74"
+    },
+    {
+      "path": "docs/development/t72-restore-roots.md",
+      "sha256": "c53c77e606e4cd3772753e323af9563439aeb43bb7d91ed41cf828aa4d921c1b"
+    },
+    {
+      "path": "docs/development/t72-restore-scope.md",
+      "sha256": "108146360441bd8c2c8418c28a4330fdaa38247e38355e3cd26e7f6c4709b00a"
+    },
+    {
+      "path": "docs/development/t72-restore-usage.md",
+      "sha256": "31bef79ee6d1180a3f427290251708de42f02e50833e774a809c10091ad15d5e"
+    },
+    {
+      "path": "docs/development/t72-v2-write-ownership.md",
+      "sha256": "bcd00d043c784030f5523697660157b7c8c6444182e62e1353f28d2452c033a6"
+    },
+    {
+      "path": "docs/development/t72-workbench-write-ownership.md",
+      "sha256": "3c1733e1970585e90b6d5534da050505cdb7f66d2577aea19408bb6348060607"
+    },
+    {
+      "path": "docs/development/t72-write-ownership.md",
+      "sha256": "16f3cd47fa71ff0f820f4a035c6b19ef323685caed9353c97344d4262dd4d747"
+    },
+    {
+      "path": "tests/test_backup_api.py",
+      "sha256": "914921788adec4f55911d0f1b6bbc4840c55df3e40f42b9e6841c94440bd07de"
+    },
+    {
+      "path": "tests/test_backup_archive.py",
+      "sha256": "1953bbbc3852575dc17376abe9adddf104b51311058b07a10ae5650b3b8c2b78"
+    },
+    {
+      "path": "tests/test_backup_archive_auxiliary.py",
+      "sha256": "2e59a9ae6c0812cb162dc1cd1ba713223bf02e9b04e57f390db29f70b44ee334"
+    },
+    {
+      "path": "tests/test_backup_archive_database.py",
+      "sha256": "1b20fe902a66cf0b4d1e38fa2b8cb48de3e59b707f93534b217d1b6c8059bc0a"
+    },
+    {
+      "path": "tests/test_backup_archive_database_relations.py",
+      "sha256": "6f7233011a25becf640da91bd564e984d8339e0024059127f067fa3181a277f2"
+    },
+    {
+      "path": "tests/test_backup_archive_executions.py",
+      "sha256": "5f019b1ada6c7abbc31cc61347fe2ee60b7e8440ef2abe2e1a63ac8f2942539f"
+    },
+    {
+      "path": "tests/test_backup_archive_history.py",
+      "sha256": "6821d7d8ab9fd35ba2d024f4d5e7b12c372a6a40d631c89636f2b3e499a8724a"
+    },
+    {
+      "path": "tests/test_backup_archive_jobs.py",
+      "sha256": "94a1bedcbe2dbba0cf78602c918d7fda5f6440f2084aa41473884ab6655ac5ef"
+    },
+    {
+      "path": "tests/test_backup_archive_legacy_state.py",
+      "sha256": "ed06486305bf466962b63d159d84706125921b613f545bc3f099c6f98f01b962"
+    },
+    {
+      "path": "tests/test_backup_archive_references.py",
+      "sha256": "e825f18d3da01a37f1cd86bf08af16908f73ef815afa44ed054014b2b2d2bbdc"
+    },
+    {
+      "path": "tests/test_backup_archive_reviewed.py",
+      "sha256": "f4a3395bc7a96fe05112cdc4e3ade6c9f1ca5da63ec83bb86e40873d815f497e"
+    },
+    {
+      "path": "tests/test_backup_archive_sources.py",
+      "sha256": "33775cd78d5f343206e936ac966b9e58250766a581801463103c2c1a6f32505b"
+    },
+    {
+      "path": "tests/test_backup_archive_usage.py",
+      "sha256": "314db996fcdf5a766701ccbc594a3f194b6d3fc97ab065075d7bacb0e0f86f44"
+    },
+    {
+      "path": "tests/test_backup_archive_verification.py",
+      "sha256": "e4bee9bffd37c479b17864d5fd28fd19f123ecbdd494c44d8f82986548ec3ec5"
+    },
+    {
+      "path": "tests/test_backup_autonomy_settlement.py",
+      "sha256": "ef0c9c41f807367a9f65166976fd7c24a35bc78813f9ce4a6e72ed38fa5c49e8"
+    },
+    {
+      "path": "tests/test_backup_autonomy_writers.py",
+      "sha256": "431953844908d55ff3e60f45e99f5371e332468648d408dd0c8918e20cca466a"
+    },
+    {
+      "path": "tests/test_backup_auxiliary_settlement.py",
+      "sha256": "e5afc248cd0b4b55cf527b665e88807ddd29ae0f4cc0869bda3ba9239887a96c"
+    },
+    {
+      "path": "tests/test_backup_database.py",
+      "sha256": "9e4c04ff6a3d13c43338ea2c65cc93fa8d39f6b4f89b7db6ce58bcd2dfc8771f"
+    },
+    {
+      "path": "tests/test_backup_delivery_writers.py",
+      "sha256": "3e4868e1ebbd95c96b88797e15036cd7b727e0c89a12b1443be3b8453388d46d"
+    },
+    {
+      "path": "tests/test_backup_external_writers.py",
+      "sha256": "f7508e0a0952d2b45751996f687a0c449753a06b868f83ad2641eb85e343bc8e"
+    },
+    {
+      "path": "tests/test_backup_files.py",
+      "sha256": "d52739778f61263e2174a948ebc6cd9337b08764845b249f958ae385aa95655c"
+    },
+    {
+      "path": "tests/test_backup_history.py",
+      "sha256": "c1d1b8b3dc30deb442a1549b7a917fc3d8edea6800407d12849360105eb1619e"
+    },
+    {
+      "path": "tests/test_backup_history_discovery.py",
+      "sha256": "d2f2ab96280f1314c3772b3db9823525352aa17eb1123d2478542e49b20496d3"
+    },
+    {
+      "path": "tests/test_backup_lock_readers.py",
+      "sha256": "fb1c625d3fa04738a8f446066e317b753403b644cf70de8f3d18e496e7f0971b"
+    },
+    {
+      "path": "tests/test_backup_migration_writers.py",
+      "sha256": "ab7406fddbfa4a81d37e28ac6d0acf881628ab284c65fc7a4b4508d22c4f81c3"
+    },
+    {
+      "path": "tests/test_backup_mixed_history.py",
+      "sha256": "65f5d3e4de3104d291194075e3d38ce211e2238d095461d61f908aa875de6401"
+    },
+    {
+      "path": "tests/test_backup_references.py",
+      "sha256": "fd2a27202011676755d3122652bc6d97be99b80fea674a1cc4e1e83046e9ca0b"
+    },
+    {
+      "path": "tests/test_backup_restore_database.py",
+      "sha256": "296684dbe675aea778a18a8c06bae5619967c8e87d3c67a43320abd709395c4e"
+    },
+    {
+      "path": "tests/test_backup_restore_materialization.py",
+      "sha256": "c10f76c43a325433a6f2c22aafe25b3c13eeef5d542d8fba6eaa66ab4fcdabbe"
+    },
+    {
+      "path": "tests/test_backup_restore_plan.py",
+      "sha256": "a54fea04b8cccf1b43a18e39239f978f962f810f478e21342d111000f6421531"
+    },
+    {
+      "path": "tests/test_backup_restore_roots.py",
+      "sha256": "dc296ece4bb8511373e0d7361e97313965f0588b9ffb1d95e1d264b4c5b1534a"
+    },
+    {
+      "path": "tests/test_backup_review_writers.py",
+      "sha256": "9c5f51151d2b5e50bfdea4c4e9101264f7f8bf2ffda5e004d3ac6d298154330b"
+    },
+    {
+      "path": "tests/test_backup_scope.py",
+      "sha256": "b2adfb642d56d9d84a2be4a9b6ea29820093637949259460a5625ccba4432352"
+    },
+    {
+      "path": "tests/test_backup_source.py",
+      "sha256": "7dabe5dcbd5ae4bad74a8d1eed6c1f06409d176a3715b80de3d795bdfa3c56c1"
+    },
+    {
+      "path": "tests/test_book_enrollment_witness.py",
+      "sha256": "f96d4f490690f0f75a85fdc1dc0d000f2ca979bbf09a8cbc9a35bdf937c4b180"
+    },
+    {
+      "path": "tests/test_book_output_ownership.py",
+      "sha256": "bb956bb8d1a4a20a7e772938bdba9155662a83a82a0af5848a0147224cad45bd"
+    },
+    {
+      "path": "tests/test_book_persistence_ownership.py",
+      "sha256": "41c2105e779bb2631531b2f3437633fdaba878351d2f6e2889488a4d4cd84eaa"
+    },
+    {
+      "path": "tests/test_book_registration_ownership.py",
+      "sha256": "3e6140499c655c8798e8e539929ea7eb3cc2c941ed97c5885d1128d2a7a59863"
+    },
+    {
+      "path": "tests/test_book_v2_ownership.py",
+      "sha256": "bee5f13a194115847d126ba99eca0a01a4566567edfc8e3dbe01b1eb143e7826"
+    },
+    {
+      "path": "tests/test_budget_endpoint.py",
+      "sha256": "b10f6fab48a7dd77e8e9cb5273b4290fc450eb7dbdf744faf0505d744ccc2658"
+    },
+    {
+      "path": "tests/test_chapter_budget_api.py",
+      "sha256": "abf1eaace79d2c9c338ac1fa502de8f8a62c97588042f56fa3f0e73776a81832"
+    },
+    {
+      "path": "tests/test_chapter_budget_contract.py",
+      "sha256": "fcb89629d4a52276550374755d6c32c133b6c467c2844cda144bfb33db6cc74a"
+    },
+    {
+      "path": "tests/test_chapter_budget_executors.py",
+      "sha256": "ad90f8b625d7e95b152943752fee5ce042aee07d7a1a71ddd84b9f0aef5e5df7"
+    },
+    {
+      "path": "tests/test_chapter_budget_freeze.py",
+      "sha256": "70fc369c2d7fe2a6c4b769d97d4c4b7d87edbacb425ba594e48d1fb27e5e6083"
+    },
+    {
+      "path": "tests/test_chapter_budget_local_recovery.py",
+      "sha256": "85a679d8adce2f04cbea565e98bdefba2ddd6e518205c892ed5eb1e28d8ec5bd"
+    },
+    {
+      "path": "tests/test_chapter_budget_runtime.py",
+      "sha256": "f23ef822fb87c8e88e23e771b99dacfb2072a0822cb21e72befc98d68ddb3d55"
+    },
+    {
+      "path": "tests/test_chapter_budget_service_scope.py",
+      "sha256": "d32b5011fcaba0ae7c8f81ce62a2beed12c41ad385aa096521336f7eac5cf81f"
+    },
+    {
+      "path": "tests/test_chapter_budget_store.py",
+      "sha256": "b306a5acd7f5fcf699ba93bfe74a42b955ba8cb6ca3d3ef784acc31718040ed2"
+    },
+    {
+      "path": "tests/test_chapter_budget_ui.py",
+      "sha256": "930d0b4c47ffc002d619b514e3583ea65b793bb7d1b3b5c15fedc9ebef4d2fdd"
+    },
+    {
+      "path": "tests/test_chapter_execution_deadline.py",
+      "sha256": "7ebc884d348225c4f664de5cc77e55cac79442716762208e1b55b6deea789b79"
+    },
+    {
+      "path": "tests/test_chapter_execution_time.py",
+      "sha256": "c090de375d84c06791da8be931cf301d0cc8a82633946f84e5b70dfecc6be261"
+    },
+    {
+      "path": "tests/test_chapter_progress_ui.py",
+      "sha256": "a3f3bd2c7e572b38081df1aa484f274674b11316dd10578f9dede0152976dfd8"
+    },
+    {
+      "path": "tests/test_maintenance_chapter_boundary.py",
+      "sha256": "ea9b1b3d1a15b5089c55e94ae56af64712dd501e13082c2a413882fa1d463b76"
+    },
+    {
+      "path": "tests/test_maintenance_control_api.py",
+      "sha256": "92f9cd49b8b92d7686cfd4c4e5413caa42c1d90825abe712d0421bab8c76c1d0"
+    },
+    {
+      "path": "tests/test_maintenance_integration.py",
+      "sha256": "a3c96c29f2806e80950d85c0cb908c7c42673fc35a40303a6cb8ba70589a8f74"
+    },
+    {
+      "path": "tests/test_maintenance_startup.py",
+      "sha256": "ee13564a14d9aa9208eefff6466ec69574dbb3490c87097567317b1b459b3546"
+    },
+    {
+      "path": "tests/test_model_usage_budget.py",
+      "sha256": "c56ae7045c77674f3cec843dde8a6e69a070d5dadb44f4636de6e8b56d040cce"
+    },
+    {
+      "path": "tests/test_model_usage_ui.py",
+      "sha256": "829cb0ee7cca0b9b9ad2003d20a0d7098fa00e940c4f7b22fd43f1c2f800e451"
+    },
+    {
+      "path": "tests/test_persistence_v21.py",
+      "sha256": "799d4c9c7755b12e7e5b3d5ae41640324c9ff9ac80e54d389b768024e19e47ca"
+    },
+    {
+      "path": "tests/test_restore_activation.py",
+      "sha256": "ef5fe65414ee0e620647e3e0b681129c6490be49e68e73946cea3ee565a55b0d"
+    },
+    {
+      "path": "tests/test_restore_activation_budget.py",
+      "sha256": "4b008c4ef69ca33c55b691451733f33238b2c207e3430cf686f0da0d71bc1565"
+    },
+    {
+      "path": "tests/test_restore_activation_chapter.py",
+      "sha256": "f723505fed0e999ca584d28ca8beba391d8d99152c7d04f3fe235f21278ac8e4"
+    },
+    {
+      "path": "tests/test_restore_activation_scope_loss.py",
+      "sha256": "619c046e72cc290bcb7df15ce257ecf11deeed58acf763198a52f7dd8c34c87d"
+    },
+    {
+      "path": "tests/test_restore_budget_merge.py",
+      "sha256": "90cd7a4c8573a27daf67d86400b6b0500ba0af127fa08e036be0c4827c3215e2"
+    },
+    {
+      "path": "tests/test_restore_budget_preparation.py",
+      "sha256": "58f6d4755af1ba60b5110d78255f96738817edb4db8c5a51d9ce6f4aed4fa7f2"
+    },
+    {
+      "path": "tests/test_restore_executions.py",
+      "sha256": "7d10c377a30a103c462091280fbb735855e3aab80adabbe734bf5cfcfe0a7f03"
+    },
+    {
+      "path": "tests/test_restore_external_execution.py",
+      "sha256": "56d363456ced1de28791cad8141e97fd9026d0d285931255766a46b129716520"
+    },
+    {
+      "path": "tests/test_restore_handoff.py",
+      "sha256": "75efdb19f461faa57290fe2b3f3181b9911833fed8e6c5baad53d7ea81dc2b08"
+    },
+    {
+      "path": "tests/test_restore_handoff_recovery.py",
+      "sha256": "b92fd88cf767c4ce8e6c4ef45ed4d96620c1bc631efcbda7cb874edf6a958945"
+    },
+    {
+      "path": "tests/test_restore_jobs.py",
+      "sha256": "483b59ca5288af0c6a71160ed9a636f60149e5677d5044dab7cfbf834aa6150d"
+    },
+    {
+      "path": "tests/test_restore_scope.py",
+      "sha256": "cd457b0f0c507ccbc0e2384bb0387123d63e4d7494c85e39c2482994ce35b78c"
+    },
+    {
+      "path": "tests/test_restore_usage.py",
+      "sha256": "629ad4379ad06a2e6e9fe97617bfe2a7d2ec4f03088a256377c7af6897650ff3"
+    },
+    {
+      "path": "tests/test_workbench_book_writes.py",
+      "sha256": "92406b599c4c765b6312a353152f61077037ea344fa654ec6787b4e58d6b0e79"
+    },
+    {
+      "path": "tests/test_workbench_maintenance.py",
+      "sha256": "7d3265ab18b26332e57c907dc576696228a85d4686c53655a226ce684402028d"
+    },
+    {
+      "path": "tests/test_workbench_onboarding.py",
+      "sha256": "e5f51eb7bcd5afcea4f782caa5189fcc623d6d8a5968e9ae75d9fe52c3782702"
+    },
+    {
+      "path": "workbench/amendments.py",
+      "sha256": "34aa4325ee79a3e1e23a02fbd42bba1b536d7ba689961bb1bab664625436fa4a"
+    },
+    {
+      "path": "workbench/app.py",
+      "sha256": "5af5b3da6a9483718da86ab0ba9be290c19c1337b57fc673e48ee0d9caf5b6e3"
+    },
+    {
+      "path": "workbench/backup_api.py",
+      "sha256": "899a360eb7d199f2b334ea38999ef078afa6e83504ea9efb1bd84a294225f53d"
+    },
+    {
+      "path": "workbench/backup_archive.py",
+      "sha256": "5d3730a333280656e63edcd6688dff38ce13d1e10696d03680c5679600805236"
+    },
+    {
+      "path": "workbench/backup_archive_auxiliary.py",
+      "sha256": "5d9e35c48d1880e93b3d5f11ce699dc7e6430314149578fe2342bdf5d1296df4"
+    },
+    {
+      "path": "workbench/backup_archive_database.py",
+      "sha256": "5bf6e494b0c1a0ec4293fd6daf9b7c8e02d07d9339ab97d4235dd7f371b616f6"
+    },
+    {
+      "path": "workbench/backup_archive_executions.py",
+      "sha256": "da2d4989adcecee78f18c1b6e8b173dde157878c0592c7da7b78aea24ab6272d"
+    },
+    {
+      "path": "workbench/backup_archive_history.py",
+      "sha256": "3889a3da422c11c621bf07c189a8eb97d7cc6b09c04a1825e6706f33d188c826"
+    },
+    {
+      "path": "workbench/backup_archive_jobs.py",
+      "sha256": "5e4b1d9bf421b33c950c49cf16f5339b20dc6112ecd3251fc1b6954e4efd7eb3"
+    },
+    {
+      "path": "workbench/backup_archive_legacy_state.py",
+      "sha256": "a48cf90e32a1ccb67fc6b6f1a8fcb2b4ad671c27b0ce811a31563aacfa7d2a60"
+    },
+    {
+      "path": "workbench/backup_archive_references.py",
+      "sha256": "72b394c6bf8f20aa3ef574e13dfe163f4e5f583fa5adf29f541eb4895f5dc440"
+    },
+    {
+      "path": "workbench/backup_archive_reviewed.py",
+      "sha256": "644d9e86dc68253fd615c06450dbca7c9815a660030249a1de3d8b1882d439f8"
+    },
+    {
+      "path": "workbench/backup_archive_sources.py",
+      "sha256": "fe6160136668057f04b847ea78352c453ae9c9b968728d8961c5db9b0993deea"
+    },
+    {
+      "path": "workbench/backup_archive_usage.py",
+      "sha256": "47e9cbcd7eb75190738e80f29627cdf3abb6fdd370467f52d10a07742f7567d8"
+    },
+    {
+      "path": "workbench/backup_archive_verification.py",
+      "sha256": "65842c5e6c07f782539a251f8b803a6176b760c4340c0f6b0e5f4d8b1cd5d29b"
+    },
+    {
+      "path": "workbench/backup_archive_view.py",
+      "sha256": "0ee3dbe9b3b412d0fb645f255a14c9e51295424f061f80100eca959413a3e695"
+    },
+    {
+      "path": "workbench/backup_autonomy_controls.py",
+      "sha256": "3541984864f35e8738eb69a3730699860a760c0401bf75728851a6bcc8953e7f"
+    },
+    {
+      "path": "workbench/backup_auxiliary.py",
+      "sha256": "2f3361e16bfe48d5c5f94c6c2f85fdac76188f9947296ff8fea3c52e5f4b08bf"
+    },
+    {
+      "path": "workbench/backup_database.py",
+      "sha256": "66c1bcde2463bdfe2b7a7b541cce6f974dd65e7fcd3f8af5ecde1dea460c1e51"
+    },
+    {
+      "path": "workbench/backup_files.py",
+      "sha256": "a644823342a497b5108ccb5e3343faac5f906332546088b8d5d2fc591edf4103"
+    },
+    {
+      "path": "workbench/backup_history.py",
+      "sha256": "e3b3bd30affe23e054c8d927adbc751f16b7637994272db878cacce63350bb70"
+    },
+    {
+      "path": "workbench/backup_history_discovery.py",
+      "sha256": "70dfa5f4bf07654afe10f57c70593846a21a2b75fdba3b4ac765552fe74c91d5"
+    },
+    {
+      "path": "workbench/backup_job_state.py",
+      "sha256": "ee473ed407bb00516fadb1985fafc24539a4b330e6b47d611602316b47f927a7"
+    },
+    {
+      "path": "workbench/backup_references.py",
+      "sha256": "978f8b64e43d70ea3b96922843607f8b25d0db18c6beea8e3ec45a71b8ebe255"
+    },
+    {
+      "path": "workbench/backup_restore_database.py",
+      "sha256": "caff45b5d1c7c6727d62ef5cd26a8c945a2b40c6748f4132525fe897108ea91a"
+    },
+    {
+      "path": "workbench/backup_restore_materialization.py",
+      "sha256": "73c9c2df0b92532ee4151e63bba09b01fc6aabe175b00ef2b7b0193f763c4bab"
+    },
+    {
+      "path": "workbench/backup_restore_plan.py",
+      "sha256": "67d02667555682051b3688e145b776f607dea7b9b004a78c11a589e659700399"
+    },
+    {
+      "path": "workbench/backup_restore_roots.py",
+      "sha256": "e8e071def4403f97071b17bf1b2ea044fa16687cfcc9c45b58ad7219af04aeae"
+    },
+    {
+      "path": "workbench/backup_scope.py",
+      "sha256": "ac55b85bb45f2d6ada50d9fdff8d50666e4dd5080736a6840beeb99f6efd4b92"
+    },
+    {
+      "path": "workbench/backup_source.py",
+      "sha256": "8d2a7630cffe6ffc88120d5548cd906edd29b393ab21968719ed0705277eda88"
+    },
+    {
+      "path": "workbench/backup_v2_history.py",
+      "sha256": "4c942ffa19b18d6986aae554661e22ebefbe47d7e4ce714efde3bfd81d77705a"
+    },
+    {
+      "path": "workbench/backup_version.py",
+      "sha256": "a9952f3d2fb451cd48c7720025642dac5c8d32279f8319ed3e4e5f4595baf065"
+    },
+    {
+      "path": "workbench/book_ownership.py",
+      "sha256": "ca3a088eac56c443f4930887e550fa40f055da4335fd4725672a8162cfd1deb6"
+    },
+    {
+      "path": "workbench/book_writes.py",
+      "sha256": "5625305ac5af97c2fd0151fbfe7f2277d8b5de44fae4f8620f1d4244f7bd81da"
+    },
+    {
+      "path": "workbench/chapter_budget_scope.py",
+      "sha256": "9b90cf0cf0e93eff9bf9f739dcc5215d1bae12a3ad6e294226df9d3c2f2c22c2"
+    },
+    {
+      "path": "workbench/chapter_budgets.py",
+      "sha256": "a0a699f3d77d1f4f2d5be8d28a6f9a4c22c68c0fc54f40753d0b278aa26ed578"
+    },
+    {
+      "path": "workbench/chapter_candidates.py",
+      "sha256": "9ac881d8d2d0f2f7ddcd940cd7c2bc6ee956708a237915a41ab6e93ec313417e"
+    },
+    {
+      "path": "workbench/chapter_commit_index.py",
+      "sha256": "716abcc554525b52d3b679e809447da61fdef4351cbe814789731f9ecac07272"
+    },
+    {
+      "path": "workbench/chapter_fact_extractions.py",
+      "sha256": "eda6df7e2ea8c72f3f28679845e5a76eba8c16e221d7588e3c84f3166e929f1b"
+    },
+    {
+      "path": "workbench/chapter_facts.py",
+      "sha256": "fba095334af30b05be283fcb79f752e216326f95e9b327a8ddde314ee0f8ff9f"
+    },
+    {
+      "path": "workbench/chapter_publication.py",
+      "sha256": "0b26a4924c64c2e155a61b28736f619b0560b27d8dedc8291b901f1dc72defea"
+    },
+    {
+      "path": "workbench/chapter_publication_api.py",
+      "sha256": "ef1098c272ba965920e95ae004a2c11eb753820f1842a79cd558a6b7565d55c9"
+    },
+    {
+      "path": "workbench/cohorts.py",
+      "sha256": "06d59a31034c11445b7181c8742294bd157c9b4edc6af50901a73b4bd24d2982"
+    },
+    {
+      "path": "workbench/database.py",
+      "sha256": "a45cf8984726233903ea79fd04a35173f4ff9a60d4ff8fb62560b200dacefe35"
+    },
+    {
+      "path": "workbench/jobs.py",
+      "sha256": "1b6000143644c2085dcf88cca1b03d2672d0fd190705a27511ad9be344bb3765"
+    },
+    {
+      "path": "workbench/maintenance.py",
+      "sha256": "9ed546c50ca878213438c0ab0c27d2ce2d969915113392a99afcb4e4d033369b"
+    },
+    {
+      "path": "workbench/maintenance_api.py",
+      "sha256": "9dd4b7dce5cf600bd431a4bded0eb1243bfd6922007cf4d4adaa9a1184181438"
+    },
+    {
+      "path": "workbench/model_usage.py",
+      "sha256": "eba6cf5d7622b21b14c74b885065307ef72c5875415eef35d94a28d613a54afc"
+    },
+    {
+      "path": "workbench/model_usage_budget.py",
+      "sha256": "dc0472b0c10fa488abe2cef95d8ba74fd7de221263de6c0710115b033555099d"
+    },
+    {
+      "path": "workbench/onboarding.py",
+      "sha256": "85c34ee5081e160c4eed070e26ea2ec5ebf081e9d5bdec885125d078e9621c24"
+    },
+    {
+      "path": "workbench/outlines.py",
+      "sha256": "c41a124ecebc7481d00323f7c81e9c77d6ad70580e1f45b83b4e09fe1e5f3cc2"
+    },
+    {
+      "path": "workbench/planning.py",
+      "sha256": "6434832c3160b66564ad3966aba4e2e94527d2210098816f906b330b1342fd41"
+    },
+    {
+      "path": "workbench/projects.py",
+      "sha256": "e74d1a0f423dd0b546a9fcec2a523e71f94012ce093236a253a850f49a77e682"
+    },
+    {
+      "path": "workbench/restore_activation.py",
+      "sha256": "10f6638af1f834120d333ef15082b504d1ec526410312561659e56fd3eb082a9"
+    },
+    {
+      "path": "workbench/restore_budget_merge.py",
+      "sha256": "e1340df8d6589916419d293051cf73ef196a98737f3c3f14394c3b1f9e361ade"
+    },
+    {
+      "path": "workbench/restore_budget_preparation.py",
+      "sha256": "cf29ef7902589a189270ed8fa601856d9a8c25b8496ab5d3825a02ae583e650a"
+    },
+    {
+      "path": "workbench/restore_execution_policy.py",
+      "sha256": "1d40f028681fc033bc9192d276ed0591e40206a181f01101a52972cddb65b503"
+    },
+    {
+      "path": "workbench/restore_executions.py",
+      "sha256": "a0a13d11c253640dd10d41487470d8bb46c6b3db095e74b9c884ef016e53b0a4"
+    },
+    {
+      "path": "workbench/restore_handoff.py",
+      "sha256": "7d9ddb71c091dd5fc69e4fb3d060400836c7d332f3dfdf908bb3fae68f2d4ac8"
+    },
+    {
+      "path": "workbench/restore_jobs.py",
+      "sha256": "ed2cf004cd8b0959d8a9d002335e02cda9e2d1d510e50af5dd96c6a318d2b60a"
+    },
+    {
+      "path": "workbench/restore_qualification.py",
+      "sha256": "2593b1dbf849c48c4039aa534177293478917f8e9b5f0987fa3ec98b7290a70c"
+    },
+    {
+      "path": "workbench/restore_scope.py",
+      "sha256": "b24fedee81fb6e2e915e363238346d252e7bb0921f1c50e8f9fe8cca1088a6c4"
+    },
+    {
+      "path": "workbench/restore_usage.py",
+      "sha256": "7a7a42f743bbb5d664bf90fda50c879f2f1e746145c96e3d5394b9dd47cc09c6"
+    },
+    {
+      "path": "workbench/reviewed_workflow.py",
+      "sha256": "6a32f45bdd124c5c28ada3d626264494520f7411cf2b6ff0a53e65a67fa410b2"
+    },
+    {
+      "path": "workbench/static/backup.js",
+      "sha256": "9d5be69385d6f2f1425202d25475d294b956a4dcb7543b95f3560c40e3f473ee"
+    },
+    {
+      "path": "workbench/static/chapter-budget.js",
+      "sha256": "33cfd8aa5427d8cecf406f9b529ed78bf8949e5eba4fbe902cae41268c857714"
+    },
+    {
+      "path": "workbench/static/index.html",
+      "sha256": "d34980e9edbec60059a487f1c132b971a865aa4fd0e765b0a3057a0d22a23661"
+    },
+    {
+      "path": "workbench/static/maintenance.js",
+      "sha256": "0ff1f2fdbb74b195e552c02ed2f4124f5b67447f7544489266a6c26d4fe3bd02"
+    },
+    {
+      "path": "workbench/static/model-usage.js",
+      "sha256": "ec7cae0b7fd9da3195895bdc69ea4b21e267e62bea435b27b55b541ffbe0422b"
+    },
+    {
+      "path": "workbench/static/workbench-spa.js",
+      "sha256": "4e4f86588e2acdbd103f1d85ca10ca35adcc8655dde1e0f613fad8e4d0fdaa89"
+    },
+    {
+      "path": "workbench/static/workbench.css",
+      "sha256": "77825b0dd79cecb93cfcf34215342b7216298d104de4012c049883a44be56496"
+    },
+    {
+      "path": "workbench/static/workbench.js",
+      "sha256": "0565eaa77e7172a09f522f196d7d5e7545ce81f4f13f62b128283009af047692"
+    },
+    "workbench/backup_restore_roots.py",
+    "workbench/backup_archive_reviewed.py",
+    "workbench/backup_archive_database.py",
+    "workbench/backup_archive.py",
+    "workbench/backup_restore_provenance.py",
+    "workbench/backup_restore_plan.py",
+    "workbench/backup_archive_history.py",
+    "workbench/backup_source.py",
+    "workbench/backup_v2_history.py",
+    "workbench/backup_history.py",
+    "workbench/backup_scope.py",
+    "tests/test_restore_rebackup.py",
+    "docs/development/t72-restored-provenance-rebackup.md",
+    "workbench/restore_scope.py",
+    "workbench/restore_jobs.py",
+    "workbench/restore_qualification.py",
+    "workbench/backup_restore_database.py",
+    "tests/test_restore_scope_generation.py",
+    "docs/development/t72-second-scope-generation.md",
+    "docs/development/t72-second-scope-browser.md",
+    "workbench/restore_handoff.py",
+    "workbench/restore_reinstatement.py",
+    "workbench/restore_usage.py",
+    "workbench/restore_activation.py",
+    "tests/test_restore_handoff_generation.py",
+    "docs/development/t72-second-handoff-generation.md",
+    "docs/development/t72-second-handoff-browser.md"
+  ],
+  "t52_components": {
+    "state": "frozen_pricing_usage_verified_amount_pending",
+    "latest_unique_tests_passed": 283,
+    "pricing_contract": {
+      "tests": 102,
+      "xml": ".tmp/stage-d-t52-contract.xml"
+    },
+    "execution_time": {
+      "tests": 14,
+      "xml": ".tmp/stage-d-t52-deadline.xml"
+    },
+    "known_gaps": [
+      "trusted amount input upper bounds and provider/cache/tier pricing",
+      "amount configuration UI and actual-billing mismatch rules",
+      "later checks/repair shared budget and active time",
+      "unknown time remains paused for new Provider; successful local response recovery verified"
+    ],
+    "review": "Independent helper found intermediate monotonic rollback could refund elapsed time. Parent made clock failure sticky and added caught-error/recovered-clock regression. Helper later credit_error; all reported findings handled.",
+    "real_provider_calls": 0,
+    "budget_store": {
+      "tests": 31,
+      "xml": ".tmp/stage-d-t52-runtime-verified.xml"
+    },
+    "runtime_protocol": {
+      "tests": 37,
+      "xml": ".tmp/stage-d-t52-runtime-verified.xml",
+      "combined_passed": 68,
+      "terminal_session": 76056,
+      "protocol": "reserve_intent_dispatch_receipt_v1",
+      "ledger_schema": "chapter_budget_ledger_v2",
+      "process_crash_boundaries": 6
+    },
+    "sdk_active_deadline": {
+      "tests": 15,
+      "xml": ".tmp/stage-d-t52-deadline.xml",
+      "combined_passed": 64,
+      "subtests": 8,
+      "terminal_session": 1639
+    },
+    "caller_regression": {
+      "xml": ".tmp/stage-d-t52-callers.xml",
+      "passed": 37,
+      "subtests": 2,
+      "terminal_session": 63542
+    },
+    "service_wiring_investigation": "Default reviewed Candidate/fact factories now inject ChapterExecutionBudget lazily per actual book/chapter; missing freeze blocks before new business Intent. Original execution reconciliation precedes global unresolved gate, and existing successful facts settle before local reuse. Explicit custom internal factories manage their own dependencies. Legacy other writers and broader preparation/repair are still to integrate according to scope.",
+    "executor_integration": {
+      "new_tests": 8,
+      "xml": ".tmp/stage-d-t52-executors-corrected.xml",
+      "earlier_xml": ".tmp/stage-d-t52-executors.xml",
+      "earlier_failures": "4 fixture mistakes, corrected; imported unittest duplicate collection removed and not counted",
+      "legacy_distinct_regressions_passed": 27
+    },
+    "executor_workbench_regression": {
+      "xml": ".tmp/stage-d-t52-executor-workbench.xml",
+      "passed": 10,
+      "terminal_session": 61458
+    },
+    "first_freeze": {
+      "new_tests": 14,
+      "xml": ".tmp/stage-d-t52-freeze.xml",
+      "combined_passed": 22,
+      "terminal_session": 19936
+    },
+    "budget_api": {
+      "new_tests": 8,
+      "xml": ".tmp/stage-d-t52-budget-api.xml",
+      "default_chain_xml": ".tmp/stage-d-t52-default-chain-corrected.xml",
+      "default_chain_terminal_session": 92052
+    },
+    "endpoint_identity": {
+      "new_tests": 6,
+      "xml": ".tmp/stage-d-t52-default-chain.xml"
+    },
+    "openai_cache_write": {
+      "new_tests": 2,
+      "xml": ".tmp/stage-d-t52-cache-write.xml",
+      "combined_passed": 27
+    },
+    "provider_references": "docs/development/t52-provider-budget-evidence.md",
+    "default_regression": {
+      "xml": ".tmp/stage-d-t52-default-regression.xml",
+      "passed": 31,
+      "subtests": 5,
+      "terminal_session": 46742
+    },
+    "budget_ui": {
+      "new_tests": 6,
+      "xml": ".tmp/stage-d-t52-ui-final.xml",
+      "combined_passed": 34,
+      "browser": "docs/development/t52-budget-browser.md",
+      "real_provider_calls": 0
+    },
+    "local_recovery": {
+      "new_tests": 9,
+      "xml": ".tmp/stage-d-t52-local-recovery-final.xml",
+      "combined_passed": 85,
+      "subtests": 5,
+      "terminal_session": 30927,
+      "browser": "docs/development/t52-local-recovery.md",
+      "real_provider_calls": 0
+    },
+    "service_scope": {
+      "new_tests_implemented": 8,
+      "passed_before_final": 7,
+      "xml": ".tmp/stage-d-t52-service-regression.xml",
+      "passed": 32,
+      "final_xml": ".tmp/stage-d-t52-service-binding-final.xml",
+      "final_session": 63235,
+      "state": "verified",
+      "browser": "docs/development/t52-service-time.md",
+      "new_tests": 8,
+      "final_passed": 70,
+      "final_subtests": 5,
+      "terminal_session": 63235
+    },
+    "usage_projection": {
+      "new_tests": 23,
+      "regression_tests": 92,
+      "xml": ".tmp/stage-d-t52-usage-final.xml",
+      "session_id": 86578,
+      "exit_code": 0,
+      "browser_doc": "docs/development/t52-usage-projection.md",
+      "browser_session_id": 38882,
+      "browser_pid": 28280,
+      "browser_state": "stopped_terminal",
+      "real_provider_calls": 0
+    }
+  },
+  "pending_tasks": [
+    "T5.2",
+    "T7.1",
+    "T8.1"
+  ],
+  "t71_components": {
+    "state": "archive_data_composition_and_restore_plan_verified_writable_restore_pending",
+    "new_tests": 405,
+    "xml": ".tmp/stage-d-t71-maintenance.xml",
+    "exit_code": 0,
+    "investigation": "docs/development/t71-backup-investigation.md",
+    "product_maintenance_integrated": true,
+    "backup_certified": false,
+    "real_book_writes": 0,
+    "real_provider_calls": 0,
+    "admission_tests": {
+      "new_tests": 6,
+      "xml": ".tmp/stage-d-t71-admission.xml",
+      "exit_code": 0
+    },
+    "regression": {
+      "passed": 66,
+      "skipped": 1,
+      "xml": ".tmp/stage-d-t71-admission-regression.xml",
+      "session_id": 47538,
+      "exit_code": 0
+    },
+    "browser": {
+      "doc": "docs/development/t71-maintenance-admission.md",
+      "session_id": 7131,
+      "pid": 6580,
+      "state": "stopped_terminal",
+      "real_provider_calls": 0
+    },
+    "snapshot_primitives": {
+      "database_new_tests": 5,
+      "files_new_tests": 9,
+      "regression_passed": 29,
+      "xml": ".tmp/stage-d-t71-snapshot-guard-final.xml",
+      "exit_code": 0,
+      "doc": "docs/development/t71-snapshot-primitives.md",
+      "archive_certified": false,
+      "superseded_database_api": "owned_database_snapshot plus capture_database; arbitrary caller transactions no longer accepted"
+    },
+    "latest_validation": {
+      "passed": 76,
+      "xml": ".tmp/stage-d-t71-archive-runtime-first.xml",
+      "session_id": 69729,
+      "exit_code": 0,
+      "doc": "docs/development/t71-archive-runtime.md"
+    },
+    "startup_regression": {
+      "passed": 96,
+      "skipped": 1,
+      "skip_reason": "existing Windows file symlink privilege WinError 1314",
+      "xml": ".tmp/stage-d-t71-startup-regression.xml",
+      "session_id": 28770,
+      "exit_code": 0
+    },
+    "control_api_integrated": true,
+    "latest_browser": {
+      "doc": "docs/development/t71-preflight-and-startup.md",
+      "control_flow": "passed",
+      "create_form": "auto_review_rejected_workspace_out_of_credits",
+      "page_id": 3,
+      "context": "t71-startup",
+      "session_id": 56994,
+      "pid": 13096,
+      "state": "stopped_terminal",
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "persistence_boundary_regression": {
+      "passed": 102,
+      "skipped": 1,
+      "subtests_passed": 109,
+      "xml": ".tmp/stage-d-t71-lock-boundary-regression.xml",
+      "session_id": 50750,
+      "exit_code": 0
+    },
+    "chapter_boundary_yield": true,
+    "source_lock_context_integrated": true,
+    "external_cli_full_coverage_certified": false,
+    "archive_package": {
+      "new_tests": 30,
+      "passed": 32,
+      "xml": ".tmp/stage-d-t71-archive-evidence-final.xml",
+      "session_id": 10699,
+      "exit_code": 0,
+      "doc": "docs/development/t71-archive-package.md",
+      "recoverable": false,
+      "real_process_exit_verified": true,
+      "software_on_disk_fingerprint": true,
+      "loaded_modules_match_proven": false,
+      "machine_ownership_evidence": true,
+      "product_archive_api_integrated": true
+    },
+    "retained_legacy_history": {
+      "new_tests": 18,
+      "coverage": "retained_v1_journals_and_known_final_run_references",
+      "doc": "docs/development/t71-legacy-history.md",
+      "d3_read_only_probe": ".tmp/stage-d-t71-d3-history-probe.json",
+      "real_book_writes": 0,
+      "real_provider_calls": 0
+    },
+    "reference_graph": {
+      "new_tests": 20,
+      "combined_passed": 79,
+      "combined_xml": ".tmp/stage-d-t71-reference-graph-final.xml",
+      "combined_session_id": 2426,
+      "shape_passed": 20,
+      "shape_xml": ".tmp/stage-d-t71-reference-shape-final.xml",
+      "exit_code": 0,
+      "doc": "docs/development/t71-reference-graph.md",
+      "d3_source_check": ".tmp/stage-d-t71-d3-scope-graph-source-check.json",
+      "recoverable": false
+    },
+    "external_writer_repairs": {
+      "new_tests": 10,
+      "combined_passed": 65,
+      "combined_subtests": 3,
+      "xml": ".tmp/stage-d-t71-external-writer-final.xml",
+      "session_id": 89451,
+      "exit_code": 0,
+      "cli_regression_passed": 8,
+      "cli_xml": ".tmp/stage-d-t71-cli-writer-regression.xml",
+      "doc": "docs/development/t71-external-writers.md",
+      "external_cli_full_coverage_certified": false
+    },
+    "review_migration_writer_repairs": {
+      "new_tests": 12,
+      "review_passed": 83,
+      "review_subtests": 6,
+      "review_xml": ".tmp/stage-d-t71-review-writers-final.xml",
+      "review_session_id": 80099,
+      "combined_passed": 63,
+      "combined_xml": ".tmp/stage-d-t71-migration-writers-final.xml",
+      "combined_session_id": 46991,
+      "exit_code": 0,
+      "doc": "docs/development/t71-review-migration-writers.md",
+      "external_cli_full_coverage_certified": false
+    },
+    "delivery_autonomy_writers": {
+      "new_tests": 17,
+      "delivery": {
+        "passed": 45,
+        "skipped": 1,
+        "subtests": 2,
+        "session_id": 46749,
+        "exit_code": 0,
+        "xml": ".tmp/stage-d-t71-delivery-writers.xml"
+      },
+      "autonomy": {
+        "passed": 51,
+        "subtests": 20,
+        "session_id": 1549,
+        "exit_code": 0,
+        "xml": ".tmp/stage-d-t71-autonomy-writers.xml"
+      },
+      "combined_session_id": 53308,
+      "combined_state": "passed_terminal",
+      "external_cli_full_coverage_certified": false,
+      "combined_passed": 67,
+      "combined_subtests": 42,
+      "combined_exit_code": 0,
+      "combined_xml": ".tmp/stage-d-t71-auxiliary-writers-verified.xml",
+      "doc": "docs/development/t71-delivery-autonomy-writers.md"
+    },
+    "auxiliary_settlement": {
+      "new_tests": 35,
+      "delivery_passed": 41,
+      "delivery_xml": ".tmp/stage-d-t71-delivery-settlement.xml",
+      "delivery_session_id": 21136,
+      "delivery_exit_code": 0,
+      "unit_passed": 32,
+      "unit_xml": ".tmp/stage-d-t71-auxiliary-settlement.xml",
+      "unit_session_id": 89085,
+      "unit_exit_code": 0,
+      "final_session_id": 73708,
+      "final_state": "passed_terminal",
+      "complete_history_certified": false,
+      "final_passed": 100,
+      "final_exit_code": 0,
+      "final_xml": ".tmp/stage-d-t71-auxiliary-settlement-final.xml",
+      "doc": "docs/development/t71-auxiliary-settlement.md"
+    },
+    "archive_api_ui": {
+      "new_tests": 10,
+      "regression_passed": 67,
+      "regression_xml": ".tmp/stage-d-t71-backup-api-regression.xml",
+      "session_id": 31804,
+      "exit_code": 0,
+      "tracked_thread_cancellation_and_shutdown_verified": true,
+      "doc": "docs/development/t71-backup-api-ui.md",
+      "browser": {
+        "status": "passed",
+        "page_id": 4,
+        "context": "t71-backup-ui",
+        "session_id": 87533,
+        "pid": 31160,
+        "server_state": "stopped_terminal",
+        "server_exit_code": 1,
+        "stop_reason": "Ctrl-C after verification",
+        "ui_evidence": ".tmp/t71-backup-ui-evidence.json",
+        "real_provider_calls": 0,
+        "real_book_writes": 0
+      },
+      "recoverable": false
+    },
+    "mixed_persistence_history": {
+      "state": "passed_terminal",
+      "new_tests": 19,
+      "new_tests_passed_confirmed": true,
+      "first_regression_passed": 36,
+      "first_regression_xml": ".tmp/stage-d-t71-mixed-history-first.xml",
+      "first_new_passed": 14,
+      "first_new_xml": ".tmp/stage-d-t71-mixed-history-new-fixed.xml",
+      "final_session_id": 84940,
+      "final_xml": ".tmp/stage-d-t71-mixed-history-final.xml",
+      "complete_history_certified": false,
+      "doc": "docs/development/t71-mixed-history.md",
+      "final_passed": 95,
+      "final_exit_code": 0,
+      "browser": {
+        "status": "passed",
+        "page_id": 5,
+        "context": "t71-mixed-history",
+        "session_id": 96053,
+        "pid": 15052,
+        "state": "stopped_terminal",
+        "exit_code": 1,
+        "evidence": ".tmp/t71-mixed-browser-evidence.json",
+        "local_generator_calls": 1,
+        "real_provider_calls": 0,
+        "real_book_writes": 0
+      }
+    },
+    "history_discovery": {
+      "state": "passed_terminal",
+      "new_tests": 17,
+      "new_tests_passed_confirmed": true,
+      "final_session_id": 38365,
+      "final_xml": ".tmp/stage-d-t71-history-discovery-final.xml",
+      "doc": "docs/development/t71-history-discovery.md",
+      "browser": {
+        "state": "passed_stopped_terminal",
+        "session_id": 48434,
+        "pid": 25628,
+        "page_id": 6,
+        "exit_code": 1,
+        "evidence": ".tmp/t71-discovery-browser-evidence.json",
+        "real_provider_calls": 0,
+        "real_book_writes": 0
+      },
+      "final_passed": 112,
+      "final_exit_code": 0
+    },
+    "archived_persistence_history": {
+      "state": "passed_terminal",
+      "new_tests": 10,
+      "new_tests_passed_confirmed": true,
+      "final_session_id": 9440,
+      "final_xml": ".tmp/stage-d-t71-archive-history-first.xml",
+      "doc": "docs/development/t71-archive-history.md",
+      "restore_plan_ready": false,
+      "recoverable_certified": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "final_passed": 45,
+      "final_exit_code": 0
+    },
+    "archived_database": {
+      "state": "passed_across_terminal_runs",
+      "new_tests": 21,
+      "new_tests_passed_confirmed": true,
+      "session_id": 13722,
+      "xml": ".tmp/stage-d-t71-archive-database-final.xml",
+      "doc": "docs/development/t71-archive-database.md",
+      "restore_plan_ready": false,
+      "recoverable_certified": false,
+      "first_terminal_session": 13722,
+      "first_terminal_exit_code": 1,
+      "first_passed": 29,
+      "first_failed": 2,
+      "fixture_fixed_session": 81486,
+      "fixture_fixed_exit_code": 0,
+      "fixture_fixed_passed": 5,
+      "fixture_fixed_xml": ".tmp/stage-d-t71-archive-database-relations-fixed.xml",
+      "combined_distinct_passed": 31
+    },
+    "archived_reviewed_state": {
+      "state": "passed_terminal",
+      "new_tests": 7,
+      "new_tests_passed_confirmed": true,
+      "session_id": 62204,
+      "xml": ".tmp/stage-d-t71-archive-reviewed-first.xml",
+      "doc": "docs/development/t71-archive-reviewed.md",
+      "restore_plan_ready": false,
+      "recoverable_certified": false,
+      "final_passed": 49,
+      "final_exit_code": 0,
+      "browser": {
+        "state": "passed_stopped_terminal",
+        "page_id": 7,
+        "session_id": 99014,
+        "pid": 31444,
+        "exit_code": 1,
+        "local_generator_calls": 1,
+        "real_provider_calls": 0,
+        "real_book_writes": 0,
+        "evidence": ".tmp/t71-reviewed-browser-evidence.json"
+      }
+    },
+    "archived_references": {
+      "state": "passed_terminal_log_and_xml",
+      "new_tests": 16,
+      "passed": 36,
+      "session_id": 41578,
+      "handle_state": "missing_on_resume",
+      "xml": ".tmp/stage-d-t71-archive-references-first.xml",
+      "doc": "docs/development/t71-archive-runtime.md"
+    },
+    "archived_auxiliary_and_usage": {
+      "state": "passed_terminal",
+      "session_id": 69729,
+      "xml": ".tmp/stage-d-t71-archive-runtime-first.xml",
+      "doc": "docs/development/t71-archive-runtime.md",
+      "prior_runs": [
+        {
+          "session_id": 13605,
+          "exit_code": 1,
+          "passed": 40,
+          "failed": 6,
+          "reason": "fixture_path_length"
+        },
+        {
+          "session_id": 87554,
+          "exit_code": 1,
+          "passed": 45,
+          "failed": 1,
+          "reason": "expected_blocker_code"
+        }
+      ],
+      "new_tests": 30,
+      "new_tests_passed_confirmed": true,
+      "passed": 76,
+      "exit_code": 0,
+      "browser": {
+        "state": "passed_stopped_terminal",
+        "page_id": 8,
+        "session_id": 35047,
+        "pid": 14076,
+        "exit_code": 1,
+        "evidence": ".tmp/t71-runtime-browser-evidence.json",
+        "real_provider_calls": 0,
+        "real_book_writes": 0
+      }
+    },
+    "archived_executions_sources_jobs": {
+      "state": "passed_terminal_and_browser_verified",
+      "doc": "docs/development/t71-archive-executions-sources.md",
+      "accepted_new_tests": 32,
+      "executions": {
+        "session_id": 58464,
+        "exit_code": 0,
+        "passed": 13,
+        "xml": ".tmp/stage-d-t71-archive-executions-second.xml"
+      },
+      "sources": {
+        "session_id": 16757,
+        "exit_code": 0,
+        "passed": 36,
+        "new_tests": 7,
+        "xml": ".tmp/stage-d-t71-archive-sources-first.xml"
+      },
+      "jobs": {
+        "session_id": 45563,
+        "state": "passed_terminal",
+        "xml": ".tmp/stage-d-t71-archive-jobs-first.xml",
+        "exit_code": 0,
+        "passed": 43,
+        "new_tests": 12
+      },
+      "browser": {
+        "state": "passed_stopped_terminal",
+        "page_id": 9,
+        "session_id": 34664,
+        "pid": 30224,
+        "exit_code": 1,
+        "evidence": ".tmp/t71-execution-browser-evidence.json",
+        "real_provider_calls": 0,
+        "real_book_writes": 0
+      }
+    },
+    "archive_composition": {
+      "state": "passed_terminal",
+      "session_id": 7340,
+      "xml": ".tmp/stage-d-t71-archive-composition-legacy.xml",
+      "accepted_new_tests": 15,
+      "first_session_id": 57958,
+      "first_exit_code": 1,
+      "first_passed": 6,
+      "first_failed": 1,
+      "fixture_fixed_session": 73477,
+      "fixture_fixed_exit_code": 0,
+      "fixture_fixed_passed": 1,
+      "prior_combined_distinct_passed": 7,
+      "exit_code": 0,
+      "passed": 15,
+      "doc": "docs/development/t71-archive-verification-plan.md"
+    },
+    "restore_plan": {
+      "state": "passed_terminal",
+      "session_id": 57351,
+      "xml": ".tmp/stage-d-t71-restore-plan-first.xml",
+      "accepted_new_tests": 12,
+      "exit_code": 0,
+      "passed": 12,
+      "doc": "docs/development/t71-archive-verification-plan.md"
+    }
+  },
+  "new_test_count_scope": "T5.2",
+  "test_counts": {
+    "T5.2_new_distinct": 283,
+    "T7.1_new_distinct": 405,
+    "T7.2_new_distinct": 391
+  },
+  "t72_components": {
+    "restore_scope": {
+      "status": "accepted_component",
+      "new_tests": 13,
+      "combined_passed": 29,
+      "subtests_passed": 14,
+      "regression_passed": 75,
+      "regression_skipped": 1,
+      "static_final_passed": 23,
+      "exit_code": 0,
+      "doc": "docs/development/t72-restore-scope.md",
+      "browser": {
+        "page_id": 10,
+        "session_id": 77332,
+        "pid": 25080,
+        "state": "stopped_terminal",
+        "port": 38889,
+        "original_book_files": 9,
+        "book_and_database_unchanged": true
+      },
+      "actual_restore_completed": false
+    },
+    "materialization": {
+      "status": "accepted_component",
+      "new_tests": 17,
+      "final_passed": 15,
+      "final_session_id": 16082,
+      "final_xml": ".tmp/stage-f-t72-materialization-final.xml",
+      "jobs_final_passed": 3,
+      "jobs_final_overlap": 1,
+      "jobs_final_session_id": 80513,
+      "jobs_final_xml": ".tmp/stage-f-t72-materialization-jobs-final.xml",
+      "regression_passed": 25,
+      "regression_session_id": 63423,
+      "regression_xml": ".tmp/stage-f-t72-materialization-regression.xml",
+      "exit_code": 0,
+      "first_passed": 13,
+      "first_session_id": 70525,
+      "resolved_test_failure": {
+        "session_id": 64583,
+        "failed": 2,
+        "reason": "misplaced test path-budget assertion; fixed and selected tests passed"
+      },
+      "doc": "docs/development/t72-restore-materialization.md",
+      "real_process_exit_boundaries": [
+        "partial_database_32_bytes",
+        "complete_database"
+      ],
+      "real_process_exit_code": 73,
+      "new_process_blocked_exit_code": 74,
+      "original_database_bytes_and_logical_digest_preserved": true,
+      "historical_file_bytes_preserved": true,
+      "book_and_external_job_roots_tested": true,
+      "restored": false,
+      "read_only_app_ready": false,
+      "write_activation_allowed": false,
+      "ownership_handoff_completed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "physical_roots": {
+      "status": "accepted_component",
+      "new_tests": 12,
+      "first_passed": 11,
+      "first_session_id": 39164,
+      "first_xml": ".tmp/stage-f-t72-roots-first.xml",
+      "final_passed": 2,
+      "final_overlap": 1,
+      "final_session_id": 1666,
+      "final_xml": ".tmp/stage-f-t72-roots-final.xml",
+      "regression_passed": 29,
+      "regression_session_id": 52870,
+      "regression_xml": ".tmp/stage-f-t72-roots-regression.xml",
+      "exit_code": 0,
+      "doc": "docs/development/t72-restore-roots.md",
+      "normal_reviewed_cold_read_verified": true,
+      "historical_pathguards_still_reject": true,
+      "fresh_process_repeat_unchanged": true,
+      "real_registry_write_exit_code": 76,
+      "explicit_resume_verified": true,
+      "original_database_bytes_preserved": true,
+      "database_rebound": false,
+      "read_only_app_ready": false,
+      "ownership_handoff_completed": false,
+      "write_activation_allowed": false,
+      "recoverable": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "database_binding": {
+      "status": "accepted_component",
+      "new_tests": 9,
+      "first_xml": ".tmp/stage-f-t72-database-first.xml",
+      "first_errors": 8,
+      "first_failure_reason": "Resolved fixture error: str(PathResolution) instead of .path. Production source reference validation was preserved; final successful union accepted9.",
+      "actual_restore_completed": false,
+      "write_activation_allowed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "positive": {
+        "session_id": 71729,
+        "exit_code": 0,
+        "passed": 1,
+        "xml": ".tmp/stage-f-t72-database-positive.xml"
+      },
+      "regression": {
+        "session_id": 69469,
+        "exit_code": 0,
+        "passed": 55,
+        "skipped": 1,
+        "xml": ".tmp/stage-f-t72-database-regression.xml"
+      },
+      "faults_first": {
+        "session_id": 54646,
+        "exit_code": 1,
+        "passed": 6,
+        "failed": 1,
+        "xml": ".tmp/stage-f-t72-database-faults.xml",
+        "reason": "Non-hot rollback journal remains before SQLite first flush; exact original SQL state passed, file inventory rejected; bounded resume fixed, final crash test running."
+      },
+      "browser": {
+        "page_id": 11,
+        "session_id": 88728,
+        "pid": 16444,
+        "port": 38890,
+        "state": "stopped_terminal",
+        "exit_code": 1,
+        "book_files": 70,
+        "actual_restored_readonly_verified": true,
+        "evidence": ".tmp/t72-database-browser-evidence.json",
+        "after": ".tmp/t72-database-browser-after.json",
+        "book_and_database_unchanged": true,
+        "source_restored_unchanged": true,
+        "cleanup": "Native Ctrl-C skipped Python finally; checked workspace fixture paths manually restored, then independent inventories passed."
+      },
+      "doc": "docs/development/t72-restore-database.md",
+      "crash_final": {
+        "session_id": 38428,
+        "exit_code": 0,
+        "passed": 2,
+        "xml": ".tmp/stage-f-t72-database-crash-final.xml"
+      },
+      "flushed": {
+        "session_id": 94141,
+        "exit_code": 0,
+        "passed": 1,
+        "xml": ".tmp/stage-f-t72-database-flushed.xml"
+      },
+      "real_process_exit_code": 77,
+      "database_rebound": true,
+      "read_only_app_ready": true,
+      "ownership_handoff_completed": false,
+      "recoverable": false,
+      "restored": false,
+      "worker_enabled": false,
+      "auto_import_enabled": false,
+      "provider_calls_allowed": false
+    },
+    "auxiliary_machine_boundary": {
+      "status": "accepted_component_limited_to_auxiliary_output",
+      "new_tests": 13,
+      "doc": "docs/development/t72-write-ownership.md",
+      "first_session_id": 66260,
+      "first_passed": 15,
+      "first_failed": 1,
+      "first_failure": "Public acquisition error changed; fixed to retain InstanceAlreadyRunning.",
+      "combined_session_id": 86273,
+      "combined_passed": 41,
+      "combined_failed": 1,
+      "combined_failure": "Old review-lock fixture used {} identity; switched to actual ensure_project_identity; fixed test passed.",
+      "first_enrollment_passed": 1,
+      "first_enrollment_xml": ".tmp/stage-f-t72-output-first-enrollment.xml",
+      "identity_final_passed": 3,
+      "identity_final_xml": ".tmp/stage-f-t72-output-identity-final.xml",
+      "machine_handoff_implemented": false,
+      "all_writers_covered": false,
+      "write_activation_allowed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "passing_current_union": 44,
+      "final_regression_session_id": 88787,
+      "final_regression_passed": 20,
+      "final_regression_exit_code": 0,
+      "final_regression_xml": ".tmp/stage-f-t72-output-publication-regression.xml",
+      "normal_enrollment_entrypoint_complete": false,
+      "missing_ledger_policy_complete": false
+    },
+    "legacy_machine_boundary": {
+      "status": "accepted_component_limited_to_executor_and_v1",
+      "new_tests": 20,
+      "doc": "docs/development/t72-legacy-write-ownership.md",
+      "evidence": [
+        {
+          "session_id": 32924,
+          "exit_code": 0,
+          "passed": 32,
+          "skipped": 0,
+          "subtests_passed": 6,
+          "xml": ".tmp/stage-f-t72-legacy-machine-first.xml",
+          "xml_sha256": "29fbc713eea46ad7ff4db6508ce4f8ccc86a27aa654998f9c310a46c94a7f0af",
+          "log": ".tmp/stage-f-t72-legacy-machine-first.log",
+          "log_sha256": "ee080a79f8b8f7ef6521df5672910b03943cde8b1fa4692d6b6517b029030802"
+        },
+        {
+          "session_id": 85416,
+          "exit_code": 0,
+          "passed": 111,
+          "skipped": 1,
+          "subtests_passed": 14,
+          "xml": ".tmp/stage-f-t72-legacy-machine-regression.xml",
+          "xml_sha256": "425e92b42d3a031d46cbea38b08b85c064752f582419f40012cc7714f79e47a3",
+          "log": ".tmp/stage-f-t72-legacy-machine-regression.log",
+          "log_sha256": "7715508b7212fd4c9fda351ddeddf5df658231778dd30558e0b83d9976dd768c"
+        },
+        {
+          "session_id": 51756,
+          "exit_code": 0,
+          "passed": 117,
+          "skipped": 0,
+          "subtests_passed": 16,
+          "xml": ".tmp/stage-f-t72-legacy-machine-final.xml",
+          "xml_sha256": "fcf363c458bfdbb94d46ea5604a2f1c4aea2114c2eb63d1e24a69173fc39060c",
+          "log": ".tmp/stage-f-t72-legacy-machine-final.log",
+          "log_sha256": "7c1b86dcca0776e24b19117aebce92ec7d784365a8cb3be7b47a408d020a73b5"
+        }
+      ],
+      "all_writers_covered": false,
+      "machine_handoff_implemented": false,
+      "write_activation_allowed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "v2_machine_boundary": {
+      "status": "accepted_component_limited_to_v2_transactions_recovery_gc",
+      "new_tests": 15,
+      "first_session_id": 91150,
+      "first_exit_code": 1,
+      "first_passed": 75,
+      "first_failed": 3,
+      "first_xml": ".tmp/stage-f-t72-v2-machine-first.xml",
+      "resolved_failures": "Removed repeated unittest helper collection; exact earlier identity rejection asserted, missing read-set fixture uses actual book ID; registry entry identities now fence legacy GC and damaged journals.",
+      "evidence": [
+        {
+          "session_id": 82332,
+          "exit_code": 0,
+          "passed": 62,
+          "subtests_passed": 100,
+          "xml": ".tmp/stage-f-t72-v2-machine-final.xml",
+          "xml_sha256": "fda6331fa13a75992d8d88551d0c5215d189163bc4c00f25d99efde657704dd7",
+          "log": ".tmp/stage-f-t72-v2-machine-final.log",
+          "log_sha256": "9ccff251cd70f7a49e076ad1d45f4d7e2cc705a1560e86184e7495ced157d789"
+        },
+        {
+          "session_id": null,
+          "exit_code": 0,
+          "passed": 1,
+          "subtests_passed": 0,
+          "xml": ".tmp/stage-f-t72-v2-machine-fresh-process.xml",
+          "xml_sha256": "1f5802b2e7748620b91698e7c4407fb173dd5a94ce7e64131359615c02424526",
+          "log": ".tmp/stage-f-t72-v2-machine-fresh-process.log",
+          "log_sha256": "6da1d9f6315cdd5685886f9428675ca88e0bdb00f262afeabeba56f738f2814b"
+        },
+        {
+          "session_id": 50655,
+          "exit_code": 0,
+          "passed": 71,
+          "subtests_passed": 3,
+          "xml": ".tmp/stage-f-t72-v2-machine-workflow.xml",
+          "xml_sha256": "5b5d1a29ce55a9fd51e62abec35f2eb633ee0147b5ca3f359d9bc27d4b12896c",
+          "log": ".tmp/stage-f-t72-v2-machine-workflow.log",
+          "log_sha256": "ab573167d726f380408ac51da260b2317215e9c91fcc24e00d3f6b5d3482c758"
+        }
+      ],
+      "doc": "docs/development/t72-v2-write-ownership.md",
+      "real_staging_exit_code": 79,
+      "new_process_recovery_denied_exit_code": 80,
+      "all_writers_covered": false,
+      "machine_handoff_implemented": false,
+      "write_activation_allowed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "registration_machine_boundary": {
+      "status": "accepted_component_limited_to_registration_migration_ea",
+      "new_tests": 14,
+      "first_session_id": 89100,
+      "first_exit_code": 1,
+      "first_passed": 65,
+      "first_failed": 3,
+      "first_xml": ".tmp/stage-f-t72-registration-first.xml",
+      "resolved_failures": "EA layout created empty directories before gate: gate moved before layout and original negative test retained. Remap negative fixture now supplies existing destination required by original path contract.",
+      "evidence": [
+        {
+          "session_id": 90606,
+          "exit_code": 0,
+          "passed": 68,
+          "subtests_passed": 22,
+          "skipped": 0,
+          "xml": ".tmp/stage-f-t72-registration-final.xml",
+          "xml_sha256": "562a3832a261d1ad0caedf80c8d183aa6c99d5c88de71418a493f987d936eb25",
+          "log": ".tmp/stage-f-t72-registration-final.log",
+          "log_sha256": "c1b1279913b6c23027cec2b95efba543b8b72b04f620029ef4a7d14c2fa2495c"
+        },
+        {
+          "session_id": 94070,
+          "exit_code": 0,
+          "passed": 76,
+          "subtests_passed": 6,
+          "skipped": 1,
+          "xml": ".tmp/stage-f-t72-registration-regression.xml",
+          "xml_sha256": "eb5b46dd46e8e234f3bb599d1b9973ea131bb958eaeff02bfadb260a9d1cc4e0",
+          "log": ".tmp/stage-f-t72-registration-regression.log",
+          "log_sha256": "324f104324e9b141c3170bf1058d586f2d8068479544893757e57e87eb6e075b"
+        },
+        {
+          "session_id": 53606,
+          "exit_code": 0,
+          "passed": 2,
+          "subtests_passed": 0,
+          "skipped": 0,
+          "xml": ".tmp/stage-f-t72-registration-integration.xml",
+          "xml_sha256": "715fa0fe75d592fb897edef7bb5b65262e63944b9f430133e90c9a6049f98cc5",
+          "log": ".tmp/stage-f-t72-registration-integration.log",
+          "log_sha256": "f46b517a6d0b8ba1c0f6454df5050b06879f1bef2579e734570f349c5d7e8d94"
+        }
+      ],
+      "doc": "docs/development/t72-registration-write-ownership.md",
+      "all_writers_covered": false,
+      "machine_handoff_implemented": false,
+      "write_activation_allowed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "workbench_machine_and_registration_boundary": {
+      "status": "accepted_component_limited_to_outline_planning_amendment",
+      "new_tests": 26,
+      "first_session_id": 35720,
+      "first_exit_code": 1,
+      "first_passed": 19,
+      "first_failed": 7,
+      "first_xml": ".tmp/stage-f-t72-workbench-first.xml",
+      "resolved_failures": "Six SQLite WAL/SHM lifecycle assertions now check complete DB logical content and ordinary file bytes; rejected writes additionally forbid writable _open. One Windows test read now explicitly UTF-8. Later review retained original record ownership across Provider and counted startup recovery only after successful transaction/scope exit.",
+      "evidence": [
+        {
+          "name": "second",
+          "session_id": 83423,
+          "exit_code": 0,
+          "passed": 36,
+          "xml": ".tmp/stage-f-t72-workbench-second.xml",
+          "xml_sha256": "9bde652876e8ebe345af3cf7331c8691821db0c74b44ac7013a96a658457934c",
+          "log": ".tmp/stage-f-t72-workbench-second.log",
+          "log_sha256": "3d9db17020297106906755e5b5da683b11bb5628a6712ecce71941ea19a23be9"
+        },
+        {
+          "name": "regression",
+          "session_id": 85467,
+          "exit_code": 0,
+          "passed": 50,
+          "xml": ".tmp/stage-f-t72-workbench-regression.xml",
+          "xml_sha256": "73c83e76f4ea321f6ac913f1b34b2efd875648abf3b22af2e9476225e7c4b386",
+          "log": ".tmp/stage-f-t72-workbench-regression.log",
+          "log_sha256": "e7f643f17a9eca1daba71ee6e764f9e8fa463a926821777b71c6c400974ecb0a"
+        },
+        {
+          "name": "final",
+          "session_id": 80973,
+          "exit_code": 0,
+          "passed": 43,
+          "xml": ".tmp/stage-f-t72-workbench-final.xml",
+          "xml_sha256": "9c104b17cfe4c3b03f2526b4f55010506fcc56bc5eb93a5ffdfca606a828f898",
+          "log": ".tmp/stage-f-t72-workbench-final.log",
+          "log_sha256": "da632bf901e5196a7fcb2488cabbbbc62aed25b407935a87e3c2b161298039de"
+        },
+        {
+          "name": "accepted",
+          "session_id": 97788,
+          "exit_code": 0,
+          "passed": 44,
+          "xml": ".tmp/stage-f-t72-workbench-accepted.xml",
+          "xml_sha256": "32f20a1aadb0b1dec6fc8fba3c8e97620e880fffb6cafe1332d6372d40d8959e",
+          "log": ".tmp/stage-f-t72-workbench-accepted.log",
+          "log_sha256": "a815c9b3d94f2447962d1fda6077b493a6bc59674c1bf8fa7987d7f4135ac886"
+        }
+      ],
+      "doc": "docs/development/t72-workbench-write-ownership.md",
+      "browser_evidence": ".tmp/t72-workbench-browser-evidence-final.json",
+      "browser_evidence_sha256": "0067c23aea863ed75385eab64de6800aa82aa8ef9faa3e5a5410589aca2b6a90",
+      "verification": ".tmp/t72-workbench-verification.json",
+      "verification_sha256": "607504a78e69c320c08c13c5ec2a47abde39403dd9ae8b2bf39809d6c3a582a7",
+      "all_writers_covered": false,
+      "machine_handoff_implemented": false,
+      "write_activation_allowed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "enrollment_witness": {
+      "status": "accepted_internal_component_browser_partial",
+      "new_tests": 13,
+      "evidence": [
+        {
+          "session_id": 66428,
+          "exit_code": 0,
+          "passed": 18,
+          "xml": ".tmp/stage-f-t72-enrollment-first.xml",
+          "xml_sha256": "2e8a42cc9093ba4fd1f2745e172364a2918cd354e794775bb6001a5ae0d1a22d",
+          "log": ".tmp/stage-f-t72-enrollment-first.log",
+          "log_sha256": "8ba12f28d155b3e3fd2fbcf7f9bf040522c24402c29f7cdc27f84051cdcacbf4"
+        },
+        {
+          "session_id": 83557,
+          "exit_code": 0,
+          "passed": 31,
+          "xml": ".tmp/stage-f-t72-enrollment-witness.xml",
+          "xml_sha256": "5f6664fd5cb2a430e27aa83d6a36bc6bfb7d7a6cfc1fbb199bb9973e1ce190c8",
+          "log": ".tmp/stage-f-t72-enrollment-witness.log",
+          "log_sha256": "a88b3fc0e2255c6f28abd675fb89bf02a296d1b24d8611cbf5b0079ea4839883"
+        },
+        {
+          "session_id": 70811,
+          "exit_code": 0,
+          "passed": 46,
+          "xml": ".tmp/stage-f-t72-enrollment-regression.xml",
+          "xml_sha256": "6cd71abff38bcf7c3f54481f1f5cd08d43590908540449fd75356b0f570af4b0",
+          "log": ".tmp/stage-f-t72-enrollment-regression.log",
+          "log_sha256": "0e92339b49fa28630bd3225d9bc368c8708359219cd68eb40e1348acd07cea5c"
+        },
+        {
+          "session_id": 21076,
+          "exit_code": 0,
+          "passed": 1,
+          "xml": ".tmp/stage-f-t72-enrollment-restore.xml",
+          "xml_sha256": "49e34c66a06db9c065eb88f6d038951db7517b32b6b6eeb57dcfb19f805cb0fd",
+          "log": ".tmp/stage-f-t72-enrollment-restore.log",
+          "log_sha256": "5fa3d1df6cca29f9dfbd8e9b4e58569b38cbc89757f3f3b328ea6809b48a7ca1"
+        }
+      ],
+      "doc": "docs/development/t72-enrollment-witness.md",
+      "browser_status": "partial",
+      "browser_evidence": ".tmp/t72-enrollment-browser-evidence.json",
+      "browser_evidence_sha256": "48a72c5c37be26672144a9c654f46a1ce1f3527539bbaf8954a4650e715fc995",
+      "browser_blocker": "Checkbox confirmation rejected by automatic approval review: workspace out of credits; no publication POST.",
+      "public_enrollment_api": false,
+      "machine_handoff_implemented": false,
+      "write_activation_allowed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "onboarding_preflight": {
+      "status": "accepted_preflight_api_and_browser",
+      "new_tests": 18,
+      "evidence": [
+        {
+          "session_id": 20173,
+          "exit_code": 0,
+          "passed": 31,
+          "xml": ".tmp/t72-onboarding-regression.xml",
+          "xml_sha256": "d62ec2e2e98507a3d6ea79a39f42ea0cda24ce43e0737af67ea59ecc196823c4",
+          "log": ".tmp/t72-onboarding-regression.log",
+          "log_sha256": "d5dabb1e3d47d8c994d5ca7b21be443d063d02af0c49fbddf912f4c26cc1b3c5"
+        },
+        {
+          "session_id": 66532,
+          "exit_code": 0,
+          "passed": 36,
+          "xml": ".tmp/t72-onboarding-app.xml",
+          "xml_sha256": "62803ee8916b5f365159b29ea50fb9a44247497881ecf03417aba59fcfc3e43d",
+          "log": ".tmp/t72-onboarding-app.log",
+          "log_sha256": "4875e04977010fd6c0b657607e5d755731016635848d022306718a8752f44916"
+        },
+        {
+          "session_id": null,
+          "exit_code": 0,
+          "passed": 1,
+          "xml": ".tmp/t72-onboarding-restored.xml",
+          "xml_sha256": "f13443a80609bb6cab226c2d99669732a8f9ce4fca2aa1fe7403325fdedd91cc",
+          "log": ".tmp/t72-onboarding-restored.log",
+          "log_sha256": "92e7fc2c4c6ec53c2bc1b0f2b8903a3a374d5ad156497c6758fd2a2cce3a7ed2"
+        }
+      ],
+      "doc": "docs/development/t72-onboarding-preflight.md",
+      "browser_status": "accepted_preflight_only",
+      "browser_evidence": ".tmp/t72-onboarding-browser-evidence.json",
+      "browser_evidence_sha256": "d0ab3ba5bc9cee9736e54757b081ad35760415f9e97f85cedb66a48079c47ded",
+      "public_preflight_api": true,
+      "public_enrollment_api": false,
+      "machine_handoff_implemented": false,
+      "write_activation_allowed": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "restore_handoff_revocation": {
+      "status": "accepted_internal_revocation_and_rollback",
+      "new_tests": 17,
+      "evidence": [
+        {
+          "session_id": 12858,
+          "exit_code": 0,
+          "passed": 10,
+          "failed": 0,
+          "xml": ".tmp/t72-handoff-second.xml",
+          "xml_sha256": "2f93079fe96c1f282a0c6acfff04f3c907b63480ac2f0172e2d9bd11993f1701",
+          "log": ".tmp/t72-handoff-second.log",
+          "log_sha256": "aa2a90a4646b40751e515496a026c3cacf12578d4a7696382e02131daae90c26"
+        },
+        {
+          "session_id": 42775,
+          "exit_code": 0,
+          "passed": 6,
+          "failed": 0,
+          "xml": ".tmp/t72-handoff-recovery-first.xml",
+          "xml_sha256": "cd60665d2256e78bb485fcea94805e5f301a00ecaee42f3660a471181dddaa3c",
+          "log": ".tmp/t72-handoff-recovery-first.log",
+          "log_sha256": "3624683da7cc87f274373e58cbe6ac1310eeff18af877a49f0729be3112b436c"
+        },
+        {
+          "session_id": 17034,
+          "exit_code": 1,
+          "passed": 7,
+          "failed": 1,
+          "xml": ".tmp/t72-handoff-final.xml",
+          "xml_sha256": "e07d9a8ae059aab5c05a218edddd07505dff19ebcca22f539c23ed94a52afb65",
+          "log": ".tmp/t72-handoff-final.log",
+          "log_sha256": "39e4df4b93a2d8ef9a1ec8257e13ab54db8e04ad1de8870c5645389768d25879"
+        },
+        {
+          "session_id": 70714,
+          "exit_code": 0,
+          "passed": 9,
+          "failed": 0,
+          "xml": ".tmp/t72-handoff-database-regression.xml",
+          "xml_sha256": "0a4ce8296344e0c32cd114417e6dbbc1174dd5f302fee1f3d30d42c0175828a0",
+          "log": ".tmp/t72-handoff-database-regression.log",
+          "log_sha256": "fa73980cbd80c115f93515562f08be45bec938e48cc13b15d25e5ae6ac66ab07"
+        },
+        {
+          "session_id": 42123,
+          "exit_code": 0,
+          "passed": 1,
+          "failed": 0,
+          "xml": ".tmp/t72-handoff-rollback-final.xml",
+          "xml_sha256": "5364be24f0a9d58fc282789fc0950fea7035c1945c56f745995eb3bb3cfd8c17",
+          "log": ".tmp/t72-handoff-rollback-final.log",
+          "log_sha256": "8b36bf56842d7c8fee79edd2478be9e2c7d9674acb0145f707d226bdb2387f68"
+        }
+      ],
+      "doc": "docs/development/t72-restore-handoff-revocation.md",
+      "source_revocation_implemented": true,
+      "target_activation_implemented": false,
+      "public_recovery_api": false,
+      "browser_status": "not_run_no_new_api_or_ui",
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "supported_source": "archived active machine ownership v2 with matching book witness and verified reviewed restore copy",
+      "unsupported_source": [
+        "old_v1",
+        "unenrolled_legacy_pre_upgrade",
+        "all_proofs_missing"
+      ]
+    },
+    "restore_usage_preservation": {
+      "status": "accepted_internal_source_evidence_preservation",
+      "new_tests": 16,
+      "evidence": [
+        {
+          "session_id": 44054,
+          "exit_code": 1,
+          "passed": 0,
+          "failed": 1,
+          "xml": ".tmp/t72-restore-usage-first.xml",
+          "xml_sha256": "b233fc8af3f9116150748a72a6326e003f7c04301181ab40d0d1e2f53690b8da",
+          "log": ".tmp/t72-restore-usage-first.log",
+          "log_sha256": "6cac0295ddeb72fc797698a8f4e227ccc4cdffcac3469dc1d0197455695c0404"
+        },
+        {
+          "session_id": 96526,
+          "exit_code": 0,
+          "passed": 14,
+          "failed": 0,
+          "xml": ".tmp/t72-restore-usage-second.xml",
+          "xml_sha256": "f349918b269f4c79b14c4229df70b1c7eb82e0a788ec38b0824557f6f39dc7e1",
+          "log": ".tmp/t72-restore-usage-second.log",
+          "log_sha256": "99c231c9ef12a297783ce474c3c6a2f81cfa877121394e3f41f064dee6690bae"
+        },
+        {
+          "session_id": 12842,
+          "exit_code": 0,
+          "passed": 42,
+          "failed": 0,
+          "xml": ".tmp/t72-restore-usage-regression.xml",
+          "xml_sha256": "681e38fe31f60dea9a6928f765930eda5772035dcef6d5cac6c932147ea6e405",
+          "log": ".tmp/t72-restore-usage-regression.log",
+          "log_sha256": "814f59243df625b076cd04fe7a57ab81089ca83be43937043816124330077c06"
+        },
+        {
+          "session_id": 14724,
+          "exit_code": 0,
+          "passed": 4,
+          "failed": 0,
+          "xml": ".tmp/t72-restore-usage-final.xml",
+          "xml_sha256": "6c02ea76cdc824f58e7f4f3b8f9cf43077ad0f536ff787fdb3a277ddc89810e4",
+          "log": ".tmp/t72-restore-usage-final.log",
+          "log_sha256": "a9260ad73516e25941df9b29e2a8cbfe1a9aa62c4bff08779b4312454c48fb31"
+        }
+      ],
+      "doc": "docs/development/t72-restore-usage.md",
+      "post_archive_source_bytes_preserved": true,
+      "unavailable_source_remains_unknown": true,
+      "archived_and_current_budget_reconciliation_completed": false,
+      "target_activation_implemented": false,
+      "public_recovery_api": false,
+      "browser_status": "not_run_no_new_api_or_ui",
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "restore_budget_preparation": {
+      "status": "accepted_internal_actual_target_budget_preparation",
+      "new_tests": 15,
+      "evidence": [
+        {
+          "session_id": 76382,
+          "exit_code": 0,
+          "passed": 9,
+          "xml": ".tmp/t72-budget-prep-first.xml",
+          "xml_sha256": "aca9feb4535939a8ec32afe83f6e5974c6826e6c95791e9eb8972656add1c6c4",
+          "log": ".tmp/t72-budget-prep-first.log",
+          "log_sha256": "358d9289a3ee567e4637f5272e801104f8c71c9526228038afdd9e8f4836b2f1"
+        },
+        {
+          "session_id": 63659,
+          "exit_code": 0,
+          "passed": 4,
+          "xml": ".tmp/t72-budget-merge-first.xml",
+          "xml_sha256": "a8c6cbcfafe5bbe28479e7aa4a9bc15d302d4c8e4fb9e9f22af1eba1e94e0c0f",
+          "log": ".tmp/t72-budget-merge-first.log",
+          "log_sha256": "71649b9e92fc111b396ef2a3efe4277c729f57b2fce607f86173eb0941b7ed3d"
+        },
+        {
+          "session_id": 77218,
+          "exit_code": 0,
+          "passed": 4,
+          "xml": ".tmp/t72-budget-prep-final.xml",
+          "xml_sha256": "83435c735b165f8144970bcbf683d9d36ac3d33c316702ac70f3e9583ac5ab66",
+          "log": ".tmp/t72-budget-prep-final.log",
+          "log_sha256": "a5cbebcc1ab7f83b906a2814a50d73d4ea9d0dcf256a5819d213ee1461e3e6d1"
+        },
+        {
+          "session_id": 29964,
+          "exit_code": 0,
+          "passed": 10,
+          "xml": ".tmp/t72-budget-prep-regression.xml",
+          "xml_sha256": "9943959cd70374e427d2a0799926ba154ca48fec3269825b4da8ad8bbdc2d8cb",
+          "log": ".tmp/t72-budget-prep-regression.log",
+          "log_sha256": "ceb2ba67115325f615ec0803678dc59bc1c79165fbb5f606c99ffc87c47ff1a2"
+        }
+      ],
+      "doc": "docs/development/t72-restore-budget-preparation.md",
+      "archived_and_current_budget_evidence_reconciled": true,
+      "target_budget_prepared": true,
+      "unresolved_occupancy_and_time_preserved": true,
+      "target_activation_implemented": false,
+      "old_jobs_invalidated": false,
+      "fresh_execution_roots_ready": false,
+      "public_recovery_api": false,
+      "browser_status": "no_new_http_or_ui; actual_readonly_TestClient_startup_passed",
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "restore_jobs_preparation": {
+      "status": "accepted_internal_actual_restored_jobs_invalidation",
+      "new_tests": 11,
+      "evidence": [
+        {
+          "session_id": 74472,
+          "exit_code": null,
+          "passed": 11,
+          "completion_evidence": "complete_pytest_log_and_junit_xml; handle_missing_and_no_python_process",
+          "xml": ".tmp/t72-jobs-final.xml",
+          "xml_sha256": "b0a30fbfdd7cea91c25881facc99447ea384843a18d112cc1c698fa103ca2f26",
+          "log": ".tmp/t72-jobs-final.log",
+          "log_sha256": "3dd9af42c071f053ab20c04dfb89ccf8cb354cf1f7660777e38ba58451b3642a"
+        },
+        {
+          "session_id": 52688,
+          "exit_code": 0,
+          "passed": 10,
+          "completion_evidence": "observed_exit_0",
+          "xml": ".tmp/t72-jobs-regression.xml",
+          "xml_sha256": "7c001868ecdd217a3cb30a6cb18bc8c129d009f4f143be1c5d0560c632bb141c",
+          "log": ".tmp/t72-jobs-regression.log",
+          "log_sha256": "d772a69a366b002058e784c61a19a994cccf9588b7852ccf33ff9bc8d671ce51"
+        }
+      ],
+      "doc": "docs/development/t72-restore-jobs.md",
+      "original_job_rows_and_events_preserved": true,
+      "workbench_jobs_invalidated": true,
+      "prepared_candidate_fact_publication_plans_invalidated": false,
+      "fresh_execution_roots_ready": false,
+      "target_activation_implemented": false,
+      "public_recovery_api": false,
+      "browser_status": "no_new_http_or_ui; actual_readonly_TestClient_startup_passed",
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "restore_execution_preparation": {
+      "status": "accepted_internal_execution_namespace_fences_and_fresh_task_directory",
+      "new_tests": 11,
+      "evidence": [
+        {
+          "session_id": 48169,
+          "exit_code": 0,
+          "passed": 8,
+          "xml": ".tmp/t72-executions-final.xml",
+          "xml_sha256": "a6c0dc9103814a3020db0db11c95468d71cf2a2a9c753a889be78638023de749",
+          "log": ".tmp/t72-executions-final.log",
+          "log_sha256": "d63015a92157bb3cca9de6e8b37a7c46a8613e2c912d4b1bf230dac06c054d04"
+        },
+        {
+          "session_id": 23650,
+          "exit_code": 0,
+          "passed": 3,
+          "xml": ".tmp/t72-executions-external-fixed.xml",
+          "xml_sha256": "dac4739b4f957c15e25a3ec5460411f648efa1fe4b9ea935b1cd9e49406260fb",
+          "log": ".tmp/t72-executions-external-fixed.log",
+          "log_sha256": "a0512ed8afbd0f502df28f42c08de28912001e5818e23f11ef254b0477d71eb1"
+        },
+        {
+          "session_id": 98655,
+          "exit_code": 0,
+          "passed": 4,
+          "xml": ".tmp/t72-executions-guards.xml",
+          "xml_sha256": "7889b9f589a67554e1c0e702b7fe0310bbad8e8df44fe4edfa63ec16209ffbc6",
+          "log": ".tmp/t72-executions-guards.log",
+          "log_sha256": "4ae0a0f97ba2af3ad02763391d1d182e3bcfdd35a0d0d0e86d2d24b6c3b2d44a"
+        },
+        {
+          "session_id": 57331,
+          "exit_code": 0,
+          "passed": 70,
+          "xml": ".tmp/t72-executions-writers.xml",
+          "xml_sha256": "318b3eaf660d45d8c73860dd0ab8afde9ec83fbca148dd6dd74089aef9dfb902",
+          "log": ".tmp/t72-executions-writers.log",
+          "log_sha256": "594151eb9c3527deb72d08f27b0e86fde1107ad262f11e4cb297951ff69b1341"
+        },
+        {
+          "session_id": 65570,
+          "exit_code": 0,
+          "passed": 54,
+          "xml": ".tmp/t72-executions-final-regression.xml",
+          "xml_sha256": "45b0b0cd927224c5b86326bdfbbbb23a604f1716b15a846bc6ef70c94a45d3d9",
+          "log": ".tmp/t72-executions-final-regression.log",
+          "log_sha256": "ca0fa9d673f978fef493423a74019c9a9c54a939649deaf10167d16a7433791f"
+        },
+        {
+          "session_id": null,
+          "exit_code": 0,
+          "passed": 52,
+          "xml": ".tmp/t72-executions-guards-regression.xml",
+          "xml_sha256": "3b21e0dc05049ccf93dda3503d06904c0c4ddde07472802d1d0027abf2264489",
+          "log": ".tmp/t72-executions-guards-regression.log",
+          "log_sha256": "1fac2d02b6b9037d97a56511bb8612caf6a8626b2104a165df5f19a1bf3e77a5"
+        }
+      ],
+      "doc": "docs/development/t72-restore-executions.md",
+      "old_candidate_fact_call_namespaces_denied": true,
+      "external_archived_job_paths_denied": true,
+      "original_history_and_budget_bytes_preserved": true,
+      "fresh_task_directory_physically_bound": true,
+      "activation_integrated": false,
+      "all_prepared_plan_paths_certified": false,
+      "target_writable": false,
+      "public_recovery_api": false,
+      "browser_status": "no_new_http_or_ui",
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "restore_activation": {
+      "status": "accepted_internal_activation_target_scope_and_next_chapter",
+      "new_tests": 11,
+      "evidence": [
+        {
+          "session_id": 8112,
+          "exit_code": null,
+          "passed": 11,
+          "terminal_evidence": "complete_log_and_junit_no_live_process",
+          "xml": ".tmp/t72-activation-final-second.xml",
+          "xml_sha256": "efe7a540f4b82ab927927e125c8bc77c521293f94ac6655b8c4cf5dfe277af43",
+          "log": ".tmp/t72-activation-final-second.log",
+          "log_sha256": "2af7b1cbe26f4ef7f83a335bf21a8fd9f1293b63adfb153e0913eb2e25d983d4"
+        },
+        {
+          "session_id": 58492,
+          "exit_code": 0,
+          "passed": 41,
+          "terminal_evidence": "observed_exit_code",
+          "xml": ".tmp/t72-activation-history-writers.xml",
+          "xml_sha256": "7b4cd286a05290760d976fd6030781533beefaf1fd1ffe20e5ea4d0c732bbc1c",
+          "log": ".tmp/t72-activation-history-writers.log",
+          "log_sha256": "dc9df345b750dfab503618db12668239f3e127f9c3911f07bb265bc7f50400fc"
+        },
+        {
+          "session_id": 62952,
+          "exit_code": null,
+          "passed": 47,
+          "terminal_evidence": "complete_log_and_junit_no_live_process",
+          "xml": ".tmp/t72-activation-regression.xml",
+          "xml_sha256": "93067b8c2ea65a7261d4870355c2005acd52be7b560b2d0912771d0a02ec72aa",
+          "log": ".tmp/t72-activation-regression.log",
+          "log_sha256": "b04c5e36ce69506459f13ff2fd97daf959a41c0874956a0d5444028394fa6f06"
+        }
+      ],
+      "doc": "docs/development/t72-restore-activation.md",
+      "browser_doc": "docs/development/t72-restore-activation-browser.md",
+      "browser_evidence": ".tmp/t72-activation-browser-evidence.json",
+      "target_writable": true,
+      "target_project_scope_enforced": true,
+      "startup_automatic_calls": 0,
+      "original_source_writes_denied": true,
+      "five_real_process_crashes": true,
+      "deterministic_next_chapter_published": true,
+      "prior_budget_preserved": true,
+      "unknown_budget_blocks_activation": true,
+      "public_activation_wizard": false,
+      "restored_provenance_rebackup_verified": true,
+      "all_direct_recovery_paths_certified": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "rebackup_verification_scope": "internal_archive_offline_plan_materialized_root_binding"
+    },
+    "restore_rebackup": {
+      "status": "accepted_internal_rearchive_offline_plan_and_root_binding",
+      "new_tests": 13,
+      "evidence": [
+        {
+          "session_id": 87987,
+          "exit_code": 0,
+          "passed": 13,
+          "duration_seconds": "191.112",
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-rebackup-tests.log",
+          "log_sha256": "14b28e88b3accac45176c69ac06b1ab2732b396018ba55be245fb198a0775091",
+          "xml": ".tmp/t72-rebackup-tests.xml",
+          "xml_sha256": "1ffc42ffaf2b989a145a3f54240731bf7edefb2575fc387d54ceb74c220983f4"
+        },
+        {
+          "session_id": 43859,
+          "exit_code": 0,
+          "passed": 93,
+          "duration_seconds": "412.081",
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-rebackup-regression.log",
+          "log_sha256": "a189a0990cb4ac8f8eb1f26d45e7bb86ced312fe97ba164ec08232ce5be1e817",
+          "xml": ".tmp/t72-rebackup-regression.xml",
+          "xml_sha256": "d9df8b6ddcc5d4815af3c4fd6946bf72d41b37bca08d30ffb1a88e6db5a9b370"
+        }
+      ],
+      "doc": "docs/development/t72-restored-provenance-rebackup.md",
+      "production_hashes": {
+        "workbench/backup_restore_roots.py": "519c0b40576b81cf248b9e7bbaa6e37f834a3190588f125f8d6a3ed8bc7eac92",
+        "workbench/backup_archive_reviewed.py": "4f489e4bb3a03d1e0797edaf2ea42b6fc0f898266fe163c145ce7657c6ff246a",
+        "workbench/backup_archive_database.py": "88571b537c40a9bc9d503cbf403874a1e0613f286ff672d1836d323a1778de83",
+        "workbench/backup_archive.py": "7fc88b01eefa6d62bf6b16b99a74c06f09f720d25730207639c81f1f4ba6f96e",
+        "workbench/backup_restore_provenance.py": "2fddee9622afd9ed77cb846c2a873129c28ed95c570f671b077d23261fc63ae6",
+        "workbench/backup_restore_plan.py": "6f3559b6da01ff37e7f854076aa1278e73bafd097ea36052f6769abc30c446e3",
+        "workbench/backup_archive_history.py": "872900ba719597890a86a75a36766361242c0324b0ae5676150e1af2a771b229",
+        "workbench/backup_source.py": "f50a54120c601f4ec09de8e7ad099f9164d11a90527771dc6950e638cda7ac38",
+        "workbench/backup_v2_history.py": "09eaf1197f8d9315f9798ce3ca1aa0153de275d866a3cbe54b44c34cb73a6d4e",
+        "workbench/backup_history.py": "20d67f8243bd3019f5034a06007195c015d140c6ae9b74df5d8dffb2c9158799",
+        "workbench/backup_scope.py": "87f6c673fc7a0bc5cc263eeed1e938f838d04e04ddeb080c83c542c4967b635c"
+      },
+      "rearchive_offline_data_verified": true,
+      "source_and_machine_absent_verified": true,
+      "subsequent_chapter_and_author_edits_preserved": true,
+      "second_copy_and_root_binding_verified": true,
+      "second_generation_database_binding_verified": true,
+      "second_generation_handoff_and_activation_verified": true,
+      "public_recovery_api": false,
+      "archive_recoverable": false,
+      "complete_restore_product": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "next_boundary_evidence_historical": ".tmp/t72-rebackup-second-db-probe.json",
+      "second_generation_handoff_revocation_verified": true,
+      "second_generation_target_activation_verified": true,
+      "third_generation_job_history_prepared_verified": true
+    },
+    "second_scope_generation": {
+      "status": "accepted_internal_second_scope_generation_and_read_only_startup",
+      "new_tests": 10,
+      "evidence": [
+        {
+          "session_id": 81431,
+          "exit_code": 1,
+          "passed": 9,
+          "failed": 1,
+          "duration_seconds": "447.750",
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-second-scope-tests.log",
+          "log_sha256": "f1ff17ae3c90e213ffbeaa463b816c387198d4d9d0c9575b03a34b1a6e641258",
+          "xml": ".tmp/t72-second-scope-tests.xml",
+          "xml_sha256": "a7c3c3c659dfd1171875a26992dbeed2766767ddb846f98ea9007f9d60d8ee5b"
+        },
+        {
+          "session_id": 86134,
+          "exit_code": 0,
+          "passed": 1,
+          "failed": 0,
+          "duration_seconds": "186.872",
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-second-scope-corrected-main.log",
+          "log_sha256": "09c5a4e75853b6463e2eb3e41353813fecc1ce74dbc32a134d5c40d5851649a8",
+          "xml": ".tmp/t72-second-scope-corrected-main.xml",
+          "xml_sha256": "8ed8ec8aec034d048f39ebd8f6564f96dc6a61d3b3d6bbe0f8ed6b9504cbb510"
+        },
+        {
+          "session_id": 78230,
+          "exit_code": 0,
+          "passed": 24,
+          "failed": 0,
+          "duration_seconds": "435.709",
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-second-scope-regression.log",
+          "log_sha256": "8d85b0c43fca8d379d1043881584ac8b00c4fbcd2979564c1adf68ee177e3dd8",
+          "xml": ".tmp/t72-second-scope-regression.xml",
+          "xml_sha256": "8da9d5dc56506eb757e8b78aa501d2e1ecc84926e3fd8235371b74a3d9a97991"
+        }
+      ],
+      "production_hashes": {
+        "workbench/restore_scope.py": "7788f02c9d609fa855329ac382fa2553d1bf9e5a32ae04e4384b76f863734b92",
+        "workbench/restore_jobs.py": "6ea8217e60da5b75ea20327889b40631485e2488420d1de580bb1b38e4597a81",
+        "workbench/backup_restore_provenance.py": "7b6704cd9a992b1e7d6060f8088cc5b13d57c003eb15fe78e9e3be8bf6ae854a",
+        "workbench/restore_qualification.py": "3023ae1d0d0db7718d9eaf39da243caa99d31a004b8782a1ff478130a0f7bd1a",
+        "workbench/backup_restore_database.py": "23a23a107fcb42479752455845eb633e90ec3cce9e867fe0e7bea031fb7bff1e"
+      },
+      "doc": "docs/development/t72-second-scope-generation.md",
+      "browser_doc": "docs/development/t72-second-scope-browser.md",
+      "browser_evidence": ".tmp/t72-second-scope-browser-evidence.json",
+      "original_scope_preserved": true,
+      "all_tables_limited_diff_verified": true,
+      "real_process_crash_boundaries": 4,
+      "target_only_read_only_startup": true,
+      "restart_without_auto_calls": true,
+      "first_generation_regression_passed": 24,
+      "second_generation_handoff_and_activation_verified": false,
+      "generic_author_draft_api_readback_verified": true,
+      "generic_author_draft_ui_verified": false,
+      "public_recovery_api": false,
+      "complete_restore_product": false,
+      "archive_recoverable": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "handoff_revocation_and_source_rollback_verified": true
+    },
+    "second_handoff_generation": {
+      "status": "accepted_internal_second_handoff_rollback_usage_and_renewal_archive",
+      "new_tests": 19,
+      "evidence": [
+        {
+          "session_id": 39094,
+          "exit_code": 1,
+          "passed": 2,
+          "failed": 1,
+          "duration_seconds": "339.463",
+          "log": ".tmp/t72-second-handoff-integration.log",
+          "log_sha256": "6ecc29393dc46d57ad61d48c847303257bf024ac99ccc99238dcae00c26fcaaf",
+          "xml": ".tmp/t72-second-handoff-integration.xml",
+          "xml_sha256": "25772dcf846d9d94136d598ea068a65f2cc0d83be463c9689c3427ade5663eb0",
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit"
+        },
+        {
+          "session_id": 27438,
+          "exit_code": 0,
+          "passed": 19,
+          "failed": 0,
+          "duration_seconds": "1237.403",
+          "log": ".tmp/t72-second-handoff-final.log",
+          "log_sha256": "7dda4a87a7e723189a13fa55c523ed5a91695f5750928dbb16ab1f4d1246b99e",
+          "xml": ".tmp/t72-second-handoff-final.xml",
+          "xml_sha256": "5a5cf250961d25d360de54436bdfd6591e46282042c6e4602a56bf7095697cc2",
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit"
+        },
+        {
+          "session_id": 49443,
+          "exit_code": 0,
+          "passed": 21,
+          "failed": 0,
+          "duration_seconds": "988.938",
+          "log": ".tmp/t72-second-handoff-regression.log",
+          "log_sha256": "436932796eb5c3876bba66f598ca814b4428d741b4daaef86e2229672becd0b6",
+          "xml": ".tmp/t72-second-handoff-regression.xml",
+          "xml_sha256": "74b42dc4c5ea0204ebcd5794b2201eb3ee33734b28a840b4d25bc74746b58934",
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit"
+        }
+      ],
+      "production_hashes": {
+        "workbench/restore_handoff.py": "06265c45650bc8922e84fa1b6842a485d76eebc0cd23394aac5ab2693f0792ba",
+        "workbench/restore_reinstatement.py": "e2789963957e7978e3a13d1c239be36aaf2a44f2a6c672cdba8bff12bb208b1e",
+        "workbench/restore_qualification.py": "5de0351e791d3dd9514a62d84eeaac4b9e7b4a524b2f2f1d27510148c2fdb507",
+        "workbench/restore_usage.py": "ec644aa5be8b6bd67918bf662b8bbf98a43a1c1174a7b91a99f662f95738ef3f",
+        "workbench/restore_activation.py": "27a8e15ceabe6bf32df23dff58c07cbbb38421cfa27fd755ca9048ba0e62c4b3",
+        "workbench/backup_restore_provenance.py": "6c2780e0969a2ef599b1d40ca26aef49f48741a33b7b80cb37a6bf99b6a842b7",
+        "workbench/restore_scope.py": "be026f65a3ff7d505b42d0582decd6fcf660d779b3ef350ff82dd6cf501307bb"
+      },
+      "doc": "docs/development/t72-second-handoff-generation.md",
+      "browser_doc": "docs/development/t72-second-handoff-browser.md",
+      "browser_evidence": ".tmp/t72-second-handoff-browser-evidence.json",
+      "real_process_crash_boundaries": 7,
+      "v3_source_revocation_verified": true,
+      "explicit_source_reinstatement_verified": true,
+      "revoked_source_usage_preserved": true,
+      "renewal_rearchive_offline_verified": true,
+      "lost_scope_no_downgrade_verified": true,
+      "browser_api_save_and_restart_verified": true,
+      "generic_author_draft_ui_verified": false,
+      "second_generation_target_activation_verified": false,
+      "complete_restore_product": false,
+      "archive_recoverable": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "windows_premature_shutdown_failure_retained": true,
+      "production_windows_shutdown_verified": false
+    },
+    "job_generations": {
+      "status": "accepted_internal_repeated_job_history_sql_and_offline_rearchive",
+      "new_tests": 32,
+      "original_regression_distinct_passed": 25,
+      "evidence": [
+        {
+          "session_id": 70401,
+          "exit_code": 0,
+          "passed": 1,
+          "failed": 0,
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-job-generation-initial.log",
+          "log_sha256": "6c623ddc960640cdeb6d9011f04988d8e15694670beb2bac4143ba7544a50905",
+          "xml": ".tmp/t72-job-generation-initial.xml",
+          "xml_sha256": "782a64a9ec52d8c16dc8688ca4d6d7745bdf73032d642ad048c84167abe5cba7"
+        },
+        {
+          "session_id": 99023,
+          "exit_code": 1,
+          "passed": 30,
+          "failed": 2,
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-job-generation-final.log",
+          "log_sha256": "d74c4ca202682c866c3bc80d18310853cca3e1aee9f575a3247bfeb4f47534c6",
+          "xml": ".tmp/t72-job-generation-final.xml",
+          "xml_sha256": "463c1ce07d199ec0fd274e69d9e0e931ceb1dd564ca81d07c0cfbd342d360a3a"
+        },
+        {
+          "session_id": 55481,
+          "exit_code": 1,
+          "passed": 24,
+          "failed": 1,
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-job-generation-regression.log",
+          "log_sha256": "dff3c391b90af6872932a0edc7912c799a04f6ea4f639f9dda44e6409ee7ef64",
+          "xml": ".tmp/t72-job-generation-regression.xml",
+          "xml_sha256": "0f4f356eb9691e801ecc2edb23efc45925bfb3d52a02be744138b9e72d0f93d7"
+        },
+        {
+          "session_id": 53490,
+          "exit_code": 0,
+          "passed": 20,
+          "failed": 0,
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-job-generation-repair.log",
+          "log_sha256": "1b298ed89333bdd03f13dab905e6bdd9dabf12fdd084129c53169ae448026580",
+          "xml": ".tmp/t72-job-generation-repair.xml",
+          "xml_sha256": "50de994184d13f37f0bd748dd1c72aded80495ca7633c9670248392bb7e1399b"
+        },
+        {
+          "session_id": 6504,
+          "exit_code": 0,
+          "passed": 3,
+          "failed": 0,
+          "terminal_evidence": "observed_exit_code_and_complete_log_junit",
+          "log": ".tmp/t72-job-generation-repair-regression.log",
+          "log_sha256": "fdf77c8ee77cd17dc232462f7eaec1565deec58b5c02754fed1d31c058b04b26",
+          "xml": ".tmp/t72-job-generation-repair-regression.xml",
+          "xml_sha256": "9e686d715b79e3c2c093f0033702a084b432bef14887fbbe75e6b4cca1969ad2"
+        }
+      ],
+      "doc": "docs/development/t72-job-generations.md",
+      "checkpoint": ".tmp/t72-job-generation-progress.json",
+      "production_hashes": {
+        "workbench/restore_job_history.py": "7852c4a80ad4e8f9736a5d85ee9fd9bc24064032744429ce553fc331cb7bd163",
+        "workbench/restore_jobs.py": "a1c2765bfc116e87116868f37581cf2e4051cc3b0b2386d67289769970e35f4f",
+        "workbench/backup_restore_provenance.py": "895d55a9d7a0493316d09b4985ecfe22aff0b0f0799b906dda24db76afd22e42",
+        "workbench/restore_scope.py": "8343cf1680612a6aa41fd2867b9270735243a90dda41d58959478cf35914b525"
+      },
+      "software_fingerprint_sha256": "5ab5403151014c09937b1633b423fc5a23b139205763217ca08dd07147d61c95",
+      "second_generation_target_activation_verified": true,
+      "third_generation_jobs_prepared": true,
+      "all_historical_rows_preserved": true,
+      "five_actual_process_deaths": true,
+      "all_ancestor_and_machine_paths_absent_offline_rearchive": true,
+      "historical_started_job_artifact_rearchive_verified": false,
+      "second_generation_next_chapter_verified": false,
+      "public_history_editor": false,
+      "complete_restore_product": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0,
+      "browser": {
+        "status": "passed_scope_and_job_api",
+        "native_history_page": false,
+        "runs": [
+          {
+            "session_id": 90418,
+            "pid": 32892,
+            "exit_code": 0
+          },
+          {
+            "session_id": 49799,
+            "pid": 41904,
+            "exit_code": 0
+          }
+        ],
+        "doc": "docs/development/t72-job-generations.md",
+        "active_sessions": []
+      },
+      "additional_third_handoff_rollback": true,
+      "next_chapter_fixture_evidence": ".tmp/t72-job-generation-third-rollback-evidence.json"
+    },
+    "restore_launcher": {
+      "status": "accepted_restore_launch_boundary",
+      "date": "2026-10-01",
+      "new_tests": 11,
+      "first": {
+        "exit_code": 1,
+        "passed": 12,
+        "failed": 4,
+        "log": ".tmp/t72-restore-launcher-tests.log",
+        "note": "Two draft normalization fixture assertions; two readonly SQLite shared-memory changes. Failures retained."
+      },
+      "final": {
+        "exit_code": 0,
+        "passed": 16,
+        "original_regressions": 5,
+        "seconds": 8.53,
+        "log": ".tmp/t72-restore-launcher-final.log",
+        "xml": ".tmp/t72-restore-launcher-final.xml"
+      },
+      "production_hashes": {
+        "run_workbench.py": "6303bf761971448c2a6e43977b6f78cdb46bfcdceae9553d7876999a147fedd7"
+      },
+      "software_fingerprint_sha256": "f57c5f7fb16defd82c4dfb5364edce32d991d7261402e265bb0d9acee3ac78af",
+      "browser": {
+        "status": "passed",
+        "session_id": 13215,
+        "pid": 42176,
+        "exit_code": 0,
+        "duplicate_pid": 45548,
+        "duplicate_exit_code": 0,
+        "evidence": ".tmp/t72-restore-launcher-browser-evidence.json"
+      },
+      "doc": "docs/development/t72-restore-launcher.md",
+      "active_sessions": [],
+      "public_recovery_api": false,
+      "complete_restore_product": false,
+      "archive_recoverable": false,
+      "real_provider_calls": 0,
+      "real_book_writes": 0
+    },
+    "durable_recovery_sessions": {
+      "status": "accepted_durable_recovery_session_control_component",
+      "new_tests": 26,
+      "checkpoint": ".tmp/t72-recovery-session-progress.json",
+      "doc": "docs/development/t72-recovery-sessions.md",
+      "browser_doc": "docs/development/t72-recovery-session-browser.md",
+      "software_fingerprint_sha256": "46f95edceb5055c5fcfdb57cf2afa52992957912570c152dd21eebc49d5520e8",
+      "public_wizard_accepted": false,
+      "complete_restore_product": false,
+      "archive_recoverable": false
+    }
+  },
+  "t72_new_test_count": 417,
+  "job_artifacts_in_progress": {
+    "status": "accepted_external_job_artifacts_events_and_active_backup_workflow",
+    "checkpoint": ".tmp\\t72-job-artifact-progress.json",
+    "accepted_new_distinct_tests": 42,
+    "accepted_regression_distinct_tests": 93,
+    "doc": "docs/development/t72-job-artifacts.md",
+    "browser_doc": "docs/development/t72-job-artifact-browser.md",
+    "external_started_job_artifact_rearchive_verified": true,
+    "full_restore_product": false,
+    "inside_book_job_artifact_repeat_restore_verified": true,
+    "second_generation_next_chapter_verified": true
+  },
+  "internal_job_artifacts_in_progress": {
+    "status": "accepted_internal_job_repeat_restore_formal_next_chapter_and_concurrent_scope_reads",
+    "checkpoint": ".tmp\\t72-internal-job-progress.json",
+    "accepted_new_distinct_tests": 13,
+    "accepted_current_book_ownership_regressions": 5,
+    "prior_execution_activation_regressions": 17,
+    "doc": "docs/development/t72-internal-job-artifacts.md",
+    "browser_doc": "docs/development/t72-internal-job-browser.md",
+    "complete_restore_product": false,
+    "second_generation_formal_next_chapter_verified": true,
+    "internal_historical_artifacts_repeat_restore_verified": true,
+    "qualified_older_policy_denials_without_rewriting_verified": true,
+    "concurrent_scope_and_budget_reads_verified": true,
+    "browser_archive_without_source_database_or_machine_verified": true
+  },
+  "recovery_session_in_progress": {
+    "date": "2026-10-02",
+    "status": "accepted_durable_recovery_session_control_component",
+    "active_sessions": [],
+    "source_hashes": {
+      "workbench/backup_restore_materialization.py": "d02e46252a75ae76ddcf1892427599791cc0b11e86952d89e42fcf0b4bcaa352",
+      "workbench/recovery_sessions.py": "e4a64f4fa9cbc48bc72da1a90e09dd7b875df052220fa2f2c5504f187ffe6ab2",
+      "workbench/recovery_api.py": "b46225078cf3b395abbfdf55807561ef0b44c2ec841d2fcea93f0fbcbbf538d0",
+      "workbench/maintenance_api.py": "d56897e35d05a44be89c6297da04f0b9e7fc53b255996a45ce6899c59b19edc6",
+      "workbench/app.py": "e9ab99562fd99927173366f2fcac13c102759aedf89f4fe27d43d26f09570074",
+      "workbench/static/index.html": "7d44e56bde16bd5f1935914a1a8f1d0503c094fd71da401ff0a3cceec3cc830b",
+      "workbench/static/recovery.js": "d8f05fe108bf76a0bcf7fb0a3e45d8562ec3a648582647fc27718ee835c75a74",
+      "workbench/static/maintenance.js": "29e605ef9ff2c27089878a4fec69742a46c9be4726e9a511addda07d1eb5c5a1"
+    },
+    "software_fingerprint_sha256": "46f95edceb5055c5fcfdb57cf2afa52992957912570c152dd21eebc49d5520e8",
+    "first": {
+      "exit_code": 1,
+      "kind": "collection_error_reserved_pytest_request_name",
+      "log": ".tmp/t72-recovery-session-probe.log"
+    },
+    "second": {
+      "session_id": 49894,
+      "exit_code": 1,
+      "passed": 1,
+      "failed": 7,
+      "teardown_errors": 6,
+      "seconds": 101.04,
+      "log": ".tmp/t72-recovery-session-second.log",
+      "xml": ".tmp/t72-recovery-session-second.xml",
+      "reason": "Author draft SQL status instead of state; crash driver selected archive-validation temporary DB instead of restore destination. All failed evidence retained."
+    },
+    "current": {
+      "session_id": 79153,
+      "state": "terminal_observed",
+      "distinct_tests": 19,
+      "log": ".tmp/t72-recovery-session-v3.log",
+      "xml": ".tmp/t72-recovery-session-v3.xml",
+      "exit_code": 0,
+      "passed": 19,
+      "failed": 0,
+      "seconds": 957.23
+    },
+    "accepted_t72_count": 417,
+    "public_wizard_accepted": false,
+    "complete_restore_product": false,
+    "archive_recoverable": false,
+    "real_provider_calls": 0,
+    "real_book_writes": 0,
+    "regression": {
+      "session_id": 5952,
+      "exit_code": 0,
+      "passed": 70,
+      "failed": 0,
+      "seconds": 126.96,
+      "log": ".tmp/t72-recovery-session-v2-regression.log",
+      "xml": ".tmp/t72-recovery-session-v2-regression.xml",
+      "version": "v2_before_latest_source_changes"
+    },
+    "browser": {
+      "status": "passed_session_component_with_versioned_controller_restart_and_unknown_usage_evidence",
+      "final_acceptance": true,
+      "evidence": ".tmp/t72-recovery-session-browser-v2-evidence.json",
+      "runs": [
+        {
+          "session_id": 33948,
+          "pid": 48392,
+          "exit_code": 0,
+          "after": ".tmp/t72-recovery-session-browser-v2-after.json"
+        },
+        {
+          "session_id": 55970,
+          "pid": 49292,
+          "exit_code": 0,
+          "after": ".tmp/t72-recovery-session-browser-v2-restart-after.json"
+        }
+      ],
+      "uncertain_session": 36749,
+      "uncertain_status": "passed_native_disabled_activation_and_explicit_rollback",
+      "uncertain_exit_code": 0,
+      "uncertain_evidence": ".tmp/t72-recovery-session-browser-v2-uncertain-evidence.json",
+      "uncertain_after": ".tmp/t72-recovery-session-browser-v2-uncertain-after.json",
+      "v3": {
+        "state": "terminal_observed",
+        "session_id": 27516,
+        "pid": 49536,
+        "info": ".tmp/t72-recovery-session-browser-v3-info.json",
+        "status": "passed_native_session_component",
+        "exit_code": 0,
+        "evidence": ".tmp/t72-recovery-session-browser-v3-evidence.json",
+        "after": ".tmp/t72-recovery-session-browser-v3-after.json"
+      },
+      "doc": "docs/development/t72-recovery-session-browser.md"
+    },
+    "next_action": "Implement and verify native opening of the bound activated target; then already-restored source controller, normal enrollment and recovery certification. Amount controls, E, F and real quality/time/cost validation remain incomplete.",
+    "prior_versions": [
+      ".tmp/t72-recovery-session-progress-v1.json",
+      ".tmp/t72-recovery-session-progress-v2.json"
+    ],
+    "boundary_first": {
+      "session_id": 52364,
+      "exit_code": 1,
+      "passed": 1,
+      "failed": 5,
+      "seconds": 333.54,
+      "log": ".tmp/t72-recovery-boundaries-first.log",
+      "xml": ".tmp/t72-recovery-boundaries-first.xml",
+      "reason": "Three socket guard fixture failures and one receipt-name fixture failure; one actual pending activation dead end"
+    },
+    "v3_changes": [
+      "Persist original resume input hash and return saved completion on duplicate resume.",
+      "Refresh authoritative maintenance state after a failed action.",
+      "Update session option labels with Chinese terminal statuses."
+    ],
+    "v3_regression": {
+      "state": "terminal_observed",
+      "session_id": 24611,
+      "log": ".tmp/t72-recovery-session-v3-regression.log",
+      "xml": ".tmp/t72-recovery-session-v3-regression.xml",
+      "exit_code": 0,
+      "passed": 70,
+      "failed": 0,
+      "seconds": 134.98
+    },
+    "accepted_new_distinct_tests": 26,
+    "test_attribution": "19 session/boundary/lifecycle tests on v3; 7 materialization-resume tests on v2 with the identical materialization source hash. This is not a claim that all 26 ran under the v3 software fingerprint."
+  },
+  "recovery_target_in_progress": {
+    "date": "2026-10-02",
+    "status": "implemented_tests_and_IAB_passed_Chrome_verification_pending_all_processes_terminal",
+    "active_sessions": [],
+    "source_hashes": {
+      "workbench/recovery_target.py": "427e80191cad3a8f1b51421d9f3a315acc2f3a9d05c1376c674302e6e5b47d7f",
+      "workbench/recovery_api.py": "0c580f8d24f206308238a3ec9cb236c7ef3e66d66091b8a2429a4882c5d02eb8",
+      "workbench/app.py": "50b93a7d7bf22af7f6a030c45f934468c36bca7fe4e9736fc25d782de7444b44",
+      "workbench/static/index.html": "962993d8ab72628649a300990cc587b38cf5d8421caaaccf704f8eca420e9bf7",
+      "workbench/static/recovery.js": "2827b02154aa87f062e74a4c283f481c33dffc1c59a1cd77d513af68c3832d5d",
+      "workbench/static/workbench-spa.js": "1eabdb5babb758db37487476ed661f4d9ba13ebc7c35c18b1d86b66790d27a6b",
+      "core/engine/persistence.py": "0664c0cb3483da3c21b0cc2b8d5c1165342867f96e33848bdacfb3e1dcd4f624",
+      "workbench/book_ownership.py": "afa691d5c8cea94765c8bae80a8dc6c1027d766f1886614086e11da184017861",
+      "workbench/restore_qualification.py": "af8eaa1601aad6c54e0f4f6647ca98f33a306b55189304d4101535f95bcc363c",
+      "workbench/restore_scope.py": "e16f3bb75da566a0e07b1a21da6679cc6900a4c04588e73f54731668f9633600"
+    },
+    "software_fingerprint_sha256": "e6165c62ee92ae032c4501c17eaae098a2905edbac8625dc5bd438b0c21083d0",
+    "accepted_t72_count": 417,
+    "accepted_new_distinct_tests": 0,
+    "complete_restore_product": false,
+    "archive_recoverable": false,
+    "goal_complete": false,
+    "real_provider_calls": 0,
+    "real_book_writes": 0,
+    "prior_versions": [
+      ".tmp/t72-recovery-target-progress-v1.json",
+      ".tmp/t72-recovery-target-progress-v2.json",
+      ".tmp/t72-recovery-target-progress-v3.json"
+    ],
+    "changes": [
+      "Type only ordinary OS lock contention separately from lock damage.",
+      "Restore qualification reads wait up to two seconds; writers retain immediate admission failure.",
+      "Wait timeout returns restore_scope_busy; current qualification is reread under the actual acquired lock.",
+      "Bound reader thread mutex acquisition within the same two-second deadline; default writers reject thread contention immediately; remove the redundant unbounded ownership mutex."
+    ],
+    "next_action": "Chrome gate remains pending with manual checklist; continue independent already-restored-source controller (currently explicitly denied) without bypassing its revoked scope. Enrollment/upgrade, certification, amount controls, E/F and real-use validation remain incomplete. Do not rerun latest passing tests without relevant changes.",
+    "tests": {
+      "session_id": 10604,
+      "state": "terminal_observed",
+      "distinct_tests": 14,
+      "log": ".tmp/t72-recovery-target-v4.log",
+      "xml": ".tmp/t72-recovery-target-v4.xml",
+      "exit_code": 0,
+      "passed": 14,
+      "seconds": 141.43
+    },
+    "regression": {
+      "session_id": 45905,
+      "state": "terminal_observed",
+      "log": ".tmp/t72-recovery-target-v4-regression.log",
+      "xml": ".tmp/t72-recovery-target-v4-regression.xml",
+      "exit_code": 0,
+      "passed": 72,
+      "seconds": 202.9,
+      "subtests_passed": 6
+    },
+    "browser": {
+      "session_id": 45807,
+      "state": "terminal_observed",
+      "pid": 51136,
+      "port": 38898,
+      "info": ".tmp/t72-recovery-target-observer-v4-info.json",
+      "tool": "Codex IAB",
+      "status": "partial_IAB_native_open_repeat_and_draft_passed_Chrome_MCP_unavailable",
+      "complete_chrome_verification": false,
+      "chrome_limitation": "Latest list_pages observation cell 176 did not return within 20 seconds and was stopped; server handles remain independent.",
+      "exit_code": 0,
+      "target_exit_code": 0,
+      "target_launcher_pid": 45664,
+      "target_server_pid": 44672,
+      "target_port": 52864,
+      "target_instance_id": "c053d88e38a94ed1b6b58a0621ff298b",
+      "source_and_target_unchanged": true,
+      "worker_absent": true,
+      "real_provider_calls": 0,
+      "after": ".tmp/t72-recovery-target-observer-v4-after.json",
+      "evidence": ".tmp/t72-recovery-target-v4-iab-evidence.json",
+      "screenshot": ".tmp/t72-recovery-target-v4-iab.png"
+    },
+    "concurrent_reads": {
+      "rounds": 12,
+      "successful_parallel_GETs": 24,
+      "unexpected_errors": 0,
+      "explicit_busy_negative_checked": true,
+      "file": ".tmp/t72-recovery-target-contention-v4-results.json"
+    },
+    "doc": "docs/development/t72-recovery-target.md",
+    "browser_doc": "docs/development/t72-recovery-target-browser.md"
+  },
+  "recovery_controller_in_progress": {
+    "date": "2026-10-02",
+    "status": "implemented_six_distinct_cases_and_82_regressions_passed_IAB_partial_Chrome_pending",
+    "software_fingerprint_sha256": "f9143a26f66faf8a044aee42bd80060acac9b8edead2e6b4b55c97bd58cadb44",
+    "source_hashes": {
+      "run_workbench.py": "74b1d8e0d5e9dd593648f38b6ede17d0f706afbbf0ad28f42ccefaa1a4743f81",
+      "workbench/recovery_controller.py": "ffa626de185a1e8b980637cb8976f4562b304141cc5e9bad3da95b0424196f78",
+      "workbench/recovery_sessions.py": "52e6824af7412a42531367071d608a30928111b38e60580a5972a00ada932a80",
+      "workbench/restore_handoff.py": "aef8aa97e99e7b66262c6c62c8286894dc2e162dc9137d66d160a6d9afec86e4",
+      "workbench/restore_scope.py": "911d5bd520b1cf0a3f240f047653cf64a94f7164445710e1f5e1ea400abe7d9d",
+      "workbench/database.py": "50ba58e8b7c363b2d3bb778a91f53d66733f297b3c63b10bd9ebd2502b66fa98",
+      "workbench/recovery_api.py": "0596084e1db012b71a8b1a19403167488ccc79d422daa61f331551f8a6f38928",
+      "workbench/maintenance_api.py": "36c39bdf1f63bd8cc6a85761b796bb703a251c50513db87d395afc34963c8710",
+      "workbench/app.py": "daa676b9b88c28b19bc7cb70fcca69515ca04f03d78191299bfb4046b9430414",
+      "workbench/static/recovery.js": "bf8c03b3f5222271db1e0691fd80567c6ed5e111ba780711c87c36aabdfc2a24",
+      "workbench/static/maintenance.js": "3bc30653fc7d36cbf4bcebef4826ae864be1748a4200479331d2f6a3c609b24e",
+      "workbench/static/workbench-spa.js": "38b56e597eab0c5f970b04ebc3753a6e7ed8f4ed8121f2eedc5c2748b80f159d"
+    },
+    "active_sessions": [],
+    "tests": {
+      "session_id": 19514,
+      "state": "terminal_observed",
+      "exit_code": 1,
+      "xml": ".tmp/t72-restored-controller-v4.xml",
+      "tests": 6,
+      "passed": 5,
+      "failed": 1,
+      "errors": 0,
+      "seconds": 1045.432,
+      "log": ".tmp/t72-restored-controller-v4.log"
+    },
+    "accepted_t72_count": 417,
+    "accepted_new_distinct_tests": 0,
+    "complete_restore_product": false,
+    "goal_complete": false,
+    "real_provider_calls": 0,
+    "real_book_writes": 0,
+    "next_action": "Do not rerun unchanged passing tests. Complete Chrome/manual network verification; continue normal legacy enrollment/upgrade, recovery certification, trusted amount controls, E/F and separately authorized real-use validation.",
+    "prior_versions": [
+      ".tmp/t72-restored-controller-progress-v1.json"
+    ],
+    "regression": {
+      "session_id": 23675,
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "xml": ".tmp/t72-restored-controller-v2-regression.xml",
+      "tests": 82,
+      "passed": 82,
+      "failed": 0,
+      "errors": 0,
+      "seconds": 1433.099,
+      "log": ".tmp/t72-restored-controller-v2-regression.log"
+    },
+    "browser": {
+      "state": "terminal_observed",
+      "tool": "Codex IAB",
+      "status": "partial",
+      "complete_chrome_verification": false,
+      "source_port": 38898,
+      "target_port": 55631,
+      "target_launcher_pid": 52008,
+      "target_server_pid": 31472,
+      "target_instance_id": "ac043c2d466a494391748237b2d32870",
+      "child_exit_code": 0,
+      "repeat_open_reused_same_instance": true,
+      "source_and_target_unchanged": true,
+      "real_provider_calls": 0,
+      "evidence": ".tmp/t72-restored-controller-iab-evidence.json",
+      "report": "docs/development/t72-restored-controller-browser.md",
+      "limitations": [
+        "Chrome MCP observation 210 returned no result in twenty seconds; not certified.",
+        "ASGI observer captured source response bodies but not headers/request bodies; target child had no network observer.",
+        "First browser generation was created with a historical fingerprint; rearchive and second generation used current fingerprint."
+      ]
+    },
+    "test_source_sha256": "30b8c232270f9b337eeda905259ff1ca579c4d35f1a9dc576e7cc02519652b42",
+    "earlier_test_runs": [
+      {
+        "session_id": 14684,
+        "exit_code": 1,
+        "failed": 1,
+        "seconds": 160.68,
+        "log": ".tmp/t72-restored-controller-first.log",
+        "reason": "identity dict was incorrectly accessed as attribute; source fixed only after terminal"
+      },
+      {
+        "session_id": 28324,
+        "exit_code": 1,
+        "failed": 1,
+        "seconds": 174.22,
+        "log": ".tmp/t72-restored-controller-v2.log",
+        "reason": "test expected 423 but existing instance mismatch contract returns 409; production unchanged"
+      },
+      {
+        "session_id": 11078,
+        "exit_code": 1,
+        "failed": 1,
+        "seconds": 183.08,
+        "log": ".tmp/t72-restored-controller-v3.log",
+        "reason": "test used incomplete error-code name; corrected to existing workbench_maintenance_invalid after terminal"
+      }
+    ],
+    "targeted_recheck": {
+      "session_id": 45188,
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "xml": ".tmp/t72-restored-controller-wrong-lease-final.xml",
+      "tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "seconds": 196.708,
+      "log": ".tmp/t72-restored-controller-wrong-lease-final.log"
+    },
+    "test_attribution": "Original 19514: five cases passed and wrong-lease case failed on the exception-class assertion. Only that assertion/import was corrected; production fingerprint stayed unchanged. Original 45188 reruns that one case, including the final correct HTTP rollback and unchanged-source assertions. This is not an assertion that a single six-case run passed.",
+    "browser_runs": [
+      {
+        "phase": "first",
+        "session_id": 81049,
+        "state": "terminal_observed",
+        "exit_code": 0,
+        "report": ".tmp/t72-restored-controller-browser-first-after.json",
+        "source_unchanged": true,
+        "worker_absent": true,
+        "real_provider_calls": 0
+      },
+      {
+        "phase": "restart",
+        "session_id": 62844,
+        "state": "terminal_observed",
+        "exit_code": 0,
+        "report": ".tmp/t72-restored-controller-browser-restart-after.json",
+        "source_unchanged": true,
+        "worker_absent": true,
+        "real_provider_calls": 0
+      },
+      {
+        "phase": "open",
+        "session_id": 54620,
+        "state": "terminal_observed",
+        "exit_code": 0,
+        "report": ".tmp/t72-restored-controller-browser-open-after.json",
+        "source_unchanged": true,
+        "worker_absent": true,
+        "real_provider_calls": 0
+      }
+    ],
+    "archive_recoverable": false
+  },
+  "legacy_writer_identity_in_progress": {
+    "date": "2026-10-02",
+    "task": "T7.2_legacy_writer_restore_identity",
+    "status": "15_distinct_cases_and_48_regressions_passed_browser_found_draft_display_gap_not_accepted",
+    "software_fingerprint_sha256": "51acbe0c9c8fc5f4e29c5d0077ae8d29af07cc6631fb409b14ed4af59e43a6a1",
+    "source_hashes": {
+      "workbench/backup_archive_legacy_state.py": "8207fff874ef27f09d3a36c0c8c834dbccbb30805377b9167308c714f4e79a38",
+      "workbench/writer_identity.py": "351c6b42932cdc74e3a844de3cbf4a66c35f35c91baec072dde7cd1c22cd2d6f",
+      "workbench/book_ownership.py": "dfac2f0e0fac0734ce4d3a3874cbf757d1d316f10e656b1a9645a96acb214b2e",
+      "workbench/restore_handoff.py": "ef186b460881869fb5f09dfe79c6bae92e9fc28c9ced5e0c92615f7657c7bc72",
+      "workbench/restore_usage.py": "8f186a2a1e4f1bc577609eee8a6d84db899e852f4ba9485fac293267377e75a5",
+      "workbench/backup_source.py": "566768788e41153da1c06cd96b8292c21f9b41928e617a3cefcc64a94e0d5bba"
+    },
+    "test_source_sha256": "ad3e2437a50c4921f8202bccee8b8668d0a002860059efeaa5f30278f1f1ea3d",
+    "tests": {
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "xml": ".tmp/t72-legacy-identity-v3.xml",
+      "log": ".tmp/t72-legacy-identity-v3.log",
+      "tests": 11,
+      "passed": 11,
+      "failed": 0,
+      "errors": 0,
+      "passed_cases": [
+        "test_actual_legacy_handoff_budget_activation_and_restart_preserve_identity_and_draft[1.0]",
+        "test_actual_legacy_handoff_budget_activation_and_restart_preserve_identity_and_draft[2.0]",
+        "test_actual_legacy_rollback_reactivates_only_original_without_identity_upgrade",
+        "test_unenrolled_legacy_archive_still_cannot_create_registration_or_handoff",
+        "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[profile]",
+        "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[encoding]",
+        "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[prose_alias]",
+        "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[event_receipt]",
+        "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[shadow]",
+        "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[chapter_gap]",
+        "test_standard_reviewed_enrollment_does_not_enroll_legacy_by_compatibility"
+      ],
+      "session_id": 28645
+    },
+    "earlier_runs": [
+      {
+        "state": "terminal_observed",
+        "exit_code": 1,
+        "log": ".tmp/t72-legacy-identity-v1.log",
+        "reason": "test fixture referred to nonexistent workbench.workers before any recovery operation"
+      },
+      {
+        "session_id": 39466,
+        "state": "terminal_observed",
+        "exit_code": 1,
+        "log": ".tmp/t72-legacy-identity-v2.log",
+        "reason": "actual backup source incorrectly labeled existing legacy ownership as legacy_not_enrolled; fixed only after terminal"
+      }
+    ],
+    "active_sessions": [],
+    "accepted_t72_count": 417,
+    "accepted_new_distinct_tests": 0,
+    "normal_enrollment_complete": false,
+    "complete_restore_product": false,
+    "archive_recoverable": false,
+    "real_provider_calls": 0,
+    "real_book_writes": 0,
+    "goal_complete": false,
+    "next_action": "Fix the observed legacy retained author draft chapter-detail API/UI gap, preserving readonly SHA/revision checks; add assertions to the existing actual legacy restore tests. Then continue normal never-enrolled legacy enrollment/upgrade, full recovery certification, trusted amount controls, E/F and separately authorized real-use validation. Do not rerun unchanged passing regressions or claim synthetic registration is the public user path.",
+    "additional_tests": {
+      "state": "terminal_observed",
+      "exit_code": 1,
+      "xml": ".tmp/t72-legacy-identity-v3-additional.xml",
+      "log": ".tmp/t72-legacy-identity-v3-additional.log",
+      "tests": 4,
+      "passed": 2,
+      "failed": 2,
+      "errors": 0,
+      "passed_cases": [
+        "test_source_change_during_legacy_cold_read_cannot_return_old_success",
+        "test_unfinished_legacy_outline_keeps_readonly_copy_and_author_draft"
+      ],
+      "session_id": 12871
+    },
+    "proof_loss_recheck": {
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "xml": ".tmp/t72-legacy-identity-v3-proof-loss.xml",
+      "log": ".tmp/t72-legacy-identity-v3-proof-loss.log",
+      "tests": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "passed_cases": [
+        "test_registered_legacy_missing_proof_cannot_be_archived_as_never_enrolled[missing_machine]",
+        "test_registered_legacy_missing_proof_cannot_be_archived_as_never_enrolled[missing_witness]"
+      ]
+    },
+    "regression": {
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "xml": ".tmp/t72-legacy-identity-v3-regression.xml",
+      "log": ".tmp/t72-legacy-identity-v3-regression.log",
+      "tests": 48,
+      "passed": 48,
+      "failed": 0,
+      "errors": 0,
+      "passed_cases": [
+        "test_offline_legacy_semantics_equal_live_with_no_source_or_store[1.0]",
+        "test_offline_legacy_semantics_equal_live_with_no_source_or_store[2.0]",
+        "test_ambiguous_or_unreadable_legacy_sources_block_evidence[prose_alias]",
+        "test_ambiguous_or_unreadable_legacy_sources_block_evidence[outline_alias]",
+        "test_ambiguous_or_unreadable_legacy_sources_block_evidence[encoding]",
+        "test_retained_author_work_requires_fresh_preparation[unfinished_outline]",
+        "test_retained_author_work_requires_fresh_preparation[changed_profile]",
+        "test_interrupted_event_authority_cannot_qualify_as_legacy",
+        "test_ownership_is_shared_across_database_instances_and_does_not_auto_rebind",
+        "test_directory_replacement_at_the_same_path_invalidates_ownership",
+        "test_suspended_ownership_cannot_be_silently_reactivated",
+        "test_machine_book_os_lock_blocks_a_second_process",
+        "test_corrupt_ownership_record_never_authorizes_writing",
+        "test_enrollment_records_book_proof_and_is_byte_idempotent",
+        "test_missing_machine_record_cannot_reenroll_or_allow_ordinary_output[record]",
+        "test_missing_machine_record_cannot_reenroll_or_allow_ordinary_output[machine-directory]",
+        "test_missing_or_different_book_witness_cannot_be_repaired_by_active_enrollment[missing]",
+        "test_missing_or_different_book_witness_cannot_be_repaired_by_active_enrollment[corrupt]",
+        "test_missing_or_different_book_witness_cannot_be_repaired_by_active_enrollment[other-registration]",
+        "test_missing_or_different_book_witness_cannot_be_repaired_by_active_enrollment[identity-missing]",
+        "test_actual_process_crash_resumes_original_enrollment_without_new_registration[after_enrollment_intent]",
+        "test_actual_process_crash_resumes_original_enrollment_without_new_registration[after_enrollment_witness]",
+        "test_actual_process_crash_resumes_original_enrollment_without_new_registration[after_enrollment_active]",
+        "test_pending_enrollment_cannot_resume_in_another_database",
+        "test_copied_witness_cannot_enroll_on_an_empty_machine_store",
+        "test_explicit_old_active_record_migration_preserves_binding_and_rejects_lost_proof",
+        "test_book_files_and_database_copy_under_supported_external_writer_locks",
+        "test_source_mutation_inside_capture_invalidates_context_without_finishing_maintenance[book]",
+        "test_source_mutation_inside_capture_invalidates_context_without_finishing_maintenance[job]",
+        "test_actual_mixed_reviewed_book_and_other_project_policy_without_sources",
+        "test_author_edit_is_preserved_as_a_continuation_gate",
+        "test_rehashed_actual_database_cannot_hide_unsupported_or_unsettled_state[unknown_table]",
+        "test_rehashed_actual_database_cannot_hide_unsupported_or_unsettled_state[running_job]",
+        "test_components_from_another_completion_are_not_combined",
+        "test_actual_legacy_executions_and_semantic_qualification_are_checked[False]",
+        "test_actual_legacy_executions_and_semantic_qualification_are_checked[True]",
+        "test_mixed_history_becomes_live_readable_without_weakening_old_guards",
+        "test_fresh_process_rechecks_same_root_binding_without_rewriting_book",
+        "test_real_exit_after_registry_write_can_resume_without_replaying_old_plans",
+        "test_modified_materialized_copy_is_rejected_before_binding[book]",
+        "test_modified_materialized_copy_is_rejected_before_binding[database]",
+        "test_modified_materialized_copy_is_rejected_before_binding[materialization_receipt]",
+        "test_modified_materialized_copy_is_rejected_before_binding[registry]",
+        "test_same_bytes_in_replaced_book_directory_cannot_resume_binding",
+        "test_rehashed_binding_intent_cannot_grant_write_activation",
+        "test_unreadable_directory_is_not_silently_omitted_from_copy_verification",
+        "test_legacy_identity_cold_reads_preserve_absolute_history_as_read_only_evidence[1.0]",
+        "test_legacy_identity_cold_reads_preserve_absolute_history_as_read_only_evidence[2.0]"
+      ],
+      "session_id": 5550
+    },
+    "passed_distinct_cases": [
+      "test_actual_legacy_handoff_budget_activation_and_restart_preserve_identity_and_draft[1.0]",
+      "test_actual_legacy_handoff_budget_activation_and_restart_preserve_identity_and_draft[2.0]",
+      "test_actual_legacy_rollback_reactivates_only_original_without_identity_upgrade",
+      "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[chapter_gap]",
+      "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[encoding]",
+      "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[event_receipt]",
+      "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[profile]",
+      "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[prose_alias]",
+      "test_live_legacy_evidence_damage_is_refused_without_repair_or_registration[shadow]",
+      "test_registered_legacy_missing_proof_cannot_be_archived_as_never_enrolled[missing_machine]",
+      "test_registered_legacy_missing_proof_cannot_be_archived_as_never_enrolled[missing_witness]",
+      "test_source_change_during_legacy_cold_read_cannot_return_old_success",
+      "test_standard_reviewed_enrollment_does_not_enroll_legacy_by_compatibility",
+      "test_unenrolled_legacy_archive_still_cannot_create_registration_or_handoff",
+      "test_unfinished_legacy_outline_keeps_readonly_copy_and_author_draft"
+    ],
+    "passed_distinct_count": 15,
+    "browser": {
+      "session_id": 66338,
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "status": "partial_with_observed_legacy_draft_display_gap",
+      "tool": "Codex IAB",
+      "complete_chrome_verification": false,
+      "evidence": ".tmp/t72-legacy-identity-browser-v2-evidence.json",
+      "responses": ".tmp/t72-legacy-identity-browser-v2-responses.jsonl",
+      "after": ".tmp/t72-legacy-identity-browser-v2-after.json",
+      "screenshot": ".tmp/t72-legacy-identity-browser-v2.png",
+      "source_and_target_unchanged": true,
+      "worker_absent": true,
+      "real_provider_calls": 0,
+      "synthetic_registration_only": true,
+      "observed_requests": 20,
+      "issue": "Legacy 1.0 chapter detail does not attach retained_author_draft. Actual restored DB draft is preserved; native chapter 2 page and refresh hide it. app.py only attaches it in the reviewed branch.",
+      "limitations": [
+        "Chrome MCP not verified; IAB console was empty.",
+        "ASGI observer contains bounded response bodies/statuses, no headers/request bodies.",
+        "Chapter 1 card returned expected context-not-ready 400 because its old outline is absent; formal prose was readable.",
+        "No public normal legacy registration, actual new chapter generation, or complete recovery certification."
+      ]
+    },
+    "original_test_source_sha256": "a1b1a6dffe6a0b5c850bc4e39141e612f213aeacd2fd23d507727a3e21d8aaec",
+    "test_attribution": "15 distinct passing cases across three terminal runs at the same production fingerprint; no single 15-pass run is claimed. Additional run had two failures because its baseline preceded normal first-preview lock arming. Only fixture baselining was corrected before the two-case recheck."
+  },
+  "legacy_draft_display_in_progress": {
+    "date": "2026-10-02",
+    "task": "T7.2_legacy_draft_display",
+    "status": "35_checks_passed_legacy_draft_display_fixed_IAB_partial_Chrome_pending",
+    "original_session_id": 40885,
+    "source_fingerprint": "51acbe0c9c8fc5f4e29c5d0077ae8d29af07cc6631fb409b14ed4af59e43a6a1",
+    "goal_complete": false,
+    "next_action": "Continue the normal legacy onboarding and recovery certification dependency: inspect current supported evidence, define a versioned certificate bound to the immutable archive and actual verifier, and connect the never-enrolled legacy registration/upgrade path. Do not replace certification with successful offline parsing or synthetic ownership. Preserve the reviewed cold-reader checks. Trusted amount controls, E/F, Chrome/manual verification and independently authorized T8.1/T8.2 remain pending. Do not rerun unchanged passing tests.",
+    "reproduction": {
+      "session_id": 40885,
+      "state": "terminal_observed",
+      "exit_code": 1,
+      "xml": ".tmp/t72-legacy-draft-before.xml",
+      "reason": "retained_author_draft missing from actual legacy chapter-detail API"
+    },
+    "software_fingerprint_sha256": "4a1225a90a8aae10c11660704a0387c9c7cd4a2800a1b92cd1083cd26aefc2f1",
+    "source_hashes": {
+      "workbench/app.py": "fa7ba2797363a0b6445288565861cb3863ebca5ac046fffb03683d96bc989438",
+      "workbench/writer_identity.py": "538294767d26cf510e644a9d5e335bdf0da65b7413c6d7aecb29283753d195c3",
+      "tests/test_legacy_restore_identity.py": "25c00cc1214791d07300bfa979d620577a9c51168f5f5af2122bc05325bf805f"
+    },
+    "active_sessions": [],
+    "earlier_test_run": {
+      "session_id": 70755,
+      "state": "terminal_observed",
+      "exit_code": 1,
+      "passed": 33,
+      "errors": 2,
+      "xml": ".tmp/t72-legacy-draft-v1.xml",
+      "reason": "New reviewed cold reader accessed missing ReviewedIdentityMetadata.schema_version; production fixed after all v1 sessions terminal."
+    },
+    "earlier_browser": {
+      "session_id": 99562,
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "after": ".tmp/t72-legacy-draft-browser-v1-after.json",
+      "verification_complete": false,
+      "purpose": "Only baseline navigation before reviewed reader fix."
+    },
+    "accepted_t72_count": 417,
+    "accepted_new_distinct_tests": 0,
+    "tests": {
+      "session_id": 33146,
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "passed": 35,
+      "xml": ".tmp/t72-legacy-draft-v2.xml",
+      "log": ".tmp/t72-legacy-draft-v2.log"
+    },
+    "browser": {
+      "session_id": 63250,
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "status": "partial",
+      "complete_chrome_verification": false,
+      "source_and_target_unchanged": true,
+      "worker_absent": true,
+      "real_provider_calls": 0,
+      "response_status_sequence": [
+        200,
+        200,
+        409,
+        200
+      ],
+      "evidence": ".tmp/t72-legacy-draft-browser-v2-evidence.json",
+      "report": "docs/development/t72-recovery-target-browser.md"
+    },
+    "draft_display_gap_resolved_in_IAB": true,
+    "reviewed_reader_attribute_gap_resolved": true,
+    "complete_restore_product": false,
+    "normal_enrollment_complete": false,
+    "archive_recoverable": false,
+    "real_provider_calls": 0,
+    "real_book_writes": 0
+  },
+  "normal_legacy_registration_in_progress": {
+    "date": "2026-10-02",
+    "task": "T7.2_normal_legacy_registration",
+    "status": "normal_legacy_registration_internal_verified_52_checks_passed_IAB_partial",
+    "goal_complete": false,
+    "current_software_fingerprint_sha256": "bb36f794ea2bfd13add82daa931f91e1277319ae5afbb0c25cf7d44cb5a9f64e",
+    "fingerprint_sampled": "after original test session terminal; no pre-run fingerprint checkpoint was recorded",
+    "source_hashes": {
+      "workbench/book_ownership.py": "13eccbf2a4a06ef17615dea288ac136d1d0f9d355162443e40823fad9beb1caa",
+      "workbench/legacy_registration.py": "3808808cf98317bb89913233cea0ee97adb53c5056ef6c27a9c3d5a163f9800f",
+      "workbench/backup_api.py": "a42c83eceb5b784fa43a14486354c8324aff86fb14df8dfe2d75b6e41dfe5893",
+      "workbench/onboarding.py": "e8e06de97c0f048aeddc8d27200dd740e80dd542e3c5394e5f45767bff189f91",
+      "workbench/static/index.html": "82da3b69e73ca02415ce9ae70dd9683321343668b0895232f1598fa1b46371b1",
+      "workbench/static/backup.js": "ca92a256387e4729a72201965266282eab1a189ea94c4a93fd723e8e39d8c63d",
+      "tests/test_legacy_registration.py": "f7d313deeef4c2b7e204ee4ae63dffaa42478cea01eabaf2a50084de5342d4b7",
+      "tests/test_legacy_registration_boundaries.py": "c208b56814e586dc0af5c975e3528f2a158d240b4672ab768f2e8d674275cd09"
+    },
+    "active_processes": [],
+    "accepted_t72_count": 417,
+    "accepted_new_distinct_tests": 0,
+    "normal_registration_complete": false,
+    "complete_restore_product": false,
+    "archive_recoverable": false,
+    "browser_verification_complete": false,
+    "real_provider_calls": 0,
+    "real_book_writes": 0,
+    "next_action": "Build the finite full recovery certificate bound to immutable archive receipt, actual current verifier/software/config, and proven writable restore protocol; connect normal upgrade with explicit author seven-category baseline confirmation and ownership identity transition. Keep diagnostics recoverable=false until certified. Chrome/default-worker verification, trusted monetary limits, E/F and independently authorized T8.1/T8.2 remain pending; do not rerun unchanged passing tests.",
+    "earlier_test_run": {
+      "session_id": 74787,
+      "state": "terminal_observed",
+      "exit_code": 1,
+      "passed": 10,
+      "failures": 1,
+      "errors": 0,
+      "seconds": 144.466,
+      "xml": ".tmp/t72-legacy-registration-v1.xml",
+      "log": ".tmp/t72-legacy-registration-v1.log",
+      "failure": "after_legacy_admission process-exit test: restarted child raised WorkbenchDatabaseInitializationPending before reaching injection; remaining cases were not executed because -x stopped the run"
+    },
+    "software_fingerprint_sha256": "422b17b99fdd73b8a1e185cf7e20e6259fff320cd032ea474c6300b3828ecc23",
+    "tests": {
+      "session_id": 60895,
+      "state": "terminal_observed",
+      "xml": ".tmp/t72-legacy-registration-v2.xml",
+      "log": ".tmp/t72-legacy-registration-v2.log",
+      "exit_code": 0,
+      "passed": 15,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 370.121
+    },
+    "regression": {
+      "session_id": 42439,
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "passed": 34,
+      "xml": ".tmp/t72-legacy-registration-regression.xml",
+      "log": ".tmp/t72-legacy-registration-regression.log"
+    },
+    "browser": {
+      "session_id": 21662,
+      "state": "terminal_observed",
+      "status": "partial",
+      "complete_chrome_verification": false,
+      "chrome_observation_cell": 399,
+      "chrome_observation_status": "20_seconds_no_output_observation_terminated",
+      "info": ".tmp/t72-legacy-registration-browser-v1-info.json",
+      "exit_code": 1,
+      "server_exit_code": 0,
+      "audit": ".tmp/t72-legacy-registration-browser-v1-audit.json",
+      "evidence": ".tmp/t72-legacy-registration-browser-v1-evidence.json",
+      "screenshot": ".tmp/t72-legacy-registration-browser-v1-final.png",
+      "report": "docs/development/t72-normal-legacy-registration.md",
+      "source_registration_changes_verified": true,
+      "fixture_root_metadata_assertion_failed": true,
+      "default_worker_startup_verified": false,
+      "audit_result": {
+        "status": "partial",
+        "registration_statuses": [
+          409,
+          200
+        ],
+        "preview_statuses": [
+          200,
+          409,
+          200,
+          200
+        ],
+        "capture_count": 3,
+        "original_archive_receipts_unchanged": true,
+        "registered_rearchive_ownership_verified": true,
+        "registration_preserved_full_book_except_known_witness": true,
+        "original_file_bytes_and_physical_root_unchanged": true,
+        "sql_unchanged": true,
+        "software_unchanged": true,
+        "worker_absent": true,
+        "real_provider_calls": 0,
+        "server_exit_code": 0,
+        "original_driver_exit_code": 1,
+        "fixture_note": "Original driver compares root metadata against the pre-fault baseline. Creating/removing its synthetic note changed directory size/mtime, so that assertion fails. The immutable original archive correctly remains stale. A fresh full inventory saved before registration matches the post-registration book after removing only the known witness; all original files, directory members, bytes and root device/inode match.",
+        "complete_chrome_verification": false,
+        "default_worker_startup_verified": false
+      }
+    },
+    "boundaries": {
+      "state": "terminal_observed",
+      "exit_code": 0,
+      "passed": 3,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 1.789,
+      "xml": ".tmp/t72-legacy-registration-boundaries.xml",
+      "log": ".tmp/t72-legacy-registration-boundaries.log"
+    },
+    "normal_registration_internal_verified": true
+  },
+  "rollback_archive_ancestry": {
+    "status": "internal_verified_browser_partial",
+    "checkpoint": ".tmp/t72-rollback-ancestry-progress.json",
+    "complete_restore_product": false,
+    "current_focused_passed": 7,
+    "current_related_regression_passed": 51,
+    "browser_status": "native_IAB_verified_Chrome_partial",
+    "component_new_accepted_count": 0
+  },
+  "qualified_rollback_archive": {
+    "status": "internal_verified_confirmation_fix_iab_passed_chrome_partial",
+    "checkpoint": ".tmp/t72-qualified-rollback-progress.json",
+    "complete_restore_product": false,
+    "new_distinct_checks_passed": 3,
+    "related_regressions_passed": 3,
+    "new_accepted": 0,
+    "production_fingerprint_sha256": "38d37134faea5351e12820db16d90d7cee74bc2f2e217a9f720a0e330898d79d",
+    "report": "docs/development/t72-qualified-rollback-archive.md",
+    "browser_partial": true,
+    "confirmation_clear_fix_pending": false,
+    "active_processes": [],
+    "confirmation_clear_fix_implemented": true,
+    "confirmation_clear_fix_verified": false,
+    "confirmation_clear_fix_verified_in_iab": true,
+    "chrome_reverification_pending": true,
+    "static_contract_regression_passed": 23,
+    "full_recovery_certification_complete": false
+  },
+  "registered_identity_upgrade": {
+    "status": "original_v2_upgrade_internal_verified_full_product_pending",
+    "checkpoint": ".tmp\\t72-registered-upgrade-progress.json",
+    "production_fingerprint_sha256": "615d3c8c0da970549ee9ad5dcce18ea2c1422e470c310629ee0e4228d536f4ec",
+    "complete": false,
+    "public_upgrade_available": false,
+    "restored_v3_upgrade_pending": false,
+    "pre_upgrade_archive_reuse_pending": false,
+    "new_accepted": 0,
+    "long_path_release_gate_pending": true,
+    "native_global_trial_reverted": true,
+    "report": "docs/development/t72-registered-identity-upgrade.md",
+    "original_v2_internal_complete": true,
+    "new_distinct_checks_passed": 11,
+    "related_regressions_passed": 62,
+    "restored_v3_upgrade_internal_verified": true,
+    "original_v2_pre_upgrade_archive_relation_pending": false,
+    "original_v2_pre_upgrade_archive_report": "docs/development/t72-original-registration-upgrade-archive.md"
+  },
+  "restored_identity_upgrade": {
+    "status": "qualified_upgrade_and_qualified_archive_internal_verified",
+    "checkpoint": ".tmp\\t72-restored-upgrade-progress.json",
+    "production_fingerprint_sha256": "97f77bab17184f3df7038f2d2e1c8956381d29934f1d46a68b4eeb2e3b12200f",
+    "complete": false,
+    "public_upgrade_available": false,
+    "new_accepted": 0,
+    "current_format_restart_checks_passed": 2,
+    "qualified_preupgrade_archive_restore_passed": true,
+    "internal_complete": true,
+    "new_distinct_checks_passed": 5,
+    "related_regressions_passed": 64,
+    "qualified_pre_upgrade_archive_reuse_verified": true,
+    "qualified_mixed_upgrade_rollback_verified": true,
+    "report": "docs/development/t72-restored-identity-upgrade.md"
+  },
+  "original_registration_upgrade_archive": {
+    "status": "five_new_core_and_http_checks_64_related_regressions_passed",
+    "checkpoint": ".tmp\\t72-registration-upgrade-archive-progress.json",
+    "production_fingerprint_sha256": "4c9351be3d0073e43a8e25180dd164ed10edbdf8a9b776a25fb5098a639dd2a8",
+    "complete": false,
+    "public_upgrade_available": false,
+    "new_accepted": 0,
+    "internal_verified": true,
+    "complete_restore_product": false,
+    "distinct_new_checks_passed": 5,
+    "related_regression_checks_passed": 64,
+    "report": "docs/development/t72-original-registration-upgrade-archive.md"
+  },
+  "original_registration_upgrade_archive_latest_observation": {
+    "date": "2026-10-19",
+    "status": "five_new_core_and_http_checks_64_related_regressions_passed",
+    "core_new_passed": 4,
+    "related_regression_passed": 64,
+    "http_restart_failed": 0,
+    "checkpoint": ".tmp/t72-registration-upgrade-archive-progress.json",
+    "complete": false,
+    "new_accepted": 0,
+    "http_restart_passed": 1,
+    "original_http_failure_preserved": true,
+    "internal_verified": true
+  },
+  "source_version_session": {
+    "status": "ten_new_fifty_related_checks_passed_browser_blocked",
+    "checkpoint": ".tmp/t71-source-version-progress.json",
+    "new_accepted": 0,
+    "complete": false,
+    "production_fingerprint_sha256": "30f140828848a71aa9dc41568885ac46c335658568c4b2fcb811e75eecba45ec",
+    "distinct_new_checks_passed": 10,
+    "related_regression_checks_passed": 50,
+    "browser_verified": false,
+    "report": "docs/development/t71-source-version-session.md"
+  },
+  "certification_current_audit": "docs/development/t71-certification-current-audit.md",
+  "certification_issuance": {
+    "status": "eighteen_distinct_internal_checks_passed_public_and_full_history_pending",
+    "checkpoint": ".tmp/t71-certification-progress.json",
+    "full_product_complete": false,
+    "public_routes_installed": false,
+    "new_accepted": 0,
+    "production_fingerprint_sha256": "601bd86febdb681480f5c254336e4898b3a17a1cd263fb5d8524a1d7fc6243b5",
+    "distinct_new_checks_passed": 18,
+    "core_distinct_checks_passed": 10,
+    "auxiliary_history_checks_passed": 8,
+    "report": "docs/development/t71-certification-issuance.md"
+  },
+  "auxiliary_control_history": {
+    "status": "thirty_eight_new_control_stage_and_certification_checks_passed_completion_history_pending",
+    "checkpoint": ".tmp/t71-auxiliary-complete-progress.json",
+    "new_accepted": 0,
+    "full_product_complete": false,
+    "production_fingerprint_sha256": "a8557e6d33e19ca1628681f5dffafc8ce30de1a46da7c3a5d4c0c46fd6e0a5a4",
+    "new_distinct_control_checks_passed": 22,
+    "new_actual_certificate_check_passed": 1,
+    "new_stage_checks_passed": 14,
+    "new_distinct_checks_passed": 38,
+    "related_existing_checks_passed": 9,
+    "report": "docs/development/t71-auxiliary-control-history.md"
+  },
+  "current_checkpoint": ".tmp/t63-stage-recovery-progress.json",
+  "outline_completion_history": {
+    "status": "component_internal_verification_passed",
+    "checkpoint": ".tmp\\t71-outline-completion-progress.json",
+    "new_checks": 34,
+    "related_checks": 51,
+    "production_fingerprint_sha256": "ef11a39aada17d8b3f2a24e577ae5af106da2ee7f9f44a231ec9f99caee896f3",
+    "full_certification_complete": false
+  },
+  "public_conditional_certification": {
+    "status": "public_conditional_certification_component_verified",
+    "checkpoint": ".tmp\\t71-public-certification-progress.json",
+    "new_checks": 5,
+    "related_checks": 43,
+    "production_fingerprint_sha256": "00a81e2e207ea1f09f1e0cf3cea9640c77248e8034444fc51d925be8409ab8c9",
+    "full_certification_complete": false,
+    "public_upgrade_enabled": false
+  },
+  "author_baseline_history": {
+    "status": "revision_source_and_archive_component_verified",
+    "checkpoint": ".tmp\\author-baseline-progress.json",
+    "new_checks": 26,
+    "related_checks": 25,
+    "production_fingerprint_sha256": "6fbb28a87caf3ceaa08f7998c8926866d743567200427993697af970d83b18f8",
+    "public_author_forms_installed": false,
+    "public_upgrade_enabled": false
+  },
+  "author_baseline_service_verified_result": {
+    "session_id": 32576,
+    "exit_code": 0,
+    "passed": 37,
+    "failed": 0,
+    "seconds_log": 352.32,
+    "log": ".tmp/author-baseline-service-second.log",
+    "xml": ".tmp/author-baseline-service-second.xml",
+    "production_fingerprint_sha256": "b29a9383f499d2a8be78eb0aad9f6190c38072bfdab798bbd01bcb8c33940a5f"
+  },
+  "public_author_baseline_routes_installed": true,
+  "public_author_baseline_routes_verified": true,
+  "author_baseline_ui_installed": true,
+  "post_verified_build_changes_require_verification": true,
+  "public_upgrade_enabled": true,
+  "public_baseline_checkpoint": ".tmp/author-baseline-public-progress.json",
+  "author_baseline_ui_core_browser_verified": true,
+  "author_baseline_file_upload_browser_verified": false,
+  "author_baseline_public_verified_result": {
+    "session_id": 72722,
+    "exit_code": 0,
+    "passed": 35,
+    "failed": 0,
+    "seconds_log": 331.7,
+    "seconds_xml": 331.646,
+    "xml": ".tmp/author-baseline-public-final.xml",
+    "log": ".tmp/author-baseline-public-final.log",
+    "fingerprint_sha256": "056ec93348902feee6a9d8fb693e2748cce25070e41d069f816f38201897f958"
+  },
+  "author_baseline_public_browser_result": {
+    "session_id": 88423,
+    "exit_code": 0,
+    "pid": 3600,
+    "port": 65479,
+    "port_closed": true,
+    "page_closed": true,
+    "status": "core_flow_passed_file_upload_unverified",
+    "http": ".tmp/author-baseline-public-browser-final-http.json",
+    "audit": ".tmp/author-baseline-public-browser-second-after.json",
+    "file_upload_limitation": "Chrome upload_file rejected repository report path outside tool-configured workspace roots; no bypass attempted."
+  },
+  "current_production_fingerprint_sha256": "1f1c67ca44af429e53d392682a612ae13a86acdd7b09aed8b0393be3b0f90b9f",
+  "onboarding_upgrade_checkpoint": ".tmp/onboarding-upgrade-progress.json",
+  "public_upgrade_ui_installed": true,
+  "public_upgrade_ui_core_browser_verified": true,
+  "public_upgrade_checkpoint": ".tmp/onboarding-upgrade-progress.json",
+  "t71_final_audit_checkpoint": ".tmp/t71-final-audit-progress.json",
+  "monetary_checkpoint": ".tmp/t52-monetary-progress.json",
+  "monetary_current_checkpoint": ".tmp/t52-monetary-progress.json",
+  "monetary_browser_status": "partial_interaction_not_verified",
+  "monetary_component_current": {
+    "status": "monetary_sdk_api_ui_locally_verified_browser_partial",
+    "new_accepted": 0,
+    "checkpoint": ".tmp/t52-monetary-progress.json",
+    "source_manifest": ".tmp/t52-monetary-current-source.json",
+    "browser_verified": false,
+    "paid_provider_authorized": false
+  },
+  "quality_budget_checkpoint": ".tmp/t52-quality-time-progress.json",
+  "quality_time_component": {
+    "status": "local_quality_publication_time_component_verified",
+    "component_complete": true,
+    "new_accepted": 0,
+    "first_result_passed": 44,
+    "final_result_passed": 84,
+    "browser_quality_flow_verified": true,
+    "checkpoint": ".tmp/t52-quality-time-progress.json"
+  },
+  "parallel_stage_foundation": "Independent E foundation; D remains incomplete",
+  "quality_disposition_component": {
+    "status": "evidence_and_disposition_component_verified",
+    "task_complete": false,
+    "new_accepted": 0,
+    "checkpoint": ".tmp/t24-quality-disposition-progress.json",
+    "final_checks": 81,
+    "browser_verified": true,
+    "repair_execution_implemented": false
+  },
+  "repair_cycle_consumption_component": {
+    "status": "cycle_consumption_and_restore_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "verified_distinct_nodes": 94,
+    "new_cycle_checks": 19,
+    "related_store_runtime_checks": 70,
+    "restore_activation_checks": 5,
+    "repair_execution_installed": false,
+    "batch_authorization_installed": false,
+    "checkpoint": ".tmp/t62-repair-cycle-progress.json"
+  },
+  "batch_budget_component": {
+    "status": "batch_financial_scope_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_verified_nodes": 168,
+    "batch_execution_authorization_installed": false,
+    "public_batch_routes_installed": false
+  },
+  "batch_author_grant_component": {
+    "status": "owned_original_grant_and_restore_isolation_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "verified_distinct_nodes": 50,
+    "grant_execution_permit": false,
+    "public_batch_routes_installed": false,
+    "policy_fact_acceptance_installed": false,
+    "automated_driver_installed": false,
+    "checkpoint": ".tmp/t61-batch-grant-progress.json"
+  },
+  "policy_review_component": {
+    "status": "typed_policy_review_formal_transition_and_cold_recovery_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "verified_distinct_nodes": 159,
+    "actual_synthetic_formal_policy_commit_verified": true,
+    "actual_process_death_recovery_verified": true,
+    "historical_policy_version_separation_verified": true,
+    "public_routes_installed": false,
+    "automated_batch_driver_installed": false,
+    "checkpoint": ".tmp/t61-policy-review-progress.json"
+  },
+  "batch_controls_component": {
+    "status": "explicit_controls_and_scoped_runtime_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_historical_nodes": 92,
+    "final_build_rerun_nodes": 6,
+    "public_routes_installed": false,
+    "automated_batch_driver_installed": false,
+    "checkpoint": ".tmp/t63-batch-controls-progress.json"
+  },
+  "policy_generation_component": {
+    "status": "genuine_policy_generation_and_typed_stage_result_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_historical_nodes": 81,
+    "final_build_rerun_nodes": 62,
+    "browser_source_label_flow_verified": true,
+    "public_batch_routes_installed": false,
+    "automatic_batch_driver_installed": false,
+    "policy_extraction_installed": false,
+    "checkpoint": ".tmp/t61-policy-generation-progress.json"
+  },
+  "policy_extraction_component": {
+    "status": "genuine_full_policy_extraction_and_typed_result_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_historical_nodes": 64,
+    "final_build_rerun_nodes": 45,
+    "browser_completed_read_and_stale_source_verified": true,
+    "public_batch_routes_installed": false,
+    "automatic_batch_driver_installed": false,
+    "policy_extraction_installed": true,
+    "checkpoint": ".tmp/t61-policy-extraction-progress.json"
+  },
+  "policy_quality_stage_component": {
+    "status": "durable_policy_quality_disposition_and_cold_finish_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "distinct_historical_pytest_nodes": 49,
+    "final_build_rerun_nodes": 28,
+    "actual_original_finish_mirror_recovery_verified": true,
+    "unknown_time_preserved": true,
+    "public_batch_routes_installed": false,
+    "automatic_batch_driver_installed": false,
+    "policy_publication_installed": false,
+    "checkpoint": ".tmp/t61-policy-quality-progress.json"
+  },
+  "policy_publication_component": {
+    "status": "publication_readback_and_original_finish_recovery_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "active_processes": [],
+    "checkpoint": ".tmp/t61-policy-publication-progress.json",
+    "historical_distinct_nodes": 45,
+    "latest_verified_build_rerun_nodes": 6,
+    "full_three_chapter_flow_verified": true,
+    "public_batch_routes_installed": false,
+    "latest_verified_build": "11c57c39499d6ff5496af4be3673af5b773ed71b5bbf9ef53f5b4ba84c767d69",
+    "original_finish_mirror_recovery_verified": true,
+    "commit_marker_pause_verified": true,
+    "automatic_batch_driver_installed": false
+  },
+  "batch_driver_component": {
+    "status": "finite_synchronous_driver_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "checkpoint": ".tmp/t61-batch-driver-progress.json",
+    "public_batch_routes_installed": false,
+    "synchronous_internal_driver_installed": true,
+    "prior_verified_build_nodes": 22,
+    "prior_verified_build": "5239c5817816a6568ba49320e1e707d2bca12faf7ef133fb5990ba79ec428f7f",
+    "latest_verified_build_rerun_nodes": 7,
+    "latest_verified_build": "70ad7b653db868e329be5a4a6db857b9d1f596376c2065aa67463e5a90ad6adc",
+    "actual_driver_three_chapters_verified": true,
+    "actual_driver_process_exit_recovery_verified": true,
+    "same_service_new_resume_preserved_verified": true,
+    "public_jobs_installed": false
+  },
+  "full_policy_repair_component": {
+    "status": "full_single_repair_internal_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "checkpoint": ".tmp/t62-full-repair-progress.json",
+    "public_routes_installed": false,
+    "prior_build_verified_nodes": 24,
+    "prior_build": "d140f033b3309b5d14bdc99a0bdaab7269897973e57514214e378bf02b250ace",
+    "hardening_verified_nodes": 28,
+    "hardening_verified_build": "d37ff7b1c74197d25a4258510667c2e857e433ab7e7175e29bcb2a2333fe1056",
+    "begin_recovery_verified_nodes": 4,
+    "begin_recovery_build": "1fced95c536bf2d6d2f25c61a45318b70a594fe140fc9d7fe952b3d225a01d80",
+    "active_processes": [],
+    "latest_verified_build_rerun_nodes": 7,
+    "latest_verified_build": "5b1d2a1225599282a7e3b2d83130cbfb2bccb61e3ef75602973c33a86bb5d64f",
+    "historical_distinct_nodes": 36,
+    "real_repair_process_exit_verified": true,
+    "claim_begin_process_exit_verified": true,
+    "original_clock_uncertainty_preserved": true,
+    "author_edits_preserved": true,
+    "missing_evidence_zero_dispatch_verified": true
+  },
+  "author_takeover_component": {
+    "status": "original_author_takeover_internal_component_verified",
+    "component_internal_verified": true,
+    "task_complete": false,
+    "checkpoint": ".tmp/t63-author-takeover-progress.json",
+    "public_routes_installed": false,
+    "prior_verified_build_nodes": 20,
+    "prior_verified_build": "986ab8f234a575e0287bd278813ff483c2fb353e1b4179255e315facdb00c574",
+    "recovery_verified_nodes": 8,
+    "recovery_verified_build": "71a82c0065901304d1f9c47a29ab8c14d7b503d8d27aa33acedba2f3e13e9345",
+    "hardening_verified_nodes": 6,
+    "hardening_verified_build": "d5e714923131b15cb9f2b49ce9688a3d9d9228bc3735d63b6619468479e2bd37",
+    "active_processes": [],
+    "latest_verified_build_rerun_nodes": 14,
+    "latest_verified_build": "d5e714923131b15cb9f2b49ce9688a3d9d9228bc3735d63b6619468479e2bd37",
+    "historical_distinct_nodes": 32,
+    "actual_author_commit_readback_resume_verified": true,
+    "failed_repair_draft_takeover_verified": true,
+    "original_cycle_and_drafts_preserved_verified": true,
+    "actual_author_process_exit_boundaries_verified": 6,
+    "old_request_retry_preserves_new_run_verified": true
+  },
+  "typed_stage_recovery_component": {
+    "status": "author_edit_preservation_and_final_matrix_verification_running",
+    "component_internal_verified": false,
+    "task_complete": false,
+    "checkpoint": ".tmp/t63-stage-recovery-progress.json",
+    "public_routes_installed": false,
+    "first_verified_nodes": 3,
+    "actual_matrix_process_exits": 12,
+    "first_verified_build": "2535ce7d7d5a2a975fd4d192b893ac44e95263ff4f5ae47a4df79eb37b24f324"
+  },
+  "previous_engineering_task": "T7.2_restored_batch_execution_integration",
+  "full_release_evidence": "docs/development/release-validation-progress.json",
+  "quality_cli_runner_encoding_issue": {
+    "original_full_suite_failure_retained": true,
+    "reproduction_audit": ".tmp/t73-quality-cli-reproduction-audit.json",
+    "cause": "Runtime-only PYTHONUTF8 changed children to UTF8 but original parent subprocess reader remained GBK;UnicodeDecodeError led to stdout None.",
+    "same_source_test_module_utf8_verification": ".tmp/t73-quality-cli-utf8-verification-audit.json",
+    "passed": 9,
+    "production_and_tests_changed": false,
+    "whole_suite_verified": false
+  },
+  "next_full_runner_command": ".venv/Scripts/python.exe -X utf8 -B .tmp/t73-full-release-corrected-run.py",
+  "current_full_regression": {
+    "runner": ".tmp/t73-full-release-corrected-run.py",
+    "auditor": ".tmp/t73-full-release-corrected-audit.py",
+    "status": "interrupted_not_terminal_current_tree_changed",
+    "session_id": 34438,
+    "runner_pid": 20668,
+    "started_at_utc": "2026-11-09T05:28:08.077401+00:00",
+    "log": ".tmp/t73-full-release-corrected.log",
+    "journal": ".tmp/t73-full-release-corrected-events.jsonl",
+    "inventory": ".tmp/t73-release-collection-final-r3-result.json",
+    "result": "not_terminal_not_full_pass",
+    "production_and_tests_frozen": false,
+    "compact_monitor": ".tmp/t73-full-release-progress.py --run corrected",
+    "compact_snapshot": ".tmp/t73-full-release-corrected-current-snapshot.json",
+    "python_utf8_at_startup": true,
+    "windows_spawn_guard": true,
+    "node_count": 4125,
+    "source_sha256": "34a1dfb288f3d1bd1a7fbdc3ff8b57ff5a3ecbc3966929a726cd86e7ec9e50ce",
+    "freeze_note": "Current source and 12 pinned test assets differ; this assessment does not infer when or by whom they changed.",
+    "interruption_audit": ".tmp/t73-corrected-interruption-audit-2026-11-11.json"
+  },
+  "original_interrupted_full_regression": {
+    "session_id": 44778,
+    "status": "interrupted_handle_missing_no_terminal_event_or_xml",
+    "audit": ".tmp/t73-interrupted-full-run-audit.json",
+    "finished": 2578,
+    "passed": 2567,
+    "failed": 6,
+    "skipped": 5,
+    "unfinished": 1546,
+    "source_and_old_tests_verified_before_fixture_edit": true,
+    "exit_code": null
+  },
+  "fixture_correction": {
+    "audit": ".tmp/t73-fixture-correction-audit.json",
+    "changed_test": "tests/test_memory_writeback.py",
+    "production_changed": false,
+    "related_passed": 75,
+    "all_original_memory_assertions_retained": true
+  },
+  "last_complete_full_regression": {
+    "session_id": 76707,
+    "runner_pid": 22960,
+    "status": "terminal_failed_two_stale_test_expectations",
+    "audit": ".tmp/t73-full-release-spawn-safe-audit.json",
+    "collected": 4124,
+    "passed": 4114,
+    "failed": 2,
+    "skipped": 8,
+    "exit_code": 1,
+    "source_and_old_430_assets_verified_before_test_edits": true,
+    "production_and_tests_frozen": false,
+    "full_release_verified": false
+  },
+  "terminal_expectation_correction": {
+    "changed_tests": [
+      "tests/test_reviewed_chapter_quality.py",
+      "tests/test_workbench_static_contract.py"
+    ],
+    "preserved_originals": ".tmp/t73-terminal-failure-before-tests/",
+    "production_changed": false,
+    "related_session_id": 39197,
+    "related_result": ".tmp/t73-terminal-corrections-v1-result.json",
+    "new_behavior_checks": 1,
+    "expected_next_collection_nodes": 4125,
+    "whole_goal_complete": false
+  },
+  "next_full_collection": {
+    "status": "collected_not_executed",
+    "evidence": ".tmp/t73-release-collection-final-r3-result.json",
+    "nodes": 4125,
+    "test_assets": 430,
+    "all_previous_nodes_retained": true,
+    "changed_tests": [
+      "tests/test_reviewed_chapter_quality.py",
+      "tests/test_workbench_static_contract.py"
+    ]
+  },
+  "prepared_next_full_runner": {
+    "runner": ".tmp/t73-full-release-corrected-run.py",
+    "auditor": ".tmp/t73-full-release-corrected-audit.py",
+    "monitor": ".tmp/t73-full-release-progress.py --run corrected",
+    "started": true,
+    "gate": "passed103 and verified XML/source/test hashes",
+    "session_id": 34438,
+    "runner_pid": 20668
+  },
+  "related103_regression": {
+    "session_id": 39197,
+    "exit_code": 0,
+    "passed": 103,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 2283.42,
+    "audit": ".tmp/t73-terminal-corrections-audit.json",
+    "source_and_all430_current_test_assets_verified": true
+  },
+  "current_full_collection": {
+    "status": "collected_not_executed",
+    "evidence": ".tmp/t73-release-collection-final-r3-result.json",
+    "nodes": 4125,
+    "test_assets": 430,
+    "all_previous_nodes_retained": true,
+    "changed_tests": [
+      "tests/test_reviewed_chapter_quality.py",
+      "tests/test_workbench_static_contract.py"
+    ]
+  },
+  "approval_session_followup": {
+    "date": "2026-11-09",
+    "user_answer": "尚未处理，先继续完整回归",
+    "session_repaired": false,
+    "retry_blocked_actions_authorized": false,
+    "continue_original_full_regression": 34438,
+    "original_browser_install_gates_retained": true
+  },
+  "progress_assessment_2026_11_11": {
+    "date": "2026-11-11",
+    "original_goal_complete": false,
+    "goal_system_status_observed": "usageLimited",
+    "historic_accepted_phases": [
+      "A",
+      "B",
+      "C"
+    ],
+    "historic_accepted_task_count": 15,
+    "original_task_count": 26,
+    "D_E_F_fully_accepted": false,
+    "current_head": "8a63778",
+    "current_source_sha256": "1f1c67ca44af429e53d392682a612ae13a86acdd7b09aed8b0393be3b0f90b9f",
+    "current_full_suite_pass_proven": false,
+    "interrupted_regression_audit": ".tmp/t73-corrected-interruption-audit-2026-11-11.json",
+    "other_execution_latest_snapshot": ".tmp/pm-patrol-projects-20261111-1456.json",
+    "other_execution_reported_formal_chapters": 63,
+    "other_execution_reported_mode": "strict",
+    "other_execution_reported_pending_count": 0,
+    "other_execution_reported_idle": true,
+    "other_execution_evidence_limit": "Stored workbench API snapshot and execution notes; not a fresh browser verification or original T8 paired/continuous acceptance. Reported waiver of literary scoring is not independently confirmed in this chat and does not mark original T8 passed.",
+    "remaining": [
+      "Reconcile current source/test baseline and evidence, then complete candidate regression",
+      "Complete final workflow browser acceptance including console/network",
+      "Clean Windows installation, doubleclick, matching rollback, remote CI",
+      "Verify remaining strict review-producer boundary (P.4)",
+      "Resolve original T8 quality/cost/time acceptance or explicitly agree a revised goal; generation success alone is insufficient"
+    ]
+  }
+}

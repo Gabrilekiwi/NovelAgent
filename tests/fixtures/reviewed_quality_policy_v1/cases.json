@@ -1,0 +1,23 @@
+{
+  "schema_version": "reviewed_quality_policy_casebook_v1",
+  "source": "synthetic_local_prose_and_labeled_controlled_review_outputs",
+  "purpose": "Evaluate bounded repair admission and evidence handling, not model writing quality.",
+  "cases": [
+    {"id":"clean_prose","kind":"clean","expected_action":"continue","expected_quotes":false,"detector_defect":false},
+    {"id":"exact_repetition","kind":"duplicate","expected_action":"repair_once","expected_quotes":true,"detector_defect":true},
+    {"id":"near_repetition","kind":"near_duplicate","expected_action":"pause","expected_quotes":true,"detector_defect":true},
+    {"id":"supported_long_near_repetition","kind":"long_near_duplicate","expected_action":"repair_once","expected_quotes":true,"detector_defect":true},
+    {"id":"short_repeat_without_supported_witness","kind":"short_repeat","expected_action":"pause","expected_quotes":true,"detector_defect":null},
+    {"id":"semantic_warning_has_excerpt","kind":"semantic","expected_action":"pause","expected_quotes":true,"detector_defect":null},
+    {"id":"length_preference","kind":"style","expected_action":"continue","expected_quotes":false,"detector_defect":null},
+    {"id":"required_check_missing","kind":"coverage","expected_action":"pause","expected_quotes":true,"detector_defect":null},
+    {"id":"state_invalid","kind":"state","expected_action":"pause","expected_quotes":true,"detector_defect":null},
+    {"id":"summary_is_not_a_quote","kind":"summary","expected_action":"pause","expected_quotes":false,"detector_defect":null},
+    {"id":"invalid_raw_range","kind":"invalid_range","expected_action":"pause","expected_quotes":false,"detector_defect":null}
+  ],
+  "limitations": [
+    "Controlled review outputs test routing; they do not measure semantic producer accuracy.",
+    "Combined local detector/risk probe metrics refer only to four deliberately constructed samples; the original short near-repeat integrity-gate miss is retained separately.",
+    "No Provider calls, real author material, real quality benefit or automatic repair authorization."
+  ]
+}

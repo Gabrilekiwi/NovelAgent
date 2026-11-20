@@ -20,7 +20,7 @@ from api.contracts import CHAPTER_CONTRACT, ModelCallError, validate_text_output
 from api.openai_client import chat_completion
 from api.notion_client import query_database_pages
 from api.retry import consume_retry_telemetry, reset_retry_telemetry
-from core.config import get_config
+from core.config import get_config, proxy_disabled_by_env
 from core.context_budget import RunBudgetLimits, RunBudgetTracker
 from core.director import ModelDirector, decide_next_step
 from core.model_call_runtime import ModelCallRuntimeContext, use_model_call_runtime
@@ -107,8 +107,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--request-timeout",
         type=int,
-        default=20,
-        help="Per-request provider timeout in seconds.",
+        default=90,
+        help="Per-request provider timeout in seconds (default: 90).",
     )
     parser.add_argument(
         "--retries",
@@ -201,7 +201,7 @@ def main() -> None:
     os.environ["PROVIDER_RETRY_JITTER_RATIO"] = "0"
     os.environ["CLAUDE_TIMEOUT_SECONDS"] = str(limits["request_timeout"])
     os.environ["NOTION_TIMEOUT_SECONDS"] = str(limits["request_timeout"])
-    if args.no_proxy:
+    if args.no_proxy or proxy_disabled_by_env():
         _clear_proxy_env()
     if args.openai_model:
         os.environ["OPENAI_MODEL"] = str(args.openai_model)

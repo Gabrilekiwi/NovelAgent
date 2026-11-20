@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>自动连续写作 · NovelAgent</title>
+  <link rel="stylesheet" href="/static/workbench.css">
+  <link rel="stylesheet" href="/static/chapter-publication.css">
+  <script src="/static/reviewed-batches.js" defer></script>
+</head>
+<body><main class="publication-page">
+  <header><a id="back" href="/">返回作品</a><p class="eyebrow">自动连续写作</p><h1>按已确认章纲连续写作</h1>
+    <p>先核对章纲、模型和限额，再明确开始。每章最多修复一次；仍有问题时暂停，保留稿件供你处理。刷新或重启后不会自动继续。</p></header>
+  <p id="status" class="notice" role="status" aria-live="polite">正在读取作品批次……</p>
+  <p id="error" class="form-error" role="alert" hidden></p>
+  <section class="panel"><h2>已保存批次</h2>
+    <label class="field"><span>选择批次</span><select id="batch"><option value="">准备新批次</option></select></label>
+    <button id="refresh" class="button button-secondary" type="button">刷新进度</button>
+    <div id="progress" aria-live="polite"></div><div id="usage"></div>
+    <label id="command-confirm-label" hidden><input type="checkbox" id="command-confirm"> 我已核对当前进度和原限额，确认执行下面选择的操作。</label>
+    <div class="button-row" id="commands" hidden>
+      <button id="initialize" class="button button-secondary" hidden>完成原批次准备</button>
+      <button id="start" class="button button-primary">开始本批次</button>
+      <button id="resume" class="button button-primary">明确继续</button>
+      <button id="pause" class="button button-secondary">暂停后续执行</button>
+      <button id="stop" class="button button-secondary">停止本批次</button>
+      <button id="recover-stage" class="button button-secondary" hidden>恢复原步骤记录</button>
+      <button id="retry-command" class="button button-secondary" hidden>查询或续办原请求</button>
+    </div><p id="recovery-note" hidden></p>
+  </section>
+  <section class="panel" id="restored-panel" hidden><h2>续接恢复后的原批次</h2>
+    <p>核对原进度、已有用量与当前写入位置。确认续接不会清零预算，也不会立即开始模型调用。</p>
+    <button id="restored-preview" class="button button-secondary">核对恢复续接</button>
+    <div id="restored-summary" role="status"></div>
+    <label><input id="restored-confirm" type="checkbox"> 我已核对原批次和当前恢复副本，确认保存本次续接。</label>
+    <button id="restored-prepare" class="button button-primary" disabled>确认续接并等待继续</button>
+  </section>
+  <section class="panel" id="quality-panel" hidden><h2>需要处理的问题</h2><div id="quality"></div></section>
+  <section class="panel" id="takeover-panel" hidden><h2>作者接管当前章</h2>
+    <p>暂停并等当前执行结束后，选择要保留的稿件。通过章节页编辑、审核事实并确认发布，再回到这里完成本章回读。下一章仍需明确继续。</p>
+    <label class="field"><span>接管稿件</span><select id="draft"></select></label>
+    <button id="takeover" class="button button-secondary">确认接管所选稿件</button>
+    <p><a id="edit" hidden>打开接管稿件与事实审核</a></p>
+    <label class="field" id="author-request-label" hidden><span>本浏览器保存的原发布请求</span><select id="author-request"></select></label>
+    <button id="complete-author" class="button button-primary" hidden>确认找回作者提交并完成本章</button>
+    <p id="author-note"></p>
+  </section>
+  <section class="panel" id="prepare-panel"><h2>准备新批次</h2>
+    <p id="money-note">正在核对当前模型的金额控制条件……</p>
+    <form id="prepare-form">
+      <div class="form-grid">
+        <label class="field"><span>最后一章</span><input name="end_chapter" type="number" min="1" required></label>
+        <label class="field"><span>币种</span><input name="currency" value="USD" pattern="[A-Z]{3}" required></label>
+        <label class="field"><span>每章金额上限</span><input name="chapter_amount" inputmode="decimal" required></label>
+        <label class="field"><span>整批金额上限</span><input name="batch_amount" inputmode="decimal" required></label>
+        <label class="field"><span>每百万输入 token 价格</span><input name="input_price" inputmode="decimal" required></label>
+        <label class="field"><span>每百万缓存命中 token 价格</span><input name="cached_price" inputmode="decimal" required></label>
+        <label class="field"><span>每百万输出 token 价格</span><input name="output_price" inputmode="decimal" required></label>
+        <label class="field"><span>每章主动执行时间上限（秒）</span><input name="max_active_seconds" type="number" min="1" value="900" required></label>
+        <label class="field"><span>每章调用上限</span><input name="chapter_calls" type="number" min="1" value="10" required></label>
+        <label class="field"><span>整批调用上限</span><input name="batch_calls" type="number" min="1" required></label>
+        <label class="field"><span>每章输入 token 上限</span><input name="chapter_input" type="number" min="1" required></label>
+        <label class="field"><span>整批输入 token 上限</span><input name="batch_input" type="number" min="1" required></label>
+        <label class="field"><span>每章输出 token 上限</span><input name="chapter_output" type="number" min="1" required></label>
+        <label class="field"><span>整批输出 token 上限</span><input name="batch_output" type="number" min="1" required></label>
+      </div>
+      <p>输入你已核对的价格。额度占用包含估算和保守预留，不能当作实际账单；生成、提取和一次修复共用限额。</p>
+      <button class="button button-secondary" id="preview" type="submit" disabled>核对批次预览</button>
+    </form>
+    <div id="manifest" hidden></div>
+    <label id="grant-confirm-label" hidden><input id="grant-confirm" type="checkbox"> 我已核对本次章纲、模型、策略和限额，确认保存本批次。</label>
+    <button id="authorize" class="button button-primary" disabled>确认批次并等待开始</button>
+  </section>
+</main></body></html>

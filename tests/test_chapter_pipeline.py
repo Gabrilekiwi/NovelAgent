@@ -62,6 +62,98 @@ class ChapterPipelineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not valid structured JSON"):
             pipeline_module._load_scene_response(payload)
 
+    def test_scene_response_repairs_trailing_extra_closing_braces(self) -> None:
+        expected = {
+            "prose": "The isolation room keeps checking the local routing copy.",
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "No location change.",
+        }
+        payload = json.dumps(expected, ensure_ascii=False, separators=(",", ":")) + "}"
+
+        result = pipeline_module._load_scene_response(payload)
+
+        self.assertEqual(expected, result)
+
+    def test_scene_response_does_not_repair_non_brace_trailing_junk(self) -> None:
+        expected = {
+            "prose": "usable text",
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "x",
+        }
+        # Trailing braces mixed with non-brace junk must stay rejected.
+        payload = json.dumps(expected, ensure_ascii=False, separators=(",", ":")) + "}junk"
+
+        with self.assertRaisesRegex(ValueError, "not valid structured JSON"):
+            pipeline_module._load_scene_response(payload)
+
+    def test_scene_response_repairs_one_premature_close_before_continuity_note(
+        self,
+    ) -> None:
+        expected = {
+            "prose": "The relay has stopped, but the crowd is still moving toward the east street.",
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "The team remains on the rooftop.",
+        }
+        prefix = json.dumps(
+            {key: expected[key] for key in ("prose", "events", "deltas")},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        continuity_field = json.dumps(
+            {"continuity_note": expected["continuity_note"]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )[1:]
+
+        result = pipeline_module._load_scene_response(f"{prefix},{continuity_field}")
+
+        self.assertEqual(expected, result)
+
+    def test_scene_response_escapes_unambiguous_dialogue_quotes_in_prose(self) -> None:
+        expected = {
+            "prose": '电容回流端亮起红光。"主核在囊体和电容之间。"楼下的读数器继续报警。',
+            "events": [],
+            "deltas": {
+                "characters": [],
+                "relationships": [],
+                "rosters": [],
+                "locations": [],
+                "inventory": [],
+                "counters": [],
+            },
+            "continuity_note": "场景仍停留在主控塔屋顶。",
+        }
+        payload = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
+        malformed = payload.replace('\\"', '"')
+
+        result = pipeline_module._load_scene_response(malformed)
+
+        self.assertEqual(expected, result)
+
     def test_scene_prompt_uses_roster_generation_view_without_losing_local_audit(
         self,
     ) -> None:
@@ -722,6 +814,8 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         self.assertNotIn("stable_entity_id", json.dumps(delta_schema))
         self.assertTrue(any("does not actually change" in rule for rule in payload["delta_rules"]))
+        self.assertIn("deltas.locations", payload["instruction"])
+        self.assertIn("赵铁 remains downstairs on radio", payload["instruction"])
         self.assertIn("resolve", delta_schema["rosters"][0]["operation"])
         self.assertTrue(
             any(
@@ -730,6 +824,43 @@ class ChapterPipelineTest(unittest.TestCase):
                 for rule in payload["delta_rules"]
             )
         )
+
+    def test_primary_scene_request_uses_low_temperature_for_structured_state(self) -> None:
+        calls: list[dict] = []
+
+        def completion(_messages: list[dict], **kwargs: object) -> str:
+            calls.append(dict(kwargs))
+            return json.dumps(
+                {
+                    "prose": "陆沉留在维修道，先核对远程读数。",
+                    "events": [],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": [],
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "场景状态未变化。",
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(pipeline_module, "chat_completion", side_effect=completion):
+            pipeline_module._request_scene_candidate(
+                input_pack="# Chapter Index\n1",
+                plan={"scenes": [{"index": 1}]},
+                scene={"index": 1},
+                scene_required_beats=[],
+                blueprint=None,
+                previous_scene_tail="",
+                prior_scene_summaries=[],
+                state_before=pipeline_module.empty_scene_state(),
+                language="zh-CN",
+            )
+
+        self.assertEqual(0.2, calls[0]["temperature"])
 
     def test_scene_request_compacts_global_plan_but_keeps_current_scene_complete(self) -> None:
         scenes = [
@@ -899,6 +1030,112 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         self.assertEqual(1, payload["boundary_retry"]["attempt"])
 
+    def test_boundary_retry_can_compact_shared_context_below_1400_chars(self) -> None:
+        class RetryBudget:
+            hard_input_limit = 32_000
+
+            def __init__(self) -> None:
+                self.context_limits: list[int] = []
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+                payload = json.loads(text)
+                context_chars = len(payload["shared_context"])
+                self.context_limits.append(context_chars)
+                return {
+                    "within_budget": True,
+                    "budgeted_input_tokens": 29_900 if context_chars <= 1_000 else 30_526,
+                    "hard_input_limit": self.hard_input_limit,
+                }
+
+            def require_input(self, *_: object, **__: object) -> dict:
+                raise AssertionError("the compact shared-context fallback should fit")
+
+        budget = RetryBudget()
+
+        def compact_context(
+            _input_pack: str,
+            *,
+            max_section_chars: int,
+            **_: object,
+        ) -> str:
+            return "x" * max_section_chars
+
+        with (
+            patch.object(pipeline_module, "default_context_budget", return_value=budget),
+            patch.object(pipeline_module, "_compact_scene_context", side_effect=compact_context),
+        ):
+            payload = json.loads(
+                pipeline_module._scene_request_payload(
+                    input_pack="# Requirements\nPreserve the chapter arc.",
+                    plan={
+                        "goal": "Retry the rejected boundary only.",
+                        "scenes": [{"index": 1}],
+                    },
+                    scene={"index": 1},
+                    scene_required_beats=[],
+                    blueprint=None,
+                    boundary_retry={
+                        "attempt": 1,
+                        "scene_index": 1,
+                        "findings": [{"code": "location_state_rollback"}],
+                    },
+                )
+            )
+
+        self.assertGreater(max(budget.context_limits), 1_000)
+        self.assertEqual(1_000, len(payload["shared_context"]))
+        self.assertEqual(1, payload["boundary_retry"]["attempt"])
+
+    def test_boundary_retry_excludes_stale_authoritative_context(self) -> None:
+        input_pack = (
+            "# Requirements\nContinue only the current scene.\n\n"
+            "# Story State\n"
+            + json.dumps({"last_scene_location": "物流园主控塔屋顶"}, ensure_ascii=False)
+            + "\n\n# Authoritative State\n"
+            + json.dumps(
+                {
+                    "locations": {
+                        "顾岚": {
+                            "entity_id": "顾岚",
+                            "location_id": "梁魁办公室外接点",
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            )
+        )
+        state = pipeline_module.empty_scene_state()
+        state["locations"] = {"顾岚": "物流园主控塔屋顶"}
+        payload = json.loads(
+            pipeline_module._scene_request_payload(
+                input_pack=input_pack,
+                plan={"goal": "撤离", "scenes": [{"index": 1}]},
+                scene={"index": 1, "goal": "下楼撤离"},
+                scene_required_beats=[],
+                blueprint=None,
+                scene_state=state,
+                boundary_retry={
+                    "attempt": 1,
+                    "scene_index": 1,
+                    "canonical_location_state": state["locations"],
+                    "findings": [{"code": "roster_count_mismatch"}],
+                },
+            )
+        )
+
+        self.assertEqual(
+            "物流园主控塔屋顶",
+            payload["current_scene_state"]["locations"]["顾岚"],
+        )
+        self.assertEqual(
+            {"顾岚": "物流园主控塔屋顶"},
+            payload["boundary_retry"]["canonical_location_state"],
+        )
+        self.assertNotIn("# Authoritative State", payload["shared_context"])
+        self.assertNotIn("梁魁办公室外接点", payload["shared_context"])
+
     def test_legacy_scene_budget_reduces_only_prompt_history_details(self) -> None:
         state = pipeline_module.empty_scene_state()
         state["characters"] = {
@@ -1042,6 +1279,115 @@ class ChapterPipelineTest(unittest.TestCase):
             "repeated_completed_event_id",
             {finding["code"] for finding in local_report["findings"]},
         )
+
+    def test_scene_admission_projection_removes_audit_only_after_normal_candidates_fail(
+        self,
+    ) -> None:
+        state = pipeline_module.empty_scene_state()
+        state["characters"] = {
+            "hero": {
+                "character_id": "hero",
+                "canonical_name": "Mira",
+                "status": "injured",
+                "current_goal": "keep the relay secure",
+                "before": "healthy",
+                "after": "injured",
+                "field": "status",
+                "reason": "chapter-0026-beat-001",
+                "scene_index": 26,
+                "source_tier": "chapter_event",
+                "last_seen_chapter": 25,
+            }
+        }
+        state["relationships"] = {
+            "hero->ally": {
+                "relationship_id": "hero->ally",
+                "source_character_id": "hero",
+                "target_character_id": "ally",
+                "trust": "earned under fire",
+                "before": "guarded",
+                "after": "earned under fire",
+                "field": "trust",
+                "reason": "chapter-0025-beat-004",
+                "scene_index": 25,
+                "source_event_id": "chapter-0025-beat-004",
+                "source_tier": "chapter_event",
+            }
+        }
+        state["completed_event_ids"] = [
+            f"historical-event-{index:03d}" for index in range(24)
+        ]
+        original_state = copy.deepcopy(state)
+
+        class AdmissionBudget:
+            hard_input_limit = 32_000
+
+            def __init__(self) -> None:
+                self.saw_normal_candidate = False
+
+            def measure(self, text: str, *, stage: str, **_: object) -> dict:
+                if stage != "scene":
+                    raise AssertionError(f"unexpected budget stage: {stage}")
+                request = json.loads(text)
+                projected = request["current_scene_state"]
+                hero = projected["characters"]["hero"]
+                relationship = projected["relationships"]["hero->ally"]
+                compact = (
+                    "source_tier" not in hero
+                    and "source_event_id" not in relationship
+                    and len(projected["completed_event_ids"]) == 8
+                )
+                self.saw_normal_candidate = self.saw_normal_candidate or not compact
+                return {
+                    "within_budget": True,
+                    "budgeted_input_tokens": 29_900 if compact else 30_100,
+                    "hard_input_limit": self.hard_input_limit,
+                }
+
+            def require_input(self, *_: object, **__: object) -> dict:
+                raise AssertionError("the admission projection should fit safely")
+
+        budget = AdmissionBudget()
+        plan = {
+            "goal": "Secure the relay.",
+            "scenes": [{"index": 1, "goal": "Hold the relay."}],
+        }
+        with patch.object(
+            pipeline_module,
+            "default_context_budget",
+            return_value=budget,
+        ):
+            payload = json.loads(
+                pipeline_module._scene_request_payload(
+                    input_pack="# Requirements\nPreserve continuity.",
+                    plan=plan,
+                    scene=plan["scenes"][0],
+                    scene_required_beats=[],
+                    blueprint=None,
+                    scene_state=state,
+                )
+            )
+
+        projected = payload["current_scene_state"]
+        self.assertTrue(budget.saw_normal_candidate)
+        self.assertEqual("injured", projected["characters"]["hero"]["status"])
+        self.assertEqual(
+            "keep the relay secure",
+            projected["characters"]["hero"]["current_goal"],
+        )
+        self.assertNotIn("reason", projected["characters"]["hero"])
+        self.assertEqual(
+            "earned under fire",
+            projected["relationships"]["hero->ally"]["trust"],
+        )
+        self.assertNotIn("source_event_id", projected["relationships"]["hero->ally"])
+        self.assertEqual(original_state["completed_event_ids"][-8:], projected["completed_event_ids"])
+        self.assertTrue(projected["completed_event_ids_truncated"])
+        self.assertEqual(
+            "scene_prompt_audit_compaction_v1",
+            projected["context_projection"]["admission_projection_policy"],
+        )
+        self.assertEqual(original_state, state)
 
     def test_second_scene_uses_lossless_transport_after_state_advances(
         self,
@@ -1279,7 +1625,7 @@ class ChapterPipelineTest(unittest.TestCase):
                     initial_scene_state=initial_state,
                 )
 
-        self.assertEqual(2, len(requests))
+        self.assertEqual(3, len(requests))
         self.assertEqual(
             24,
             len(requests[0]["current_scene_state"]["completed_events"]),
@@ -1951,6 +2297,10 @@ class ChapterPipelineTest(unittest.TestCase):
             retry_request["boundary_retry"]["findings"][0]["evidence"]["expected_before"],
         )
         self.assertEqual(
+            plan["scenes"][1]["planned_events"],
+            retry_request["boundary_retry"]["canonical_planned_events"],
+        )
+        self.assertEqual(
             "危险核心进入独立隔离柜，双方仍不合并组织",
             drafts[1]["deltas"]["relationships"][0]["after"],
         )
@@ -2165,7 +2515,80 @@ class ChapterPipelineTest(unittest.TestCase):
         )
         self.assertTrue(drafts[0]["boundary_validation"]["accepted"])
 
-    def test_scene_boundary_failure_raises_after_one_local_regeneration(self) -> None:
+    def test_scene_boundary_allows_second_regeneration_before_rejecting(self) -> None:
+        state = pipeline_module.empty_scene_state()
+        state["locations"]["hero"] = "gate"
+        event = {
+            "event_id": "chapter-0017-beat-001",
+            "type": "arrival_completed",
+            "subjects": ["hero"],
+            "objects": [],
+            "location": "shelter",
+            "status": "completed",
+        }
+        plan = {
+            "goal": "hero reaches the shelter",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "cross the gate",
+                    "required_beats": ["hero reaches the shelter"],
+                    "required_beat_indexes": [1],
+                    "required_event_ids": [event["event_id"]],
+                    "forbidden_event_ids": [],
+                    "planned_events": [event],
+                }
+            ],
+        }
+        calls: list[dict] = []
+
+        def completion(messages, **_kwargs):
+            request = json.loads(messages[-1]["content"])
+            calls.append(request)
+            return json.dumps(
+                {
+                    "prose": "hero crosses the gate and reaches the shelter.",
+                    "events": [event],
+                    "deltas": {
+                        "characters": [],
+                        "relationships": [],
+                        "rosters": [],
+                        "locations": (
+                            [
+                                {
+                                    "entity_id": "hero",
+                                    "before": "gate",
+                                    "after": "shelter",
+                                    "reason": "crossed the gate",
+                                }
+                            ]
+                            if len(calls) == 3
+                            else []
+                        ),
+                        "inventory": [],
+                        "counters": [],
+                    },
+                    "continuity_note": "hero moved once.",
+                }
+            )
+
+        with patch.object(pipeline_module, "chat_completion", side_effect=completion):
+            drafts = pipeline_module.generate_scenes(
+                "input pack",
+                plan,
+                dry_run=False,
+                initial_scene_state=state,
+            )
+
+        self.assertEqual(3, len(calls))
+        self.assertEqual(2, drafts[0]["boundary_validation"]["local_regeneration_attempts"])
+        self.assertEqual(
+            2,
+            len(drafts[0]["boundary_validation"]["local_regeneration_rejections"]),
+        )
+        self.assertTrue(drafts[0]["boundary_validation"]["accepted"])
+
+    def test_scene_boundary_failure_raises_after_two_local_regenerations(self) -> None:
         calls = 0
         authority = {
             "relationships": {
@@ -2243,7 +2666,7 @@ class ChapterPipelineTest(unittest.TestCase):
                     language="zh-CN",
                 )
 
-        self.assertEqual(2, calls)
+        self.assertEqual(3, calls)
 
     def test_recovered_invalid_scene_regenerates_without_recalling_valid_prefix(
         self,
@@ -2388,6 +2811,108 @@ class ChapterPipelineTest(unittest.TestCase):
         self.assertEqual(recovered[0]["text"], drafts[0]["text"])
         self.assertEqual("核心已经隔离", drafts[1]["deltas"]["relationships"][0]["after"])
 
+    def test_stale_recovered_opening_restarts_without_boundary_retry(self) -> None:
+        plan = {
+            "goal": "从当前仓库办公区撤离",
+            "scenes": [
+                {
+                    "index": 1,
+                    "goal": "从仓库办公区撤离并前往屋顶",
+                    "required_beats": ["完成撤离"],
+                    "required_beat_indexes": [1],
+                    "required_event_ids": ["chapter-0026-beat-001"],
+                    "forbidden_event_ids": [],
+                    "planned_events": [
+                        {
+                            "event_id": "chapter-0026-beat-001",
+                            "type": "required_beat_1_completed",
+                            "subjects": ["陆沉"],
+                            "objects": [],
+                            "location": "物流园主控塔屋顶",
+                            "status": "completed",
+                        }
+                    ],
+                }
+            ],
+        }
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        recovered = [
+            {
+                "index": 1,
+                "text": "陆沉从物流园外围维修道登上主控塔屋顶。",
+                "events": [plan["scenes"][0]["planned_events"][0]],
+                "deltas": {
+                    **empty_deltas,
+                    "locations": [
+                        {
+                            "entity_id": "陆沉",
+                            "before": "物流园外围维修道",
+                            "after": "物流园主控塔屋顶",
+                            "reason": "沿外梯登上屋顶",
+                        }
+                    ],
+                },
+            }
+        ]
+        initial_state = pipeline_module.empty_scene_state()
+        initial_state["locations"]["陆沉"] = "仓库办公区废墟"
+        requests: list[dict] = []
+
+        def fresh_completion(messages, **_kwargs):
+            request = json.loads(messages[-1]["content"])
+            requests.append(request)
+            return json.dumps(
+                {
+                    "prose": "陆沉从仓库办公区废墟沿外梯登上主控塔屋顶。",
+                    "events": [request["scene"]["planned_events"][0]],
+                    "deltas": {
+                        **empty_deltas,
+                        "locations": [
+                            {
+                                "entity_id": "陆沉",
+                                "before": "仓库办公区废墟",
+                                "after": "物流园主控塔屋顶",
+                                "reason": "沿外梯登上屋顶",
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        with patch.object(
+            pipeline_module,
+            "chat_completion",
+            side_effect=fresh_completion,
+        ):
+            drafts = pipeline_module.generate_scenes(
+                "input pack",
+                plan,
+                dry_run=False,
+                language="zh-CN",
+                recovered_scene_drafts=recovered,
+                initial_scene_state=initial_state,
+            )
+
+        self.assertEqual(1, len(requests))
+        self.assertNotIn("boundary_retry", requests[0])
+        self.assertEqual(
+            "仓库办公区废墟",
+            requests[0]["current_scene_state"]["locations"]["陆沉"],
+        )
+        self.assertNotEqual(recovered[0]["text"], drafts[0]["text"])
+        self.assertNotIn(
+            "local_regeneration_attempts",
+            drafts[0]["boundary_validation"],
+        )
+
     def test_live_plain_prose_scene_is_rejected_instead_of_synthesizing_events(
         self,
     ) -> None:
@@ -2415,6 +2940,117 @@ class ChapterPipelineTest(unittest.TestCase):
             pipeline_module.chat_completion = original_chat_completion
 
         self.assertEqual(1, calls)
+
+
+    def test_fallback_scene_context_keeps_seven_section_budget(self) -> None:
+        # The fallback path must keep the 10500-character cap (max_section_chars
+        # * 7). Raising that cap only hides the real bookkeeping problem: when
+        # no Generation State View exists, required complete sections grow with
+        # the book and eventually overflow. The derived working-set path is
+        # what should keep later chapters writable.
+        seen: dict[str, int] = {}
+        real = pipeline_module.compact_markdown_context
+
+        def wrapper(*args, **kwargs):
+            seen["max_chars"] = int(kwargs["max_chars"])
+            return real(*args, **kwargs)
+
+        pack = "\n\n".join(
+            [
+                "# Project Profile\nA short project profile.",
+                "# Director Decision\nContinue the current plan.",
+                "# Spatial State\nStay on this side of the line.",
+                "# Requirements\nKeep the required facts.",
+            ]
+        )
+        with patch.object(pipeline_module, "compact_markdown_context", side_effect=wrapper):
+            pipeline_module._compact_scene_context(pack, max_section_chars=1_500)
+
+        self.assertEqual(1_500 * 7, seen.get("max_chars"))
+
+    def test_fallback_required_sections_overflow_at_seven_section_budget(self) -> None:
+        # A late-book input pack without a Generation State View still treats
+        # large complete bookkeeping sections as required. After each section is
+        # compacted to its own cap, the sum must fail at 10500 rather than
+        # silently raising that total budget.
+        def section(name: str, payload: dict) -> str:
+            return f"# {name}\n" + pipeline_module.json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":")
+            )
+
+        def padded_section(name: str, target: int) -> str:
+            payload = {"title": name, "body": "x" * target}
+            text = section(name, payload)
+            overflow = len(text) - target
+            if overflow > 0:
+                payload["body"] = "x" * max(1, target - overflow - 1)
+                text = section(name, payload)
+            return text
+
+        beats = []
+        core = {
+            "chapter_index": 59,
+            "core_event": "Search stops.",
+            "ending_pressure": "Device turns.",
+            "required_beats": beats,
+        }
+        index = 1
+        while True:
+            beats.append({"index": index, "text": f"Beat {index} stays complete. " + ("fact " * 20)})
+            index += 1
+            blob = pipeline_module.json.dumps(
+                {"chapter_blueprint": core, "read_set_context_digest": "a" * 64},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if len(blob) > 3900:
+                beats.pop()
+                break
+        blueprint_payload = {
+            "chapter_blueprint": core,
+            "read_set_context_digest": "a" * 64,
+        }
+        large_events = {
+            f"chapter-{item:04d}-beat-001": {
+                "event_id": f"chapter-{item:04d}-beat-001",
+                "type": "checkpoint",
+                "subjects": ["hero"],
+                "status": "completed",
+                "summary": "Historical beat " + ("ledger " * 12),
+            }
+            for item in range(1, 80)
+        }
+        pack = "\n\n".join(
+            [
+                padded_section("Project Profile", 1450),
+                padded_section("Director Decision", 1450),
+                section(
+                    "Story State",
+                    {
+                        "last_scene_location": "old-cabinet",
+                        "last_scene_characters": ["hero"],
+                        "open_threads": [],
+                        "required_opening_bridge": "Stay.",
+                    },
+                ),
+                padded_section("Spatial State", 1450),
+                section(
+                    "Authoritative State",
+                    {
+                        "schema_version": "1.0",
+                        "events": large_events,
+                        "characters": {"hero": {"character_id": "hero"}},
+                    },
+                ),
+                section("StoryProject Chapter Blueprint", blueprint_payload),
+                padded_section("Requirements", 1450),
+            ]
+        )
+        with self.assertRaises(pipeline_module.StructuredContextError) as raised:
+            pipeline_module._compact_scene_context(pack, max_section_chars=1_500)
+        self.assertEqual(raised.exception.code, "required_markdown_context_exceeds_budget")
+        self.assertIn("10500", str(raised.exception))
+
 
 
 if __name__ == "__main__":

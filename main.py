@@ -82,6 +82,7 @@ from core.story_project.oh_story_detection import (
     failed_oh_story_compatibility_report,
 )
 from core.story_project.paths import resolve_story_project_root
+from core.story_project.format_compatibility import assert_project_execution_compatible
 from core.story_project.identity import (
     ensure_project_identity_for_runtime,
     load_project_identity,
@@ -732,6 +733,8 @@ def main() -> None:
         clear_proxy_env()
     try:
         story_runtime_paths = _apply_story_project_runtime_defaults(args)
+        if getattr(args, "_resolved_story_project_root", None) is not None:
+            assert_project_execution_compatible(args._resolved_story_project_root)
         delivery_command_requested = _delivery_command_requested(args)
         autonomy_command_requested = _autonomy_command_requested(args)
         root_remap_command_requested = _root_remap_command_requested(

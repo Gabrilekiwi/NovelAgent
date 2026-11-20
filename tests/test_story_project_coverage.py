@@ -5,6 +5,7 @@ import unittest
 from core.story_project.coverage import (
     build_blueprint_coverage,
     build_blueprint_plan,
+    build_text_blueprint_coverage,
     validate_blueprint_coverage,
 )
 from modules.chapter_generator.pipeline import plan_scenes
@@ -34,6 +35,28 @@ def _beat_index_groups(plan: dict) -> list[list[int]]:
 
 
 class StoryProjectCoverageTests(unittest.TestCase):
+    def test_whole_text_does_not_require_or_invent_scene_declarations(self):
+        blueprint = _nine_beat_blueprint()
+        text = "\n".join([*(beat["text"] for beat in blueprint["required_beats"]), blueprint["ending_pressure"]])
+        report = build_text_blueprint_coverage(blueprint, text)
+        self.assertEqual(list(range(1, 10)), report["covered_beat_indexes"])
+        self.assertFalse(report["scene_declarations_used"])
+        self.assertEqual("whole_chapter_text_heuristic_v1", report["basis"])
+        # Existing scene workflows still need declarations from actual drafts.
+        self.assertEqual(list(range(1, 10)), build_blueprint_coverage(blueprint, [], text)["missing_beat_indexes"])
+
+    def test_whole_text_rejects_missing_contract_or_ambiguous_beat_indexes(self):
+        for field in ("core_event", "required_beats", "ending_pressure"):
+            with self.subTest(field=field):
+                blueprint = _nine_beat_blueprint()
+                blueprint[field] = [] if field == "required_beats" else None
+                with self.assertRaises(ValueError):
+                    build_text_blueprint_coverage(blueprint, "正文。")
+        blueprint = _nine_beat_blueprint()
+        blueprint["required_beats"][1]["index"] = 1
+        with self.assertRaisesRegex(ValueError, "unique"):
+            build_text_blueprint_coverage(blueprint, "正文。")
+
     def test_default_groups_nine_beats_into_four_contiguous_balanced_scenes(
         self,
     ) -> None:

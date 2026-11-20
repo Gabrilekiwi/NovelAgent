@@ -80,7 +80,7 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["explicit"]
+          "enum": ["explicit", "derived"]
         },
         "chapter_index": {
           "type": "integer",

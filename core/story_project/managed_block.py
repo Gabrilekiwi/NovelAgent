@@ -65,6 +65,7 @@ def build_managed_projection(
     owned_fields: Iterable[str],
     values: dict[str, Any],
     tombstones: Iterable[dict[str, Any]] = (),
+    field_sources: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     projection = {
         "schema_version": MANAGED_BLOCK_SCHEMA_VERSION,
@@ -80,6 +81,8 @@ def build_managed_projection(
         "tombstones": _normalize_tombstones(tombstones),
         "payload_sha256": "",
     }
+    if field_sources is not None:
+        projection["field_sources"] = dict(field_sources)
     projection["payload_sha256"] = managed_payload_sha256(projection)
     return validate_managed_projection(projection)
 
@@ -89,8 +92,23 @@ def validate_managed_projection(value: Any, *, verify_hash: bool = True) -> dict
         projection = validate_schema(value, "story_project_managed_projection.schema.json")
     except SchemaValidationError as exc:
         raise ManagedBlockError("managed_projection_schema_invalid", str(exc)) from exc
+    if projection["chapter"] == 0 and not (projection["scope"] == "context"
+            and projection["parser_version"] == "reviewed_legacy_state_v1"
+            and projection["owned_fields"] == ["reviewed_state"]):
+        raise ManagedBlockError("managed_projection_schema_invalid", "only a reviewed book start may precede chapter one")
     if len(set(projection["owned_fields"])) != len(projection["owned_fields"]):
         raise ManagedBlockError("managed_projection_owned_fields_duplicate", "owned_fields must be unique")
+    if set(projection.get("field_sources", {})) - set(projection["values"]):
+        raise ManagedBlockError("managed_field_source_orphaned", "field sources must refer to live values")
+    for source in projection.get("field_sources", {}).values():
+        if (not isinstance(source, dict) or set(source) != {"chapter", "run_id", "prose_sha256"}
+                or type(source["chapter"]) is not int or source["chapter"] < 1
+                or not isinstance(source["run_id"], str) or not source["run_id"].strip()
+                or not isinstance(source["prose_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", source["prose_sha256"])):
+            raise ManagedBlockError("managed_field_source_invalid", "field sources require chapter, run and prose SHA-256")
+    if any(item["chapter"] > projection["chapter"] for item in projection.get("field_sources", {}).values()):
+        raise ManagedBlockError("managed_field_source_future", "field sources cannot come from a later chapter")
     tombstone_fields = [item["field_path"] for item in projection["tombstones"]]
     if len(set(tombstone_fields)) != len(tombstone_fields):
         raise ManagedBlockError("managed_projection_tombstone_duplicate", "tombstone field paths must be unique")
@@ -319,6 +337,16 @@ def three_way_merge_managed(
     merged = dict(proposed_valid)
     merged["values"] = merged_values
     merged["tombstones"] = [merged_tombstones[key] for key in sorted(merged_tombstones)]
+    if "field_sources" in proposed_valid or "field_sources" in (current_valid or {}):
+        sources = dict((current_valid or {}).get("field_sources", {}))
+        for field_path, value in proposed_values.items():
+            if field_path in proposed_valid.get("field_sources", {}):
+                sources[field_path] = proposed_valid["field_sources"][field_path]
+            elif current_values.get(field_path, _MISSING) != value:
+                sources.pop(field_path, None)
+        # A manual replacement has no prose evidence until explicitly reviewed.
+        merged["field_sources"] = {key: value for key, value in sources.items()
+                                   if key in merged_values and key not in manual_value_map}
     merged["payload_sha256"] = managed_payload_sha256(merged)
     return ManagedMergeResult(validate_managed_projection(merged), ())
 

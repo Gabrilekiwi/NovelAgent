@@ -1,0 +1,212 @@
+{
+  "date": "2026-09-08",
+  "stage": "A",
+  "completed_tasks": [
+    "T0.1",
+    "T0.2",
+    "T1.1",
+    "T1.2"
+  ],
+  "next_task": "T2.1",
+  "goal_complete": false,
+  "baseline_commit": "090d0aa191f7aae96ea1c979b6725d7f87d811ae",
+  "baseline_verification": {
+    "archive_files": 48,
+    "git_files": 43,
+    "result": "matched_original_archive"
+  },
+  "lock_files": [
+    {
+      "path": "requirements.lock",
+      "sha256": "68f5f0b87850f017e0f027c94beeb56babf209671f321b2e6ad88f0aa6bedc3c"
+    },
+    {
+      "path": "requirements-dev.lock",
+      "sha256": "62d1e47a5b4e3adf5717194c08901d601b2b5b0af3fd1280dd4e5c329e9cb174"
+    }
+  ],
+  "environment": {
+    "python": "3.12.4",
+    "runtime_packages": 30,
+    "development_extra_packages": 5,
+    "project_version_check": "passed",
+    "pip_check": "passed",
+    "clean_path": ".tmp/stage-a/全新环境 clean",
+    "runtime_only_install": "passed",
+    "upgrade_to_development": "passed",
+    "runtime_only_dev_check": "correctly_rejected_missing_5_dev_dependencies"
+  },
+  "tests": [
+    {
+      "path": ".tmp/stage-a/environment-tests.xml",
+      "sha256": "a1b46c148c9f35c71c8c0af0069bba98bfc8c0fefbb8657ba04a9b610a7f4e47",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "1",
+          "skipped": "1",
+          "tests": "105",
+          "time": "21.872",
+          "timestamp": "2026-09-08T14:33:53.900342+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-a/launcher-tests.xml",
+      "sha256": "b3823828535f981f16d89822f0350c00e7a30de5f9eb09ff065d67a33ee1b5a6",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "2",
+          "time": "1.800",
+          "timestamp": "2026-09-08T14:35:18.636020+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-a/clean-environment-app-tests.xml",
+      "sha256": "f4441940b53abc5dc9d4bd20fea51f7f0769fec3a0c224e1ddf36c6770b99e8a",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "18",
+          "time": "9.090",
+          "timestamp": "2026-09-08T14:37:06.981197+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-a/instance-process-tests.xml",
+      "sha256": "3f1849e97789ebd78537ddb49ac36ecd8b1560e7dbf81d64d88aed9c46245aa1",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "5",
+          "time": "4.300",
+          "timestamp": "2026-09-08T14:49:30.987014+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "skips": []
+    },
+    {
+      "path": ".tmp/stage-a/workbench-t1-regression.xml",
+      "sha256": "7a67b5ed450ac1f48704c32e50d76d233d302551c98223353ba8bfcd1b010c02",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "1",
+          "tests": "147",
+          "time": "57.998",
+          "timestamp": "2026-09-08T14:59:17.497438+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "skips": [
+        {
+          "test": "test_provenance_classifier_rejects_model_call_symlink",
+          "reason": "file symlinks are unavailable on this Windows host: [WinError 1314] 客户端没有所需的特权。: 'D:\\\\Pycharm\\\\PythonProject\\\\NovelAgent\\\\.tmp\\\\pytest-cases\\\\test_provenance_classifier_rejects_model_call_sy-0e81e9cc413447289009cbfd12e61b28\\\\outside-model-call.json' -> 'D:\\\\Pycharm\\\\PythonProject\\\\NovelAgent\\\\.tmp\\\\pytest-cases\\\\test_provenance_classifier_rejects_model_call_sy-0e81e9cc413447289009cbfd12e61b28\\\\books\\\\test-book\\\\.novelagent\\\\runtime\\\\runs\\\\executions\\\\execution-test\\\\model_calls\\\\intent.json'"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-a/instance-monitor-regression.xml",
+      "sha256": "764ff086f20d37257b0923d11a5f5dbb955ef4d60f9aa873a46399c1baafd9e3",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "1",
+          "tests": "36",
+          "time": "6.850",
+          "timestamp": "2026-09-08T15:03:27.222933+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "skips": [
+        {
+          "test": "test_provenance_classifier_rejects_model_call_symlink",
+          "reason": "file symlinks are unavailable on this Windows host: [WinError 1314] 客户端没有所需的特权。: 'D:\\\\Pycharm\\\\PythonProject\\\\NovelAgent\\\\.tmp\\\\pytest-cases\\\\test_provenance_classifier_rejects_model_call_sy-47c54aa7b5dd4085947f9509eba143ac\\\\outside-model-call.json' -> 'D:\\\\Pycharm\\\\PythonProject\\\\NovelAgent\\\\.tmp\\\\pytest-cases\\\\test_provenance_classifier_rejects_model_call_sy-47c54aa7b5dd4085947f9509eba143ac\\\\books\\\\test-book\\\\.novelagent\\\\runtime\\\\runs\\\\executions\\\\execution-test\\\\model_calls\\\\intent.json'"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/stage-a/process-monitor-fault-tests.xml",
+      "sha256": "7cd353136455b39d0082fcef1579faaf3a42d23fcfb0ec63b37caf30f004fda8",
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "3",
+          "time": "1.114",
+          "timestamp": "2026-09-08T15:07:30.404034+08:00",
+          "hostname": "PCMICRO-7LA9Q0O"
+        }
+      ],
+      "skips": []
+    }
+  ],
+  "resolved_failure": "Mixed LF/CRLF launcher bytes corrected; quoted venv invocation contract updated; launcher and complete app suite subsequently passed.",
+  "smoke": {
+    "command": ".venv/Scripts/python.exe -B scripts/smoke_v1.py --skip-tests",
+    "exit_code": 0,
+    "preflight_passed": 21,
+    "work_dir": ".tmp/smoke_v1/20260908T063354063959Z",
+    "provider_report": {
+      "path": ".tmp/smoke_v1/20260908T063354063959Z/provider_smoke_missing_config/provider_smoke_report.json",
+      "sha256": "41b36ac24ea17f59e84c6892ba9b7a97aa518b28b03257ac4999b99f10063ce5"
+    }
+  },
+  "installation_logs": [
+    {
+      "path": ".tmp/stage-a/clean-runtime-install.log",
+      "sha256": "79553ce115211d0d3f1e06b249a8fb9943782df44ee066e966d21706a2068087"
+    },
+    {
+      "path": ".tmp/stage-a/clean-dev-install.log",
+      "sha256": "18790bee4f7915522c35ba03a9c864fe196a0ad8df8383548047e235fb456229"
+    }
+  ],
+  "paid_provider_calls": 0,
+  "real_book_writes": 0,
+  "remote_ci_executed": false,
+  "full_pytest_rerun": false,
+  "ongoing_task_processes": [],
+  "stage_status": "complete",
+  "next_stage": "B",
+  "browser": {
+    "status": "passed",
+    "report": "docs/development/stage-a-browser-verification.md",
+    "raw_evidence": ".tmp/stage-a/browser-evidence.json",
+    "raw_sha256": "9b5959d16aee6eaa943aced625c4b1195b2da20c9e8b0f1686a4fab037bb1e6f",
+    "server_pid": 34396,
+    "server_session": 66437,
+    "server_stopped": true,
+    "isolated_tab_closed": true
+  },
+  "ownership_design": "docs/development/workbench-instance.md",
+  "review_correction": "Monitoring exceptions now halt dispatch and retain ownership until the execution process is confirmed stopped; unknown Provider outcome stays needs_recovery.",
+  "test_limitations": [
+    "Windows executed locally; POSIX branch awaits CI.",
+    "132-test workbench suite predates the final monitor correction; affected instance/jobs tests (35 passed, 1 skipped) plus 3 new fault tests passed after the correction.",
+    "The initial child-process fixture used an invalid one-element command; corrected to the actual store command contract before final process tests."
+  ]
+}

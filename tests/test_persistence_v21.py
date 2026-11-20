@@ -416,9 +416,8 @@ class PersistenceV21Test(unittest.TestCase):
             case, local_read_set, tracking
         )
 
-        with self.assertRaisesRegex(
-            Exception, "read-set root identity|exactly match"
-        ):
+        from workbench.book_ownership import BookOwnershipError
+        with self.assertRaisesRegex(BookOwnershipError, "identity differs from its actual project"):
             self._prepare(
                 case,
                 book_id=foreign_read_set["book_id"],
@@ -428,7 +427,8 @@ class PersistenceV21Test(unittest.TestCase):
             )
 
         with self.assertRaisesRegex(Exception, "complete StoryProject read-set"):
-            self._prepare(case, run_id="missing-read-set", apply_target=target)
+            self._prepare(case, run_id="missing-read-set", apply_target=target,
+                          book_id=local_read_set["book_id"])
 
         wrong = copy.deepcopy(local_declared)
         wrong[0]["after_sha256"] = "f" * 64

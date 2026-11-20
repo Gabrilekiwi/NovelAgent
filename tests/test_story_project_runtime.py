@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import unittest
 import uuid
+import json
 from pathlib import Path
 
+from core.story_project.identity import ensure_project_identity, ProjectIdentityMismatchError
 from core.story_project.model import CORE_DIRECTORY_NAMES
 from core.story_project.paths import canonical_outline_path, canonical_prose_path
 from core.story_project.runtime import (
@@ -78,6 +80,38 @@ class StoryProjectRuntimeTests(unittest.TestCase):
         self.assertEqual(first.resolve(), loader.story_project_root)
         self.assertEqual(first.resolve(), context.story_project_root.resolve())
         self.assertEqual("First", context.chapter_blueprint.title)
+
+    def test_preview_loader_reads_identity_created_by_runtime_onboarding(self) -> None:
+        root = self._book(self._case_dir("onboard_after_preview"))
+        self._outline(root, 1)
+        loader = build_generation_story_project_context_loader(story_project=root)
+        self.assertTrue(loader.project_identity.ephemeral)
+        stable = ensure_project_identity(root)
+        identity_path = root / ".novelagent/project.json"
+        before = identity_path.read_bytes()
+
+        context = loader(self._snapshot(), self._memory())
+
+        self.assertEqual(stable.book_id, context.to_dict()["project_identity"]["book_id"])
+        self.assertFalse(context.to_dict()["project_identity"]["ephemeral"])
+        self.assertEqual(before, identity_path.read_bytes())
+
+    def test_loader_created_for_persisted_book_rejects_replaced_identity(self) -> None:
+        root = self._book(self._case_dir("persisted_pin"))
+        self._outline(root, 1)
+        stable = ensure_project_identity(root)
+        loader = build_generation_story_project_context_loader(story_project=root)
+        self.assertEqual(stable.book_id, loader.project_identity.book_id)
+        identity_path = root / ".novelagent/project.json"
+        payload = json.loads(identity_path.read_text(encoding="utf-8"))
+        payload["book_id"] = str(uuid.uuid4())
+        identity_path.write_text(json.dumps(payload), encoding="utf-8")
+        before = identity_path.read_bytes()
+
+        with self.assertRaises(ProjectIdentityMismatchError):
+            loader(self._snapshot(), self._memory())
+
+        self.assertEqual(before, identity_path.read_bytes())
 
     def test_explicit_loader_uses_hint_for_subsequent_chapter_and_reloads_files(self) -> None:
         case = self._case_dir("explicit")

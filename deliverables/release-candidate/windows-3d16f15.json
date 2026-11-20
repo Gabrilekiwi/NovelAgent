@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-19",
+  "zip": "NovelAgent-Windows-3d16f15.zip",
+  "sha256": "3ec8f2c77885f1551ea55730bab79740a51f603e069fc1dfeee73b97ac4a18fe",
+  "source_commit": "3d16f15750c10042e4760e45ff38261273f2074e",
+  "guide_commit": "c83bd79698f154387e6084b706a3ef9343e4f26e",
+  "zip_entries": 606,
+  "stable_release": false,
+  "verification": {
+    "every_member_matches_tested_windows_archive": true,
+    "real_generation_requests": 1,
+    "previous_local_rejection_dispatched": false,
+    "raw_characters": 2080,
+    "edited_characters": 2000,
+    "reopened_draft_revision": 2,
+    "previous_formal_chapter_unchanged": true,
+    "generated_chapter_published": false
+  },
+  "scope": "One real chapter generated on Windows, edited and reopened in the packaged workbench. Author-independent acceptance and long-form writing quality remain unverified."
+}

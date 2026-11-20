@@ -40,6 +40,7 @@ from core.state.generation_state_view import (
     build_scene_generation_state_reference,
     filter_scene_state_for_generation,
     generation_state_view_from_markdown,
+    project_bookkeeping_for_generation,
     scene_generation_state_reference_from_markdown,
 )
 from core.state.story_state_context import STORY_STATE_CONTEXT_KEYS, STORY_STATE_SECTION_MAX_CHARS
@@ -77,15 +78,32 @@ _CHAPTER_PLAN_PROMPT = (
     "2-4 scenes. Scene 1 must be type opening_bridge and continue directly from "
     "the last chapter ending."
 )
-_SCENE_BOUNDARY_REGENERATION_LIMIT = 1
+_SCENE_BOUNDARY_REGENERATION_LIMIT = 2
 _SCENE_BOUNDARY_FEEDBACK_FINDING_LIMIT = 4
 _SCENE_BOUNDARY_FEEDBACK_EVIDENCE_MAX_CHARS = 480
 _LEGACY_SCENE_COMPLETED_EVENT_RECORD_LIMITS = (None, 12, 6, 0)
+_SCENE_ADMISSION_COMPLETED_EVENT_ID_LIMIT = 8
+_SCENE_PROMPT_AUDIT_RECORD_FIELDS = frozenset(
+    {
+        "after",
+        "before",
+        "field",
+        "reason",
+        "scene_index",
+        "source_event_id",
+        "source_tier",
+        "last_seen_chapter",
+    }
+)
 _EVENT_LOCATION_CONTRACT = (
     "Use one exact, non-compound location for each event.location. Every known entity "
     "listed in event.subjects or event.objects is asserted to be physically present "
     "there. Omit remote or differently located entities from that event, and make each "
-    "matching location delta.after exactly equal event.location."
+    "matching deltas.locations delta.after exactly equal event.location. A "
+    "deltas.characters location field does not establish physical presence for an event. "
+    "For example, if 赵铁 remains downstairs on radio while 陆沉 and 顾岚 are on the roof, "
+    "the roof event must omit 赵铁 from subjects and objects; prose may still describe "
+    "his remote coordination."
 )
 _SCENE_CONTEXT_PAYLOAD_POLICIES = (
     {
@@ -148,6 +166,20 @@ _SCENE_CONTEXT_PAYLOAD_POLICIES = (
         "context_section_chars": 1_400,
         "previous_tail_chars": 120,
         "summary_limit": 4,
+        "summary_tail_chars": 0,
+        "include_summary_goal": False,
+    },
+    {
+        "context_section_chars": 1_000,
+        "previous_tail_chars": 80,
+        "summary_limit": 3,
+        "summary_tail_chars": 0,
+        "include_summary_goal": False,
+    },
+    {
+        "context_section_chars": 800,
+        "previous_tail_chars": 0,
+        "summary_limit": 2,
         "summary_tail_chars": 0,
         "include_summary_goal": False,
     },
@@ -472,17 +504,25 @@ def _structured_json_text(payload: str) -> str:
 
 
 def _repair_premature_scene_object_close(payload: str) -> dict[str, Any] | None:
-    """Repair one unambiguous extra top-level brace after the prose field."""
+    """Repair one extra top-level brace at an unambiguous scene-field boundary."""
 
     text = _structured_json_text(payload)
     try:
         prefix, prefix_end = json.JSONDecoder().raw_decode(text)
     except json.JSONDecodeError:
         return None
-    if not isinstance(prefix, dict) or set(prefix) != {"prose"}:
+    if not isinstance(prefix, dict):
         return None
     remainder = text[prefix_end:]
-    if not remainder.lstrip().startswith(',"events"'):
+    boundary = (set(prefix), remainder.lstrip())
+    valid_boundaries = (
+        ({"prose"}, ',"events"'),
+        ({"prose", "events", "deltas"}, ',"continuity_note"'),
+    )
+    if not any(
+        prefix_keys == boundary[0] and boundary[1].startswith(next_field)
+        for prefix_keys, next_field in valid_boundaries
+    ):
         return None
     if prefix_end <= 0 or text[prefix_end - 1] != "}":
         return None
@@ -494,11 +534,98 @@ def _repair_premature_scene_object_close(payload: str) -> dict[str, Any] | None:
     return repaired if isinstance(repaired, dict) else None
 
 
+def _repair_unescaped_scene_string_quotes(payload: str) -> dict[str, Any] | None:
+    """Escape only quotes that cannot terminate a JSON string.
+
+    Some otherwise complete scene responses put dialogue quotes directly into
+    ``prose``.  A quote can end a JSON string only before a structural
+    delimiter.  Quotes followed by ordinary prose are therefore unambiguous
+    string content and can be escaped without accepting malformed structure.
+    """
+    text = _structured_json_text(payload)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    candidate = text[start : end + 1]
+    repaired_text = _escape_nonterminating_json_string_quotes(candidate)
+    if repaired_text is None:
+        return None
+    try:
+        repaired = json.loads(repaired_text)
+    except json.JSONDecodeError:
+        return None
+    return repaired if isinstance(repaired, dict) else None
+
+
+def _escape_nonterminating_json_string_quotes(value: str) -> str | None:
+    repaired: list[str] = []
+    in_string = False
+    escaped = False
+    changed = False
+    for index, char in enumerate(value):
+        if not in_string:
+            if char == '"':
+                in_string = True
+            repaired.append(char)
+            continue
+        if escaped:
+            repaired.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            repaired.append(char)
+            escaped = True
+            continue
+        if char != '"':
+            repaired.append(char)
+            continue
+        if _json_string_can_end_at(value, index):
+            repaired.append(char)
+            in_string = False
+            continue
+        repaired.append('\\"')
+        changed = True
+    return "".join(repaired) if changed and not in_string else None
+
+
+def _json_string_can_end_at(value: str, quote_index: int) -> bool:
+    cursor = quote_index + 1
+    while cursor < len(value) and value[cursor].isspace():
+        cursor += 1
+    return cursor == len(value) or value[cursor] in ",}]:"
+
+
+def _repair_trailing_extra_closing_braces(payload: str) -> dict[str, Any] | None:
+    """Accept one complete scene object followed only by extra closing braces.
+
+    Some provider responses emit a valid scene JSON object and then one or more
+    stray `}` characters.  When the remainder is braces-only, the leading
+    object is unambiguous and can be kept.
+    """
+
+    text = _structured_json_text(payload)
+    try:
+        value, end = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, dict) or "prose" not in value:
+        return None
+    remainder = text[end:].strip()
+    if not remainder or set(remainder) != {"}"}:
+        return None
+    return value
+
+
 def _load_scene_response(payload: str) -> dict[str, Any]:
     try:
         value = _load_plan_json(payload)
     except json.JSONDecodeError as exc:
-        value = _repair_premature_scene_object_close(payload)
+        value = (
+            _repair_premature_scene_object_close(payload)
+            or _repair_trailing_extra_closing_braces(payload)
+            or _repair_unescaped_scene_string_quotes(payload)
+        )
         if value is None:
             raise ValueError("Scene response was not valid structured JSON") from exc
     if not isinstance(value, dict):
@@ -620,9 +747,37 @@ def generate_scenes(
             )
             if boundary["accepted"]:
                 break
+            if _recovered_opening_has_stale_state(
+                scene_index=scene_index,
+                recovered_scene=scene_index in recovered,
+                boundary=boundary,
+            ):
+                # A receipt-backed Scene can still have been generated against
+                # an earlier committed chapter state.  Its evidence remains
+                # useful for audit, but retry feedback would be misleading:
+                # this is a fresh opening against a different story boundary,
+                # not a repair of the current candidate.  Drop the recovered
+                # sequence and restart the chapter from the current state.
+                recovered = {}
+                scene_result = _request_scene_candidate(
+                    input_pack=input_pack,
+                    plan=plan,
+                    scene=scene,
+                    scene_required_beats=scene_required_beats,
+                    blueprint=blueprint,
+                    previous_scene_tail=previous_scene_tail,
+                    prior_scene_summaries=prior_scene_summaries,
+                    state_before=state_before,
+                    language=language,
+                    authoritative_state_source=authoritative_state_source,
+                    generation_state_view_source=generation_state_view_source,
+                )
+                continue
             feedback = _scene_boundary_retry_feedback(
                 boundary,
                 attempt=local_regeneration_attempts + 1,
+                state_before=state_before,
+                planned_events=scene.get("planned_events") or [],
             )
             rejected_boundaries.append(feedback)
             if (
@@ -703,6 +858,25 @@ def generate_scenes(
     return _validate_scene_drafts(scene_drafts)
 
 
+def _recovered_opening_has_stale_state(
+    *,
+    scene_index: int,
+    recovered_scene: bool,
+    boundary: dict[str, Any],
+) -> bool:
+    """Return whether a recovered opening predates the current story state."""
+    if not recovered_scene or scene_index != 1:
+        return False
+    findings = boundary.get("findings")
+    if not isinstance(findings, list):
+        return False
+    return any(
+        isinstance(finding, dict)
+        and str(finding.get("code") or "").endswith("_state_rollback")
+        for finding in findings
+    )
+
+
 def _request_scene_candidate(
     *,
     input_pack: str,
@@ -726,6 +900,9 @@ def _request_scene_candidate(
             scene_index,
             boundary_retry=boundary_retry_attempt,
         ),
+        # Scene metadata drives deterministic safety gates. Favor repeatable
+        # adherence to the structured contract over stylistic variance.
+        "temperature": 0.2,
     }
     if boundary_retry is not None:
         call_kwargs["temperature"] = 0.0
@@ -762,6 +939,8 @@ def _scene_boundary_retry_feedback(
     report: dict[str, Any],
     *,
     attempt: int,
+    state_before: dict[str, Any] | None = None,
+    planned_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     raw_findings = [
         item
@@ -777,6 +956,22 @@ def _scene_boundary_retry_feedback(
                 "evidence": _bounded_boundary_evidence(item.get("evidence")),
             }
         )
+    canonical_locations = {
+        str(entity_id): str(location_id)
+        for entity_id, location_id in sorted(
+            ((state_before or {}).get("locations") or {}).items(),
+            key=lambda item: str(item[0]),
+        )
+        if str(entity_id).strip() and str(location_id).strip()
+    }
+    canonical_events = [
+        {
+            key: item.get(key)
+            for key in ("event_id", "type", "subjects", "objects", "location", "status")
+        }
+        for item in (planned_events or [])
+        if isinstance(item, dict) and str(item.get("event_id") or "").strip()
+    ]
     return {
         "attempt": int(attempt),
         "scene_index": int(report.get("scene_index") or 0),
@@ -784,8 +979,18 @@ def _scene_boundary_retry_feedback(
         "finding_count": len(raw_findings),
         "omitted_finding_count": max(0, len(raw_findings) - len(findings)),
         "findings": findings,
+        **(
+            {"canonical_location_state": canonical_locations}
+            if canonical_locations
+            else {}
+        ),
+        **({"canonical_planned_events": canonical_events} if canonical_events else {}),
         "instruction": (
-            "Regenerate this same scene only. Treat current_scene_state as authoritative. "
+            "Regenerate this same scene only. Treat current_scene_state and "
+            "canonical_location_state as the exclusive authoritative state. "
+            "Shared context describes earlier chapter context and must never override them. "
+            "Copy every canonical_planned_events descriptor exactly; do not rewrite its type, "
+            "subjects, objects, location, or status. "
             "Correct or remove every rejected delta; each before value must exactly equal "
             "the current value. Do not repeat any earlier scene or event. "
             + _EVENT_LOCATION_CONTRACT
@@ -976,6 +1181,8 @@ def _scene_request_payload(
             "Never emit migration audit metadata.",
             "Every relationship delta must include source_event_id and it must reference an event declared "
             "by this Scene; never reuse an earlier Scene event to justify a new relationship state.",
+            "Use deltas.locations exclusively for physical location changes. Never emit a deltas.characters "
+            "delta whose field is location or current_location.",
         ],
         **({"boundary_retry": boundary_retry} if boundary_retry is not None else {}),
         "instruction": (
@@ -988,6 +1195,8 @@ def _scene_request_payload(
             "bound as a hard limit and stop the scene before exceeding it. "
             "Every required_event_id must appear exactly once in events. Do not restart, duplicate, or retell "
             "a completed event; never use a forbidden_event_id or roll state back. "
+            "For every event in scene.planned_events, copy event_id, type, subjects, objects, location, and "
+            "status exactly; these are an immutable bookkeeping contract, not prose to rewrite. "
             f"{_EVENT_LOCATION_CONTRACT} "
             "Deltas must follow the exact type-specific fields and delta_rules in this request. Do not emit a "
             "delta merely to restate an unchanged fact. Continue directly from previous_scene_tail and "
@@ -1013,6 +1222,7 @@ def _scene_request_payload(
                         query=context_query,
                         authoritative_state_source=authoritative_state_source,
                         generation_state_view_source=generation_state_view,
+                        exclude_authoritative_state=boundary_retry is not None,
                     )
                 except StructuredContextError as exc:
                     if context_section_chars >= 1_500 or exc.code not in {
@@ -1120,7 +1330,62 @@ def _scene_state_projection_candidates(
             continue
         candidates.append(projection)
         previous_completed_events = completed_events
+    # Keep a final, prompt-only admission candidate for legacy packs that do
+    # not yet carry a Generation State View.  The complete normalized state is
+    # still used for transition validation; this only removes provenance and
+    # historical audit fields the model must not treat as current story facts.
+    for projection in tuple(candidates):
+        admission_projection = _scene_state_admission_projection(projection)
+        if admission_projection != projection:
+            candidates.append(admission_projection)
     return candidates
+
+
+def _scene_state_admission_projection(
+    projection: dict[str, Any],
+) -> dict[str, Any]:
+    """Reduce legacy prompt state only after normal scene candidates fail.
+
+    Character and relationship records carry local provenance for receipts and
+    deterministic validation.  They are not dynamic story facts and can
+    consume enough Chinese-token budget to prevent a safe retry.  Preserve all
+    remaining current-state fields plus hashes/counts that bind this prompt to
+    the complete local history.
+    """
+
+    compact = dict(projection)
+    for collection_name in ("characters", "relationships"):
+        records = projection.get(collection_name)
+        if not isinstance(records, dict):
+            continue
+        compact[collection_name] = {
+            str(record_id): {
+                str(key): value
+                for key, value in record.items()
+                if str(key) not in _SCENE_PROMPT_AUDIT_RECORD_FIELDS
+            }
+            if isinstance(record, dict)
+            else record
+            for record_id, record in records.items()
+        }
+    completed_event_ids = list(projection.get("completed_event_ids") or [])
+    compact["completed_event_ids"] = completed_event_ids[
+        -_SCENE_ADMISSION_COMPLETED_EVENT_ID_LIMIT:
+    ]
+    compact["completed_event_ids_truncated"] = (
+        bool(projection.get("completed_event_ids_truncated"))
+        or len(completed_event_ids) > _SCENE_ADMISSION_COMPLETED_EVENT_ID_LIMIT
+    )
+    context_projection = projection.get("context_projection")
+    if isinstance(context_projection, dict):
+        compact["context_projection"] = {
+            **context_projection,
+            "admission_projection_policy": "scene_prompt_audit_compaction_v1",
+            "admission_completed_event_id_limit": (
+                _SCENE_ADMISSION_COMPLETED_EVENT_ID_LIMIT
+            ),
+        }
+    return compact
 
 
 def _scene_blueprint_contract(
@@ -1235,6 +1500,7 @@ def _compact_scene_context(
     query: str = "",
     authoritative_state_source: dict[str, Any] | None = None,
     generation_state_view_source: dict[str, Any] | None = None,
+    exclude_authoritative_state: bool = False,
 ) -> str:
     """Retrieve complete sections/JSON items relevant to the current scene."""
     generation_state_view = (
@@ -1246,6 +1512,7 @@ def _compact_scene_context(
         scene_state_reference = build_scene_generation_state_reference(
             generation_state_view
         )
+        text = _project_scene_bookkeeping_sections(text, generation_state_view)
         selection = compact_markdown_context(
             text,
             max_chars=max_section_chars * 8,
@@ -1303,33 +1570,44 @@ def _compact_scene_context(
         AUTHORITATIVE_SCENE_SECTION_MAX_CHARS,
         max(1, max_section_chars * 7),
     )
-    projected_text = compact_authoritative_state_in_markdown(
-        text,
-        max_section_chars=authority_section_limit,
-        query=query,
-        require_query_references=False,
-        require_open_events=False,
-        authoritative_state_source=authoritative_state_source,
-        externalized_collections={"roster": "current_scene_state.rosters"},
+    projected_text = (
+        text
+        if exclude_authoritative_state
+        else compact_authoritative_state_in_markdown(
+            text,
+            max_section_chars=authority_section_limit,
+            query=query,
+            require_query_references=False,
+            require_open_events=False,
+            authoritative_state_source=authoritative_state_source,
+            externalized_collections={"roster": "current_scene_state.rosters"},
+        )
     )
+    required_sections = {
+        "Context Digest",
+        "Prompt Context Selection",
+        "Project Profile",
+        "Director Decision",
+        "Story State",
+        "Spatial State",
+        "Authoritative State",
+        "StoryProject Chapter Blueprint",
+        "Requirements",
+        "灏忚鐢熸垚瑙勫垯濂戠害",
+    }
+    if exclude_authoritative_state:
+        required_sections.discard("Authoritative State")
     selection = compact_markdown_context(
         projected_text,
         max_chars=max_section_chars * 7,
         per_section_max_chars=max_section_chars,
         query=query,
-        required_sections={
-            "Context Digest",
-            "Prompt Context Selection",
-            "Project Profile",
-            "Director Decision",
-            "Story State",
-            "Spatial State",
-            "Authoritative State",
-            "StoryProject Chapter Blueprint",
-            "Requirements",
-            "灏忚鐢熸垚瑙勫垯濂戠害",
-        },
-        excluded_sections={"Memory Index", "Structured Context Manifest"},
+        required_sections=required_sections,
+        excluded_sections=(
+            {"Memory Index", "Structured Context Manifest", "Authoritative State"}
+            if exclude_authoritative_state
+            else {"Memory Index", "Structured Context Manifest"}
+        ),
         required_json_keys={
             "Prompt Context Selection": PROMPT_CONTEXT_SELECTION_KEYS,
             "Story State": STORY_STATE_CONTEXT_KEYS,
@@ -1345,7 +1623,11 @@ def _compact_scene_context(
             "StoryProject Chapter Blueprint": _STORY_PROJECT_BLUEPRINT_SECTION_MAX_CHARS,
         },
         prefer_recent=True,
-        policy="scene_markdown_json_retrieval_v1",
+        policy=(
+            "scene_boundary_retry_retrieval_v1"
+            if exclude_authoritative_state
+            else "scene_markdown_json_retrieval_v1"
+        ),
     )
     return selection.text
 
@@ -1438,6 +1720,57 @@ def _initial_scene_state(input_pack: str) -> dict[str, Any]:
         if normalized and normalized not in state["completed_event_ids"]:
             state["completed_event_ids"].append(normalized)
     return state
+
+
+
+def _project_scene_bookkeeping_sections(
+    text: str, generation_state_view: dict[str, Any]
+) -> str:
+    """Replace growing ledgers with working-set projections before compaction."""
+
+    project_profile = _input_pack_json_section(text, "Project Profile")
+    spatial_state = _input_pack_json_section(text, "Spatial State")
+    if project_profile is None and spatial_state is None:
+        return text
+    projected = project_bookkeeping_for_generation(
+        generation_state_view,
+        project_profile=project_profile,
+        spatial_state=spatial_state,
+    )
+    updated = text
+    if project_profile is not None:
+        updated = _replace_markdown_json_section(
+            updated, "Project Profile", projected["project_profile"]
+        )
+    if spatial_state is not None:
+        updated = _replace_markdown_json_section(
+            updated, "Spatial State", projected["spatial_state"]
+        )
+    return updated
+
+
+def _replace_markdown_json_section(
+    text: str, section: str, payload: dict[str, Any]
+) -> str:
+    rendered = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    pattern = rf"(?ms)^# {re.escape(section)}[ \t]*\r?\n(.*?)(?=^# |\Z)"
+    replaced, count = re.subn(
+        pattern,
+        f"# {section}\n{rendered}\n\n",
+        str(text or ""),
+        count=1,
+    )
+    if count != 1:
+        raise ContextBudgetError(
+            "story_project_context_reference_mismatch",
+            f"{section} could not be replaced with a working-set projection",
+        )
+    return replaced
 
 
 def _input_pack_json_section(input_pack: str, section: str) -> dict[str, Any] | None:

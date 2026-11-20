@@ -17,6 +17,8 @@ from core.engine.locked_chapter_state import (
     verify_locked_chapter_scene_sources,
 )
 from core.engine.persistence import atomic_create_json, persistence_run_lock
+from core.story_project.format_compatibility import assert_project_execution_compatible
+from core.engine.provider_safety import CANDIDATE_EXECUTION_PREFIX
 from core.engine.run_record import validate_run_result
 from core.engine.scene_source_provenance import (
     SceneSourceProvenanceError,
@@ -31,6 +33,7 @@ from core.model_calls import (
     model_response_artifact_hash,
     parse_scene_generation_call_id,
 )
+from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
 from core.schema import validate_schema
 from core.state.snapshot import load_snapshot
 from core.story_project.coverage import build_blueprint_plan
@@ -61,6 +64,7 @@ def recover_locked_chapter(
     """
 
     story_root = Path(story_project_root).resolve(strict=True)
+    assert_project_execution_compatible(story_root, expected_book_id=expected_book_id)
     runtime_root = Path(run_dir).resolve()
     snapshot_target = Path(snapshot_path).resolve(strict=True)
     now = clock or (lambda: datetime.now(timezone.utc))
@@ -92,6 +96,28 @@ def recover_locked_chapter(
             language=language,
         )
         if unresolved:
+            bound_execution_ids = {
+                str(item["payload"]["run"].get("execution_evidence", {}).get("execution_id") or "")
+                if isinstance(item["payload"]["run"].get("execution_evidence"), dict)
+                else ""
+                for item in runs
+            }
+            unbound = [
+                item
+                for item in unresolved
+                if item["execution_id"] not in bound_execution_ids
+            ]
+            if unbound and len(unbound) == len(unresolved):
+                return _recover_unbound_uncertain_executions(
+                    unbound,
+                    runtime_root=runtime_root,
+                    chapter_index=chapter_index,
+                    expected_book_id=expected_book_id,
+                    force_reset=force_reset,
+                    manual_draft_path=manual_draft_path,
+                    clock=now,
+                    id_factory=make_id,
+                )
             owners = _bind_unresolved_to_runs(
                 unresolved,
                 runs,
@@ -180,7 +206,39 @@ def recover_locked_chapter(
                 expected_chapter_index=chapter_index,
                 expected_book_id=expected_book_id,
             )
-        if recovered_scenes:
+        if (
+            not force_reset
+            and complete_draft is None
+        ):
+            complete_draft = _usable_complete_draft(
+                source_payload,
+                language=language,
+                run_dir=runtime_root,
+            )
+        prefer_author_draft = bool(
+            not force_reset
+            and complete_draft is not None
+            and (
+                (
+                    _repair_did_not_converge(source_payload)
+                    and _remaining_problems_require_author_review(source_payload)
+                )
+                or _repair_assembly_blocked_after_paid_calls(source_payload)
+                or _repair_stale_scene_blocked_after_paid_calls(source_payload)
+            )
+        )
+        if prefer_author_draft:
+            # Resume-scenes would only re-enter a blocked repair or another
+            # unattended revalidation, hiding the already paid complete draft.
+            recovered_scenes = []
+        elif (
+            not force_reset
+            and _repair_did_not_converge(source_payload)
+            and _remaining_problems_require_author_review(source_payload)
+        ):
+            if recovered_scenes:
+                complete_draft = None
+        elif recovered_scenes:
             complete_draft = None
         elif not force_reset:
             # The RunRecord's final artifact is newer than any individual
@@ -309,6 +367,131 @@ def recover_locked_chapter(
         return _public_result(marker, marker_path)
 
 
+
+
+def _recover_unbound_uncertain_executions(
+    unresolved: list[dict[str, Any]],
+    *,
+    runtime_root: Path,
+    chapter_index: int,
+    expected_book_id: str,
+    force_reset: bool,
+    manual_draft_path: str | Path | None,
+    clock: Callable[[], datetime],
+    id_factory: Callable[[], str],
+) -> dict[str, Any]:
+    """Classify an uncertain mid-chapter execution that never wrote a RunRecord.
+
+    A crash after writing an intent (and possibly some receipts) can leave the
+    book locked for the next production attempt, but locked-chapter recovery
+    used to stop because it required a durable run owner.  Safe classification
+    writes an append-only reset marker so the author can start a new attempt
+    without deleting evidence or formal prose.  Scene reuse is not claimed
+    here: scene provenance still requires a source run.
+    """
+
+    if manual_draft_path is not None:
+        raise LockedChapterRecoveryError(
+            "an unresolved model execution has no durable chapter run; "
+            "a manual draft cannot be bound until the uncertain attempt is reset"
+        )
+
+    expected_scene_count = _expected_scene_count_from_unbound_executions(unresolved)
+    source_run_id = f"unbound_{unresolved[0]['execution_id']}"
+    created_at = clock().astimezone(timezone.utc)
+    marker_id = f"resolution_{created_at.strftime('%Y%m%dT%H%M%S%fZ')}_{id_factory()}"
+    reason = (
+        "operator_requested_reset"
+        if force_reset
+        else "provider_call_uncertain_without_run"
+    )
+    marker = {
+        "schema_version": LOCKED_CHAPTER_RESOLUTION_VERSION,
+        "id": marker_id,
+        "created_at": created_at.isoformat(),
+        "book_id": expected_book_id,
+        "chapter_index": chapter_index,
+        "action": "reset",
+        "source_run_id": source_run_id,
+        "resolved_execution_ids": sorted(item["execution_id"] for item in unresolved),
+        "resolved_attempt_ids": sorted(
+            call["attempt_id"] for item in unresolved for call in item["calls"]
+        ),
+        "discarded_run_ids": [],
+        "expected_scene_count": expected_scene_count,
+        "complete_draft": None,
+        "scenes": [],
+        "reason": reason,
+    }
+    marker["resolution_hash"] = canonical_json_hash(
+        marker,
+        exclude_fields=("resolution_hash",),
+        exclude_environment_fields=False,
+    )
+    marker = validate_locked_chapter_resolution(marker)
+    marker_path = runtime_root / "locked_chapter_resolutions" / f"{marker_id}.json"
+    atomic_create_json(marker_path, marker)
+    result = _public_result(marker, marker_path)
+    result["message"] = (
+        "上次模型调用结果不确定（已有调用意图但没有耐久回执），且还没有形成章节 RunRecord。"
+        "系统没有盲目重试，正式正文与快照未改写。已结束这次失败尝试，作者可以重新开写本章。"
+    )
+    return result
+
+
+
+def list_unbound_uncertain_executions(
+    run_dir: str | Path,
+    *,
+    expected_book_id: str,
+) -> list[dict[str, Any]]:
+    """List unresolved uncertain executions that have no durable chapter run.
+
+    A crash after writing an intent can leave the book locked for the next
+    production attempt even though there is no RunRecord to classify for
+    scene reuse.  The official workbench uses this to show a truthful next
+    step; safe classification still writes only an append-only reset marker.
+    """
+
+    runtime_root = Path(run_dir)
+    unresolved = _unresolved_executions(runtime_root)
+    if not unresolved:
+        return []
+    runs = _load_runs(runtime_root, expected_book_id=expected_book_id)
+    bound_execution_ids = {
+        str(item["payload"]["run"].get("execution_evidence", {}).get("execution_id") or "")
+        if isinstance(item["payload"]["run"].get("execution_evidence"), dict)
+        else ""
+        for item in runs
+    }
+    unbound = [
+        {
+            "execution_id": item["execution_id"],
+            "calls": item["calls"],
+        }
+        for item in unresolved
+        if item["execution_id"] not in bound_execution_ids
+    ]
+    if unbound and len(unbound) == len(unresolved):
+        return unbound
+    return []
+
+
+def _expected_scene_count_from_unbound_executions(unresolved: list[dict[str, Any]]) -> int:
+    import re as _re
+
+    highest = 0
+    pattern = _re.compile(r"scene-0*([1-9][0-9]*)", _re.IGNORECASE)
+    for item in unresolved:
+        for call in item.get("calls") or []:
+            for value in (call.get("call_id"), call.get("attempt_id"), call.get("stage")):
+                if not isinstance(value, str):
+                    continue
+                for match in pattern.finditer(value):
+                    highest = max(highest, int(match.group(1)))
+    return highest or 1
+
+
 def _load_manual_recovery_draft(
     path: str | Path,
     *,
@@ -336,6 +519,20 @@ def _load_manual_recovery_draft(
         raise LockedChapterRecoveryError(
             "manual recovery draft is too short to be treated as a complete chapter"
         )
+    integrity = FinalArtifactIntegrityGate().evaluate(
+        artifact_text=text,
+        stage="manual_recovery",
+    )
+    if not integrity["accepted"]:
+        codes = ", ".join(
+            str(item["code"])
+            for item in integrity["findings"]
+            if item["blocking"]
+        )
+        raise LockedChapterRecoveryError(
+            "manual recovery draft failed final artifact integrity: "
+            f"{codes or 'unknown'}"
+        )
     validation = source_payload.get("validation")
     problems = validation.get("problems") if isinstance(validation, dict) else []
     problem_codes = [
@@ -361,6 +558,10 @@ def _unresolved_executions(run_dir: Path) -> list[dict[str, Any]]:
         return unresolved
     for execution_dir in sorted(executions_root.glob("execution_*")):
         execution_id = execution_dir.name
+        # Candidate calls have an independent recovery lifecycle. A legacy
+        # chapter reset must never classify or resolve their side effects.
+        if execution_id.startswith(CANDIDATE_EXECUTION_PREFIX):
+            continue
         if execution_id in handled:
             continue
         model_root = execution_dir / "model_calls"
@@ -442,6 +643,22 @@ def _newer_recoverable_terminal_run(
                 if isinstance(active_checkpoint, dict)
                 else ""
             )
+            if (
+                isinstance(active_checkpoint, dict)
+                and active_checkpoint.get("action") == "resume_scenes"
+                and not isinstance(active_checkpoint.get("complete_draft"), dict)
+                and _repair_did_not_converge(item["payload"])
+                and _remaining_problems_require_author_review(item["payload"])
+                and preferred is not None
+            ):
+                # A prior classify may have stored resume_scenes before this
+                # manual-review rule existed.  Re-running recovery must be
+                # able to upgrade that same failed run to an author draft.
+                return {
+                    **item,
+                    "complete_draft": preferred,
+                    "recovered_scenes": [],
+                }
             if (
                 not _complete_draft_matches_accepted_final_artifact(
                     item["payload"],
@@ -775,6 +992,65 @@ def _complete_draft_matches_accepted_final_artifact(
     )
 
 
+def _complete_draft_matches_verified_candidate_artifact(
+    payload: dict[str, Any],
+    complete_draft: dict[str, Any] | None,
+    *,
+    run_dir: Path,
+    language: str | None = None,
+) -> bool:
+    """Return whether a failed complete draft is receipt-backed without final_gate.
+
+    A run can stop at quality or repair convergence after the chapter text and
+    Scene receipts already exist.  That candidate is not a final-gate artifact,
+    but it is still the correct source for confirmed recovery: bind the settled
+    Scene evidence and continue validation instead of paying to rewrite it.
+    """
+
+    if not isinstance(complete_draft, dict):
+        return False
+    sha256 = complete_draft.get("sha256")
+    if not isinstance(sha256, str):
+        return False
+    raw = payload.get("chapter")
+    if not isinstance(raw, str):
+        return False
+    try:
+        normalized = validate_language_output(raw, CHAPTER_CONTRACT)
+    except ModelOutputError:
+        return False
+    if normalized != complete_draft.get("text") or _content_sha256(normalized) != sha256:
+        return False
+    run = payload.get("run")
+    run_chapter = run.get("chapter") if isinstance(run, dict) else None
+    pipeline = (
+        run_chapter.get("pipeline")
+        if isinstance(run_chapter, dict)
+        else None
+    )
+    if (
+        not isinstance(run, dict)
+        or run.get("status") not in {"failed", "rejected"}
+        or run.get("accepted") is not False
+        or run.get("committed") is not False
+        or not isinstance(run_chapter, dict)
+        or not isinstance(pipeline, dict)
+        or int(run_chapter.get("chars") or -1) != len(raw)
+        or not _verified_rejected_chapter_artifact(payload, run_dir=run_dir)
+        or not _source_execution_is_settled(payload, run_dir=run_dir)
+    ):
+        return False
+    return (
+        _verified_final_scene_evidence(
+            payload,
+            run_dir=run_dir,
+            language=language,
+            require_final_gate=False,
+        )
+        is not None
+    )
+
+
 def verified_final_recovery_draft(
     *,
     run_dir: str | Path,
@@ -805,6 +1081,47 @@ def verified_final_recovery_draft(
         payload,
         draft,
         run_dir=runtime_root,
+    ):
+        return None
+    return json.loads(json.dumps(draft, ensure_ascii=False))
+
+
+def verified_candidate_recovery_draft(
+    *,
+    run_dir: str | Path,
+    run_id: str,
+    language: str | None = None,
+) -> dict[str, Any] | None:
+    """Return a receipt-backed failed complete candidate for recovery coordination.
+
+    This is not a final-gate artifact.  It is the settled chapter text a run
+    already paid for before repair or quality stopped, and it is the correct
+    source for an author draft instead of another unattended revalidation.
+    """
+
+    runtime_root = Path(run_dir).resolve(strict=True)
+    candidate_id = str(run_id or "").strip()
+    if not candidate_id or Path(candidate_id).name != candidate_id:
+        return None
+    path = runtime_root / f"{candidate_id}.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        validate_run_result(payload)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    run = payload.get("run")
+    if not isinstance(run, dict) or str(run.get("id") or "") != candidate_id:
+        return None
+    draft = _usable_complete_draft(
+        payload,
+        language=language,
+        run_dir=runtime_root,
+    )
+    if not _complete_draft_matches_verified_candidate_artifact(
+        payload,
+        draft,
+        run_dir=runtime_root,
+        language=language,
     ):
         return None
     return json.loads(json.dumps(draft, ensure_ascii=False))
@@ -942,15 +1259,24 @@ def _integrity_audit_matches_records(
     records: list[Any],
     *,
     chapter_sha256: str,
+    require_final_gate: bool = True,
 ) -> bool:
     if (
         not isinstance(audit, dict)
-        or audit.get("final_hash_matches_gate") is not True
         or audit.get("final_chapter_sha256") != chapter_sha256
-        or audit.get("final_gate_sha256") != chapter_sha256
         or int(audit.get("record_count") or -1) != len(records)
     ):
         return False
+    gate_recorded = (
+        audit.get("final_hash_matches_gate") is not None
+        or audit.get("final_gate_sha256") is not None
+    )
+    if require_final_gate or gate_recorded:
+        if (
+            audit.get("final_hash_matches_gate") is not True
+            or audit.get("final_gate_sha256") != chapter_sha256
+        ):
+            return False
     stage_hashes = audit.get("stage_hashes")
     if not isinstance(stage_hashes, list) or len(stage_hashes) != len(records):
         return False
@@ -1015,11 +1341,25 @@ def _verified_rejected_chapter_artifact(
     )
 
 
+# Stages that inspect a finished chapter but do not produce or mutate Scene
+# or chapter artifacts.  An uncertain call at these stages has no receipt by
+# definition and must not disqualify already receipt-backed prose.
+_NON_ARTIFACT_MODEL_STAGES = frozenset({"llm_validation"})
+
+
 def _source_execution_is_settled(
     payload: dict[str, Any],
     *,
     run_dir: Path,
 ) -> bool:
+    """Return whether artifact-producing model calls have settled receipts.
+
+    Settlement is about the prose we intend to bind: every Scene, polish, or
+    repair intent must have a receipt.  A later llm_validation attempt can
+    end as provider_call_uncertain with no receipt and no partial content.
+    That incomplete audit must not make the already settled chapter unusable.
+    """
+
     execution_dir = _source_execution_dir(run_dir, {"payload": payload})
     if execution_dir is None:
         return False
@@ -1032,9 +1372,13 @@ def _source_execution_is_settled(
     try:
         for path in intent_paths:
             intent = store.load_intent(path.stem)
-            if not store.has_receipt(str(intent["attempt_id"])):
-                return False
-            store.load_receipt(str(intent["attempt_id"]))
+            attempt_id = str(intent["attempt_id"])
+            if store.has_receipt(attempt_id):
+                store.load_receipt(attempt_id)
+                continue
+            if str(intent.get("stage") or "") in _NON_ARTIFACT_MODEL_STAGES:
+                continue
+            return False
     except (OSError, ValueError, KeyError):
         return False
     return True
@@ -1045,6 +1389,7 @@ def _verified_final_scene_evidence(
     *,
     run_dir: Path,
     language: str | None,
+    require_final_gate: bool = True,
 ) -> dict[str, Any] | None:
     """Prove final Scene text and authority data back to settled responses.
 
@@ -1292,6 +1637,7 @@ def _verified_final_scene_evidence(
         pipeline,
         source_merge_sha256=_content_sha256(source_merge),
         final_sha256=_content_sha256(raw_chapter),
+        require_final_gate=require_final_gate,
     ):
         return None
     if continuity.get("evidence_history") != pipeline.get("scene_evidence_history"):
@@ -1311,20 +1657,23 @@ def _verified_final_transform_chain(
     *,
     source_merge_sha256: str,
     final_sha256: str,
+    require_final_gate: bool = True,
 ) -> bool:
     records = run_chapter.get("integrity_records")
     pipeline_records = pipeline.get("integrity_records")
     audit = run_chapter.get("integrity_audit")
     integrity = pipeline.get("integrity")
+    minimum_records = 2 if require_final_gate else 1
     if (
         not isinstance(records, list)
-        or len(records) < 2
+        or len(records) < minimum_records
         or records != pipeline_records
         or not isinstance(integrity, dict)
         or not _integrity_audit_matches_records(
             audit,
             records,
             chapter_sha256=final_sha256,
+            require_final_gate=require_final_gate,
         )
     ):
         return False
@@ -1338,21 +1687,35 @@ def _verified_final_transform_chain(
         or first.get("output_sha256") != source_merge_sha256
         or first.get("artifact_sha256") != source_merge_sha256
         or not isinstance(last, dict)
-        or last.get("stage") != "final_gate"
         or last.get("accepted") is not True
-        or last.get("input_sha256") is not None
         or last.get("output_sha256") != final_sha256
         or last.get("artifact_sha256") != final_sha256
     ):
         return False
     merge_report = integrity.get("merge")
-    final_report = integrity.get("final_gate")
+    if last.get("stage") == "final_gate":
+        if last.get("input_sha256") is not None:
+            return False
+        transforms = records[1:-1]
+        last_report = integrity.get("final_gate")
+    elif require_final_gate:
+        return False
+    elif last.get("stage") == "merge":
+        if source_merge_sha256 != final_sha256 or len(records) != 1:
+            return False
+        transforms = []
+        last_report = merge_report
+    elif last.get("stage") in {"polish", "repair", "writeback_canonicalization"}:
+        transforms = records[1:]
+        last_report = integrity.get(str(last.get("stage")))
+    else:
+        return False
     if not _accepted_integrity_candidate(
         merge_report,
         chapter_sha256=source_merge_sha256,
         required_hash_field="artifact_sha256",
     ) or not _accepted_integrity_candidate(
-        final_report,
+        last_report,
         chapter_sha256=final_sha256,
         required_hash_field="artifact_sha256",
     ):
@@ -1363,7 +1726,6 @@ def _verified_final_transform_chain(
         "repair": 2,
         "writeback_canonicalization": 3,
     }
-    transforms = records[1:-1]
     previous_sha256 = source_merge_sha256
     previous_order = 0
     for record in transforms:
@@ -1557,10 +1919,18 @@ def load_verified_locked_chapter_pipeline(
         language=language,
         run_dir=runtime_root,
     )
-    if not _complete_draft_matches_accepted_final_artifact(
-        payload,
-        source_draft,
-        run_dir=runtime_root,
+    if not (
+        _complete_draft_matches_accepted_final_artifact(
+            payload,
+            source_draft,
+            run_dir=runtime_root,
+        )
+        or _complete_draft_matches_verified_candidate_artifact(
+            payload,
+            source_draft,
+            run_dir=runtime_root,
+            language=language,
+        )
     ):
         raise LockedChapterRecoveryError(
             "complete-draft source has no verified accepted final artifact"
@@ -1598,7 +1968,15 @@ def load_verified_locked_chapter_pipeline(
         payload,
         run_dir=runtime_root,
         language=language,
+        require_final_gate=True,
     )
+    if not isinstance(verified, dict):
+        verified = _verified_final_scene_evidence(
+            payload,
+            run_dir=runtime_root,
+            language=language,
+            require_final_gate=False,
+        )
     if not isinstance(verified, dict):
         raise LockedChapterRecoveryError(
             "complete-draft source Scene evidence does not match its provider receipts and final artifact"
@@ -2158,6 +2536,173 @@ def _latest_usable_complete_transform(
     return None
 
 
+def _repair_assembly_blocked_after_paid_calls(payload: dict[str, Any]) -> bool:
+    """True when repair stopped after paid calls and retrying it would hit the same wall.
+
+    Official evidence: a settled generate+validate run retains a complete
+    candidate, then repair_if_needed raises a character/token budget or
+    structured-context error.  Scene resume would only re-enter that blocked
+    repair.  Fail closed on mixed or incomplete evidence.
+    """
+
+    run = payload.get("run")
+    if not isinstance(run, dict):
+        return False
+    if run.get("status") not in {"failed", "rejected"}:
+        return False
+    if run.get("committed") is True or run.get("accepted") is True:
+        return False
+    error = run.get("error") if isinstance(run.get("error"), dict) else {}
+    error_type = str(error.get("type") or "")
+    message = str(error.get("message") or "")
+    budget_markers = (
+        "required_authoritative_records_exceed_budget",
+        "required_authoritative_record_exceeds_budget",
+        "required_authoritative_context_metadata_exceeds_budget",
+        "required_json_item_exceeds_budget",
+        "required_markdown_context_exceeds_budget",
+        "required_structured_entry_exceeds_budget",
+        "required_structured_manifest_exceeds_budget",
+        "story_project_context_budget",
+        "context_budget_exceeded",
+        "local_budget",
+        "headroom",
+    )
+    type_ok = error_type in {"StructuredContextError", "ContextBudgetError"} or (
+        error_type == "ModelCallError"
+        and any(marker in message for marker in ("local_budget", "context_budget"))
+    )
+    marker_ok = any(marker in message for marker in budget_markers)
+    if not type_ok or not marker_ok:
+        return False
+    trace = run.get("trace")
+    if not isinstance(trace, list) or not trace:
+        return False
+    failed = [
+        item
+        for item in trace
+        if isinstance(item, dict)
+        and str(item.get("status") or item.get("state") or "") == "failed"
+    ]
+    if len(failed) != 1:
+        return False
+    failed_action = str(failed[0].get("action") or failed[0].get("name") or failed[0].get("step") or "")
+    if failed_action not in {"repair_if_needed", "repair"}:
+        return False
+    evidence = run.get("execution_evidence") if isinstance(run.get("execution_evidence"), dict) else {}
+    budget = evidence.get("budget") if isinstance(evidence.get("budget"), dict) else {}
+    try:
+        provider_calls = int(budget.get("provider_calls") or run.get("provider_calls") or 0)
+        unsettled = int(budget.get("unsettled_attempt_count") or run.get("unsettled_attempt_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if provider_calls < 1 or unsettled != 0:
+        return False
+    writeback = None
+    story_project = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+    if isinstance(story_project.get("writeback"), dict):
+        writeback = story_project.get("writeback")
+    elif isinstance(run.get("writeback"), dict):
+        writeback = run.get("writeback")
+    if isinstance(writeback, dict) and writeback.get("applied") is True:
+        return False
+    return True
+
+
+def _repair_stale_scene_blocked_after_paid_calls(payload: dict[str, Any]) -> bool:
+    """True when settled stale-scene evidence blocked repair or polish after paid calls.
+
+    Official evidence: generate (and usually validate) already retained a
+    complete candidate, then repair_if_needed or polish raised
+    SceneEvidenceAlignmentError: stale_scene_evidence.  Mixed leftover
+    deterministic repairs cannot be applied because the revision itself was
+    rejected.  Scene resume would only re-enter that blocked revision.
+    Fail closed on mixed or incomplete evidence.
+    """
+
+    run = payload.get("run")
+    if not isinstance(run, dict):
+        return False
+    if run.get("status") not in {"failed", "rejected"}:
+        return False
+    if run.get("committed") is True or run.get("accepted") is True:
+        return False
+    error = run.get("error") if isinstance(run.get("error"), dict) else {}
+    error_type = str(error.get("type") or "")
+    message = str(error.get("message") or "")
+    if error_type != "SceneEvidenceAlignmentError" or "stale_scene_evidence" not in message:
+        return False
+    trace = run.get("trace")
+    if not isinstance(trace, list) or not trace:
+        return False
+    failed = [
+        item
+        for item in trace
+        if isinstance(item, dict)
+        and str(item.get("status") or item.get("state") or "") == "failed"
+    ]
+    if len(failed) != 1:
+        return False
+    failed_action = str(failed[0].get("action") or failed[0].get("name") or failed[0].get("step") or "")
+    if failed_action not in {"repair_if_needed", "repair", "polish"}:
+        return False
+    evidence = run.get("execution_evidence") if isinstance(run.get("execution_evidence"), dict) else {}
+    budget = evidence.get("budget") if isinstance(evidence.get("budget"), dict) else {}
+    try:
+        provider_calls = int(budget.get("provider_calls") or run.get("provider_calls") or 0)
+        unsettled = int(budget.get("unsettled_attempt_count") or run.get("unsettled_attempt_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if provider_calls < 1 or unsettled != 0:
+        return False
+    writeback = None
+    story_project = run.get("story_project") if isinstance(run.get("story_project"), dict) else {}
+    if isinstance(story_project.get("writeback"), dict):
+        writeback = story_project.get("writeback")
+    elif isinstance(run.get("writeback"), dict):
+        writeback = run.get("writeback")
+    if isinstance(writeback, dict) and writeback.get("applied") is True:
+        return False
+    return True
+
+
+def _remaining_problems_require_author_review(payload: dict[str, Any]) -> bool:
+    """Return True when leftover blocking problems are assigned to the author."""
+
+    run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+    validations: list[dict[str, Any]] = []
+    for candidate in (
+        payload.get("validation"),
+        run.get("validation") if isinstance(run, dict) else None,
+    ):
+        if isinstance(candidate, dict):
+            validations.append(candidate)
+
+    problems: list[dict[str, Any]] = []
+    for validation in validations:
+        items = validation.get("problems")
+        if isinstance(items, list):
+            problems.extend(item for item in items if isinstance(item, dict))
+        checks = validation.get("checks")
+        if isinstance(checks, list):
+            for check in checks:
+                if not isinstance(check, dict):
+                    continue
+                nested = check.get("problems")
+                if isinstance(nested, list):
+                    problems.extend(item for item in nested if isinstance(item, dict))
+
+    def _is_blocking(item: dict[str, Any]) -> bool:
+        if item.get("blocking") is True or item.get("category") == "blocking":
+            return True
+        return str(item.get("severity") or "").lower() in {"critical", "high"}
+
+    blocking = [item for item in problems if _is_blocking(item)]
+    return bool(blocking) and all(
+        str(item.get("repair_action") or "") == "manual_review" for item in blocking
+    )
+
+
 def _repair_did_not_converge(payload: dict[str, Any]) -> bool:
     run = payload.get("run")
     error = run.get("error") if isinstance(run, dict) else None
@@ -2433,6 +2978,7 @@ def _content_sha256(text: str) -> str:
 
 __all__ = [
     "LockedChapterRecoveryError",
+    "list_unbound_uncertain_executions",
     "load_verified_locked_chapter_pipeline",
     "recover_locked_chapter",
     "verified_final_recovery_draft",

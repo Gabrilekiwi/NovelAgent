@@ -7,7 +7,7 @@ import inspect
 import os
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
@@ -31,6 +31,7 @@ from core.delivery_intents import (
     validate_file_delivery_profile,
 )
 from core.director import decide_next_step, validate_decision
+from core.location_names import is_usable_location_name
 from core.project_profile import project_language
 from core.quality.final_artifact_integrity import (
     FinalArtifactIntegrityConfig,
@@ -45,7 +46,11 @@ from core.quality.repair_patch import (
     build_repair_patch_from_texts,
     coerce_repair_patch,
 )
-from core.quality.scene_evidence import realign_scene_evidence
+from core.quality.scene_evidence import (
+    SceneEvidenceAlignmentError,
+    canonicalize_scene_local_repair_patch,
+    realign_scene_evidence,
+)
 from core.quality_decision import (
     QualityPolicy,
     resolve_quality_policy,
@@ -99,11 +104,15 @@ from core.engine.persistence import (
     persistence_run_lock,
 )
 from core.engine.persistence_coordinator import PersistenceCoordinator
-from core.engine.locked_chapter_state import (
-    active_locked_chapter_checkpoint,
-    resolved_execution_ids,
+from core.engine.locked_chapter_state import active_locked_chapter_checkpoint
+from core.engine.provider_safety import (
+    list_unresolved_provider_calls,
+    provider_execution_lock,
 )
-from core.engine.locked_chapter import load_verified_locked_chapter_pipeline
+from core.engine.locked_chapter import (
+    LockedChapterRecoveryError,
+    load_verified_locked_chapter_pipeline,
+)
 from core.engine.persistence_v2 import (
     PersistenceV2Target,
     bind_final_run_record_receipt,
@@ -145,6 +154,7 @@ from core.state.input_pack import (
     build_recovery_context,
     build_snapshot_input_pack,
 )
+from core.state.chapter_read_set import derive_chapter_context_read_set, source_outline_sha256_for_blueprint
 from core.state.generation_state_view import (
     apply_generation_state_view_to_snapshot,
     build_generation_state_view,
@@ -328,45 +338,66 @@ class AgentExecutor:
         previous_tracker = self._run_budget_tracker
         previous_runtime = self._model_call_runtime
         try:
-            self._execution_evidence = self._begin_execution_evidence(persist=persist)
-            self._run_budget_tracker = RunBudgetTracker(self.run_budget_limits)
-            model_calls_ref = (
-                self._execution_evidence.get("model_calls_ref")
-                if isinstance(self._execution_evidence, dict)
-                else None
+            lock_scope = (
+                provider_execution_lock(self.run_dir)
+                if self._requires_execution_evidence(persist=persist)
+                else nullcontext()
             )
-            self._model_call_runtime = (
-                ModelCallRuntimeContext(
-                    ModelCallStore(self.run_dir / Path(model_calls_ref)),
-                    tracker=self._run_budget_tracker,
+            with self._machine_write_scope(persist=persist), lock_scope:
+                self._execution_evidence = self._begin_execution_evidence(persist=persist)
+                self._run_budget_tracker = RunBudgetTracker(self.run_budget_limits)
+                model_calls_ref = (
+                    self._execution_evidence.get("model_calls_ref")
+                    if isinstance(self._execution_evidence, dict)
+                    else None
                 )
-                if isinstance(model_calls_ref, str) and model_calls_ref
-                else None
-            )
-            if self.autonomy_run_context is not None:
-                self.autonomy_run_context.hydrate_budget_tracker(
-                    self._run_budget_tracker
+                self._model_call_runtime = (
+                    ModelCallRuntimeContext(
+                        ModelCallStore(self.run_dir / Path(model_calls_ref)),
+                        tracker=self._run_budget_tracker,
+                    )
+                    if isinstance(model_calls_ref, str) and model_calls_ref
+                    else None
                 )
-            if self._model_call_runtime is None:
-                yield
-            else:
-                with use_model_call_runtime(self._model_call_runtime):
+                if self.autonomy_run_context is not None:
+                    self.autonomy_run_context.hydrate_budget_tracker(
+                        self._run_budget_tracker
+                    )
+                if self._model_call_runtime is None:
                     yield
+                else:
+                    with use_model_call_runtime(self._model_call_runtime):
+                        yield
         finally:
             self._execution_evidence = previous_evidence
             self._run_budget_tracker = previous_tracker
             self._model_call_runtime = previous_runtime
             self._execution_scope_depth = 0
 
-    def _begin_execution_evidence(self, *, persist: bool) -> dict[str, Any] | None:
-        if not self.enable_execution_provenance:
-            return None
-        persist_evidence = (
+    def _machine_write_scope(self, *, persist: bool):
+        if not self._requires_execution_evidence(persist=persist):
+            return nullcontext()
+        from workbench.book_ownership import book_output_write_lock
+        paths = [self.run_dir, self.persistence_dir, self.chapter_dir, self.snapshot_path]
+        root = self._configured_story_project_root()
+        if root is not None:
+            paths.append(root)
+        if hasattr(self.memory_writer, "path"):
+            paths.append(Path(self.memory_writer.path))
+        return book_output_write_lock(*paths)
+
+    def _requires_execution_evidence(self, *, persist: bool) -> bool:
+        return (
             persist
             or not self.dry_run
             or self.enable_llm_validator
             or _director_mode(self.director) == "model"
         )
+
+    def _begin_execution_evidence(self, *, persist: bool) -> dict[str, Any] | None:
+        if not self.enable_execution_provenance:
+            return None
+        persist_evidence = self._requires_execution_evidence(persist=persist)
         if persist_evidence:
             unresolved = _unresolved_provider_calls(self.run_dir)
             if unresolved:
@@ -571,6 +602,22 @@ class AgentExecutor:
             self._event_authority_operation = None
 
     def _invoke_persist_once(
+        self,
+        *,
+        snapshot_override: dict[str, Any] | None,
+        previous_result: dict[str, Any] | None,
+        chapter_hint: int | None,
+    ) -> dict[str, Any]:
+        # Also protect direct/internal persistence entry before identity setup,
+        # recovery or model work. Public calls hold this before provenance too.
+        with self._machine_write_scope(persist=True):
+            return self._invoke_owned_persist_once(
+                snapshot_override=snapshot_override,
+                previous_result=previous_result,
+                chapter_hint=chapter_hint,
+            )
+
+    def _invoke_owned_persist_once(
         self,
         *,
         snapshot_override: dict[str, Any] | None,
@@ -1074,6 +1121,7 @@ class AgentExecutor:
                         chapter_pipeline,
                         snapshot,
                         authority_delta=authority_delta,
+                        chapter_text=chapter,
                     ),
                     "analysis_result.schema.json",
                 )
@@ -1280,12 +1328,15 @@ class AgentExecutor:
         stop_on_rejection: bool = True,
         observer: LoopObserver | None = None,
     ) -> dict[str, Any]:
-        return self._run_loop_impl(
-            steps=steps,
-            persist=persist,
-            stop_on_rejection=stop_on_rejection,
-            observer=observer,
-        )
+        # The loop also persists its session summary after a step exits. Keep
+        # that write (including failure diagnostics) inside the same boundary.
+        with self._machine_write_scope(persist=persist):
+            return self._run_loop_impl(
+                steps=steps,
+                persist=persist,
+                stop_on_rejection=stop_on_rejection,
+                observer=observer,
+            )
 
     def _run_loop_impl(
         self,
@@ -1639,6 +1690,11 @@ class AgentExecutor:
             if isinstance(locked_checkpoint, dict)
             else None
         )
+        # A confirmed, validated complete draft is the chapter candidate.
+        # Bind receipt-backed Scene evidence from the source run (including
+        # failed runs that never reached final_gate) and realign that
+        # evidence to the confirmed text.  Do not discard the draft and pay
+        # to regenerate it.  If the source cannot be bound, fail closed.
         locked_chapter_pipeline = self._locked_complete_draft_pipeline(
             locked_checkpoint,
             complete_draft,
@@ -1896,6 +1952,36 @@ class AgentExecutor:
         else:
             polished = self._polish(chapter)
         polished_text = str(polished)
+        prior_integrity = state.get("active_integrity_report")
+        source_sha256 = hashlib.sha256(chapter.encode("utf-8")).hexdigest()
+        source_integrity_is_accepted = (
+            isinstance(prior_integrity, dict)
+            and prior_integrity.get("accepted") is True
+            and prior_integrity.get("artifact_sha256") == source_sha256
+        )
+        polish_integrity = self._record_integrity_transition(
+            state,
+            stage="polish",
+            input_text=chapter,
+            output_text=polished_text,
+        )
+        # A whole-scene duplication is a transport/output corruption, not a
+        # narrative revision to repair. When the receipt-backed merge is
+        # already integrity-clean, retain that exact source artifact instead
+        # of inflating an otherwise small repair request with every duplicate
+        # finding. The rejected polish report stays in the immutable audit.
+        if (
+            source_integrity_is_accepted
+            and _is_duplicate_only_integrity_failure(polish_integrity)
+        ):
+            state["active_integrity_report"] = prior_integrity
+            state["polish_fallback"] = {
+                "reason": "duplicate_only_integrity_failure",
+                "source_sha256": source_sha256,
+                "rejected_polish_sha256": polish_integrity["artifact_sha256"],
+            }
+            state["validation"] = None
+            return
         polish_patch = build_repair_patch_from_texts(
             chapter,
             polished_text,
@@ -1908,12 +1994,6 @@ class AgentExecutor:
             after_chapter=polished_text,
             patch=polish_patch,
             stage="polish",
-        )
-        self._record_integrity_transition(
-            state,
-            stage="polish",
-            input_text=chapter,
-            output_text=state["chapter"],
         )
         state["validation"] = None
 
@@ -2047,19 +2127,50 @@ class AgentExecutor:
                 repaired,
                 problem_codes=_problem_codes(before_validation),
             )
+            repair_patch, separator_canonicalization = canonicalize_scene_local_repair_patch(
+                state.get("chapter_pipeline"),
+                before_chapter=before_chapter,
+                patch=repair_patch,
+            )
             repaired_text, patch_audit = apply_repair_patch(
                 before_chapter,
                 repair_patch,
             )
             patch_audit["attempt"] = attempt
+            if separator_canonicalization is not None:
+                patch_audit["scene_separator_canonicalization"] = separator_canonicalization
+            try:
+                realigned_pipeline = self._realign_chapter_pipeline(
+                    state.get("chapter_pipeline"),
+                    before_chapter=before_chapter,
+                    after_chapter=repaired_text,
+                    patch=repair_patch,
+                    stage="repair",
+                )
+            except SceneEvidenceAlignmentError as exc:
+                # Cross-scene repairs are rejected rather than guessed, but
+                # that rejection is a failed repair attempt, not a lost
+                # chapter. Keep the already generated, receipt-backed prose
+                # so the author can still review it.
+                patch_audit["rejected"] = True
+                patch_audit["rejected_code"] = getattr(exc, "code", "stale_scene_evidence")
+                patch_audit["rejected_reason"] = str(exc)
+                if getattr(exc, "evidence", None) is not None:
+                    patch_audit["rejected_evidence"] = copy.deepcopy(exc.evidence)
+                state["repair_patches"].append(patch_audit)
+                state["repair_attempts"] += 1
+                self._authorize_elastic_repair_budget(state)
+                state["repair_deltas"].append(
+                    _repair_delta(
+                        attempt=attempt,
+                        before=before_validation,
+                        after=before_validation,
+                        patch=patch_audit,
+                    )
+                )
+                continue
             state["repair_patches"].append(patch_audit)
-            state["chapter_pipeline"] = self._realign_chapter_pipeline(
-                state.get("chapter_pipeline"),
-                before_chapter=before_chapter,
-                after_chapter=repaired_text,
-                patch=repair_patch,
-                stage="repair",
-            )
+            state["chapter_pipeline"] = realigned_pipeline
             state["chapter"] = repaired_text
             self._record_integrity_transition(
                 state,
@@ -2244,14 +2355,25 @@ class AgentExecutor:
         snapshot: dict[str, Any],
     ) -> dict[str, Any] | None:
         blueprint = self._story_project_chapter_blueprint()
-        chapter_context_read_set = (
-            blueprint.get("chapter_context_read_set")
-            if isinstance(blueprint, dict)
-            else None
-        )
-        if not isinstance(chapter_context_read_set, dict):
+        if not isinstance(blueprint, dict):
             return None
+        chapter_context_read_set = blueprint.get("chapter_context_read_set")
         authority = seed_authoritative_state_from_snapshot(snapshot)
+        if not isinstance(chapter_context_read_set, dict):
+            context = self._story_project_context_dict() or {}
+            chapter_index = int(
+                blueprint.get("chapter_index")
+                or context.get("chapter_index")
+                or snapshot.get("chapter_index")
+                or 0
+            )
+            chapter_context_read_set = derive_chapter_context_read_set(
+                authority,
+                chapter_index=chapter_index,
+                source_outline_sha256=source_outline_sha256_for_blueprint(blueprint),
+                snapshot=snapshot,
+                blueprint=blueprint,
+            )
         return build_generation_state_view(
             authority,
             chapter_context_read_set,
@@ -4173,22 +4295,8 @@ def _capture_execution_provenance_cached(
 
 
 def _unresolved_provider_calls(run_dir: Path) -> list[dict[str, Any]]:
-    executions_root = run_dir / "executions"
-    if not executions_root.is_dir():
-        return []
-    unresolved: list[dict[str, Any]] = []
-    handled = resolved_execution_ids(run_dir)
-    for execution_dir in sorted(executions_root.glob("execution_*")):
-        if execution_dir.name in handled:
-            continue
-        model_root = execution_dir / "model_calls"
-        if not model_root.is_dir():
-            continue
-        unresolved.extend(ModelCallStore(model_root).list_uncertain_calls())
-    return sorted(
-        unresolved,
-        key=lambda item: (str(item.get("created_at") or ""), str(item.get("attempt_id") or "")),
-    )
+    # Compatibility wrapper retained for recovery callers and older tests.
+    return list_unresolved_provider_calls(run_dir)
 
 
 def _chapter_evidence_spans(
@@ -4662,6 +4770,7 @@ def _attach_authoritative_scene_delta(
     snapshot: dict[str, Any] | None = None,
     *,
     authority_delta: dict[str, Any] | None = None,
+    chapter_text: str | None = None,
 ) -> dict[str, Any]:
     result = dict(analysis)
     if authority_delta is None:
@@ -4684,6 +4793,7 @@ def _attach_authoritative_scene_delta(
         result,
         chapter_pipeline,
         language=project_language(snapshot or {}),
+        chapter_text=chapter_text,
     )
     return result
 
@@ -4693,6 +4803,7 @@ def _reconcile_story_state_with_final_scene(
     chapter_pipeline: dict[str, Any] | None,
     *,
     language: str | None = None,
+    chapter_text: str | None = None,
 ) -> dict[str, Any]:
     """Make the verified final Scene boundary the next chapter's continuity.
 
@@ -4700,6 +4811,12 @@ def _reconcile_story_state_with_final_scene(
     a destination mentioned near the ending for the place where the scene
     actually ends.  The Scene pipeline has already validated ordered events and
     location deltas, so its final state is the stronger source for continuity.
+
+    When the Scene final location is adopted, also register it into analysis
+    ``new_locations`` / ``spatial_state.spaces`` so the next chapter's bridge
+    pre-validation (``last_scene_location in get_locations``) cannot stall on an
+    unregistered continuity anchor. Empty ``characters_present`` does not wipe a
+    non-empty analyzer cast — scene drafts sometimes declare the key with [].
     """
 
     if not isinstance(chapter_pipeline, dict):
@@ -4724,15 +4841,107 @@ def _reconcile_story_state_with_final_scene(
     result = copy.deepcopy(analysis)
     story_state = result["story_state"]
     if location:
+        location = _prefer_ending_consistent_location(
+            scene_location=location,
+            analyzer_location=str(existing_story_state.get("last_scene_location") or "").strip(),
+            chapter_text=chapter_text,
+        )
         story_state["last_scene_location"] = location
+        _ensure_analysis_registers_location(result, location)
+    if characters_present_declared:
+        if characters:
+            story_state["last_scene_characters"] = characters
+        else:
+            # Keep analyzer cast when the Scene final boundary declares an empty
+            # present list (common when drafts track deltas but drop presence).
+            existing_cast = [
+                str(item).strip()
+                for item in story_state.get("last_scene_characters") or []
+                if str(item).strip()
+            ]
+            characters = existing_cast
+            story_state["last_scene_characters"] = existing_cast
+    bridge_cast = [
+        str(item).strip()
+        for item in story_state.get("last_scene_characters") or []
+        if str(item).strip()
+    ]
+    if location:
         story_state["required_opening_bridge"] = _required_opening_bridge(
             location,
-            characters,
+            bridge_cast if bridge_cast else characters,
             language=language,
         )
-    if characters_present_declared:
-        story_state["last_scene_characters"] = characters
     return result
+
+
+def _prefer_ending_consistent_location(
+    *,
+    scene_location: str,
+    analyzer_location: str,
+    chapter_text: str | None,
+) -> str:
+    """Do not copy a stale opening location over an ending the prose already reached.
+
+    Scene ``current_location`` can remain on the chapter opening when later
+    movement never wrote a location delta. If the chapter ending names the
+    analyzer's location and does not name the Scene location, keep the ending.
+    Without chapter text, preserve the existing Scene-final preference.
+    """
+
+    if not is_usable_location_name(analyzer_location):
+        return scene_location
+    if not is_usable_location_name(scene_location):
+        return analyzer_location
+    if not chapter_text or analyzer_location == scene_location:
+        return scene_location
+    # Keep the more specific place when one name is only a stem of the other.
+    if scene_location.startswith(analyzer_location) or scene_location.endswith(analyzer_location):
+        return scene_location
+    if analyzer_location.startswith(scene_location) or analyzer_location.endswith(scene_location):
+        return analyzer_location
+    body = str(chapter_text)
+    analyzer_index = body.rfind(analyzer_location)
+    scene_index = body.rfind(scene_location)
+    if analyzer_index > scene_index:
+        return analyzer_location
+    return scene_location
+
+
+def _ensure_analysis_registers_location(analysis: dict[str, Any], location: str) -> None:
+    """Keep continuity locations discoverable by ``get_locations`` after commit."""
+
+    clean = str(location or "").strip()
+    if not clean:
+        return
+    new_locations = analysis.get("new_locations")
+    if not isinstance(new_locations, list):
+        new_locations = []
+        analysis["new_locations"] = new_locations
+    if clean not in new_locations:
+        new_locations.append(clean)
+    spatial_state = analysis.get("spatial_state")
+    if not isinstance(spatial_state, dict):
+        spatial_state = {
+            "spaces": {},
+            "connections": [],
+            "character_positions": {},
+            "blocked_paths": [],
+            "last_transition": {},
+        }
+        analysis["spatial_state"] = spatial_state
+    spaces = spatial_state.get("spaces")
+    if not isinstance(spaces, dict):
+        spaces = {}
+        spatial_state["spaces"] = spaces
+    spaces.setdefault(clean, {"source": "scene_state_final"})
+    last_transition = spatial_state.get("last_transition")
+    if not isinstance(last_transition, dict):
+        last_transition = {}
+        spatial_state["last_transition"] = last_transition
+    if not str(last_transition.get("to") or "").strip():
+        last_transition["to"] = clean
+        last_transition.setdefault("source", "scene_state_final")
 
 
 def _required_opening_bridge(
@@ -4757,6 +4966,23 @@ def _require_chapter(state: dict[str, Any]) -> str:
     if not isinstance(chapter, str) or not chapter:
         raise ValueError("Workflow action requires chapter text")
     return chapter
+
+
+def _is_duplicate_only_integrity_failure(report: dict[str, Any]) -> bool:
+    if report.get("accepted") is True:
+        return False
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        return False
+    blocking = [
+        finding
+        for finding in findings
+        if isinstance(finding, dict) and finding.get("blocking") is True
+    ]
+    return bool(blocking) and all(
+        str(finding.get("code") or "") == "duplicate_scene_text"
+        for finding in blocking
+    )
 
 
 def _repairer_accepts_plan(repairer: ChapterRepairer) -> bool:

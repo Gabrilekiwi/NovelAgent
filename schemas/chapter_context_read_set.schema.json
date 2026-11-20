@@ -17,11 +17,16 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["1.0"]
+      "enum": [
+        "1.0"
+      ]
     },
     "mode": {
       "type": "string",
-      "enum": ["explicit"]
+      "enum": [
+        "explicit",
+        "derived"
+      ]
     },
     "chapter_index": {
       "type": "integer",

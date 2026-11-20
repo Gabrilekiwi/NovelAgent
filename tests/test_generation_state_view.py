@@ -12,6 +12,7 @@ from core.state.generation_state_view import (
     build_generation_state_view,
     filter_scene_state_for_generation,
     generation_state_view_from_markdown,
+    project_bookkeeping_for_generation,
     project_snapshot_for_generation,
     scene_generation_state_reference_from_markdown,
 )
@@ -777,6 +778,74 @@ class GenerationStateViewTests(unittest.TestCase):
             view["projection_sha256"],
             projected["generation_state_view"]["projection_sha256"],
         )
+
+    def test_project_bookkeeping_keeps_working_set_and_provenance_transition(
+        self,
+    ) -> None:
+        authority = _authority()
+        view = build_generation_state_view(
+            authority,
+            _read_set(
+                state_ids=[
+                    "characters/hero",
+                    "locations/hero",
+                ],
+                event_ids=["events/chapter-0017-beat-004"],
+            ),
+        )
+        profile = {
+            "language": "zh-CN",
+            "known_characters": ["hero", "bystander", "unrelated-crowd"],
+            "known_locations": ["二层通信室", "unused-warehouse", "RAW-LOCATION"],
+        }
+        spatial = {
+            "spaces": {
+                "二层通信室": {"known": True},
+                "unused-warehouse": {},
+                "了所有来路都能看见的位置": {"source": "chapter_analysis"},
+            },
+            "connections": [],
+            "character_positions": {
+                "hero": "旧位置",
+                "bystander": "unused-warehouse",
+            },
+            "blocked_paths": [],
+            "last_transition": {
+                "source": "chapter_analysis",
+                "to": "二层通信室",
+            },
+        }
+
+        projected = project_bookkeeping_for_generation(
+            view,
+            project_profile=profile,
+            spatial_state=spatial,
+        )
+
+        self.assertEqual("zh-CN", projected["project_profile"]["language"])
+        self.assertEqual(
+            ["hero", "陆沉"],
+            projected["project_profile"]["known_characters"],
+        )
+        self.assertNotIn("bystander", projected["project_profile"]["known_characters"])
+        self.assertEqual(
+            ["二层通信室"],
+            projected["project_profile"]["known_locations"],
+        )
+        self.assertNotIn(
+            "unused-warehouse",
+            projected["spatial_state"]["spaces"],
+        )
+        self.assertNotIn(
+            "bystander",
+            projected["spatial_state"]["character_positions"],
+        )
+        self.assertEqual(
+            {"source": "chapter_analysis", "to": "二层通信室"},
+            projected["spatial_state"]["last_transition"],
+        )
+
+
 
 
 if __name__ == "__main__":

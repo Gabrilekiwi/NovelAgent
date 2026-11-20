@@ -41,6 +41,7 @@
   };
 
   const errorMessage = (payload, status) => {
+    if (payload?.error?.code === "workbench_maintenance_active") return safeText(payload.error.message, "工作台正在维护，暂不能启动新任务或保存编辑。");
     if (status === 409) return safeText(payload?.error?.message, "内容已被其他操作更新。请刷新页面，确认最新版本后再试。");
     if (status === 423) return "该作品正在执行另一项写入任务，请稍后再试。";
     if (status === 401 || status === 403) return "本地工作台会话已失效，请从启动器重新打开。";
@@ -162,11 +163,33 @@
   };
 
   const asyncSubmit = async (form, submitter) => {
+    const isChapterCardConfirmation = form.matches("[data-chapter-card-confirm-form]");
+    const submissionNonce = isChapterCardConfirmation
+      ? String(Number(form.dataset.submissionNonce || 0) + 1)
+      : null;
+    if (submissionNonce) form.dataset.submissionNonce = submissionNonce;
+    const submissionContext = isChapterCardConfirmation ? Object.freeze({
+      action: form.action,
+      method: (form.dataset.method || form.method || "POST").toUpperCase(),
+      project_id: form.dataset.projectId || "",
+      chapter: Number(form.dataset.chapter),
+      card_sha256: form.dataset.cardSha || "",
+      input_revision: form.dataset.inputRevision || "0",
+      submission_nonce: submissionNonce
+    }) : null;
+    const submissionIsCurrent = () => !submissionContext || (
+      form.dataset.submissionNonce === submissionContext.submission_nonce
+      && form.dataset.projectId === submissionContext.project_id
+      && Number(form.dataset.chapter) === submissionContext.chapter
+      && form.dataset.cardSha === submissionContext.card_sha256
+    );
+    const boundJsonBody = isChapterCardConfirmation ? formAsJson(form) : null;
     const confirmMessage = submitter?.dataset.confirm || form.dataset.confirm;
     if (confirmMessage && form.dataset.confirmedOnce !== "true") {
       const confirmed = await confirmAction(confirmMessage, submitter?.dataset.confirmTone || form.dataset.confirmTone);
       if (!confirmed) return;
     }
+    if (!submissionIsCurrent()) return;
     delete form.dataset.confirmedOnce;
 
     const button = submitter || one('[type="submit"]', form);
@@ -176,12 +199,12 @@
     form.setAttribute("aria-busy", "true");
 
     try {
-      const method = (form.dataset.method || form.method || "POST").toUpperCase();
+      const method = submissionContext?.method || (form.dataset.method || form.method || "POST").toUpperCase();
       const headers = requestHeaders();
       let requestBody;
       if (form.hasAttribute("data-json-form")) {
         headers.set("Content-Type", "application/json");
-        const jsonBody = formAsJson(form);
+        const jsonBody = boundJsonBody || formAsJson(form);
         const jsonFileField = form.dataset.jsonFileField;
         if (jsonFileField) {
           const fileInput = one('input[type="file"][data-json-file]', form);
@@ -204,29 +227,49 @@
         headers.set("X-Expected-SHA256", form.dataset.casSha);
         headers.set("If-Match", `"${form.dataset.casSha.replace(/"/g, "")}"`);
       }
-      const response = await fetch(form.action, { method, headers, body: method === "GET" ? undefined : requestBody, credentials: "same-origin" });
+      const response = await fetch(submissionContext?.action || form.action, { method, headers, body: method === "GET" ? undefined : requestBody, credentials: "same-origin" });
       const payload = await parseResponse(response);
       if (!response.ok) throw { payload, status: response.status };
 
-      updateCas(form, payload, response);
-      form.classList.remove("is-dirty");
-      const saveState = one("[data-save-state]", form) || one("[data-save-state]");
-      if (saveState) saveState.textContent = "所有修改已保存";
-      const message = payload.message || form.dataset.successMessage || "操作已完成。";
-      showToast(message);
-      form.dispatchEvent(new CustomEvent("workbench:success", { bubbles: true, detail: payload }));
+      const responseTargetsCurrentForm = submissionIsCurrent();
+      if (responseTargetsCurrentForm) {
+        updateCas(form, payload, response);
+        form.classList.remove("is-dirty");
+        const saveState = one("[data-save-state]", form) || one("[data-save-state]");
+        if (saveState) saveState.textContent = "所有修改已保存";
+        const message = payload.message || form.dataset.successMessage || "操作已完成。";
+        if (!form.hasAttribute("data-defer-success-toast")) showToast(message);
+      }
+      const successDetail = submissionContext
+        ? { ...payload, submission_context: submissionContext }
+        : payload;
+      form.dispatchEvent(new CustomEvent("workbench:success", { bubbles: true, detail: successDetail }));
 
-      const redirectUrl = payload.redirect_url || payload.location || (response.redirected ? response.url : null);
-      if (redirectUrl && sameOriginNavigate(redirectUrl)) return;
-      if (form.hasAttribute("data-reload-on-success")) window.location.reload();
+      if (responseTargetsCurrentForm) {
+        const redirectUrl = payload.redirect_url || payload.location || (response.redirected ? response.url : null);
+        if (redirectUrl && sameOriginNavigate(redirectUrl)) return;
+        if (form.hasAttribute("data-reload-on-success")) window.location.reload();
+      }
     } catch (error) {
       const message = errorMessage(error?.payload, error?.status);
-      if (errorBox) { errorBox.textContent = message; errorBox.hidden = false; errorBox.focus?.(); }
-      showToast(message, "error");
-      form.dispatchEvent(new CustomEvent("workbench:error", { bubbles: true, detail: { message, status: error?.status } }));
+      if (submissionIsCurrent()) {
+        if (errorBox) { errorBox.textContent = message; errorBox.hidden = false; errorBox.focus?.(); }
+        showToast(message, "error");
+      }
+      form.dispatchEvent(new CustomEvent("workbench:error", {
+        bubbles: true,
+        detail: {
+          message,
+          status: error?.status,
+          error_code: error?.payload?.error?.code,
+          ...(submissionContext ? { submission_context: submissionContext } : {})
+        }
+      }));
     } finally {
-      form.removeAttribute("aria-busy");
-      if (button) { button.disabled = false; button.classList.remove("is-busy"); }
+      if (submissionIsCurrent()) {
+        form.removeAttribute("aria-busy");
+        if (button) { button.disabled = false; button.classList.remove("is-busy"); }
+      }
     }
   };
 
@@ -427,6 +470,15 @@
         "chapter.pre_provider_context_budget_exceeded": "本地上下文预算超出安全上限",
         "chapter.pre_provider_provenance_unavailable": "Git 来源记录环境异常，任务已暂停",
         "chapter.repair_not_converging": "自动修订未收敛，任务已安全暂停",
+        "chapter.stale_scene_evidence": "自动修订与场景证据对不齐，任务已安全暂停",
+        "chapter.scene_boundary_validation": "场景边界校验未通过，任务已安全暂停",
+        "chapter.scene_schema_validation": "场景响应格式错误，任务已安全暂停",
+        "chapter.bridge_prevalidation": "开写前衔接预检未通过，任务已安全暂停",
+        "chapter.provider_partial_response": "模型部分响应中断，已保留已付费内容，任务已安全暂停",
+        "chapter.local_budget_after_provider": "本地预算在已有调用后中断，已保留已付费内容，任务已安全暂停",
+        "chapter.context_budget_after_provider": "已付费调用后上下文预算中断，已保留已付费内容，任务已安全暂停",
+        "chapter.structured_context_after_provider": "已付费调用后结构化上下文装配中断，已保留已付费内容，任务已安全暂停",
+        "chapter.execution_stopped": "写作已停止，未取得完整执行结果",
         "chapter.needs_revision": "章节需要作者修订",
         "chapter.needs_recovery": "章节已安全暂停，等待恢复",
         "draft.source_upgrade_conflict": "作者草稿已保留，发现更新恢复源",
@@ -449,6 +501,15 @@
         "chapter.pre_provider_context_budget_exceeded": "awaiting_input",
         "chapter.pre_provider_provenance_unavailable": "awaiting_input",
         "chapter.repair_not_converging": "awaiting_input",
+        "chapter.stale_scene_evidence": "awaiting_input",
+        "chapter.scene_boundary_validation": "awaiting_input",
+        "chapter.scene_schema_validation": "awaiting_input",
+        "chapter.bridge_prevalidation": "awaiting_input",
+        "chapter.provider_partial_response": "awaiting_input",
+        "chapter.local_budget_after_provider": "awaiting_input",
+        "chapter.context_budget_after_provider": "awaiting_input",
+        "chapter.structured_context_after_provider": "awaiting_input",
+        "chapter.execution_stopped": "awaiting_input",
         "chapter.needs_revision": "awaiting_input",
         "chapter.needs_recovery": "needs_recovery",
         "recovery.completed": "completed"
@@ -597,8 +658,8 @@
       "status", "progress", "stage", "event", "queue", "metrics", "attention", "complete",
       "job.queued", "job.starting", "job.pause_requested", "job.paused", "job.completed",
       "job.failed", "job.needs_recovery", "job.cancel_requested", "job.cancelled_provider_uncertain",
-       "job.author_confirmed_resume", "chapter.started", "chapter.committed", "chapter.needs_revision",
-       "chapter.pre_provider_context_budget_exceeded", "chapter.pre_provider_provenance_unavailable", "chapter.repair_not_converging",
+       "job.author_confirmed_resume", "chapter.started", "chapter.committed", "chapter.execution_stopped", "chapter.needs_revision",
+       "chapter.pre_provider_context_budget_exceeded", "chapter.pre_provider_provenance_unavailable", "chapter.repair_not_converging", "chapter.stale_scene_evidence", "chapter.scene_boundary_validation", "chapter.scene_schema_validation", "chapter.bridge_prevalidation", "chapter.provider_partial_response", "chapter.local_budget_after_provider", "chapter.context_budget_after_provider", "chapter.structured_context_after_provider",
         "chapter.needs_recovery", "draft.source_upgrade_conflict", "recovery.completed", "loop_start", "step_start", "step_end",
       "step_failed", "loop_end", "engine.progress"
     ].forEach((type) => source.addEventListener(type, receive));

@@ -281,9 +281,12 @@ def event_authority_write_operation(
         raise EventAuthorityPersistenceBarrierError(
             f"event_authority_writer_kind_invalid: {writer_kind!r}"
         )
-    story_root, home, resolver = _barrier_layout(story_project_root)
+    story_root = assert_safe_local_tree(story_project_root)
     stack = ExitStack()
     try:
+        from workbench.book_ownership import book_output_write_lock
+        stack.enter_context(book_output_write_lock(story_root, book_id=expected_book_id))
+        story_root, home, resolver = _barrier_layout(story_root)
         # PersistenceV2.commit acquires its exact apply-target locks below this
         # fence; pre-acquiring those same non-reentrant Windows byte locks would
         # self-deadlock.
@@ -293,7 +296,11 @@ def event_authority_write_operation(
         raise EventAuthorityPersistenceBarrierError(
             "event_authority_writer_busy: another StoryProject authority writer owns the lock"
         ) from exc
+    except BaseException:
+        stack.close()
+        raise
     with stack:
+        _initialize_registry_directories(home, resolver)
         # Outline/session writers use this durable fence before their own
         # narrower locks.  Recovery always takes it because a pending entry may
         # be a history transaction.  History writers retain it through their
@@ -367,17 +374,24 @@ def reconcile_event_authority_persistence(
 ) -> dict[str, Any]:
     """Recover all transaction roots registered for one StoryProject."""
 
-    story_root, home, resolver = _barrier_layout(story_project_root)
+    story_root = assert_safe_local_tree(story_project_root)
     stack = ExitStack()
     try:
+        from workbench.book_ownership import book_output_write_lock
+        stack.enter_context(book_output_write_lock(story_root, book_id=expected_book_id))
+        story_root, home, resolver = _barrier_layout(story_root)
         stack.enter_context(persistence_run_lock(home))
     except PersistenceLockError as exc:
         stack.close()
         raise EventAuthorityPersistenceBarrierError(
             "event_authority_writer_busy: another StoryProject authority writer owns the lock"
         ) from exc
+    except BaseException:
+        stack.close()
+        raise
     with stack:
         dependency_stack = ExitStack()
+        _initialize_registry_directories(home, resolver)
         try:
             dependency_stack.enter_context(
                 persistence_run_lock(_dependency_fence_root(resolver))
@@ -839,6 +853,11 @@ def _barrier_layout(
     resolver.ensure_parent(sentinel)
     home = resolver.resolve(sentinel).path.parent
     assert_safe_local_tree(home)
+    return story_root, home, resolver
+
+
+def _initialize_registry_directories(home: Path, resolver: SafePathResolver) -> None:
+    """Create EA state namespaces only after owning the global writer lock."""
     for state in (
         "pending",
         "recovery_required",
@@ -847,7 +866,6 @@ def _barrier_layout(
         "abandoned",
     ):
         _registry_dir(home, resolver, state)
-    return story_root, home, resolver
 
 
 def _dependency_fence_root(resolver: SafePathResolver) -> Path:

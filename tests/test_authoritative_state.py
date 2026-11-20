@@ -39,6 +39,85 @@ def _context() -> dict:
 
 
 class AuthoritativeStateTests(unittest.TestCase):
+    def test_new_character_alias_delta_uses_implicit_canonical_alias_as_before_state(self) -> None:
+        adapted = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 1,
+                    "deltas": {
+                        "characters": [
+                            {
+                                "character_id": "仓管员",
+                                "field": "canonical_name",
+                                "before": None,
+                                "after": "仓管员",
+                            },
+                            {
+                                "character_id": "仓管员",
+                                "field": "aliases",
+                                "before": None,
+                                "after": ["仓管员"],
+                            },
+                            {
+                                "character_id": "仓管员",
+                                "field": "status",
+                                "before": None,
+                                "after": "临时受保护者",
+                            },
+                        ]
+                    },
+                }
+            ],
+            base_state=empty_authoritative_state(),
+        )
+
+        self.assertEqual(["仓管员"], adapted["character_changes"][1]["before"])
+        report = validate_authoritative_state_delta(
+            base_state=empty_authoritative_state(),
+            chapter_text="",
+            state_delta=adapted,
+        )
+
+        self.assertTrue(report["accepted"])
+        self.assertEqual(
+            ["仓管员"],
+            report["state_after"]["characters"]["仓管员"]["aliases"],
+        )
+
+    def test_existing_character_alias_delta_still_requires_exact_before_state(self) -> None:
+        base = empty_authoritative_state()
+        base["characters"]["仓管员"] = {
+            "character_id": "仓管员",
+            "canonical_name": "仓管员",
+            "aliases": ["仓管员"],
+        }
+        adapted = adapt_scene_deltas_to_authoritative_delta(
+            [
+                {
+                    "index": 1,
+                    "deltas": {
+                        "characters": [
+                            {
+                                "character_id": "仓管员",
+                                "field": "aliases",
+                                "before": None,
+                                "after": ["仓管员", "北院仓管"],
+                            }
+                        ]
+                    },
+                }
+            ],
+            base_state=base,
+        )
+        report = validate_authoritative_state_delta(
+            base_state=base,
+            chapter_text="",
+            state_delta=adapted,
+        )
+
+        self.assertFalse(report["accepted"])
+        self.assertIn("character_state_rollback", _codes(report))
+
     def test_valid_changes_advance_all_ledgers(self) -> None:
         base = empty_authoritative_state()
         report = validate_authoritative_state_delta(
@@ -387,7 +466,14 @@ class AuthoritativeStateTests(unittest.TestCase):
         self.assertIn("城西物流园方向通勤道", attached["story_state"]["required_opening_bridge"])
         self.assertIn("陆沉", attached["story_state"]["required_opening_bridge"])
 
-    def test_explicit_empty_final_roster_clears_analyzer_characters(self) -> None:
+    def test_explicit_empty_final_roster_keeps_analyzer_characters(self) -> None:
+        """Empty Scene final cast must not wipe a non-empty analyzer cast.
+
+        Scene drafts often declare ``characters_present: []`` when they only
+        tracked deltas; wiping continuity cast then stalls the next chapter's
+        opening-bridge validation / repair.
+        """
+
         attached = _attach_authoritative_scene_delta(
             {
                 "story_state": {
@@ -418,8 +504,69 @@ class AuthoritativeStateTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual([], attached["story_state"]["last_scene_characters"])
-        self.assertEqual("roof", attached["story_state"]["required_opening_bridge"])
+        self.assertEqual(["Mira"], attached["story_state"]["last_scene_characters"])
+        self.assertIn("roof", attached["story_state"]["required_opening_bridge"])
+        self.assertIn("Mira", attached["story_state"]["required_opening_bridge"])
+        self.assertIn("roof", attached.get("new_locations") or [])
+        spatial = attached.get("spatial_state") or {}
+        self.assertIn("roof", (spatial.get("spaces") or {}))
+
+    def test_verified_final_location_registers_into_analysis_locations(self) -> None:
+        attached = _reconcile_story_state_with_final_scene(
+            {
+                "new_locations": ["cold store"],
+                "story_state": {
+                    "last_chapter_ending": "They left the cold store.",
+                    "last_scene_location": "cold store",
+                    "last_scene_characters": ["陆沉"],
+                    "open_threads": [],
+                    "required_opening_bridge": "cold store",
+                },
+            },
+            {
+                "scene_state_final": {
+                    "current_location": "北侧维护通道",
+                    "characters_present": ["陆沉", "赵铁"],
+                }
+            },
+            language="zh-CN",
+        )
+
+        self.assertEqual("北侧维护通道", attached["story_state"]["last_scene_location"])
+        self.assertIn("北侧维护通道", attached["new_locations"])
+        self.assertIn("北侧维护通道", (attached.get("spatial_state") or {}).get("spaces") or {})
+        self.assertIn("陆沉", attached["story_state"]["required_opening_bridge"])
+
+    def test_stale_opening_scene_location_does_not_override_ending_in_prose(self) -> None:
+        attached = _reconcile_story_state_with_final_scene(
+            {
+                "new_locations": ["未登记电缆夹层靠外盲区", "废弃管廊支仓"],
+                "story_state": {
+                    "last_chapter_ending": "门外，水流撞上废管，发出一声比刚才更近的空响。",
+                    "last_scene_location": "废弃管廊支仓",
+                    "last_scene_characters": ["陆沉", "顾岚"],
+                    "open_threads": [],
+                    "required_opening_bridge": "废弃管廊支仓；陆沉、顾岚",
+                },
+            },
+            {
+                "scene_state_final": {
+                    "current_location": "未登记电缆夹层靠外盲区",
+                    "characters_present": ["陆沉", "顾岚"],
+                }
+            },
+            language="zh-CN",
+            chapter_text=(
+                "上一轮通信结束后，陆沉和顾岚仍留在未登记电缆夹层靠外盲区。"
+                "两人确认靠外夹层已经清空，才沿复核过的低矮段撤进废弃管廊支仓。"
+                "陆沉守在支仓外侧的标线后，等待下一次定时联络。"
+                "门外，水流撞上废管，发出一声比刚才更近的空响。"
+            ),
+        )
+
+        self.assertEqual("废弃管廊支仓", attached["story_state"]["last_scene_location"])
+        self.assertIn("废弃管廊支仓", attached["story_state"]["required_opening_bridge"])
+        self.assertNotIn("未登记电缆夹层靠外盲区", attached["story_state"]["required_opening_bridge"])
 
     def test_memory_event_is_the_replayable_authority(self) -> None:
         memory = create_empty_typed_canonical_memory(book_id="book-authority")

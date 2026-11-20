@@ -19,6 +19,10 @@ from core.story_project.identity import (
     validate_project_identity,
 )
 from core.story_project.read_set import capture_story_project_read_set
+from core.story_project.legacy_memory_integrity import require_legacy_memory_integrity
+from core.story_project.reviewed_state_context import (
+    reviewed_state_memory_context, reviewed_state_snapshot, validated_reviewed_state_context,
+)
 
 
 StoryProjectContextLoader = Callable[[dict[str, Any], dict[str, Any], int | None], Any]
@@ -155,6 +159,7 @@ class StoryProjectContextService:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if not context:
             return snapshot, memory_context
+        reviewed = validated_reviewed_state_context(context)
         identity_payload = context.get("project_identity")
         identity = validate_project_identity(identity_payload) if isinstance(identity_payload, dict) else None
         if identity is not None:
@@ -184,6 +189,8 @@ class StoryProjectContextService:
                 StoryProjectContextService.apply_authority(context, snapshot),
                 _event_authority_memory_context(context, identity),
             )
+        if reviewed is not None:
+            return reviewed_state_snapshot(context), reviewed_state_memory_context(context)
         merged_snapshot = _deep_merge_dict(snapshot, context.get("snapshot_overlay"))
         if identity is not None:
             merged_snapshot["book_id"] = identity.book_id
@@ -212,6 +219,8 @@ class StoryProjectContextService:
 
     @staticmethod
     def apply_authority(context: dict[str, Any] | None, snapshot: dict[str, Any]) -> dict[str, Any]:
+        if validated_reviewed_state_context(context) is not None:
+            return reviewed_state_snapshot(context)
         if not isinstance(context, dict) or context.get("story_state_mode") != "strict":
             return snapshot
         identity = context.get("project_identity")
@@ -264,6 +273,10 @@ class StoryProjectContextService:
                 "strict_semantic_state_missing",
                 "strict StoryProject context is missing authoritative semantic state",
             )
+        try:
+            require_legacy_memory_integrity(semantic)
+        except ValueError as exc:
+            raise StoryProjectContextError("legacy_memory_requires_review", str(exc)) from exc
         for field in (
             "story_state",
             "world_state",

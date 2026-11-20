@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from core.project_profile import normalize_project_profile
 from core.schema import validate_schema
 from core.state.story_state_context import project_story_state_for_model
 from core.story_project.coverage import build_blueprint_plan
+from core.story_project.reviewed_state_context import validated_reviewed_state_context
 from core.structured_context import select_text_blocks
 
 
@@ -62,6 +64,7 @@ def build_input_pack(
     narrative_rules: str | None = None,
     story_project_context: dict[str, Any] | None = None,
     generation_state_view: dict[str, Any] | None = None,
+    prose_only: bool = False,
 ) -> str:
     return f"""You are NovelAgent's chapter generation module. Generate the next chapter from the runtime Snapshot and Director decision.
 
@@ -115,12 +118,24 @@ def build_input_pack(
 - If Project Profile sets a language, write the chapter only in that language.
 - Continue directly from Story State and explain Spatial State transitions before changing locations.
 - Treat Authoritative State stable IDs, aliases, relationships, rosters, counters, inventory, locations, and events as binding.
-- Express every state change as a structured Scene delta; never infer a replacement identity or reset a counter.
+{_state_change_output_requirement(prose_only)}
 - Introduce or intensify at least one concrete conflict.
 - Treat Snapshot and Memory Index as read-only runtime context.
 - If Recovery Context is available, address its problem codes and validation coverage gaps without contradicting the Snapshot.
 - If StoryProject Chapter Blueprint is present, treat its required_beats and ending_pressure as mandatory chapter contract.
 - Return only chapter prose, not analysis or JSON."""
+
+
+def _state_change_output_requirement(prose_only: bool) -> str:
+    if prose_only:
+        return (
+            "- Render state changes only in novel prose. Do not output event ledgers, "
+            "Scene deltas, state patches, continuity reports, or JSON."
+        )
+    return (
+        "- Express every state change as a structured Scene delta; never infer a "
+        "replacement identity or reset a counter."
+    )
 
 
 def _narrative_rules_section(narrative_rules: str | None) -> str:
@@ -141,6 +156,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
     if not isinstance(story_project_context, dict):
         return ""
     event_authority = _uses_event_authority(story_project_context)
+    reviewed = validated_reviewed_state_context(story_project_context)
     blueprint = story_project_context.get("chapter_blueprint")
     chapter_context_read_set = (
         blueprint.get("chapter_context_read_set")
@@ -149,7 +165,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
     )
     explicit_chapter_context = (
         isinstance(chapter_context_read_set, dict)
-        and chapter_context_read_set.get("mode") == "explicit"
+        and chapter_context_read_set.get("mode") in {"explicit", "derived"}
     )
     payload = {
         "chapter_blueprint": _prompt_chapter_blueprint(
@@ -170,7 +186,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         "tracking_excerpts": _compact_story_sources(
             (
                 {}
-                if event_authority or explicit_chapter_context
+                if event_authority or reviewed is not None or explicit_chapter_context
                 else story_project_context.get("tracking_files")
             ),
             excerpt_chars=2000,
@@ -178,7 +194,7 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
         "setting_excerpts": _compact_story_sources(
             (
                 {}
-                if event_authority or explicit_chapter_context
+                if event_authority or reviewed is not None or explicit_chapter_context
                 else story_project_context.get("setting_files")
             ),
             excerpt_chars=1200,
@@ -198,7 +214,36 @@ def _story_project_section(story_project_context: dict[str, Any] | None) -> str:
             story_project_context, event_authority
         ),
     }
-    return "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+    opening = []
+    if reviewed is not None:
+        if "genesis" in story_project_context["project_identity"].get("reviewed_state", {}):
+            opening = [ref["text"] for ref in reviewed["static_references"]]
+        else:
+            payload["approved_static_references"] = copy.deepcopy(reviewed["static_references"])
+        payload["structured_foreshadowing"] = copy.deepcopy(
+            (story_project_context.get("semantic_state") or {}).get("foreshadowing") or [])
+        payload["current_state_authority"] = {
+            "source": "legacy_reviewed_state", "source_sha256": reviewed["source_sha256"],
+            "payload_sha256": reviewed["payload_sha256"],
+            "manual_sources_sha256": reviewed["manual_sources_sha256"],
+            "manual_reference_mode": "structured_static_fields_only",
+        }
+        payload["source_resolution"] = {
+            "precedence": ["current_outline_or_user_input", "legacy_reviewed_state", "previous_prose",
+                           "static_manual_fields", "model_inference"],
+            "entries": [{"field": "authoritative_state", "chosen_source": "legacy_reviewed_state",
+                         "reason": "confirmed_chapter_state_bound_to_project_sources"}],
+        }
+    section = "\n\n# StoryProject Chapter Blueprint\n" + _dump(payload)
+    if opening:
+        # The blueprint can be compacted independently. Keep explicit author settings whole.
+        section += "\n\n# Author Confirmed Opening Settings\n" + json.dumps(opening, ensure_ascii=False, separators=(",", ":"))
+    if reviewed and "previous_chapter_facts" in reviewed:
+        # Keep the accepted meaning and its original quotations together, outside
+        # the independently ranked, cumulative authority and blueprint sections.
+        section += "\n\n# Previous Chapter Confirmed Facts\n" + json.dumps(
+            reviewed["previous_chapter_facts"], ensure_ascii=False, separators=(",", ":"))
+    return section
 
 
 def _prompt_chapter_blueprint(

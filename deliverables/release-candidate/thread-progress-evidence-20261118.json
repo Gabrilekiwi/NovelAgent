@@ -1,0 +1,167 @@
+{
+  "code_fingerprint": "c360b50995855224422d965dd44b0245b81265a2bfb2160d3823a9e1eb0b8076",
+  "regression": {
+    "concrete_action": {
+      "prose": "周岚发现闸门控制器刚被人从内部使用。控制室日志显示顾言在十分钟前刷卡进入封闭区。闸门后的声音准确叫出了林澈的名字。",
+      "old": "warning",
+      "new": {
+        "code": "advances_open_threads_or_conflicts",
+        "status": "pass",
+        "severity": "medium",
+        "message": "A narrated action or finding touches an open thread.",
+        "evidence": {
+          "thread": "顾言为何拥有封闭区权限",
+          "matched_terms": [
+            "顾言",
+            "封闭区"
+          ],
+          "observed_action": "显示",
+          "witness": "控制室日志显示顾言在十分钟前刷卡进入封闭区"
+        }
+      }
+    },
+    "question_repeated": {
+      "prose": "顾言为何拥有封闭区权限？",
+      "old": "pass",
+      "new": {
+        "code": "advances_open_threads_or_conflicts",
+        "status": "warning",
+        "severity": "medium",
+        "message": "No clear narrative evidence of progress on a current thread or conflict.",
+        "evidence": {
+          "candidate_terms": [
+            "顾言为何拥有封闭区权限",
+            "闸门后的求救者如何知道林澈的名字"
+          ]
+        }
+      }
+    },
+    "unrelated": {
+      "prose": "院子里下起了雨。",
+      "old": "warning",
+      "new": {
+        "code": "advances_open_threads_or_conflicts",
+        "status": "warning",
+        "severity": "medium",
+        "message": "No clear narrative evidence of progress on a current thread or conflict.",
+        "evidence": {
+          "candidate_terms": [
+            "顾言为何拥有封闭区权限",
+            "闸门后的求救者如何知道林澈的名字"
+          ]
+        }
+      }
+    }
+  },
+  "original_book": {
+    "check_scope": "thread progress on unchanged formal prose using recorded chapter 63 threads",
+    "chapter": 64,
+    "prose_sha256": "2f00c3c6c844e9cb8cf37652983316aaafd9d397cc973d3549ccc865e2f52309",
+    "carryover_threads": [
+      "备用阀口至少四分钟，扫描空隙三分钟，缺口待复核，不能算可用水源",
+      "消防站侧仅余一天合格饮水，未合格原水不能计入饮用库存",
+      "陆遥信号继续封存，不回呼不测向；缺水不改变既定方向",
+      "医院组和消防站组静默分散，不会合不交换最终地址；新链不放托片、不启用窗口、不发缺水求援"
+    ],
+    "check": {
+      "code": "advances_open_threads_or_conflicts",
+      "status": "pass",
+      "severity": "medium",
+      "message": "A narrated action or finding touches an open thread.",
+      "evidence": {
+        "thread": "备用阀口至少四分钟，扫描空隙三分钟，缺口待复核，不能算可用水源",
+        "matched_terms": [
+          "四分钟",
+          "阀"
+        ],
+        "observed_action": "断了",
+        "witness": "原定的四分钟开阀，从这里就断了。"
+      }
+    }
+  },
+  "new_model_calls": 0,
+  "isolated_policy_projection": {
+    "concrete_action": {
+      "automatic_action": "continue",
+      "findings": []
+    },
+    "question_repeated": {
+      "automatic_action": "pause",
+      "findings": [
+        [
+          [
+            "advances_open_threads_or_conflicts"
+          ],
+          "pause"
+        ]
+      ]
+    },
+    "unrelated": {
+      "automatic_action": "pause",
+      "findings": [
+        [
+          [
+            "advances_open_threads_or_conflicts"
+          ],
+          "pause"
+        ]
+      ]
+    }
+  },
+  "original_book_next_input": {
+    "committed_through": 64,
+    "equivalent_prose_sha256": "2f00c3c6c844e9cb8cf37652983316aaafd9d397cc973d3549ccc865e2f52309",
+    "prepared_chapter": 65,
+    "actual_input_sha256": "df055869d365cc09b584bc569ad44f1a7bab264898e1d50fc56cbd64a8b21de2",
+    "new_fact_types": 6,
+    "verbatim_quotes": 15,
+    "baseline_fields_retained": [
+      "inventory",
+      "numeric_counters",
+      "locations",
+      "roster",
+      "characters",
+      "relationships"
+    ],
+    "generation_dispatched": false
+  },
+  "acceptance": {
+    "results": {
+      "scoped": {
+        "tests": 48,
+        "seconds": 2.307,
+        "report": "thread-progress-tests-20261118.xml"
+      },
+      "restore": {
+        "tests": 1,
+        "seconds": 873.897,
+        "report": "thread-restore-final-20261118.xml"
+      }
+    },
+    "original_test_unchanged": true,
+    "source_pause_chapter": 3,
+    "source_archive": "backup_ce7a9b51cad348e394e95b211067724e",
+    "source_formal_through_after_restore": 2,
+    "restored_cold_formal_through": 4,
+    "restored_head": {
+      "kind": "chapter",
+      "previous": {
+        "document_sha256": "3756c331f1ea1065c6e491153a42329e398deb38c7fbd8d442f7042b0642f72c",
+        "receipt_relative_path": "reviewed/receipts/commit_055365603278ccb771db1a86a6ca2ebe.json"
+      },
+      "receipt_id": "reviewed-commit_f7b3c229685715f16e648914346f3664",
+      "receipt_relative_path": "reviewed/receipts/commit_f7b3c229685715f16e648914346f3664.json",
+      "request_sha256": "def18f1ae764d86af646682f91a96b586fdaeab38d03091dc760aa49c07f002a",
+      "run_id": "commit_f7b3c229685715f16e648914346f3664"
+    },
+    "restored_chapter4_prose_sha256": "ca5f9d78ea7ac55f8eda930556a0f0c69196c8dac9145417043ef6b8f44a8f4a",
+    "restored_author_extraction_count": 1,
+    "local_provider_fixture_calls_per_chapter": {
+      "2": 2,
+      "3": 2,
+      "4": 2
+    },
+    "external_model_calls": 0,
+    "version_drift_rehearsal": "thread-restore-test-20261118.xml (earlier non-final run: 409 after source changed; not counted as passing)"
+  }
+}

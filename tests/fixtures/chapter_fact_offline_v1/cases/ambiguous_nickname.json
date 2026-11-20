@@ -1,0 +1,87 @@
+{
+  "id": "ambiguous_nickname",
+  "category": "identity_ambiguity",
+  "checker": "fact_prepare",
+  "material": {
+    "chapter_text": "两个姓周的守卫站在一起：周岚和周宁。林澈把一枚信标交给了小周。",
+    "proposal": {
+      "schema_version": "1.0",
+      "facts": [
+        {
+          "local_key": "event_1",
+          "kind": "event",
+          "summary": "林澈从仓库抵达旧城站，周岚在站内迎接。",
+          "evidence_quotes": [
+            "林澈把一枚信标交给了小周。"
+          ],
+          "proposal": {
+            "event_type": "arrival_and_handover",
+            "status": "completed",
+            "occurrence_location": "location_old_station",
+            "onsite_participants": [
+              {
+                "entity_id": "char_lin_che",
+                "role": "actor"
+              },
+              {
+                "entity_id": "char_zhou_lan",
+                "role": "actor"
+              }
+            ],
+            "remote_participants": [],
+            "transported_items": [],
+            "related_entities": []
+          }
+        },
+        {
+          "local_key": "inventory_1",
+          "kind": "inventory",
+          "summary": "林澈的信标库存增加1枚",
+          "evidence_quotes": [
+            "林澈把一枚信标交给了小周。"
+          ],
+          "proposal": {
+            "owner_id": "char_zhou_lan",
+            "item_id": "item_beacon",
+            "delta": 1,
+            "source_event_key": "event_1"
+          }
+        }
+      ]
+    },
+    "baseline": "baseline.json",
+    "baseline_additions": {
+      "characters": {
+        "char_zhou_ning": {
+          "character_id": "char_zhou_ning",
+          "canonical_name": "周宁",
+          "aliases": [
+            "周宁"
+          ]
+        }
+      },
+      "inventory": {
+        "zhou_beacon": {
+          "inventory_id": "zhou_beacon",
+          "owner_id": "char_zhou_lan",
+          "item_id": "item_beacon",
+          "quantity": 0
+        }
+      }
+    }
+  },
+  "expected": {
+    "disposition": "review",
+    "policy_code": "identity_ambiguous"
+  },
+  "annotation": {
+    "source": "agent_curated_from_explicit_fixture",
+    "human_review_status": "pending",
+    "rationale": "小周可能指向两位姓周角色；提案指定周岚的ID不能替代作者消歧。"
+  },
+  "origin": {
+    "kind": "synthetic_or_existing_repo_fixture",
+    "path": "examples/chapter_fact_review/seven_kinds.json",
+    "sha256": "1e8df44e4e66d247251325eca99e3a7db9f7763d886b018a4c530f85a564ac26"
+  }
+}

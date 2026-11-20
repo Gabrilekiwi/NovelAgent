@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 import uuid
+
+import pytest
 from pathlib import Path
 
 from core.engine.persistence import (
@@ -365,3 +368,31 @@ class PersistenceTransactionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(os.name == "nt", "Win32 filesystem semantics")
+def test_long_windows_call_record_is_durable_and_cannot_be_overwritten(tmp_path):
+    from core.engine.persistence import atomic_create_text, atomic_write_text
+    from core.model_calls import ModelCallStore
+    from core.local_file_io import local_io_path
+
+    root = tmp_path
+    while len(str(root)) < 240:
+        root /= "long-author-book-location"
+    store = ModelCallStore(root)
+    path = store.intent_path("openai-chapter_generation-scene-0001-primary-a1")
+    # Use the plain user path on first write, then reopen the same evidence store.
+    plain = root / "intents" / path.name
+    atomic_create_text(plain, "original")
+    assert ModelCallStore(root).intent_path("openai-chapter_generation-scene-0001-primary-a1").read_text() == "original"
+    with pytest.raises(FileExistsError):
+        atomic_create_text(plain, "replacement")
+    assert local_io_path(plain).read_text() == "original"
+    atomic_write_text(plain, "author revision")
+    assert local_io_path(plain).read_text() == "author revision"
+
+    # An intent without a receipt must still be found on reopening a deep book.
+    calls = ModelCallStore(root / "another-execution" / "model_calls")
+    intent = calls.create_intent(call_id="call-1", attempt_id="attempt-1", provider="openai", model="offline",
+                                 stage="chapter_generation", request={"messages": []}, budget_reservation={"calls": 1})
+    assert [item['intent_hash'] for item in ModelCallStore(calls.root).list_uncertain_calls()] == [intent['intent_hash']]

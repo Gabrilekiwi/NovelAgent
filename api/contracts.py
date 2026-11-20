@@ -10,6 +10,20 @@ from typing import Any, Mapping
 MODEL_ENDPOINT_OFFICIAL = "official"
 MODEL_ENDPOINT_OPENAI_COMPATIBLE = "openai_compatible"
 MODEL_ENDPOINT_UNKNOWN = "unknown"
+MODEL_USAGE_SOURCE_KEY = "novelagent_usage_source"
+
+
+def reported_model_usage(usage: Mapping[str, Any]) -> dict[str, Any]:
+    """Mark only an actual non-empty SDK usage mapping, without inventing zeroes."""
+    result = copy.deepcopy(dict(usage))
+    # Reserved attribution is owned by trusted adapters, never copied from an
+    # arbitrary compatible endpoint's raw usage object as a billing claim.
+    result.pop(MODEL_USAGE_SOURCE_KEY, None)
+    result.pop("novelagent_cost_evidence", None)
+    result.pop("novelagent_billing_response", None)
+    if result:
+        result[MODEL_USAGE_SOURCE_KEY] = "provider_reported"
+    return result
 
 
 class ModelResponse(str):

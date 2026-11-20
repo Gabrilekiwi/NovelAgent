@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import unittest
 
 from core.quality.final_artifact_integrity import FinalArtifactIntegrityGate
@@ -13,6 +14,7 @@ from core.quality.repair_patch import (
 )
 from core.quality.scene_evidence import (
     SceneEvidenceAlignmentError,
+    canonicalize_scene_local_repair_patch,
     realign_scene_evidence,
 )
 
@@ -37,6 +39,27 @@ def _pipeline() -> dict:
             },
         ],
     }
+
+
+def _duplicate_tail_pipeline() -> dict:
+    first = "Alpha enters the corridor."
+    second = "Beta spots the marker.\n\nThe damaged gate is open."
+    third = "Gamma seals the route."
+    merged = "\n\n".join((first, second, third))
+    drafts = [
+        {"index": 1, "text": first},
+        {"index": 2, "text": second},
+        {"index": 3, "text": third},
+    ]
+    cursor = 0
+    spans = []
+    for draft in drafts:
+        text = draft["text"]
+        spans.append(
+            {"index": draft["index"], "start_char": cursor, "end_char": cursor + len(text), "chars": len(text)}
+        )
+        cursor += len(text) + 2
+    return {"merged_chapter": merged, "scene_drafts": drafts, "scene_spans": spans}
 
 
 class RepairPatchTests(unittest.TestCase):
@@ -127,6 +150,72 @@ class SceneEvidenceAlignmentTests(unittest.TestCase):
                 patch=patch,
                 stage="repair",
             )
+
+    def test_separator_only_crossing_deletion_is_canonicalized_to_scene_local_patch(self) -> None:
+        pipeline = _duplicate_tail_pipeline()
+        before = pipeline["merged_chapter"]
+        second = pipeline["scene_drafts"][1]["text"]
+        third = pipeline["scene_drafts"][2]["text"]
+        duplicate_tail = "\n\nThe damaged gate is open."
+        start = pipeline["scene_spans"][1]["start_char"] + second.rfind(duplicate_tail)
+        end = pipeline["scene_spans"][2]["start_char"]
+        raw_patch = coerce_repair_patch(
+            before,
+            {
+                "base_chapter_sha256": hashlib.sha256(before.encode("utf-8")).hexdigest(),
+                "mode": "stage_text_diff",
+                "operations": [
+                    {
+                        "start_char": start,
+                        "end_char": end,
+                        "expected_text_sha256": hashlib.sha256(
+                            before[start:end].encode("utf-8")
+                        ).hexdigest(),
+                        "replacement": "",
+                        "problem_codes": ["duplicate_scene_text"],
+                    }
+                ],
+            },
+        )
+        raw_after, _ = apply_repair_patch(before, raw_patch)
+
+        canonical_patch, audit = canonicalize_scene_local_repair_patch(
+            pipeline,
+            before_chapter=before,
+            patch=raw_patch,
+        )
+        canonical_after, _ = apply_repair_patch(before, canonical_patch)
+        updated = realign_scene_evidence(
+            pipeline,
+            before_chapter=before,
+            after_chapter=canonical_after,
+            patch=canonical_patch,
+            stage="repair",
+        )
+
+        self.assertIsNotNone(audit)
+        self.assertEqual("scene_separator_preservation_v1", audit["policy"])
+        self.assertEqual("\n\n".join((pipeline["scene_drafts"][0]["text"], second.removesuffix(duplicate_tail), third)), canonical_after)
+        self.assertEqual(canonical_after, updated["merged_chapter"])
+        self.assertNotEqual(raw_after, canonical_after)
+
+    def test_actual_cross_scene_rewrite_is_not_canonicalized(self) -> None:
+        pipeline = _pipeline()
+        before = pipeline["merged_chapter"]
+        raw_patch = build_repair_patch_from_texts(
+            before,
+            "A completely different single-scene chapter.",
+            mode="stage_text_diff",
+        )
+
+        unchanged_patch, audit = canonicalize_scene_local_repair_patch(
+            pipeline,
+            before_chapter=before,
+            patch=raw_patch,
+        )
+
+        self.assertIsNone(audit)
+        self.assertEqual(raw_patch["patch_sha256"], unchanged_patch["patch_sha256"])
 
     def test_old_scene_evidence_remains_blocking_after_text_changes(self) -> None:
         pipeline = _pipeline()

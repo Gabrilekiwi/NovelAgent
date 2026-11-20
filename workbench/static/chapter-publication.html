@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>确认发布章节 · NovelAgent</title>
+  <link rel="stylesheet" href="/static/workbench.css">
+  <link rel="stylesheet" href="/static/chapter-publication.css">
+  <script src="/static/chapter-publication.js" defer></script>
+</head>
+<body>
+  <main class="publication-page">
+    <header><a id="back" href="/">返回本章</a><p class="eyebrow">章节发布</p><h1 id="title">核对正文与事实</h1>
+      <p>先查看最终正文、质量检查和提交后的事实状态，再确认发布。发布会同时保存正文和本章事实。</p></header>
+    <p id="status" class="notice" role="status" aria-live="polite">正在读取已确认的审核记录……</p>
+    <p id="error" class="form-error" role="alert" hidden></p>
+    <section class="panel"><h2>最终正文</h2><p id="binding"></p><pre id="prose" class="publication-prose"></pre></section>
+    <section class="panel" id="preview-panel" hidden>
+      <h2>质量检查</h2><p id="quality"></p><ul id="checks"></ul>
+      <section aria-labelledby="quality-actions-heading"><h3 id="quality-actions-heading">问题与正文依据</h3>
+        <p id="quality-action-summary"></p><div id="quality-actions"></div>
+        <p>处理建议供本次审阅参考。修改正文后，需要重新提取事实并完成检查。</p>
+      </section>
+      <h2>本次接受的事实</h2><div id="facts"></div>
+      <div id="support-panel" hidden><h2>作者补充的身份与初始情况</h2>
+        <p>这些是本次审核中明确补充的内容，会与章节事实一同保存。</p><div id="support"></div></div>
+      <h2>提交后的事实状态</h2><p>展开各类事实，核对本章提交后的完整记录。</p><div id="state"></div>
+    </section>
+    <section class="panel publication-actions">
+      <div class="button-row"><button id="preview" class="button button-secondary" disabled>生成提交预览</button>
+        <button id="reload" class="button button-secondary">重新读取审核与预算</button>
+        <button id="resolve" class="button button-secondary" hidden>查询原提交结果</button>
+        <button id="recover" class="button button-secondary" hidden>恢复原事务</button>
+        <button id="restart" class="button button-secondary" hidden>重新准备提交</button></div>
+      <label id="confirm-label" hidden><input type="checkbox" id="confirmed"> 我已核对最终正文和事实，确认发布本章。</label>
+      <button id="commit" class="button button-primary" disabled>确认发布本章</button>
+      <p id="receipt" hidden></p>
+      <a id="next-chapter" class="button button-primary" hidden>开始下一章</a>
+    </section>
+  </main>
+</body>
+</html>

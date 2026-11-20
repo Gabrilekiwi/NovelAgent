@@ -1,0 +1,558 @@
+{
+  "actions": [
+    "anchor_last_scene_state",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review",
+    "manual_review"
+  ],
+  "attempt": 1,
+  "blocking_problem_count": 20,
+  "deterministic_step_count": 1,
+  "manual_review_count": 19,
+  "problem_count": 20,
+  "recovery": {
+    "available": false,
+    "failure_modes": [],
+    "new_problem_codes": [],
+    "previous_manual_review_count": 0,
+    "previous_repair_attempts": 0,
+    "previous_repair_risk_level": null,
+    "repair_budget_exhausted": false,
+    "repair_introduced_new_problems": false,
+    "repair_stalled": false,
+    "repeated_problem_codes": [],
+    "skipped_checks": [],
+    "source_problem_codes": [],
+    "source_run_id": null,
+    "source_status": null,
+    "unresolved_problem_codes": []
+  },
+  "repair_budget": 1,
+  "risk_level": "critical",
+  "severity_counts": [
+    {
+      "count": 18,
+      "severity": "critical"
+    },
+    {
+      "count": 2,
+      "severity": "high"
+    }
+  ],
+  "steps": [
+    {
+      "action": "anchor_last_scene_state",
+      "blocking": true,
+      "code": "missing_last_scene_continuity",
+      "evidence": [
+        {
+          "kind": "missing_last_scene_state",
+          "value": "location:物流园外围维修道"
+        },
+        {
+          "kind": "opening_excerpt",
+          "value": "梁魁的指挥车已经拐上东侧高架，车尾红灯在仓库间一闪，朝东街逃去。楼顶那座主控塔却没有因操控者离开而停下，塔身的蓝白指示灯一格格亮起，像一枚正在蓄力的心脏。\n\n赵铁把车载电台调到最低功率，指着仓库外的两辆车说：“先装人，再装滤芯。八名获救者分乘两车，全部进救援车的防护区；完好组和破损组分开封存，谁也不许把战斗位置占了。”"
+        }
+      ],
+      "index": 1,
+      "message": "Chapter opening does not anchor the last scene state before continuing.",
+      "parameters": {
+        "character": "",
+        "location": "物流园外围维修道"
+      },
+      "priority": 58,
+      "repair_hint": "Start from the last scene location, characters, and immediate consequence.",
+      "severity": "high",
+      "strategy": "Anchor the opening to the last scene location, characters, and immediate consequence.",
+      "validator": "spatial"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "llm_timeline_causality_inconsistent",
+      "evidence": [
+        {
+          "kind": "chapter_span",
+          "value": "梁魁的指挥车已经拐上东侧高架，车尾红灯在仓库间一闪，朝东街逃去。"
+        }
+      ],
+      "index": 2,
+      "message": "章节开头跳过了既定的开场衔接，直接从主控塔行动后的追逃状态开始，未呈现从备用电源亮起及监控室确认异常的过渡。",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "在当前章节开头补入物流园外围维修道的撤离或转向过程，并通过备用电源亮起、陆沉查看监控画面确认异常的场景完成与既定开场衔接；若保留现有开头，应调整上一章结尾或明确这是倒叙。",
+      "severity": "high",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "llm"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "电流被他制造的反向负载硬生生推回，电容组外壳炸开一圈蓝白火花。顾岚踩住摇晃的天线底座，咬牙把刀尖送进最后一枚支撑铆钉。主核彻底暴露。"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 3,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "电流被他制造的反向负载硬生生推回，电容组外壳炸开一圈蓝白火花。顾岚踩住摇晃的天线底座，咬牙把刀尖送进最后一枚支撑铆钉。主核彻底暴露。"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"paragraph\"}"
+        }
+      ],
+      "index": 4,
+      "message": "The same substantial paragraph appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "陆沉踏前半步，短刃没有劈向鼓胀的囊壁，而是沿着电容与囊体之间那条暗红脉络刺入。他只用了一击。脉冲在刀身上反冲，回声囊无声塌陷，吸满广播的肉膜迅速干瘪，屋顶的灯同时熄灭。远处装卸区传来的尸吼仍…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 5,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "陆沉踏前半步，短刃没有劈向鼓胀的囊壁，而是沿着电容与囊体之间那条暗红脉络刺入。他只用了一击。脉冲在刀身上反冲，回声囊无声塌陷，吸满广播的肉膜迅速干瘪，屋顶的灯同时熄灭。远处装卸区传来的尸吼仍…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"paragraph\"}"
+        }
+      ],
+      "index": 6,
+      "message": "The same substantial paragraph appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "陆沉没有把它按进自己的手臂。他先用刀尖抵住回声囊尸体，保持连续接触，再以握刀的手触到自己的腕骨，随后抓起三米内的便携消防扩音器，让尸体、武器、自身与扩音器连成一条接触链。蓝光沿刀柄滑过皮肤，…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 7,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "陆沉没有把它按进自己的手臂。他先用刀尖抵住回声囊尸体，保持连续接触，再以握刀的手触到自己的腕骨，随后抓起三米内的便携消防扩音器，让尸体、武器、自身与扩音器连成一条接触链。蓝光沿刀柄滑过皮肤，…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"paragraph\"}"
+        }
+      ],
+      "index": 8,
+      "message": "The same substantial paragraph appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "短促的提示在他脑中成形：反相耳膜只能针对已经记录的一种R-17引导频率，制造九十秒反相窗口。窗口启用时，范围内友方无线通信也会中断；扩音器过热后，十二小时内不可再次使用。"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 9,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "短促的提示在他脑中成形：反相耳膜只能针对已经记录的一种R-17引导频率，制造九十秒反相窗口。窗口启用时，范围内友方无线通信也会中断；扩音器过热后，十二小时内不可再次使用。"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"paragraph\"}"
+        }
+      ],
+      "index": 10,
+      "message": "The same substantial paragraph appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "顾岚没有立刻下楼。她蹲在主控塔残骸旁，把便携消防扩音器的旋钮拨回机械锁位，又看了一眼腕表。"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 11,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "楼下传来金属撞击声。赵铁的声音从有线内线里断续挤上来：“我读到主电容还有残压。别碰总闸，先拆脉冲输出母排。第一轮放出去的东西已经够多了。”"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 12,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "楼下传来金属撞击声。赵铁的声音从有线内线里断续挤上来：“我读到主电容还有残压。别碰总闸，先拆脉冲输出母排。第一轮放出去的东西已经够多了。”"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"paragraph\"}"
+        }
+      ],
+      "index": 13,
+      "message": "The same substantial paragraph appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "陆沉和顾岚沿检修梯返回主控平台。赵铁留在楼下，隔着墙体盯住电流表，一次报出一组读数。顾岚先拔掉备用天线的固定插销，再用绝缘钳剪断最后一段铜排。火星贴着积水窜过，主控塔没有重新亮起，只有屋顶那…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 14,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "陆沉和顾岚沿检修梯返回主控平台。赵铁留在楼下，隔着墙体盯住电流表，一次报出一组读数。顾岚先拔掉备用天线的固定插销，再用绝缘钳剪断最后一段铜排。火星贴着积水窜过，主控塔没有重新亮起，只有屋顶那…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"paragraph\"}"
+        }
+      ],
+      "index": 15,
+      "message": "The same substantial paragraph appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "赵铁的声音从楼下的备用频道里传上来：“反向负载已经锁住，电流还在翻。陆沉，三秒只有一次。”"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 16,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "下一瞬，回声囊腹部的脉冲骤然收缩，原本缠在电容组上的肉膜被电弧撑开。顾岚没有立刻挥刀，而是等蓄能灯由红转暗，才猛地扑向备用天线支架，刀背横扫，先砸断固定环，再用肩膀撞开第二根支撑杆。天线倾斜…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 17,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "下一瞬，回声囊腹部的脉冲骤然收缩，原本缠在电容组上的肉膜被电弧撑开。顾岚没有立刻挥刀，而是等蓄能灯由红转暗，才猛地扑向备用天线支架，刀背横扫，先砸断固定环，再用肩膀撞开第二根支撑杆。天线倾斜…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"paragraph\"}"
+        }
+      ],
+      "index": 18,
+      "message": "The same substantial paragraph appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "陆沉的太阳穴像被烧红的钢钉贯穿。他没有再把弱点视界铺满屋顶，只强行盯住那道刚暴露的暗红主核。视野边缘立刻泛起黑斑，耳中所有声音都隔着水传来；代价压进脑后，却没有新的侵蚀词条，侵蚀值仍是6/1…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"line\"}"
+        }
+      ],
+      "index": 19,
+      "message": "The same substantial line appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    },
+    {
+      "action": "manual_review",
+      "blocking": true,
+      "code": "duplicate_scene_text",
+      "evidence": [
+        {
+          "kind": "summary",
+          "value": "陆沉的太阳穴像被烧红的钢钉贯穿。他没有再把弱点视界铺满屋顶，只强行盯住那道刚暴露的暗红主核。视野边缘立刻泛起黑斑，耳中所有声音都隔着水传来；代价压进脑后，却没有新的侵蚀词条，侵蚀值仍是6/1…"
+        },
+        {
+          "kind": "integrity_evidence",
+          "value": "{\"occurrences\": 2, \"unit_kind\": \"paragraph\"}"
+        }
+      ],
+      "index": 20,
+      "message": "The same substantial paragraph appears more than once.",
+      "parameters": {
+        "raw_problem": {}
+      },
+      "priority": 1000,
+      "repair_hint": "Reject the artifact or regenerate the affected stage with the reported evidence.",
+      "severity": "critical",
+      "strategy": "No deterministic repair strategy is registered for this validation problem.",
+      "validator": "final_artifact_integrity"
+    }
+  ],
+  "warning_count": 0
+}

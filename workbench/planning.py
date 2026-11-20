@@ -14,11 +14,13 @@ from api.openai_client import chat_completion
 from core.model_call_runtime import ModelCallRuntimeContext
 from core.model_calls import ModelCallStore
 from core.story_project.paths import infer_next_chapter, prose_chapter_index
+from workbench.book_writes import registered_book_write, registered_record_write, recover_interrupted_operations
 from workbench.database import WorkbenchDatabase
 from workbench.outlines import (
     OutlineBatchRecord,
     OutlineBatchService,
     compute_source_fingerprint,
+    raise_if_remaining_approved_coverage,
     validate_outline_items,
 )
 
@@ -73,10 +75,22 @@ class OutlinePlanner:
         self.database = database
         self.outlines = outlines
         self.provider = provider or _durable_openai_provider
-        self._initialize()
+        self.database.initialize_component(self._initialize)
 
     def propose(
         self,
+        project_id: str,
+        *,
+        direction: str,
+        chapter_count: int = 10,
+        idempotency_key: str | None = None,
+        recover: bool = False,
+    ) -> tuple[PlanningOperation, OutlineBatchRecord]:
+        with registered_book_write(self.outlines.projects, project_id, database=self.database) as write:
+            return self._propose_owned(write, project_id, direction=direction, chapter_count=chapter_count, idempotency_key=idempotency_key, recover=recover)
+
+    def _propose_owned(
+        self, write,
         project_id: str,
         *,
         direction: str,
@@ -89,8 +103,9 @@ class OutlinePlanner:
             raise OutlinePlanningError("chapter_count must be an integer")
         if chapter_count < 1 or chapter_count > 20:
             raise OutlinePlanningError("chapter_count must be between 1 and 20")
-        project = self.outlines.projects.get(project_id)
+        project = write.project
         start_chapter = infer_next_chapter(project.root)
+        raise_if_remaining_approved_coverage(self.outlines, project, start_chapter)
         source_fingerprint_before = compute_source_fingerprint(project)
         context = collect_planning_context(project.root, start_chapter=start_chapter)
         if compute_source_fingerprint(project) != source_fingerprint_before:
@@ -122,6 +137,8 @@ class OutlinePlanner:
             context_sha256=context_sha,
             recover=recover,
         )
+        write.record = ('planning_operations', operation.id)
+        write.require()
         if operation.state == "completed":
             if not operation.batch_id:
                 raise OutlinePlanningError("completed planning operation has no outline batch")
@@ -142,6 +159,7 @@ class OutlinePlanner:
             chapter_count=chapter_count,
         )
         try:
+            write.require()
             raw = self.provider(messages, f"outline-plan-{operation.id}", evidence_root)
             try:
                 proposal = parse_outline_proposal(
@@ -167,6 +185,7 @@ class OutlinePlanner:
                         ),
                     },
                 ]
+                write.require()
                 repaired = self.provider(
                     repair_messages,
                     f"outline-repair-{operation.id}",
@@ -177,7 +196,7 @@ class OutlinePlanner:
                     start_chapter=start_chapter,
                     chapter_count=chapter_count,
                 )
-            self._save_proposal(operation.id, proposal)
+            self.__save_proposal_owned(write, operation.id, proposal)
             current_context_sha = _sha256(
                 _canonical_json(
                     collect_planning_context(project.root, start_chapter=start_chapter)
@@ -191,16 +210,17 @@ class OutlinePlanner:
                 raise OutlinePlanningError(
                     "StoryProject changed while the model was planning; output was preserved but cannot be approved"
                 )
+            write.require()
             batch = self.outlines.create_batch(
                 project_id,
                 proposal,
                 expected_source_fingerprint=source_fingerprint_before,
             )
-            completed = self._complete(operation.id, batch.id)
+            completed = self.__complete_owned(write, operation.id, batch.id)
             return completed, batch
         except Exception as exc:
             uncertain = _provider_state_uncertain(exc)
-            self._fail(operation.id, exc, uncertain=uncertain)
+            self.__fail_owned(write, operation.id, exc, uncertain=uncertain)
             if uncertain:
                 raise OutlinePlanningError(
                     "章纲模型调用状态不确定；工作台已禁止自动重试。请显式执行恢复。"
@@ -217,24 +237,11 @@ class OutlinePlanner:
         return _operation_from_row(row)
 
     def recover_after_restart(self) -> int:
-        with self.database.transaction() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE planning_operations
-                SET state = 'needs_recovery', error_json = ?, updated_at = ?
-                WHERE state = 'running'
-                """,
-                (
-                    _canonical_json(
-                        {
-                            "code": "workbench_restarted_during_outline_call",
-                            "automatic_retry": False,
-                        }
-                    ),
-                    _utc_now(),
-                ),
-            )
-        return int(cursor.rowcount)
+        count, self.recovery_blocked = recover_interrupted_operations(
+            self.outlines.projects, self.database, table="planning_operations",
+            error_json=_canonical_json({"code":"workbench_restarted_during_outline_call", "automatic_retry":False}),
+            timestamp=_utc_now())
+        return count
 
     def _initialize(self) -> None:
         with self.database.transaction() as connection:
@@ -280,8 +287,22 @@ class OutlinePlanner:
         context_sha256: str,
         recover: bool,
     ) -> PlanningOperation:
+        with registered_book_write(self.outlines.projects, project_id, database=self.database) as write:
+            return self.__claim_operation_owned(write, operation_id=operation_id, project_id=project_id, start_chapter=start_chapter, chapter_count=chapter_count, request_sha256=request_sha256, context_sha256=context_sha256, recover=recover)
+
+    def __claim_operation_owned(
+        self, write,
+        *,
+        operation_id: str,
+        project_id: str,
+        start_chapter: int,
+        chapter_count: int,
+        request_sha256: str,
+        context_sha256: str,
+        recover: bool,
+    ) -> PlanningOperation:
         timestamp = _utc_now()
-        with self.database.transaction() as connection:
+        with write.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM planning_operations WHERE id = ?", (operation_id,)
             ).fetchone()
@@ -342,8 +363,12 @@ class OutlinePlanner:
         return _operation_from_row(row)
 
     def _complete(self, operation_id: str, batch_id: str) -> PlanningOperation:
+        with registered_record_write(self.outlines.projects, 'planning_operations', operation_id, database=self.database) as write:
+            return self.__complete_owned(write, operation_id, batch_id)
+
+    def __complete_owned(self, write, operation_id: str, batch_id: str) -> PlanningOperation:
         timestamp = _utc_now()
-        with self.database.transaction() as connection:
+        with write.transaction() as connection:
             updated = connection.execute(
                 """
                 UPDATE planning_operations SET state = 'completed', batch_id = ?,
@@ -356,13 +381,17 @@ class OutlinePlanner:
         return self.get_operation(operation_id)
 
     def _fail(self, operation_id: str, exc: Exception, *, uncertain: bool) -> None:
+        with registered_record_write(self.outlines.projects, 'planning_operations', operation_id, database=self.database) as write:
+            return self.__fail_owned(write, operation_id, exc, uncertain=uncertain)
+
+    def __fail_owned(self, write, operation_id: str, exc: Exception, *, uncertain: bool) -> None:
         timestamp = _utc_now()
         error = {
             "type": type(exc).__name__,
             "message": str(exc)[:2000],
             "automatic_retry": False,
         }
-        with self.database.transaction() as connection:
+        with write.transaction() as connection:
             connection.execute(
                 """
                 UPDATE planning_operations SET state = ?, error_json = ?, updated_at = ?
@@ -379,7 +408,13 @@ class OutlinePlanner:
     def _save_proposal(
         self, operation_id: str, proposal: Sequence[Mapping[str, Any]]
     ) -> None:
-        with self.database.transaction() as connection:
+        with registered_record_write(self.outlines.projects, 'planning_operations', operation_id, database=self.database) as write:
+            return self.__save_proposal_owned(write, operation_id, proposal)
+
+    def __save_proposal_owned(
+        self, write, operation_id: str, proposal: Sequence[Mapping[str, Any]]
+    ) -> None:
+        with write.transaction() as connection:
             updated = connection.execute(
                 """
                 UPDATE planning_operations SET proposal_json = ?, updated_at = ?

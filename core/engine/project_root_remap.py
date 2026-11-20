@@ -125,6 +125,8 @@ def remap_story_project_roots(
 
     try:
         with ExitStack() as locks:
+            from workbench.book_ownership import book_output_write_lock
+            locks.enter_context(book_output_write_lock(new_story))
             # Same order as authority/history writers: EA global, dependency
             # fence, then narrower local transaction roots.  The pre-armed
             # dependency fence is the unique project-remap serializer; journal

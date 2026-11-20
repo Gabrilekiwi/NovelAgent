@@ -141,6 +141,16 @@ def run_real_autonomy_e2e(
     try:
         parent.mkdir(parents=True, exist_ok=True)
         isolated_root.mkdir(parents=False)
+        # Sanitized release-gate environments clear HOME/USERPROFILE/LOCALAPPDATA.
+        # Keep machine ownership under the isolated tree so Path.home() is unused.
+        machine_store = isolated_root / "m"
+        machine_store.mkdir(parents=True)
+        local_appdata = isolated_root / "la"
+        local_appdata.mkdir(parents=True, exist_ok=True)
+        previous_machine_store = os.environ.get("NOVELAGENT_MACHINE_BOOK_STORE")
+        previous_local_appdata = os.environ.get("LOCALAPPDATA")
+        os.environ["NOVELAGENT_MACHINE_BOOK_STORE"] = str(machine_store.resolve())
+        os.environ["LOCALAPPDATA"] = str(local_appdata.resolve())
         book = isolated_root / "b"
         delivery_root = isolated_root / "d"
         delivery_root.mkdir(parents=True)
@@ -313,6 +323,15 @@ def run_real_autonomy_e2e(
         )
         raise failure from exc
     finally:
+        if "previous_machine_store" in locals():
+            if previous_machine_store is None:
+                os.environ.pop("NOVELAGENT_MACHINE_BOOK_STORE", None)
+            else:
+                os.environ["NOVELAGENT_MACHINE_BOOK_STORE"] = previous_machine_store
+            if previous_local_appdata is None:
+                os.environ.pop("LOCALAPPDATA", None)
+            else:
+                os.environ["LOCALAPPDATA"] = previous_local_appdata
         try:
             if isolated_root.exists():
                 _remove_isolated_tree(isolated_root, parent=parent)

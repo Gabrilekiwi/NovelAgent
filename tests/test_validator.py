@@ -7,10 +7,49 @@ from unittest.mock import patch
 
 from core.validator import validate_chapter
 from core.validator.llm import LLM_VALIDATION_AREAS, llm_payload_to_check, validate_llm
-from core.validator.spatial import validate_bridge_preconditions
+from core.validator.spatial import continuity_story_state, validate_bridge_preconditions
 
 
 class ValidatorTest(unittest.TestCase):
+    def test_placeholder_location_does_not_require_a_prose_repair(self) -> None:
+        from core.validator.spatial import validate_spatial
+        snapshot = {
+            "world_state": {"locations": {"unknown": {}}},
+            "story_state": {"last_scene_location": "unknown"},
+        }
+        original = json.loads(json.dumps(snapshot))
+        result = validate_spatial(snapshot, "林川沿着通道走进仓库。")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(original, snapshot)
+        snapshot["story_state"]["required_opening_bridge"] = "林川沿着通道"
+        self.assertTrue(validate_bridge_preconditions(snapshot)["ok"])
+        self.assertTrue(validate_spatial(snapshot, "林川沿着通道走进仓库。")["ok"])
+        self.assertIn("missing_opening_bridge", {
+            p["code"] for p in validate_spatial(snapshot, "周岚独自在屋顶值守。")["problems"]
+        })
+        snapshot["world_state"]["locations"] = {"unknown-room": {}}
+        snapshot["story_state"]["last_scene_location"] = "unknown-room"
+        result = validate_spatial(snapshot, "林川沿着通道走进仓库。")
+        self.assertIn("no_known_location", {p["code"] for p in result["problems"]})
+        self.assertIn("missing_last_scene_continuity", {p["code"] for p in result["problems"]})
+
+    def test_unknown_last_scene_does_not_become_an_arbitrary_character_position(self) -> None:
+        snapshot = {
+            "story_state": {"last_chapter_ending": "林澈收好地图。"},
+            "spatial_state": {"character_positions": {
+                "character_lin": "location_warehouse",
+                "character_zhou": "location_station",
+            }},
+        }
+        original = json.loads(json.dumps(snapshot))
+
+        resolved = continuity_story_state(snapshot)
+
+        self.assertNotIn("last_scene_location", resolved)
+        self.assertNotIn("required_opening_bridge", resolved)
+        self.assertTrue(validate_bridge_preconditions(snapshot)["ok"])
+        self.assertEqual(original, snapshot)
+
     def test_llm_validator_retries_once_when_response_is_not_json(self) -> None:
         with patch(
             "core.validator.llm.chat_completion",
@@ -213,10 +252,8 @@ class ValidatorTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("chapter_too_short", {p["code"] for p in result["problems"]})
         self.assertIn("missing_conflict_marker", {p["code"] for p in result["problems"]})
-        self.assertEqual(len(result["problems"]), result["blocking_problem_count"])
-        self.assertEqual(0, result["warning_count"])
-        self.assertTrue(all(problem["blocking"] for problem in result["problems"]))
-        self.assertTrue(all(problem["category"] == "blocking" for problem in result["problems"]))
+        self.assertEqual(1, result["blocking_problem_count"])
+        self.assertEqual(1, result["warning_count"])
         self.assertTrue(all(problem["repair_hint"] for problem in result["problems"]))
         self.assertTrue(all(problem["repair_action"] for problem in result["problems"]))
         self.assertTrue(all(isinstance(problem["repair_parameters"], dict) for problem in result["problems"]))
@@ -225,17 +262,17 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(["continuity", "spatial", "logic"], result["requested_focus"])
         self.assertEqual(["continuity", "spatial", "logic"], result["executed_checks"])
         self.assertEqual([], result["skipped_checks"])
-        self.assertEqual(2, result["deterministic_repair_count"])
-        self.assertEqual(0, result["manual_review_count"])
+        self.assertEqual(1, result["deterministic_repair_count"])
+        self.assertEqual(1, result["manual_review_count"])
         self.assertEqual(
             [
-                {"action": "add_conflict_signal", "count": 1},
                 {"action": "expand_scene", "count": 1},
+                {"action": "manual_review", "count": 1},
             ],
             result["repair_action_counts"],
         )
         severities = {item["severity"]: item["count"] for item in result["severity_counts"]}
-        self.assertEqual(1, severities["high"])
+        self.assertEqual(1, severities["low"])
         self.assertEqual(1, severities["medium"])
 
     def test_rejects_declared_chapter_index_mismatch(self) -> None:
@@ -714,6 +751,53 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotIn("missing_opening_bridge", problem_codes)
         self.assertNotIn("missing_last_scene_continuity", problem_codes)
 
+    def test_opening_continuity_follows_authoritative_ending_not_stale_last_scene(self) -> None:
+        snapshot = {
+            "chapter_index": 52,
+            "world_state": {
+                "locations": {
+                    "未登记电缆夹层靠外盲区": {},
+                    "废弃管廊支仓": {},
+                }
+            },
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "门外，水流撞上废管，发出一声比刚才更近的空响。",
+                "last_scene_location": "未登记电缆夹层靠外盲区",
+                "last_scene_characters": ["陆沉", "顾岚"],
+                "open_threads": [],
+                "required_opening_bridge": "未登记电缆夹层靠外盲区；陆沉、顾岚",
+            },
+            "spatial_state": {
+                "spaces": {"未登记电缆夹层靠外盲区": {"source": "chapter_analysis"}},
+                "connections": [],
+                "character_positions": {},
+                "blocked_paths": [],
+                "last_transition": {"to": "未登记电缆夹层靠外盲区"},
+            },
+            "authoritative_state": {
+                "characters": {
+                    "陆沉": {
+                        "canonical_name": "陆沉",
+                        "aliases": ["陆沉"],
+                        "after": "遵守未解除的隔离约束，在废弃管廊支仓外侧标线后保持与赵铁的隔离间距并等待定时联络",
+                        "current_goal": "遵守未解除的隔离约束，在废弃管廊支仓外侧标线后保持与赵铁的隔离间距并等待定时联络",
+                    }
+                }
+            },
+        }
+
+        result = validate_chapter(
+            snapshot,
+            "陆沉和顾岚守在废弃管廊支仓外侧的标线后，听着门外上涨的积水。",
+            {"validation_focus": ["spatial"]},
+        )
+
+        problem_codes = {problem["code"] for problem in result["problems"]}
+        self.assertNotIn("missing_last_scene_continuity", problem_codes)
+        self.assertNotIn("missing_opening_bridge", problem_codes)
+
     def test_rejects_invalid_spatial_transition_with_dedicated_code(self) -> None:
         snapshot = {
             "chapter_index": 2,
@@ -1172,3 +1256,59 @@ class ValidatorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiscourseContinuityTest(unittest.TestCase):
+    def test_opening_continuity_rejects_discourse_last_scene_location(self) -> None:
+        snapshot = {
+            "chapter_index": 64,
+            "world_state": {
+                "locations": {
+                    "最后": {"source": "chapter_analysis", "first_seen_chapter": 63},
+                    "消防站侧首段递送路线": {},
+                    "二层通信室": {},
+                }
+            },
+            "characters": {},
+            "timeline": [],
+            "story_state": {
+                "last_chapter_ending": "静默的边界已经守住，真正留给他们的，仍是阀口那一分钟——任何记录都覆盖不了的一分钟。",
+                "last_scene_location": "最后",
+                "last_scene_characters": ["陆沉", "韩野", "顾岚"],
+                "open_threads": [],
+                "required_opening_bridge": "最后；陆沉、韩野、顾岚",
+            },
+            "spatial_state": {
+                "spaces": {
+                    "最后": {"source": "chapter_analysis"},
+                    "消防站侧首段递送路线": {"source": "chapter_analysis"},
+                    "二层通信室": {"source": "chapter_analysis"},
+                },
+                "connections": [],
+                "character_positions": {
+                    "陆沉": "消防站侧首段递送路线",
+                    "韩野": "消防站侧首段递送路线",
+                    "顾岚": "消防站侧首段递送路线",
+                },
+                "blocked_paths": [],
+                "last_transition": {"to": "最后", "source": "chapter_analysis"},
+            },
+        }
+
+        resolved = continuity_story_state(snapshot)
+        self.assertEqual("消防站侧首段递送路线", resolved["last_scene_location"])
+        self.assertIn("消防站侧首段递送路线", resolved["required_opening_bridge"])
+        self.assertNotIn("最后；", resolved["required_opening_bridge"])
+
+        pre = validate_bridge_preconditions(snapshot)
+        self.assertTrue(pre["ok"])
+        self.assertEqual([], pre["problem_codes"])
+
+        result = validate_chapter(
+            snapshot,
+            "陆沉与顾岚从消防站侧首段递送路线外侧的撤回线后观察备用取水口，韩野仍在本侧复核记录。",
+            {"validation_focus": ["spatial"]},
+        )
+        problem_codes = {problem["code"] for problem in result["problems"]}
+        self.assertNotIn("missing_last_scene_continuity", problem_codes)
+        self.assertNotIn("missing_opening_bridge", problem_codes)

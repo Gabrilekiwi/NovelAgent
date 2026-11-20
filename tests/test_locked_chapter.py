@@ -316,7 +316,10 @@ class LockedChapterRecoveryTest(unittest.TestCase):
     def test_manual_draft_supersedes_failed_model_draft_without_mutating_evidence(self) -> None:
         execution_id = "execution_manual_draft"
         model_draft = "陆沉守在防爆门旁，按原有顺序核对每一个进入缓冲区的人。" * 45
-        manual_draft = "陆沉先验伤，再让幸存者依次通过防爆门，最后核对十七人名册。" * 45
+        manual_draft = "".join(
+            f"陆沉先验伤，再让第{i}名幸存者通过防爆门，最后核对第{i}项名册记录。"
+            for i in range(1, 46)
+        )
         self._write_execution(execution_id, successful=[], missing_stage="llm_validation")
         self._write_failed_run(execution_id=execution_id, chapter=model_draft, scene_count=3)
         draft_path = self.story_root / ".novelagent" / "runtime" / "manual_draft.md"
@@ -343,10 +346,38 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         self.assertEqual("scene_repair", checkpoint["complete_draft"]["source_stage"])
         self.assertNotIn("source_attempt_id", checkpoint["complete_draft"])
 
+    def test_manual_draft_rejects_duplicate_prose_before_validation(self) -> None:
+        execution_id = "execution_manual_duplicate_draft"
+        model_draft = "陆沉守在防爆门旁，按原有顺序核对每一个进入缓冲区的人。" * 45
+        repeated = "陆沉在车旁逐项核对滤芯箱封条，确认每一名幸存者都已扣紧安全带，又检查车门闭锁和救援车的防护隔板是否到位。"
+        manual_draft = "\n\n".join([repeated] * 24)
+        self._write_execution(execution_id, successful=[], missing_stage="llm_validation")
+        self._write_failed_run(execution_id=execution_id, chapter=model_draft, scene_count=3)
+        draft_path = self.story_root / ".novelagent" / "runtime" / "duplicate_manual_draft.md"
+        draft_path.write_text(manual_draft, encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            LockedChapterRecoveryError,
+            "manual recovery draft failed final artifact integrity: duplicate_scene_text",
+        ):
+            recover_locked_chapter(
+                story_project_root=self.story_root,
+                run_dir=self.run_dir,
+                snapshot_path=self.snapshot_path,
+                expected_book_id=self.book_id,
+                language="zh-CN",
+                manual_draft_path=draft_path,
+                clock=lambda: self.now,
+                id_factory=lambda: "manualduplicatemarker",
+            )
+
     def test_manual_draft_supersedes_an_existing_active_checkpoint(self) -> None:
         execution_id = "execution_manual_after_checkpoint"
         model_draft = "陆沉先按旧方案检查车门，再等待赵铁确认触发线路。" * 45
-        manual_draft = "陆沉先隔离车门触发线，再由赵铁确认座椅与后窗锁扣。" * 45
+        manual_draft = "".join(
+            f"陆沉第{i}次隔离车门触发线，再由赵铁确认第{i}处座椅与后窗锁扣。"
+            for i in range(1, 46)
+        )
         self._write_execution(execution_id, successful=[], missing_stage="llm_validation")
         self._write_failed_run(
             execution_id=execution_id,
@@ -590,6 +621,641 @@ class LockedChapterRecoveryTest(unittest.TestCase):
             [f"attempt-{index}" for index in range(1, 5)],
             [scene["source_attempt_id"] for scene in checkpoint["scenes"]],
         )
+
+    def test_nonconverging_manual_review_keeps_complete_candidate_for_author(
+        self,
+    ) -> None:
+        execution_id = "execution_nonconverging_manual_review"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            f"林夏保留第{index}场的原始行动证据，医院组不参与消防站侧复核。" * 24
+            for index in range(1, 5)
+        ]
+        call_ids = [build_scene_generation_call_id(index) for index in range(1, 5)]
+        responses = [
+            json.dumps(
+                {
+                    "prose": text,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["林夏"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"scene {index} complete",
+                },
+                ensure_ascii=False,
+            )
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+            call_ids=call_ids,
+        )
+        candidate = "林夏批准只到第一回撤点的本地复核，医院组不参与；自愿复核人员找到伤者后按点撤回。" * 45
+        self._write_complete_transform(
+            execution_id,
+            stage="claude_polish",
+            text=candidate,
+            offset_seconds=10,
+        )
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=candidate,
+            scene_count=4,
+        )
+        self._mark_repair_not_converging()
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        validation = {
+            "ok": False,
+            "blocking_problem_count": 1,
+            "manual_review_count": 1,
+            "problems": [
+                {
+                    "code": "llm_participant_assignment_inconsistent",
+                    "message": "医院组不参与，却被写成复核人员。",
+                    "severity": "critical",
+                    "blocking": True,
+                    "repair_action": "manual_review",
+                }
+            ],
+        }
+        payload["validation"] = validation
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        self.assertEqual("complete_failed_draft_available", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(candidate, checkpoint["complete_draft"]["text"])
+
+    def test_repair_budget_block_keeps_complete_candidate_instead_of_scene_resume(
+        self,
+    ) -> None:
+        execution_id = "execution_repair_authority_budget"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            f"林夏保留第{index}场的原始行动证据，医院组不参与消防站侧复核。" * 24
+            for index in range(1, 5)
+        ]
+        call_ids = [build_scene_generation_call_id(index) for index in range(1, 5)]
+        responses = [
+            json.dumps(
+                {
+                    "prose": text,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["林夏"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"scene {index} complete",
+                },
+                ensure_ascii=False,
+            )
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+            call_ids=call_ids,
+        )
+        candidate = "林夏批准只到第一回撤点的本地复核，医院组不参与；自愿复核人员找到伤者后按点撤回。" * 45
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=candidate,
+            scene_count=4,
+        )
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["run"]["error"] = {
+            "type": "StructuredContextError",
+            "message": (
+                "required_authoritative_records_exceed_budget: required records "
+                "need 6425 characters including audit metadata, exceeding the "
+                "5978 character authority budget: characters/LinXia"
+            ),
+        }
+        def _trace(action, status, chars=0):
+            stamp = self.now.isoformat()
+            return {
+                "action": action,
+                "status": status,
+                "started_at": stamp,
+                "finished_at": stamp,
+                "chapter_chars": chars,
+                "repair_attempts": 0,
+            }
+        payload["run"]["trace"] = [
+            _trace("build_snapshot", "completed", 0),
+            _trace("generate_chapter", "completed", len(candidate)),
+            _trace("validate", "completed", len(candidate)),
+            _trace("repair_if_needed", "failed", len(candidate)),
+        ]
+        payload["run"]["execution_evidence"]["budget"] = {
+            "provider_calls": 2,
+            "unsettled_attempt_count": 0,
+        }
+        payload["validation"] = {
+            "ok": False,
+            "blocking_problem_count": 2,
+            "manual_review_count": 1,
+            "problems": [
+                {
+                    "code": "character_location_not_mentioned",
+                    "message": "Character 林夏 appears without current location.",
+                    "severity": "medium",
+                    "blocking": True,
+                    "repair_action": "add_character_location",
+                },
+                {
+                    "code": "llm_spatial_continuity_inconsistent",
+                    "message": "观察区与隔离黄线被写成同一个空间。",
+                    "severity": "high",
+                    "blocking": True,
+                    "repair_action": "manual_review",
+                },
+            ],
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        self.assertEqual("complete_failed_draft_available", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(candidate, checkpoint["complete_draft"]["text"])
+
+    def test_repair_budget_block_fails_closed_when_generate_stage_failed(
+        self,
+    ) -> None:
+        execution_id = "execution_generate_json_budget"
+        self._write_execution(
+            execution_id,
+            successful=["陆沉先观察外围一圈，并记下机械计时片上的间隔。" * 20],
+            missing_stage=None,
+            call_ids=[build_scene_generation_call_id(1)],
+        )
+        self._write_failed_run(execution_id=execution_id, chapter="", scene_count=3)
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["run"]["error"] = {
+            "type": "StructuredContextError",
+            "message": "required_json_item_exceeds_budget: required entries exceed 1472 characters",
+        }
+        def _trace(action, status, chars=0):
+            stamp = self.now.isoformat()
+            return {
+                "action": action,
+                "status": status,
+                "started_at": stamp,
+                "finished_at": stamp,
+                "chapter_chars": chars,
+                "repair_attempts": 0,
+            }
+        payload["run"]["trace"] = [
+            _trace("build_snapshot", "completed", 0),
+            _trace("generate_chapter", "failed", 0),
+        ]
+        payload["run"]["execution_evidence"]["budget"] = {
+            "provider_calls": 1,
+            "unsettled_attempt_count": 0,
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertNotEqual("repair_draft", result["action"])
+        self.assertNotEqual("complete_failed_draft_available", result.get("reason"))
+
+    def test_repair_stale_scene_keeps_complete_candidate_instead_of_scene_resume(
+        self,
+    ) -> None:
+        execution_id = "execution_repair_stale_scene"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            f"林夏保留第{index}场的原始行动证据，医院组不参与消防站侧复核。" * 24
+            for index in range(1, 5)
+        ]
+        call_ids = [build_scene_generation_call_id(index) for index in range(1, 5)]
+        responses = [
+            json.dumps(
+                {
+                    "prose": text,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["林夏"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"scene {index} complete",
+                },
+                ensure_ascii=False,
+            )
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+            call_ids=call_ids,
+        )
+        candidate = "林夏批准只到第一回撤点的本地复核，医院组不参与；自愿复核人员找到伤者后按点撤回。" * 45
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=candidate,
+            scene_count=4,
+        )
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["run"]["error"] = {
+            "type": "SceneEvidenceAlignmentError",
+            "message": "stale_scene_evidence: repair operation crosses a Scene boundary or separator",
+        }
+        def _trace(action, status, chars=0):
+            stamp = self.now.isoformat()
+            return {
+                "action": action,
+                "status": status,
+                "started_at": stamp,
+                "finished_at": stamp,
+                "chapter_chars": chars,
+                "repair_attempts": 0,
+            }
+        payload["run"]["trace"] = [
+            _trace("build_snapshot", "completed", 0),
+            _trace("generate_chapter", "completed", len(candidate)),
+            _trace("validate", "completed", len(candidate)),
+            _trace("repair_if_needed", "failed", len(candidate)),
+        ]
+        payload["run"]["execution_evidence"]["budget"] = {
+            "provider_calls": 6,
+            "unsettled_attempt_count": 0,
+        }
+        payload["validation"] = {
+            "ok": False,
+            "blocking_problem_count": 2,
+            "manual_review_count": 1,
+            "problems": [
+                {
+                    "code": "missing_conflict_marker",
+                    "message": "本章缺少冲突标记。",
+                    "severity": "high",
+                    "blocking": True,
+                    "repair_action": "add_conflict_signal",
+                },
+                {
+                    "code": "llm_participant_assignment_inconsistent",
+                    "message": "医院组不参与，却被写成复核人员。",
+                    "severity": "critical",
+                    "blocking": True,
+                    "repair_action": "manual_review",
+                },
+            ],
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        self.assertEqual("complete_failed_draft_available", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(candidate, checkpoint["complete_draft"]["text"])
+
+    def test_polish_stale_scene_keeps_complete_candidate_instead_of_scene_resume(
+        self,
+    ) -> None:
+        execution_id = "execution_polish_stale_scene"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            f"林夏保留第{index}场的原始行动证据，医院组不参与消防站侧复核。" * 24
+            for index in range(1, 5)
+        ]
+        call_ids = [build_scene_generation_call_id(index) for index in range(1, 5)]
+        responses = [
+            json.dumps(
+                {
+                    "prose": text,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["林夏"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"scene {index} complete",
+                },
+                ensure_ascii=False,
+            )
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+            call_ids=call_ids,
+        )
+        candidate = "林夏批准只到第一回撤点的本地复核，医院组不参与；自愿复核人员找到伤者后按点撤回。" * 45
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=candidate,
+            scene_count=4,
+        )
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["run"]["error"] = {
+            "type": "SceneEvidenceAlignmentError",
+            "message": "stale_scene_evidence: repair operation crosses a Scene boundary or separator",
+        }
+        def _trace(action, status, chars=0):
+            stamp = self.now.isoformat()
+            return {
+                "action": action,
+                "status": status,
+                "started_at": stamp,
+                "finished_at": stamp,
+                "chapter_chars": chars,
+                "repair_attempts": 0,
+            }
+        payload["run"]["trace"] = [
+            _trace("build_snapshot", "completed", 0),
+            _trace("generate_chapter", "completed", len(candidate)),
+            _trace("polish", "failed", len(candidate)),
+        ]
+        payload["run"]["execution_evidence"]["budget"] = {
+            "provider_calls": 5,
+            "unsettled_attempt_count": 0,
+        }
+        payload["validation"] = {
+            "ok": False,
+            "blocking_problem_count": 1,
+            "manual_review_count": 1,
+            "problems": [
+                {
+                    "code": "execution_error",
+                    "message": "stale_scene_evidence: repair operation crosses a Scene boundary or separator",
+                    "severity": "critical",
+                    "blocking": True,
+                    "repair_action": "manual_review",
+                }
+            ],
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertEqual("repair_draft", result["action"])
+        self.assertEqual("complete_failed_draft_available", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(candidate, checkpoint["complete_draft"]["text"])
+
+    def test_repair_stale_scene_fails_closed_when_generate_stage_failed(
+        self,
+    ) -> None:
+        execution_id = "execution_generate_stale_scene"
+        self._write_execution(
+            execution_id,
+            successful=["陆沉先观察外围一圈，并记下机械计时片上的间隔。" * 20],
+            missing_stage=None,
+            call_ids=[build_scene_generation_call_id(1)],
+        )
+        self._write_failed_run(execution_id=execution_id, chapter="", scene_count=3)
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["run"]["error"] = {
+            "type": "SceneEvidenceAlignmentError",
+            "message": "stale_scene_evidence: repair operation crosses a Scene boundary or separator",
+        }
+        def _trace(action, status, chars=0):
+            stamp = self.now.isoformat()
+            return {
+                "action": action,
+                "status": status,
+                "started_at": stamp,
+                "finished_at": stamp,
+                "chapter_chars": chars,
+                "repair_attempts": 0,
+            }
+        payload["run"]["trace"] = [
+            _trace("build_snapshot", "completed", 0),
+            _trace("generate_chapter", "failed", 0),
+        ]
+        payload["run"]["execution_evidence"]["budget"] = {
+            "provider_calls": 1,
+            "unsettled_attempt_count": 0,
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        result = self._recover()
+
+        self.assertNotEqual("repair_draft", result["action"])
+        self.assertNotEqual("complete_failed_draft_available", result.get("reason"))
+
+    def test_resume_scenes_checkpoint_upgrades_to_author_draft_when_manual_review_remains(
+        self,
+    ) -> None:
+        execution_id = "execution_nonconverging_upgrade_to_manual_review"
+        empty_deltas = {
+            "characters": [],
+            "relationships": [],
+            "rosters": [],
+            "locations": [],
+            "inventory": [],
+            "counters": [],
+        }
+        scene_texts = [
+            f"林夏保留第{index}场的原始行动证据，医院组不参与消防站侧复核。" * 24
+            for index in range(1, 5)
+        ]
+        call_ids = [build_scene_generation_call_id(index) for index in range(1, 5)]
+        responses = [
+            json.dumps(
+                {
+                    "prose": text,
+                    "events": [
+                        {
+                            "event_id": f"chapter-001-scene-{index:03d}-event-001",
+                            "type": "scene_completed",
+                            "subjects": ["林夏"],
+                            "objects": [],
+                            "location": "fire-station",
+                            "status": "completed",
+                        }
+                    ],
+                    "deltas": empty_deltas,
+                    "continuity_note": f"scene {index} complete",
+                },
+                ensure_ascii=False,
+            )
+            for index, text in enumerate(scene_texts, start=1)
+        ]
+        self._write_execution(
+            execution_id,
+            successful=responses,
+            missing_stage=None,
+            call_ids=call_ids,
+        )
+        candidate = "林夏批准只到第一回撤点的本地复核，医院组不参与；自愿复核人员找到伤者后按点撤回。" * 45
+        self._write_complete_transform(
+            execution_id,
+            stage="claude_polish",
+            text=candidate,
+            offset_seconds=10,
+        )
+        self._write_failed_run(
+            execution_id=execution_id,
+            chapter=candidate,
+            scene_count=4,
+        )
+        self._mark_repair_not_converging()
+        run_path = self.run_dir / f"{build_run_id(1, self.now)}.json"
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        payload["validation"] = {
+            "ok": False,
+            "blocking_problem_count": 1,
+            "manual_review_count": 1,
+            "problems": [
+                {
+                    "code": "llm_participant_assignment_inconsistent",
+                    "message": "医院组不参与，却被写成复核人员。",
+                    "severity": "critical",
+                    "blocking": True,
+                    "repair_action": "manual_review",
+                }
+            ],
+        }
+        validate_run_result(payload)
+        run_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        with patch(
+            "core.engine.locked_chapter._remaining_problems_require_author_review",
+            return_value=False,
+        ):
+            first = self._recover()
+        self.assertEqual("resume_scenes", first["action"])
+        self.assertEqual(
+            "complete_scene_sequence_requires_revalidation",
+            first["reason"],
+        )
+
+        self.now += timedelta(minutes=5)
+        upgraded = recover_locked_chapter(
+            story_project_root=self.story_root,
+            run_dir=self.run_dir,
+            snapshot_path=self.snapshot_path,
+            expected_book_id=self.book_id,
+            language="zh-CN",
+            clock=lambda: self.now,
+            id_factory=lambda: "testupgrade",
+        )
+        self.assertEqual("repair_draft", upgraded["action"])
+        self.assertEqual("complete_failed_draft_available", upgraded["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([], checkpoint["scenes"])
+        self.assertEqual(candidate, checkpoint["complete_draft"]["text"])
 
     def test_nonconverging_repair_rejects_tampered_scene_and_regressed_transform(
         self,
@@ -1092,6 +1758,220 @@ class LockedChapterRecoveryTest(unittest.TestCase):
                 language="zh-CN",
             )
         receipt_path.write_bytes(receipt_bytes)
+
+    def test_confirmed_manual_draft_binds_pre_final_gate_candidate_without_regenerating(self) -> None:
+        execution_id = "execution_manual_draft_before_final_gate"
+        generated = "陆沉检查通勤车的触发线路，并记录车辆尚未移动。" * 45
+        repaired = "陆沉检查通勤车的触发线路，赵铁确认车门移动才会触发。" * 45
+        revised = "领头的人检查通勤车的触发线路，赵铁确认车门移动才会触发。" * 45
+        chapter_blueprint = {
+            "chapter_index": 1,
+            "title": "Verified recovery",
+            "core_event": "verify persisted Scene provenance",
+            "required_beats": [
+                {"index": 1, "text": "verify persisted Scene provenance"},
+            ],
+            "ending_pressure": "the verified alarm remains active",
+            "missing_fields": [],
+        }
+        expected_plan = build_blueprint_plan(chapter_blueprint)
+        # Production gap: an uncertain llm_validation intent has no receipt.
+        # Already settled Scene/prose receipts must still bind.
+        call_id = self._write_valid_single_scene_execution(
+            execution_id,
+            scene_text=generated,
+            missing_stage="llm_validation",
+        )
+        self._write_rejected_single_scene_artifact_run(
+            execution_id=execution_id,
+            source_attempt_id="attempt-1",
+            source_call_id=call_id,
+            scene_text=generated,
+        )
+        run_path = next(self.run_dir.glob("chapter_1_*.json"))
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+        repaired_sha256 = hashlib.sha256(repaired.encode("utf-8")).hexdigest()
+        payload["chapter"] = repaired
+        payload["run"]["chapter"]["chars"] = len(repaired)
+        pipeline = payload["run"]["chapter"]["pipeline"]
+        original_continuity_path = Path(pipeline["artifacts"]["scene_continuity"]["path"])
+        original_continuity = json.loads(original_continuity_path.read_text(encoding="utf-8"))
+        source_evidence = original_continuity["scenes"][0]
+        gate = FinalArtifactIntegrityGate()
+        merge_report = gate.evaluate(artifact_text=generated, stage="merge")
+        repair_report = gate.evaluate(
+            artifact_text=repaired,
+            stage="repair",
+            source_text=generated,
+        )
+        records = [
+            build_integrity_stage_record(
+                stage="merge",
+                input_text=None,
+                output_text=generated,
+                report=merge_report,
+            ),
+            build_integrity_stage_record(
+                stage="repair",
+                input_text=generated,
+                output_text=repaired,
+                report=repair_report,
+            ),
+        ]
+        evidence_history = [
+            {
+                "stage": "repair",
+                "before_sha256": hashlib.sha256(generated.encode("utf-8")).hexdigest(),
+                "after_sha256": repaired_sha256,
+                "modified_scene_indexes": [1],
+                "operation_count": 1,
+                "patch_sha256": hashlib.sha256(
+                    f"repair:{generated}:{repaired}".encode("utf-8")
+                ).hexdigest(),
+            }
+        ]
+        pipeline["integrity"] = {"merge": merge_report, "repair": repair_report}
+        pipeline["integrity_records"] = records
+        pipeline.pop("final_artifact", None)
+        pipeline["scene_spans"] = [
+            {
+                "index": 1,
+                "start_char": 0,
+                "end_char": len(repaired),
+                "chars": len(repaired),
+            }
+        ]
+        pipeline["scene_sources"][0]["text_sha256"] = repaired_sha256
+        pipeline["scene_evidence_history"] = evidence_history
+        final_scene = {
+            "index": 1,
+            "goal": expected_plan["scenes"][0]["goal"],
+            "text": repaired,
+            "source_attempt_id": "attempt-1",
+            "source_call_id": call_id,
+            "events": source_evidence["events"],
+            "deltas": source_evidence["deltas"],
+            "continuity_note": source_evidence["continuity_note"],
+            "covered_beat_indexes": [1],
+        }
+        artifact_pipeline = {
+            **pipeline,
+            "plan": expected_plan,
+            "scene_drafts": [final_scene],
+            "merged_chapter": repaired,
+        }
+        pipeline["artifacts"] = save_chapter_pipeline_artifacts(
+            pipeline=artifact_pipeline,
+            validation=None,
+            repair_deltas=[],
+            run=payload["run"],
+            output_dir=self.run_dir / "chapter_pipeline",
+        )
+        story_metadata = payload["run"]["input_pack"]["metadata"]["story_project"]
+        story_metadata.update(
+            {
+                "planned_scene_count": 1,
+                "planned_scene_scopes": [
+                    {"index": 1, "required_beat_indexes": [1]},
+                ],
+                "required_beat_count": 1,
+                "scene_plan_hash": canonical_json_hash(
+                    expected_plan,
+                    exclude_environment_fields=False,
+                ),
+            }
+        )
+        payload["run"]["story_project"]["chapter_blueprint"] = chapter_blueprint
+        run_chapter = payload["run"]["chapter"]
+        run_chapter.pop("final_artifact", None)
+        run_chapter["integrity_records"] = records
+        run_chapter["integrity_audit"] = {
+            "record_count": len(records),
+            "earliest_blocking_stage": None,
+            "earliest_blocking_problem_codes": [],
+            "stage_hashes": [
+                {
+                    "stage": record["stage"],
+                    "input_sha256": record["input_sha256"],
+                    "output_sha256": record["output_sha256"],
+                    "accepted": record["accepted"],
+                    "timestamp": record["timestamp"],
+                    "blocking_problem_codes": [],
+                    "record_sha256": canonical_json_hash(
+                        record,
+                        exclude_environment_fields=False,
+                    ),
+                }
+                for record in records
+            ],
+            "final_chapter_sha256": repaired_sha256,
+        }
+        payload["run"]["repair_attempts"] = 1
+        payload["accepted"] = False
+        payload["committed"] = False
+        payload["repair_attempts"] = 1
+        payload["run"]["chapter"]["artifact"] = save_chapter_artifact(
+            chapter_text=repaired,
+            run=payload["run"],
+            output_dir=self.run_dir.parent / "chapters",
+        )
+        validate_run_result(payload)
+        run_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        draft_path = self.story_root / ".novelagent" / "workbench" / "drafts" / "manual.md"
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
+        draft_path.write_text(revised, encoding="utf-8")
+        result = recover_locked_chapter(
+            story_project_root=self.story_root,
+            run_dir=self.run_dir,
+            snapshot_path=self.snapshot_path,
+            expected_book_id=self.book_id,
+            language="zh-CN",
+            manual_draft_path=draft_path,
+            clock=lambda: self.now + timedelta(minutes=5),
+            id_factory=lambda: "manualprefinalgate",
+        )
+        self.assertEqual("manual_repaired_draft_provided", result["reason"])
+        checkpoint = active_locked_chapter_checkpoint(
+            self.run_dir,
+            chapter_index=1,
+            expected_book_id=self.book_id,
+        )
+        rehydrated = load_verified_locked_chapter_pipeline(
+            run_dir=self.run_dir,
+            checkpoint=checkpoint,
+            chapter_blueprint=chapter_blueprint,
+            language="zh-CN",
+        )
+        self.assertEqual(repaired, rehydrated["merged_chapter"])
+
+        generator_calls: list[str] = []
+        executor = AgentExecutor(
+            run_dir=self.run_dir,
+            generator=lambda input_pack: generator_calls.append(input_pack) or "REGENERATED",
+            story_project_context={"chapter_blueprint": chapter_blueprint},
+            story_project_writeback=StoryProjectWritebackConfig(mode="apply"),
+            enable_execution_provenance=False,
+        )
+        realigned = executor._locked_complete_draft_pipeline(
+            checkpoint,
+            checkpoint["complete_draft"],
+            snapshot={"language": "zh-CN"},
+        )
+        self.assertEqual(revised, realigned["merged_chapter"])
+        self.assertEqual(revised, "\n\n".join(item["text"] for item in realigned["scene_drafts"]))
+
+        state = {
+            "chapter": checkpoint["complete_draft"]["text"],
+            "chapter_pipeline": realigned,
+            "locked_chapter_action": "repair_draft",
+            "validation": {"stale": True},
+        }
+        executor._handle_generate(state, "fresh-input", {"language": "zh-CN"})
+        self.assertEqual([], generator_calls)
+        self.assertEqual(revised, state["chapter"])
+        self.assertIs(realigned, state["chapter_pipeline"])
+        self.assertIsNone(state["validation"])
 
     def test_newer_terminal_budget_failure_supersedes_partial_checkpoint_with_complete_draft(self) -> None:
         execution_id = "execution_partial_before_terminal_failure"
@@ -2095,6 +2975,109 @@ class LockedChapterRecoveryTest(unittest.TestCase):
         )
         self.assertIsNone(load_latest_run_summary(self.run_dir))
         self.assertEqual([], _unresolved_provider_calls(self.run_dir))
+
+    def test_unbound_uncertain_execution_without_run_is_classifiable(self) -> None:
+        execution_id = "execution_unbound_uncertain"
+        self._write_execution(
+            execution_id,
+            successful=[],
+            missing_stage="chapter_generation",
+        )
+        self.assertTrue(_unresolved_provider_calls(self.run_dir))
+
+        result = self._recover()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("reset", result["action"])
+        self.assertEqual("provider_call_uncertain_without_run", result["reason"])
+        self.assertEqual(f"unbound_{execution_id}", result["source_run_id"])
+        self.assertEqual(1, result["resolved_execution_count"])
+        self.assertEqual(0, result["reusable_scene_count"])
+        self.assertIn("结果不确定", result["message"])
+        self.assertEqual([], _unresolved_provider_calls(self.run_dir))
+        self.assertIsNone(
+            active_locked_chapter_checkpoint(
+                self.run_dir,
+                chapter_index=1,
+                expected_book_id=self.book_id,
+            )
+        )
+        self.assertIsNone(load_latest_run_summary(self.run_dir))
+        retry = self._recover()
+        self.assertEqual("not_locked", retry["status"])
+
+    def test_list_unbound_uncertain_executions_matches_classifier_gate(self) -> None:
+        from core.engine.locked_chapter import list_unbound_uncertain_executions
+
+        execution_id = "execution_unbound_list"
+        self._write_execution(
+            execution_id,
+            successful=[],
+            missing_stage="chapter_generation",
+        )
+        unbound = list_unbound_uncertain_executions(
+            self.run_dir,
+            expected_book_id=self.book_id,
+        )
+        self.assertEqual([execution_id], [item["execution_id"] for item in unbound])
+        self.assertTrue(unbound[0]["calls"])
+
+        self._recover()
+
+        self.assertEqual(
+            [],
+            list_unbound_uncertain_executions(
+                self.run_dir,
+                expected_book_id=self.book_id,
+            ),
+        )
+
+    def test_unbound_uncertain_execution_force_reset_clears_lock(self) -> None:
+        execution_id = "execution_unbound_force_reset"
+        self._write_execution(
+            execution_id,
+            successful=[],
+            missing_stage="chapter_generation",
+        )
+
+        result = recover_locked_chapter(
+            story_project_root=self.story_root,
+            run_dir=self.run_dir,
+            snapshot_path=self.snapshot_path,
+            expected_book_id=self.book_id,
+            language="zh-CN",
+            force_reset=True,
+            clock=lambda: self.now,
+            id_factory=lambda: "unboundreset",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("reset", result["action"])
+        self.assertEqual("operator_requested_reset", result["reason"])
+        self.assertEqual([], _unresolved_provider_calls(self.run_dir))
+
+    def test_unbound_uncertain_execution_rejects_manual_draft_until_reset(self) -> None:
+        execution_id = "execution_unbound_manual"
+        self._write_execution(
+            execution_id,
+            successful=[],
+            missing_stage="chapter_generation",
+        )
+        draft = self.story_root / "draft.txt"
+        draft.write_text("陆沉停在门口，先把灯关掉。" * 40, encoding="utf-8")
+
+        with self.assertRaises(LockedChapterRecoveryError):
+            recover_locked_chapter(
+                story_project_root=self.story_root,
+                run_dir=self.run_dir,
+                snapshot_path=self.snapshot_path,
+                expected_book_id=self.book_id,
+                language="zh-CN",
+                manual_draft_path=draft,
+                clock=lambda: self.now,
+                id_factory=lambda: "unbounddraft",
+            )
+        self.assertTrue(_unresolved_provider_calls(self.run_dir))
 
     def test_forced_reset_discards_a_trustworthy_scene_prefix(self) -> None:
         execution_id = "execution_forced_reset"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit
@@ -10,13 +11,14 @@ import json
 import os
 import re
 import secrets
+import weakref
 
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.config import get_config
-from core.engine.locked_chapter import verified_final_recovery_draft
+from core.engine.locked_chapter import list_unbound_uncertain_executions, verified_candidate_recovery_draft, verified_final_recovery_draft
 from core.engine.persistence import atomic_write_text
 from core.engine.persistence import atomic_create_json
 from core.runtime_paths import RuntimePaths
@@ -30,6 +32,7 @@ from core.story_project.activation import (
 )
 from core.story_project.amendments import read_current_chapter_text
 from core.story_project.identity import load_project_identity, project_identity_for_operation
+from core.story_project.mapper import extract_chapter_title
 from core.story_project.paths import (
     outline_chapter_index,
     prose_chapter_index,
@@ -43,8 +46,39 @@ from core.story_project.semantic_parser import (
 )
 from core.story_project.validator import validate_story_project
 from workbench.amendments import AmendmentError, AmendmentService
+from workbench.chapter_cards import (
+    ChapterCardConflict,
+    ChapterCardError,
+    ChapterCardService,
+)
+from workbench.chapter_candidates import (
+    ChapterCandidateService,
+    ChapterCandidateWorkbenchConflict,
+    ChapterCandidateWorkbenchError,
+    ChapterCandidateWorkbenchIntegrity,
+    ChapterCandidateWorkbenchNotFound,
+)
+from workbench.chapter_facts import (
+    ChapterFactReviewConflict,
+    ChapterFactReviewError,
+    ChapterFactReviewIntegrity,
+    ChapterFactReviewNotFound,
+    ChapterFactReviewService,
+)
+from workbench.chapter_fact_extractions import (
+    ChapterFactExtractionService,
+    ChapterFactExtractionWorkbenchConflict,
+    ChapterFactExtractionWorkbenchError,
+    ChapterFactExtractionWorkbenchIntegrity,
+    ChapterFactExtractionWorkbenchNotFound,
+)
 from workbench.cohorts import CohortError, CohortService, SCORE_DIMENSIONS
-from workbench.database import WorkbenchDatabase, WorkbenchDatabaseError
+from workbench.database import (
+    WorkbenchDatabase, WorkbenchDatabaseError, WorkbenchDatabaseInitializationPending,
+)
+from workbench.instance import InstanceLease
+from workbench.recovery_guidance import attention_label_for_project, durable_polished_draft_available, retained_complete_draft_available
+from workbench.review_status import resolve_review_status
 from workbench.jobs import (
     JobError,
     JobStore,
@@ -52,10 +86,27 @@ from workbench.jobs import (
     PAUSED_JOB_STATES,
     TERMINAL_JOB_STATES,
     compute_project_state_head,
+    verify_committed_chapter,
 )
 from workbench.outlines import OutlineBatchConflict, OutlineBatchError, OutlineBatchService
+from workbench.project_catalog import (
+    annotate_project_catalog,
+    annotate_project_with_related_editions,
+    annotate_related_editions,
+    resolve_active_book,
+    select_author_bookshelf,
+    should_auto_import_book,
+)
 from workbench.planning import OutlinePlanner, OutlinePlanningError
 from workbench.projects import ProjectRecord, ProjectRegistry, ProjectRegistryError
+from workbench.chapter_publication_api import install_chapter_publication_routes
+from workbench.reviewed_workflow import install_reviewed_workflow
+from workbench.reviewed_project_views import ProjectDisplayRegistry, ReviewedProjectViews
+from workbench.maintenance import maintenance_for, MaintenanceBlocked, DeferredStartup
+from workbench.maintenance_api import MaintenanceRoute, install_maintenance_status
+from workbench.backup_api import install_backup_api
+from workbench.recovery_api import install_recovery_api
+from workbench.restore_scope import RestoreScopeError, install_restore_scope_api
 
 
 SESSION_COOKIE = "novelagent_workbench"
@@ -63,8 +114,33 @@ SAFE_HOSTS = frozenset({"127.0.0.1", "localhost", "testserver", "::1"})
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
-def create_app(
+def create_app(*, database_path: str | Path | None = None,
+               instance_lease: InstanceLease | None = None, **kwargs: Any) -> FastAPI:
+    db_path = Path(database_path or _local_app_root() / "workbench.db").expanduser().resolve()
+    lease = instance_lease or InstanceLease(db_path.parent).acquire()
+    lease.require_held()
+    if lease.directory != db_path.parent:
+        raise ValueError("Instance lease does not cover the workbench data directory")
+    try:
+        app = _create_app_owned(database_path=db_path, instance_lease=lease, **kwargs)
+    except BaseException:
+        lease.close()
+        raise
+    weakref.finalize(app, _close_owned_app, app.state.supervisor, lease, app.state.maintenance,
+        app.state.reviewed_batches.tasks)
+    return app
+
+
+def _close_owned_app(supervisor: JobSupervisor, lease: InstanceLease, maintenance=None, batch_tasks=None) -> None:
+    if batch_tasks is not None:batch_tasks.close()
+    supervisor.shutdown()
+    if maintenance is not None and lease.held:maintenance.require_no_active()
+    lease.close()
+
+
+def _create_app_owned(
     *,
+    instance_lease: InstanceLease,
     database_path: str | Path | None = None,
     allowed_workspaces: Sequence[str | Path] | None = None,
     repo_root: str | Path | None = None,
@@ -73,17 +149,49 @@ def create_app(
     auto_import_active: bool = True,
     outline_provider: Any | None = None,
     amendment_provider: Any | None = None,
+    chapter_candidate_executor_factory: Any | None = None,
+    chapter_fact_extraction_executor_factory: Any | None = None,
+    chapter_publication_machine_store: str | Path | None = None,
+    reviewed_chapter_candidate_executor_factory: Any | None = None,
+    reviewed_chapter_fact_extraction_executor_factory: Any | None = None,
     python_executable: str | Path | None = None,
 ) -> FastAPI:
     repository = Path(repo_root or Path(__file__).resolve().parents[1]).resolve(strict=True)
     local_root = _local_app_root()
     db_path = Path(database_path or local_root / "workbench.db")
     task_root = Path(runtime_root or local_root / "jobs")
+    maintenance=maintenance_for(instance_lease)
     workspaces = tuple(allowed_workspaces or _configured_workspaces(repository))
-    database = WorkbenchDatabase(db_path)
+    # Schema registration is separate from construction. Even later-installed
+    # reviewed services must wait for the same maintenance admission.
+    database = WorkbenchDatabase(db_path, defer_initialization=True, machine_store=chapter_publication_machine_store,
+        allow_recovery_controller=True)
+    restore_scope = database.restore_scope
+    if restore_scope is not None:
+        start_worker = auto_import_active = False
+        workspaces = (restore_scope.book_root,)
+        task_root = restore_scope.task_runtime_root
     projects = ProjectRegistry(database, allowed_workspaces=workspaces)
     outlines = OutlineBatchService(database, projects)
+    chapter_cards = ChapterCardService(projects)
     jobs = JobStore(database)
+    chapter_candidates = ChapterCandidateService(
+        projects=projects,
+        chapter_cards=chapter_cards,
+        database=database,
+        executor_factory=chapter_candidate_executor_factory,
+    )
+    chapter_facts = ChapterFactReviewService(
+        database=database,
+        projects=projects,
+        candidate_drafts=chapter_candidates.drafts,
+    )
+    chapter_fact_extractions = ChapterFactExtractionService(
+        projects=projects,
+        candidate_drafts=chapter_candidates.drafts,
+        chapter_facts=chapter_facts,
+        executor_factory=chapter_fact_extraction_executor_factory,
+    )
     planner = OutlinePlanner(database=database, outlines=outlines, provider=outline_provider)
     amendments = AmendmentService(
         database=database,
@@ -96,39 +204,50 @@ def create_app(
         jobs=jobs,
         repo_root=repository,
     )
+    bootstrap_warnings: list[str] = []
+    def recover_startup():
+        database.complete_initialization()
+        if restore_scope is not None:
+            bootstrap_warnings.append('恢复副本已启用；只访问目标作品，重启不会自动执行任务。' if restore_scope.active
+                else '恢复副本尚未启用，当前只供核对资料。')
+            return
+        recovered_plans=planner.recover_after_restart()
+        recovered_amendments=amendments.recover_after_restart()
+        blocked = len(getattr(planner, 'recovery_blocked', ())) + len(getattr(amendments, 'recovery_blocked', ()))
+        if blocked:
+            bootstrap_warnings.append(f"{blocked} 个中断操作所属作品当前无法取得写入资格，原记录已保留。")
+        if recovered_plans:bootstrap_warnings.append(f"{recovered_plans} 个中断的章纲调用已锁定，需显式恢复。")
+        if recovered_amendments:bootstrap_warnings.append(f"{recovered_amendments} 个中断的润色审核已锁定，需显式恢复。")
+        if auto_import_active:
+            try:_import_active_project(repository,projects)
+            except Exception as exc:bootstrap_warnings.append(f"活动作品未自动导入：{exc}")
+    startup_recovery=DeferredStartup(recover_startup)
     supervisor = JobSupervisor(
         store=jobs,
         project_lookup=projects.get,
         repo_root=repository,
         runtime_root=task_root,
         python_executable=python_executable,
+        instance_lease=instance_lease,
+        startup_recovery=startup_recovery.run,
     )
-    bootstrap_warnings: list[str] = []
-    recovered_plans = planner.recover_after_restart()
-    recovered_amendments = amendments.recover_after_restart()
-    if recovered_plans:
-        bootstrap_warnings.append(
-            f"{recovered_plans} 个中断的章纲调用已锁定，需显式恢复。"
-        )
-    if recovered_amendments:
-        bootstrap_warnings.append(
-            f"{recovered_amendments} 个中断的润色审核已锁定，需显式恢复。"
-        )
-    if auto_import_active:
-        try:
-            _import_active_project(repository, projects)
-        except Exception as exc:  # noqa: BLE001 - visible diagnostic, not a startup failure.
-            bootstrap_warnings.append(f"活动作品未自动导入：{exc}")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        if start_worker:
-            supervisor.start()
         try:
+            instance_lease.require_held()
+            if start_worker:
+                supervisor.start()
             yield
         finally:
+            batch_workflow = getattr(app.state, 'reviewed_batches', None)
+            if batch_workflow is not None:
+                await asyncio.to_thread(batch_workflow.tasks.close)
+            await maintenance.drain_async()
             if start_worker:
                 supervisor.shutdown()
+            maintenance.require_no_active()
+            instance_lease.close()
 
     app = FastAPI(
         title="NovelAgent 本地创作工作台",
@@ -138,10 +257,26 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+    app.router.route_class=MaintenanceRoute
+    app.state.maintenance=maintenance
+    app.state.startup_recovery=startup_recovery
+    install_maintenance_status(app)
+    install_backup_api(app,projects=projects,maintenance=maintenance,task_runtime_root=task_root,
+        worker_enabled=start_worker,auto_import_active=auto_import_active,
+        machine_store=chapter_publication_machine_store)
     app.state.session_token = secrets.token_urlsafe(32)
+    install_recovery_api(app,projects=projects,maintenance=maintenance,backups=app.state.backups,
+        machine_store=chapter_publication_machine_store,repository=repository,python_executable=python_executable)
+    app.state.instance_lease = instance_lease
     app.state.database = database
+    app.state.restore_scope = restore_scope
+    install_restore_scope_api(app, database)
     app.state.projects = projects
     app.state.outlines = outlines
+    app.state.chapter_cards = chapter_cards
+    app.state.chapter_candidates = chapter_candidates
+    app.state.chapter_facts = chapter_facts
+    app.state.chapter_fact_extractions = chapter_fact_extractions
     app.state.jobs = jobs
     app.state.planner = planner
     app.state.amendments = amendments
@@ -153,6 +288,8 @@ def create_app(
 
     @app.middleware("http")
     async def local_security_boundary(request: Request, call_next: Any):
+        if not instance_lease.held:
+            return JSONResponse({"error": {"code": "workbench_stopped", "message": "工作台已停止，请重新启动。"}}, status_code=503)
         host_header = request.headers.get("host", "")
         host = _host_name(host_header)
         if host not in SAFE_HOSTS:
@@ -192,22 +329,98 @@ def create_app(
         )
         return response
 
+    @app.get("/api/instance")
+    async def instance_identity():
+        return {"instance_id": instance_lease.instance_id}
+
+    @app.exception_handler(WorkbenchDatabaseInitializationPending)
+    async def database_initialization_pending(_: Request, exc):
+        return JSONResponse({"error": {"code": exc.code, "message": str(exc)}}, status_code=503)
+
+    @app.exception_handler(RestoreScopeError)
+    async def restore_scope_error(_: Request, exc):
+        return JSONResponse({"error": {"code": exc.code, "message": str(exc)}}, status_code=409)
+
     @app.exception_handler(ProjectRegistryError)
     @app.exception_handler(OutlineBatchError)
     @app.exception_handler(OutlinePlanningError)
     @app.exception_handler(JobError)
     @app.exception_handler(AmendmentError)
+    @app.exception_handler(ChapterCardError)
+    @app.exception_handler(ChapterCandidateWorkbenchError)
+    @app.exception_handler(ChapterFactReviewError)
+    @app.exception_handler(ChapterFactExtractionWorkbenchError)
     @app.exception_handler(CohortError)
     @app.exception_handler(ValueError)
     async def product_error(_: Request, exc: Exception):
-        status = 409 if isinstance(exc, (OutlineBatchConflict, JobError)) else 400
+        if isinstance(exc, ChapterCandidateWorkbenchNotFound):
+            status = 404
+        elif isinstance(exc, ChapterFactReviewNotFound):
+            status = 404
+        elif isinstance(exc, ChapterFactExtractionWorkbenchNotFound):
+            status = 404
+        elif isinstance(
+            exc,
+            (
+                ChapterCandidateWorkbenchIntegrity,
+                ChapterFactReviewIntegrity,
+                ChapterFactExtractionWorkbenchIntegrity,
+            ),
+        ):
+            status = 500
+        elif isinstance(
+            exc,
+            (
+                OutlineBatchConflict,
+                ChapterCardConflict,
+                ChapterCandidateWorkbenchConflict,
+                ChapterFactReviewConflict,
+                ChapterFactExtractionWorkbenchConflict,
+                JobError,
+            ),
+        ):
+            status = 409
+        else:
+            status = 400
         return JSONResponse(
             {"error": {"code": _error_code(exc), "message": str(exc)}},
             status_code=status,
         )
 
+    chapter_publication = install_chapter_publication_routes(app, database=database, allowed_workspaces=workspaces,
+        machine_store=chapter_publication_machine_store)
+    from workbench.chapter_budgets import install_chapter_budget_routes
+    install_chapter_budget_routes(app,chapter_publication)
+    chapter_cards, chapter_candidates, chapter_facts, chapter_fact_extractions = install_reviewed_workflow(app,
+        publication=chapter_publication, cards=chapter_cards, candidates=chapter_candidates,
+        facts=chapter_facts, extractions=chapter_fact_extractions,
+        candidate_executor_factory=reviewed_chapter_candidate_executor_factory,
+        extraction_executor_factory=reviewed_chapter_fact_extraction_executor_factory)
+    from workbench.reviewed_batch_api import install_reviewed_batch_routes
+    install_reviewed_batch_routes(app,chapter_publication,instance_lease=instance_lease,maintenance=maintenance,
+        generation_executor_factory=reviewed_chapter_candidate_executor_factory,
+        extraction_executor_factory=reviewed_chapter_fact_extraction_executor_factory)
+    display_projects = ProjectDisplayRegistry(database, allowed_workspaces=workspaces)
+    reviewed_views = ReviewedProjectViews(chapter_publication)
+
+    @app.get("/api/projects/{project_id}/model-calls")
+    async def project_model_calls(project_id: str) -> dict[str, Any]:
+        from workbench.model_usage import read_project_model_usage
+        record = display_projects.get(project_id)
+        try:
+            report = await asyncio.to_thread(read_project_model_usage, record.root, book_id=record.book_id)
+        except (OSError, ValueError, RuntimeError) as exc:
+            # Preserve evidence and avoid returning a misleading partial total.
+            return JSONResponse({"error":{"code":"model_usage_evidence_invalid",
+                "message":"模型调用证据未能完整核验，暂不能显示用量合计。请保留原记录并检查项目恢复状态。"}},status_code=409)
+        return {"project_id":record.id,**report}
+
     @app.get("/api/bootstrap")
-    async def bootstrap() -> dict[str, Any]:
+    async def bootstrap(request: Request) -> dict[str, Any]:
+        current_scope = getattr(request.state,'restore_scope',restore_scope)
+        scope_view = current_scope.view() if current_scope is not None else None
+        if scope_view is not None and getattr(request.state,'restore_restart_required',False):
+            scope_view.update(restart_required=True,message='原作品写资格已恢复；请重启此实例恢复写作。')
         return {
             "name": "NovelAgent",
             "version": app.version,
@@ -215,11 +428,55 @@ def create_app(
             "provider": _provider_status(),
             "allowed_workspaces": list(app.state.allowed_workspaces),
             "warnings": list(app.state.bootstrap_warnings),
+            "restore_scope": scope_view,
         }
 
+    def _sibling_catalog_items(*, include_fixtures: bool = False):
+        return [
+            _catalog_project_item(
+                sibling,
+                jobs,
+                reviewed_views,
+                outlines,
+                reviewed=app.state.reviewed_workflow.is_reviewed(sibling.id),
+            )
+            for sibling in select_author_bookshelf(
+                display_projects.list_projects(),
+                repository=repository,
+                include_fixtures=include_fixtures or restore_scope is not None,
+            )
+        ]
+
+    def _with_related_editions(item, *, include_fixtures: bool = False):
+        return annotate_project_with_related_editions(
+            item,
+            _sibling_catalog_items(include_fixtures=include_fixtures),
+            repository=repository,
+        )
+
     @app.get("/api/projects")
-    async def list_projects() -> dict[str, Any]:
-        return {"items": [_project_summary(record, jobs) for record in projects.list_projects()]}
+    async def list_projects(include_fixtures: bool = Query(False)) -> dict[str, Any]:
+        return await asyncio.to_thread(_list_projects_payload, include_fixtures)
+
+    def _list_projects_payload(include_fixtures: bool) -> dict[str, Any]:
+        records = select_author_bookshelf(
+            display_projects.list_projects(),
+            repository=repository,
+            include_fixtures=include_fixtures or restore_scope is not None,
+        )
+        return {"items": annotate_related_editions(
+            [
+                _catalog_project_item(
+                    record,
+                    jobs,
+                    reviewed_views,
+                    outlines,
+                    reviewed=app.state.reviewed_workflow.is_reviewed(record.id),
+                )
+                for record in records
+            ],
+            repository=repository,
+        )}
 
     @app.post("/api/projects", status_code=201)
     async def create_project(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -232,14 +489,25 @@ def create_app(
             if not parent_value:
                 raise ProjectRegistryError("target or save_location is required")
             target = Path(str(parent_value)) / _safe_directory_name(name)
-        record = projects.create_project(
+        registry = projects
+        if payload.get("writing_mode") == "review_each_chapter":
+            from workbench.reviewed_projects import NewBookRegistry
+            registry = NewBookRegistry(database, allowed_workspaces=workspaces,
+                settings=payload.get("initial_settings", ""), publication=chapter_publication)
+        record = registry.create_project(
             target,
             name=name,
             genre=str(payload.get("genre") or ""),
             synopsis=str(payload.get("synopsis") or payload.get("summary") or ""),
             language=str(payload.get("language") or "zh-CN"),
         )
-        return {"project": _project_summary(record, jobs)}
+        return {"project": _catalog_project_item(record, jobs, reviewed_views, outlines, reviewed=registry is not projects)}
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/author-outline")
+    def save_author_outline(project_id: str, chapter: int, payload: dict[str, Any] = Body(...)):
+        from workbench.new_book_outline import save_next_outline
+        workflow = app.state.reviewed_workflow
+        return workflow.mutate(project_id, lambda: save_next_outline(workflow.registration(project_id), chapter, payload))
 
     @app.post("/api/projects/import", status_code=201)
     async def import_project(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -250,33 +518,473 @@ def create_app(
             str(root),
             name=str(payload.get("name") or "").strip() or None,
         )
-        return {"project": _project_summary(record, jobs)}
+        return {"project": _catalog_project_item(record, jobs, reviewed_views, outlines)}
 
     @app.get("/api/projects/{project_id}")
     async def project_detail(project_id: str) -> dict[str, Any]:
-        record = projects.get(project_id)
+        record = display_projects.get(project_id)
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            detail = await asyncio.to_thread(reviewed_views.detail, record)
+            project = detail.get("project")
+            if isinstance(project, dict):
+                project = annotate_project_catalog(project, record)
+                detail = {**detail, "project": _with_related_editions(project)}
+            return detail
         return {
-            "project": _project_summary(record, jobs),
+            "project": _with_related_editions(_catalog_project_item(record, jobs, reviewed_views, outlines)),
             "overview": _project_overview(record, outlines, jobs),
         }
 
     @app.get("/api/projects/{project_id}/chapters")
     async def project_chapters(project_id: str) -> dict[str, Any]:
-        record = projects.get(project_id)
+        record = display_projects.get(project_id)
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            return {"items":await asyncio.to_thread(reviewed_views.chapters, record)}
         return {"items": _chapter_list(record, amendments)}
 
     @app.get("/api/projects/{project_id}/chapters/{chapter}")
     async def project_chapter(project_id: str, chapter: int) -> dict[str, Any]:
-        record = projects.get(project_id)
-        return _chapter_detail(record, chapter, amendments)
+        record = display_projects.get(project_id)
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            detail = await asyncio.to_thread(reviewed_views.chapter, record, chapter)
+        else:
+            detail = _chapter_detail(record, chapter, amendments)
+        draft = await asyncio.to_thread(jobs.get_project_chapter_draft, record.id, chapter)
+        if draft is not None:
+            if (draft.project_id != record.id or draft.chapter != chapter or draft.revision < 1
+                    or hashlib.sha256(draft.text.encode('utf-8')).hexdigest() != draft.sha256):
+                raise JobError('保留的作者草稿内容或修订无法核验，请保留数据并核对。')
+            # Archived recovery drafts are kept as evidence after formal commit,
+            # but must not be presented as current author work.
+            if str(getattr(draft, "state", "") or "") != "archived":
+                detail['retained_author_draft'] = {name:getattr(draft,name)
+                    for name in ('id','project_id','chapter','revision','sha256','text','state')}
+        return detail
+
+    @app.get("/api/projects/{project_id}/chapters/{chapter}/card")
+    async def project_chapter_card(project_id: str, chapter: int) -> dict[str, Any]:
+        card = await asyncio.to_thread(chapter_cards.get, project_id, chapter)
+        return {"chapter_card": card.to_dict()}
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/card/confirm")
+    async def confirm_project_chapter_card(
+        project_id: str,
+        chapter: int,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        confirmation = await asyncio.to_thread(
+            chapter_cards.confirm,
+            project_id,
+            chapter,
+            payload,
+        )
+        return {
+            "confirmation": confirmation,
+            "message": "章节意图已在当前工作台会话中确认；尚未创建正文候选。",
+        }
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/generation-estimate")
+    async def estimate_generation(project_id: str, chapter: int, payload: dict[str, Any] = Body(...)):
+        estimate = await asyncio.to_thread(chapter_candidates.generation_estimate, project_id, chapter,
+                                           confirmation=payload.get("confirmation"))
+        return {"estimate": estimate}
+
+    @app.get("/api/projects/{project_id}/chapters/{chapter}/candidates")
+    async def project_chapter_candidates(
+        project_id: str,
+        chapter: int,
+    ) -> dict[str, Any]:
+        items = await asyncio.to_thread(
+            chapter_candidates.list_for_chapter,
+            project_id,
+            chapter,
+        )
+        return {"items": list(items)}
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/author-drafts")
+    async def import_project_author_draft(project_id: str, chapter: int, payload: dict[str, Any] = Body(...)):
+        candidate = await asyncio.to_thread(chapter_candidates.import_author_draft, project_id, chapter,
+            confirmation=payload.get('confirmation'),text=payload.get('text'),origin_label=payload.get('origin_label'),
+            idempotency_key=payload.get('idempotency_key') or '')
+        return {'candidate':candidate,'message':'已有稿件已导入为可编辑草稿；请继续审阅事实。'}
+
+    @app.post("/api/projects/{project_id}/chapters/{chapter}/candidates")
+    async def generate_project_chapter_candidate(
+        project_id: str,
+        chapter: int,
+        payload: dict[str, Any] = Body(...),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.generate,
+            project_id,
+            chapter,
+            confirmation=payload.get("confirmation"),
+            idempotency_key=(idempotency_key or payload.get("idempotency_key") or ""),
+        )
+        return {
+            "candidate": candidate,
+            "message": _candidate_result_message(candidate),
+        }
+
+    @app.post(
+        "/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/resume"
+    )
+    async def resume_project_chapter_candidate(
+        project_id: str,
+        chapter: int,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.resume,
+            project_id,
+            chapter,
+            candidate_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "candidate": candidate,
+            "message": _candidate_result_message(candidate),
+        }
+
+    @app.post(
+        "/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/draft"
+    )
+    async def create_project_chapter_candidate_draft(
+        project_id: str,
+        chapter: int,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.create_editable_draft,
+            project_id,
+            chapter,
+            candidate_id,
+            expected_prose_sha256=str(payload.get("expected_prose_sha256") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "candidate": candidate,
+            "message": "正文候选已复制为工作台可编辑草稿；正式正文和权威状态仍未修改。",
+        }
+
+    @app.get(
+        "/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}"
+    )
+    async def project_chapter_candidate(
+        project_id: str,
+        chapter: int,
+        candidate_id: str,
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.get,
+            project_id,
+            chapter,
+            candidate_id,
+        )
+        return {"candidate": candidate}
+
+    @app.put("/api/candidate-drafts/{draft_id}")
+    async def update_candidate_draft(
+        draft_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        draft = await asyncio.to_thread(
+            chapter_candidates.update_editable_draft,
+            draft_id,
+            text=payload.get("text"),
+            expected_revision=payload.get("expected_revision"),
+        )
+        return {
+            "draft": draft,
+            "message": "工作台草稿已保存；正式正文和权威状态仍未修改。",
+        }
+
+    @app.get("/api/candidate-drafts/{draft_id}/fact-extractions")
+    async def candidate_draft_fact_extractions(draft_id: str) -> dict[str, Any]:
+        items = await asyncio.to_thread(
+            chapter_fact_extractions.list_for_draft,
+            draft_id,
+        )
+        return {"items": list(items)}
+
+    @app.post("/api/candidate-drafts/{draft_id}/fact-extractions")
+    async def start_candidate_draft_fact_extraction(
+        draft_id: str,
+        payload: dict[str, Any] = Body(...),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.start,
+            draft_id,
+            expected_draft_revision=payload.get("expected_draft_revision"),
+            expected_draft_sha256=str(payload.get("expected_draft_sha256") or ""),
+            idempotency_key=(
+                idempotency_key or payload.get("idempotency_key") or ""
+            ),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.get(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}"
+    )
+    async def candidate_draft_fact_extraction(
+        draft_id: str,
+        extraction_id: str,
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.get,
+            draft_id,
+            extraction_id,
+        )
+        return {"fact_extraction": extraction}
+
+    @app.post(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/resume"
+    )
+    async def resume_candidate_draft_fact_extraction(
+        draft_id: str,
+        extraction_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.resume,
+            draft_id,
+            extraction_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.post(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/review"
+    )
+    async def open_candidate_draft_fact_extraction_review(
+        draft_id: str,
+        extraction_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.open_review,
+            draft_id,
+            extraction_id,
+            expected_record_hash=str(payload.get("expected_record_hash") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.post(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/cancel"
+    )
+    async def cancel_candidate_draft_fact_extraction(
+        draft_id: str,
+        extraction_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.cancel,
+            draft_id,
+            extraction_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.post(
+        "/api/candidate-drafts/{draft_id}/fact-extractions/{extraction_id}/abandon-provider"
+    )
+    async def abandon_candidate_draft_fact_extraction_provider(
+        draft_id: str,
+        extraction_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        extraction = await asyncio.to_thread(
+            chapter_fact_extractions.abandon_provider_uncertainty,
+            draft_id,
+            extraction_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            expected_record_hash=(
+                str(payload["expected_record_hash"])
+                if payload.get("expected_record_hash") is not None
+                else None
+            ),
+            expected_uncertainty_sha256=str(
+                payload.get("expected_uncertainty_sha256") or ""
+            ),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_extraction": extraction,
+            "message": _fact_extraction_result_message(extraction),
+        }
+
+    @app.get("/api/candidate-drafts/{draft_id}/fact-reviews")
+    async def candidate_draft_fact_reviews(draft_id: str) -> dict[str, Any]:
+        items = await asyncio.to_thread(chapter_facts.list_for_draft, draft_id)
+        return {"items": items}
+
+    @app.post("/api/candidate-drafts/{draft_id}/fact-reviews", status_code=201)
+    async def create_candidate_draft_fact_review(
+        draft_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        review = await asyncio.to_thread(
+            chapter_facts.create,
+            draft_id,
+            expected_draft_revision=payload.get("expected_draft_revision"),
+            expected_draft_sha256=str(payload.get("expected_draft_sha256") or ""),
+            proposals=payload.get("proposals"),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_review": review,
+            "message": (
+                "事实候选卡基于旧快照建立并已保留，但当前已失效；请从最新正文重新开始审核。"
+                if review.get("state") == "stale"
+                else "事实候选卡已建立；所有项目仍是待审建议，正式正文和权威状态均未修改。"
+            ),
+        }
+
+    @app.get("/api/fact-reviews/{review_id}")
+    async def fact_review_detail(review_id: str) -> dict[str, Any]:
+        review = await asyncio.to_thread(chapter_facts.get, review_id)
+        return {"fact_review": review}
+
+    @app.put("/api/fact-reviews/{review_id}")
+    async def update_fact_review(
+        review_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        review = await asyncio.to_thread(
+            chapter_facts.update,
+            review_id,
+            facts=payload.get("facts"),
+            expected_revision=payload.get("expected_revision"),
+        )
+        return {
+            "fact_review": review,
+            "message": (
+                "事实候选编辑已保存为旧快照证据，但当前已失效，不能用于提交。"
+                if review.get("state") == "stale"
+                else "事实候选卡已保存；正式正文和权威状态均未修改。"
+            ),
+        }
+
+    @app.get("/api/fact-reviews/{review_id}/editor-context")
+    async def fact_review_editor_context(review_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(chapter_facts.editor_context, review_id)
+
+    @app.put("/api/fact-reviews/{review_id}/support")
+    async def update_fact_review_support(review_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        if set(payload) != {"support", "expected_revision", "author_confirmed"}:
+            raise ValueError("身份与基线补充只接受作者决定和当前审核修订。")
+        review = await asyncio.to_thread(chapter_facts.update_support, review_id,
+            support=payload["support"], expected_revision=payload["expected_revision"],
+            author_confirmed=payload["author_confirmed"] is True)
+        return {"fact_review":review, "message":"身份与基线决定已保存；确认整章审核后方可预览提交。"}
+
+    @app.post("/api/fact-reviews/{review_id}/confirm")
+    async def confirm_fact_review(
+        review_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        review = await asyncio.to_thread(
+            chapter_facts.confirm,
+            review_id,
+            expected_revision=payload.get("expected_revision"),
+            expected_facts_sha256=str(payload.get("expected_facts_sha256") or ""),
+            expected_draft_revision=payload.get("expected_draft_revision"),
+            expected_draft_sha256=str(payload.get("expected_draft_sha256") or ""),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "fact_review": review,
+            "message": (
+                "旧快照的事实审核已确认并保留，但当前已失效，不能提交；请从最新正文重建审核。"
+                if review.get("state") == "stale"
+                else "事实候选已由作者确认并锁定，但尚未写入权威状态或正式正文。"
+            ),
+        }
+
+    @app.post(
+        "/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/abandon-provider"
+    )
+    async def abandon_project_chapter_candidate_provider(
+        project_id: str,
+        chapter: int,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        candidate = await asyncio.to_thread(
+            chapter_candidates.abandon_provider_uncertainty,
+            project_id,
+            chapter,
+            candidate_id,
+            expected_intent_hash=str(payload.get("expected_intent_hash") or ""),
+            expected_record_hash=(
+                str(payload["expected_record_hash"])
+                if payload.get("expected_record_hash") is not None
+                else None
+            ),
+            expected_uncertainty_sha256=str(
+                payload.get("expected_uncertainty_sha256") or ""
+            ),
+            author_confirmed=payload.get("author_confirmed") is True,
+        )
+        return {
+            "candidate": candidate,
+            "message": (
+                "未知结果已放弃采用，原始证据和预算占用仍保留；新增调用仍需满足本章预算或受控续试条件。"
+            ),
+        }
+
+    @app.post('/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/continuation')
+    async def authorize_candidate_continuation(project_id: str, chapter: int, candidate_id: str,
+                                              payload: dict[str, Any] = Body(...)):
+        candidate=await asyncio.to_thread(chapter_candidates.authorize_continuation,
+            project_id,chapter,candidate_id,
+            expected_ledger_sha256=str(payload.get('expected_ledger_sha256') or ''),
+            expected_intent_hash=str(payload.get('expected_intent_hash') or ''),
+            expected_record_hash=payload.get('expected_record_hash'),
+            expected_uncertainty_sha256=str(payload.get('expected_uncertainty_sha256') or ''),
+            author_confirmed=payload.get('author_confirmed') is True)
+        return {'candidate':candidate,'message':'一次续试许可已保存，尚未发送；旧请求占用继续保留。'}
+
+    @app.post('/api/projects/{project_id}/chapters/{chapter}/candidates/{candidate_id}/continuation/run')
+    async def run_candidate_continuation(project_id: str, chapter: int, candidate_id: str,
+                                        payload: dict[str, Any] = Body(...)):
+        candidate=await asyncio.to_thread(chapter_candidates.run_continuation,
+            project_id,chapter,candidate_id,
+            expected_grant_sha256=str(payload.get('expected_grant_sha256') or ''),
+            author_confirmed=payload.get('author_confirmed') is True)
+        return {'candidate':candidate,'message':_candidate_result_message(candidate)}
 
     @app.get("/api/projects/{project_id}/export")
     async def export_project(project_id: str) -> PlainTextResponse:
-        record = projects.get(project_id)
-        sections: list[str] = []
-        for chapter in sorted(scan_prose_chapters(record.root)):
-            current_text, _, _, _ = read_current_chapter_text(record.root, chapter)
-            sections.append(f"===== 第 {chapter} 章 =====\n\n{current_text.rstrip()}")
+        record = display_projects.get(project_id)
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            sections = await asyncio.to_thread(reviewed_views.export, record)
+        else:
+            sections = []
+            for chapter in sorted(scan_prose_chapters(record.root)):
+                current_text, _, _, _ = read_current_chapter_text(record.root, chapter)
+                sections.append(f"===== 第 {chapter} 章 =====\n\n{current_text.rstrip()}")
         if not sections:
             raise ProjectRegistryError("作品还没有可导出的正式正文")
         response = PlainTextResponse("\n\n\n".join(sections) + "\n", media_type="text/plain; charset=utf-8")
@@ -294,9 +1002,68 @@ def create_app(
     @app.get("/api/projects/{project_id}/history")
     async def project_history(project_id: str) -> dict[str, Any]:
         record = projects.get(project_id)
+        from workbench.history_stats import build_project_history_payload
+
+        return build_project_history_payload(
+            root=record.root,
+            project_id=record.id,
+            job_store=jobs,
+            compact_run=_compact_run,
+        )
+
+    @app.get("/api/projects/{project_id}/history/{entry_id}")
+    async def project_history_detail(
+        project_id: str,
+        entry_id: str,
+        source: str = Query("run"),
+    ) -> dict[str, Any]:
+        if source not in {"job", "run"}:
+            raise HTTPException(status_code=422, detail="source must be 'job' or 'run'")
+
+        record = projects.get(project_id)
+        job_summary: dict[str, Any] | None = None
+        run_id = entry_id
+        if source == "job":
+            try:
+                job = jobs.get(entry_id)
+            except JobError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            if job.project_id != record.id:
+                raise HTTPException(status_code=404, detail="job not found for this project")
+            job_summary = {
+                "id": job.id,
+                "kind": job.kind,
+                "state": job.state,
+                "created_at": job.created_at,
+                "started_at": job.started_at,
+                "finished_at": job.finished_at,
+                "next_chapter": job.next_chapter,
+            }
+            run_id = str(job.result.get("run_id") or "").strip()
+            if not run_id:
+                return {
+                    "source": source,
+                    "job": job_summary,
+                    "run": None,
+                    "verification": None,
+                }
+
+        payload = _history_run_by_id(record.root, run_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="run record not found for this project")
+        run = _compact_run(payload)
+        if run is None:
+            raise HTTPException(status_code=404, detail="invalid run record")
+
+        verification: dict[str, Any] | None = None
+        if run.get("committed") is True and isinstance(run.get("chapter_index"), int):
+            verification = verify_committed_chapter(record.root, run["chapter_index"], payload)
         return {
-            "jobs": [item.to_dict() for item in jobs.list_jobs(project_id=record.id, limit=100)],
-            "runs": _run_history(record.root),
+            "source": source,
+            "job": job_summary,
+            "run": run,
+            "verification": verification,
+            "retained_paid_draft_preview": _retained_paid_draft_preview(payload),
         }
 
     @app.get("/api/projects/{project_id}/production")
@@ -313,7 +1080,7 @@ def create_app(
                 item["resume_ready"] = jobs.resume_ready(job.id)
             job_payload.append(item)
         return {
-            "project": _project_summary(record, jobs),
+            "project": _project_summary(record, jobs, outlines),
             "jobs": job_payload,
             "approved_batches": [item.to_dict() for item in batches if item.status == "approved"],
             "draft_batches": [item.to_dict() for item in batches if item.status == "draft"],
@@ -321,6 +1088,8 @@ def create_app(
             "cohorts": [item.to_dict() for item in cohort_items],
             "score_dimensions": list(SCORE_DIMENSIONS),
             "self_use_production_ready": cohorts.production_ready(record.id),
+            "official_launch": cohorts.official_launch_declaration(record.id),
+            "session_defaults": _session_outline_window(batches, record.next_chapter),
         }
 
     @app.get("/api/projects/{project_id}/outline-batches")
@@ -376,21 +1145,43 @@ def create_app(
         )
         return {"batch": batch.to_dict()}
 
+    @app.post("/api/outline-batches/{batch_id}/adopt-existing")
+    async def adopt_existing_outline_batch(
+        batch_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
+        batch = outlines.adopt_existing_and_approve_batch(
+            batch_id,
+            expected_revision=int(payload.get("expected_revision") or 0),
+            expected_sha256=str(payload.get("expected_sha256") or payload.get("source_state_sha") or ""),
+        )
+        return {"batch": batch.to_dict()}
+
     @app.post("/api/projects/{project_id}/sessions", status_code=202)
     async def create_session(project_id: str, payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
         project = projects.get(project_id)
         start = int(payload.get("start_chapter") or project.next_chapter)
-        count = int(payload.get("chapter_count") or 10)
-        end = int(payload.get("end_chapter") or (start + count - 1))
-        batch = _approved_batch_for_range(outlines.list_batches(project.id), start, end)
+        batches = outlines.list_batches(project.id)
+        window = _session_outline_window(batches, start)
+        if payload.get("end_chapter") not in (None, ""):
+            end = int(payload.get("end_chapter"))
+            if end < start:
+                raise OutlineBatchError(f"结束章不能早于起始章第 {start} 章")
+        else:
+            default_count = window["chapter_count"] or 10
+            count = int(payload["chapter_count"]) if payload.get("chapter_count") not in (None, "") else default_count
+            if count < 1:
+                raise OutlineBatchError("连续章数必须至少为 1")
+            end = start + count - 1
+            if window["covered"]:
+                end = min(end, int(window["end_chapter"]))
+        batch = _approved_batch_for_range(batches, start, end)
         if batch is None and start == end and payload.get("recovery_confirmed") is True:
             if not _has_recovery_checkpoint(project.root, start):
                 raise JobError("locked chapter must be classified before a recovery commit can start")
             outline_binding = _recovery_outline_binding(project, start)
         elif batch is None:
-            raise OutlineBatchError(
-                f"第 {start}—{end} 章必须先由一个已批准且冻结的章纲批次完整覆盖"
-            )
+            raise OutlineBatchError(_missing_outline_coverage_message(start, end, window))
         else:
             outline_binding = {
                 "outline_batch_id": batch.id,
@@ -640,17 +1431,39 @@ def create_app(
         chapter = int(payload.get("chapter") or project.next_chapter)
         if resolve_prose(project.root, chapter).path is not None:
             raise JobError(f"chapter {chapter} already has formal prose")
+        parent = next(
+            (
+                item
+                for item in jobs.list_jobs(project_id=project.id, limit=100)
+                if item.kind == "generation_session"
+                and item.state in PAUSED_JOB_STATES
+                and item.next_chapter == chapter
+            ),
+            None,
+        )
         recovery = jobs.create_job(
             project_id=project.id,
             kind="locked_chapter_recovery",
             start_chapter=chapter,
             end_chapter=chapter,
-            config={"force_reset": bool(payload.get("force_reset"))},
+            config={
+                "force_reset": bool(payload.get("force_reset")),
+                **(
+                    {
+                        "parent_job_id": parent.id,
+                        "parent_failure_revision": parent.revision,
+                    }
+                    if parent is not None
+                    else {}
+                ),
+            },
             idempotency_key=_derived_idempotency_key(
                 "recover-project",
                 project.id,
                 chapter,
                 bool(payload.get("force_reset")),
+                parent.id if parent is not None else None,
+                parent.revision if parent is not None else None,
             ),
         )
         supervisor.notify()
@@ -662,6 +1475,7 @@ def create_app(
 
     @app.put("/api/drafts/{draft_id}")
     async def update_draft(draft_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        jobs.require_actionable_recovery_draft(draft_id)
         draft = jobs.update_draft(
             draft_id,
             text=payload.get("text"),
@@ -671,7 +1485,7 @@ def create_app(
 
     @app.post("/api/drafts/{draft_id}/validate", status_code=202)
     async def validate_draft(draft_id: str, payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-        draft = jobs.get_draft(draft_id)
+        draft = jobs.require_actionable_recovery_draft(draft_id)
         project = projects.get(draft.project_id)
         draft_path = (
             Path(project.root)
@@ -704,7 +1518,7 @@ def create_app(
 
     @app.post("/api/drafts/{draft_id}/confirm")
     async def confirm_draft(draft_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        draft = jobs.get_draft(draft_id)
+        draft = jobs.require_actionable_recovery_draft(draft_id)
         if draft.state != "validated":
             raise JobError("draft must pass recovery validation before confirmation")
         parent_id = str(payload.get("job_id") or "")
@@ -735,6 +1549,8 @@ def create_app(
 
     @app.get("/api/projects/{project_id}/health")
     async def project_health(project_id: str) -> dict[str, Any]:
+        if app.state.reviewed_workflow.is_reviewed(project_id):
+            return await asyncio.to_thread(reviewed_views.health, display_projects.get(project_id))
         return _health_payload(projects.get(project_id))
 
     @app.post("/api/projects/{project_id}/health/activate")
@@ -817,6 +1633,34 @@ def create_app(
         )
         return response
 
+    @app.get("/baseline-review", include_in_schema=False)
+    async def author_baseline_page() -> FileResponse:
+        response = FileResponse(static_root / "baseline-review.html")
+        response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
+            samesite="strict", secure=False, path="/")
+        return response
+
+    @app.get("/upgrade", include_in_schema=False)
+    async def onboarding_upgrade_page() -> FileResponse:
+        response = FileResponse(static_root / "upgrade.html")
+        response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
+            samesite="strict", secure=False, path="/")
+        return response
+
+    @app.get("/publication", include_in_schema=False)
+    async def chapter_publication_page() -> FileResponse:
+        response = FileResponse(static_root / "chapter-publication.html")
+        response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
+            samesite="strict", secure=False, path="/")
+        return response
+
+    @app.get("/reviewed-batches", include_in_schema=False)
+    async def reviewed_batches_page() -> FileResponse:
+        response = FileResponse(static_root / "reviewed-batches.html")
+        response.set_cookie(SESSION_COOKIE, app.state.session_token, httponly=True,
+            samesite="strict", secure=False, path="/")
+        return response
+
     @app.get("/projects/{client_path:path}")
     async def client_route(client_path: str) -> FileResponse:
         del client_path
@@ -831,31 +1675,119 @@ def create_app(
         )
         return response
 
+    try:
+        with maintenance.admit('local_writer'):
+            startup_recovery.run()
+    except MaintenanceBlocked:
+        bootstrap_warnings.append('上次维护尚未结束；数据库初始化、自动导入、状态恢复和任务调度已延后。')
     return app
 
 
-def _project_summary(record: ProjectRecord, jobs: JobStore) -> dict[str, Any]:
-    identity = load_project_identity(record.root)
-    prose = scan_prose_chapters(record.root)
+
+def _author_pending_attention(
+    record: ProjectRecord,
+    outlines: OutlineBatchService,
+    jobs: JobStore,
+) -> dict[str, Any]:
+    """Author-visible pending/attention derived from real project state.
+
+    Counts paused jobs, draft outline batches, standalone actionable drafts,
+    and genuinely recoverable locked-chapter work for the actual chapter
+    involved — never a hardcoded chapter 20 field.
+    """
+    paused_jobs = jobs.list_jobs(
+        project_id=record.id,
+        states=tuple(PAUSED_JOB_STATES),
+        limit=200,
+    )
     unfinished = jobs.list_jobs(
         project_id=record.id,
-        states=("queued", "starting", "running", "pause_requested", "awaiting_input", "needs_recovery"),
-        limit=10,
+        states=(
+            "queued",
+            "starting",
+            "running",
+            "pause_requested",
+            "awaiting_input",
+            "needs_recovery",
+        ),
+        limit=200,
     )
-    active = unfinished[0] if unfinished else None
-    paused_chapters = {
-        job.next_chapter for job in unfinished if job.state in PAUSED_JOB_STATES
-    }
+    active_generation = next(
+        (
+            job
+            for job in unfinished
+            if job.kind == "generation_session"
+            and job.state not in TERMINAL_JOB_STATES | PAUSED_JOB_STATES
+        ),
+        None,
+    )
+    recovery_chapter = (
+        paused_jobs[0].next_chapter
+        if paused_jobs
+        else active_generation.next_chapter
+        if active_generation is not None
+        else record.next_chapter
+    )
+    chapter_recovery = _chapter_recovery_summary(record.root, recovery_chapter)
     inflight_generation_chapters = {
-        job.next_chapter for job in unfinished if job.kind == "generation_session"
+        job.next_chapter
+        for job in unfinished
+        if job.kind == "generation_session"
+        and job.state not in TERMINAL_JOB_STATES | PAUSED_JOB_STATES
     }
-    recovery = _chapter_recovery_summary(record.root, record.next_chapter)
+    paused_chapters = {job.next_chapter for job in paused_jobs}
     recovery_attention = bool(
-        recovery["recoverable"]
-        and record.next_chapter not in inflight_generation_chapters
+        chapter_recovery["recoverable"]
+        and recovery_chapter not in inflight_generation_chapters
+        and recovery_chapter not in paused_chapters
     )
-    pending_count = len(paused_chapters) + int(recovery_attention)
+    draft_batches = tuple(
+        batch for batch in outlines.list_batches(record.id) if batch.status == "draft"
+    )
+    attention_chapters = set(paused_chapters)
+    if recovery_attention:
+        attention_chapters.add(recovery_chapter)
+    drafts = jobs.list_actionable_drafts(record.id)
+    extra_drafts = tuple(
+        draft for draft in drafts if int(draft.chapter) not in attention_chapters
+    )
+    pending_count = (
+        len(paused_jobs)
+        + len(draft_batches)
+        + int(recovery_attention)
+        + len(extra_drafts)
+    )
+    return {
+        "pending_count": pending_count,
+        "has_attention": pending_count > 0,
+        "paused_jobs": paused_jobs,
+        "unfinished": unfinished,
+        "chapter_recovery": chapter_recovery,
+        "draft_batches": draft_batches,
+        "actionable_drafts": drafts,
+    }
+
+
+def _project_summary(
+    record: ProjectRecord,
+    jobs: JobStore,
+    outlines: OutlineBatchService,
+) -> dict[str, Any]:
+    identity = load_project_identity(record.root)
+    prose = scan_prose_chapters(record.root)
+    attention = _author_pending_attention(record, outlines, jobs)
+    unfinished = attention["unfinished"]
+    active = unfinished[0] if unfinished else None
+    pending_count = attention["pending_count"]
     metadata = record.metadata
+    attention_recovery = attention["chapter_recovery"]
+    draft_state = None
+    if active is not None:
+        chapter = int(active.next_chapter)
+        if chapter != int(attention_recovery.get("chapter") or record.next_chapter):
+            attention_recovery = _chapter_recovery_summary(record.root, chapter)
+        draft = jobs.get_project_chapter_draft(record.id, chapter)
+        draft_state = draft.state if draft is not None else None
     return {
         **record.to_dict(),
         "title": record.name,
@@ -871,7 +1803,11 @@ def _project_summary(record: ProjectRecord, jobs: JobStore) -> dict[str, Any]:
         "active_job": active.to_dict() if active else None,
         "pending_count": pending_count,
         "has_attention": pending_count > 0,
-        "attention_label": _attention_label(active.state) if active else None,
+        "attention_label": attention_label_for_project(
+            active.state if active else None,
+            recovery=attention_recovery,
+            draft_state=draft_state,
+        ) if active else None,
     }
 
 
@@ -881,8 +1817,8 @@ def _project_overview(
     jobs: JobStore,
 ) -> dict[str, Any]:
     batches = outlines.list_batches(record.id)
+    attention = _author_pending_attention(record, outlines, jobs)
     recent_jobs = jobs.list_jobs(project_id=record.id, limit=8)
-    pending = [job for job in recent_jobs if job.state in PAUSED_JOB_STATES]
     prose = scan_prose_chapters(record.root)
     word_count = 0
     for chapter, candidates in prose.items():
@@ -893,16 +1829,21 @@ def _project_overview(
         except (OSError, ValueError):
             continue
         word_count += _visible_character_count(current_text)
+    window = _session_outline_window(batches, record.next_chapter)
     return {
         "chapter_count": len(prose),
         "word_count": word_count,
         "word_count_label": f"{word_count:,} 字",
         "next_chapter": record.next_chapter,
+        "next_outline_title": _next_outline_title(record),
         "current_tasks": [job.to_dict() for job in recent_jobs if job.state not in TERMINAL_JOB_STATES],
-        "pending_count": len(pending) + sum(1 for batch in batches if batch.status == "draft"),
+        "pending_count": attention["pending_count"],
+        "has_attention": attention["has_attention"],
         "recent_history": [job.to_dict() for job in recent_jobs],
         "latest_outline_batch": batches[0].to_dict() if batches else None,
-        "chapter_20_recovery": _chapter_recovery_summary(record.root, 20),
+        "outline_remaining": window,
+        "outline_ready_count": int(window["chapter_count"] or 0) if window["covered"] else 0,
+        "chapter_recovery": attention["chapter_recovery"],
     }
 
 
@@ -930,7 +1871,10 @@ def _chapter_list(record: ProjectRecord, amendments: AmendmentService) -> list[d
         result.append(
             {
                 "chapter": chapter,
-                "title": _chapter_title(prose_resolution.path or outline_resolution.path),
+                "title": _chapter_display_title(
+                    outline_path=outline_resolution.path if not outline_resolution.conflict else None,
+                    prose_path=prose_resolution.path if not prose_resolution.conflict else None,
+                ),
                 "has_outline": outline_resolution.path is not None and not outline_resolution.conflict,
                 "has_prose": prose_resolution.path is not None and not prose_resolution.conflict,
                 "conflict": prose_resolution.conflict or outline_resolution.conflict,
@@ -959,10 +1903,20 @@ def _chapter_detail(
         current_text, _, current_sha, source_kind = read_current_chapter_text(record.root, chapter)
     versions = amendments.list_for_chapter(record.id, chapter)
     run = _latest_run_for_chapter(record.root, chapter)
+    has_outline = outline.path is not None and not outline.conflict
+    has_prose = prose.path is not None and not prose.conflict
+    conflict = outline.conflict or prose.conflict
     return {
         "project": {"id": record.id, "title": record.name},
         "chapter": chapter,
-        "title": _chapter_title(prose.path or outline.path),
+        "title": _chapter_display_title(
+            outline_path=outline.path if not outline.conflict else None,
+            prose_path=prose.path if not prose.conflict else None,
+        ),
+        "has_outline": has_outline,
+        "has_prose": has_prose,
+        "conflict": conflict,
+        "status": "warning" if conflict else "committed" if has_prose else "draft",
         "outline": outline_text,
         "formal_prose": formal_text,
         "current_prose": current_text,
@@ -971,6 +1925,7 @@ def _chapter_detail(
         "review": _review_from_run(run),
         "run": _compact_run(run),
         "versions": [item.to_dict() for item in versions],
+        "retained_paid_draft_preview": None if has_prose else _retained_paid_draft_preview(run),
     }
 
 
@@ -981,13 +1936,8 @@ def _pending_payload(
 ) -> dict[str, Any]:
     recent_jobs = jobs.list_jobs(project_id=record.id, limit=100)
     paused = tuple(job for job in recent_jobs if job.state in PAUSED_JOB_STATES)
-    drafts = []
-    with jobs.database.connection() as connection:
-        rows = connection.execute(
-            "SELECT id FROM drafts WHERE project_id = ? ORDER BY updated_at DESC", (record.id,)
-        ).fetchall()
-    for row in rows:
-        drafts.append(jobs.get_draft(str(row["id"])).to_dict())
+    jobs.archive_settled_recovery_drafts(record.id, project_root=record.root)
+    drafts = [draft.to_dict() for draft in jobs.list_actionable_drafts(record.id)]
     paused_payload = []
     for job in paused:
         item = job.to_dict()
@@ -1166,6 +2116,56 @@ def _health_payload(record: ProjectRecord) -> dict[str, Any]:
     }
 
 
+def _covering_approved_batch(batches: Sequence[Any], start: int) -> Any | None:
+    return next(
+        (
+            batch
+            for batch in batches
+            if batch.status == "approved"
+            and batch.start_chapter <= start <= batch.end_chapter
+            and batch.approval_manifest_path
+            and batch.approval_receipt_sha256
+        ),
+        None,
+    )
+
+
+def _session_outline_window(batches: Sequence[Any], start: int) -> dict[str, Any]:
+    batch = _covering_approved_batch(batches, start)
+    if batch is None:
+        return {
+            "start_chapter": start,
+            "chapter_count": 0,
+            "end_chapter": None,
+            "max_chapter_count": 0,
+            "outline_batch_id": None,
+            "outline_batch_start": None,
+            "outline_batch_end": None,
+            "covered": False,
+        }
+    remaining = batch.end_chapter - start + 1
+    return {
+        "start_chapter": start,
+        "chapter_count": remaining,
+        "end_chapter": batch.end_chapter,
+        "max_chapter_count": remaining,
+        "outline_batch_id": batch.id,
+        "outline_batch_start": batch.start_chapter,
+        "outline_batch_end": batch.end_chapter,
+        "covered": True,
+    }
+
+
+def _missing_outline_coverage_message(start: int, end: int, window: dict[str, Any]) -> str:
+    if window.get("covered"):
+        return (
+            f"已批准且冻结的章纲批次只覆盖第 {window['outline_batch_start']}—{window['outline_batch_end']} 章。"
+            f"当前可从第 {start} 章连续写到第 {window['end_chapter']} 章（共 {window['chapter_count']} 章），"
+            "不能把范围延伸到尚未批准的章节。"
+        )
+    return f"第 {start}—{end} 章必须先由一个已批准且冻结的章纲批次完整覆盖"
+
+
 def _approved_batch_for_range(batches: Sequence[Any], start: int, end: int) -> Any | None:
     return next(
         (
@@ -1285,20 +2285,64 @@ def _run_history(root: Path) -> list[dict[str, Any]]:
     return [value for _, value in values[:100]]
 
 
-def _latest_run_for_chapter(root: Path, chapter: int) -> dict[str, Any] | None:
+def _history_run_by_id(root: Path, run_id: str) -> dict[str, Any] | None:
+    if not run_id:
+        return None
     runtime = RuntimePaths.for_story_project(root)
-    candidates: list[tuple[int, dict[str, Any]]] = []
     if not runtime.run_dir.is_dir():
         return None
     for path in runtime.run_dir.glob("chapter_*.json"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        compact = _compact_run(payload)
+        if compact is not None and compact.get("id") == run_id:
+            return payload
+    return None
+
+
+def _run_file_signature(path: Path) -> tuple[int, ...]:
+    stat = path.stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+@lru_cache(maxsize=4096)
+def _run_chapter_index(path: Path, signature: tuple[int, ...]) -> int | None:
+    # Cache only routing metadata, never manuscript/snapshot payloads. Exceptions
+    # are not cached, so partially written or damaged records can recover.
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if _run_file_signature(path) != signature:
+        raise OSError("Run record changed during lookup")
+    run = payload.get("run") if isinstance(payload, dict) else None
+    return int(run.get("chapter_index") or 0) if isinstance(run, dict) else None
+
+
+def _latest_run_for_chapter(root: Path, chapter: int) -> dict[str, Any] | None:
+    runtime = RuntimePaths.for_story_project(root)
+    if not runtime.run_dir.is_dir():
+        return None
+    candidates: list[tuple[int, Path]] = []
+    for path in runtime.run_dir.glob("chapter_*.json"):
+        try:
+            candidates.append((path.stat().st_mtime_ns, path))
+        except OSError:
+            continue
+    # Read newest first and retain the original directory order for equal
+    # timestamps. Avoid decoding older full snapshots once a match is found.
+    for _, path in sorted(candidates, key=lambda item: item[0], reverse=True):
+        try:
+            path = path.absolute()
+            if _run_chapter_index(path, _run_file_signature(path)) != chapter:
+                continue
+            # Matching records are always reread and checked before returning.
+            payload = json.loads(path.read_text(encoding="utf-8"))
             run = payload.get("run") if isinstance(payload, dict) else None
             if isinstance(run, dict) and int(run.get("chapter_index") or 0) == chapter:
-                candidates.append((path.stat().st_mtime_ns, payload))
+                return payload
         except (OSError, ValueError, TypeError):
             continue
-    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+    return None
 
 
 def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -1355,6 +2399,19 @@ def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
             "manual_review_count": validation.get("manual_review_count"),
             "problems": problems,
         }
+    failed_action = None
+    trace = run.get("trace")
+    if isinstance(trace, list):
+        failed = [
+            item
+            for item in trace
+            if isinstance(item, Mapping)
+            and str(item.get("status") or item.get("state") or "") == "failed"
+        ]
+        if len(failed) == 1:
+            failed_action = str(
+                failed[0].get("action") or failed[0].get("name") or failed[0].get("step") or ""
+            ).strip() or None
     return {
         "id": run.get("id"),
         "chapter_index": run.get("chapter_index"),
@@ -1363,11 +2420,12 @@ def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "repair_attempts": run.get("repair_attempts"),
-        "review_status": review.get("status") if isinstance(review, Mapping) else None,
+        "review_status": resolve_review_status(payload),
         "persistence_state": persistence.get("state") if isinstance(persistence, Mapping) else None,
         "publication": persistence.get("publication") if isinstance(persistence, Mapping) else None,
         "error_type": error.get("type"),
         "error_message": error.get("message"),
+        "failed_action": failed_action,
         "provider_calls": budget.get("provider_calls"),
         "unsettled_attempt_count": budget.get("unsettled_attempt_count"),
         "total_input_tokens": budget.get("total_input_tokens"),
@@ -1375,6 +2433,50 @@ def _compact_run(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "estimated_cost": budget.get("estimated_cost"),
         "chapter_chars": chapter_payload.get("chars"),
         "validation": compact_validation,
+    }
+
+
+
+def _retained_paid_draft_preview(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Return a view-only preview of retained paid chapter text.
+
+    This is not a verified candidate and must not be used to open confirm-submit.
+    """
+
+    if not isinstance(payload, Mapping):
+        return None
+    run = payload.get("run") if isinstance(payload.get("run"), Mapping) else payload
+    if not isinstance(run, Mapping):
+        return None
+    if run.get("committed") is True or payload.get("committed") is True:
+        return None
+    if run.get("accepted") is True or payload.get("accepted") is True:
+        return None
+    text = payload.get("chapter")
+    if not isinstance(text, str):
+        maybe = run.get("chapter")
+        text = maybe if isinstance(maybe, str) else None
+    if not isinstance(text, str) or len(text) < 500:
+        return None
+    chapter_meta = run.get("chapter") if isinstance(run.get("chapter"), Mapping) else {}
+    reported_chars = chapter_meta.get("chars") if isinstance(chapter_meta, Mapping) else None
+    if reported_chars is not None:
+        try:
+            if int(reported_chars) != len(text):
+                return None
+        except (TypeError, ValueError):
+            return None
+    compact = _compact_run(payload) or {}
+    return {
+        "text": text,
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "source_run_id": run.get("id"),
+        "failed_action": compact.get("failed_action"),
+        "unsettled_attempt_count": compact.get("unsettled_attempt_count"),
+        "committed": False,
+        "verified_candidate": False,
+        "confirm_submit_allowed": False,
     }
 
 
@@ -1416,6 +2518,41 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
                 break
     run_record = run.get("run") if isinstance(run, dict) and isinstance(run.get("run"), dict) else {}
     latest_run_id = str(run_record.get("id") or "").strip() or None
+    formal_prose_exists = bool(resolve_prose(root, chapter).path)
+    unbound_uncertain: list[dict[str, Any]] = []
+    if latest_run_id is None and not formal_prose_exists:
+        identity = load_project_identity(root)
+        book_id = str(getattr(identity, "book_id", "") or "")
+        snapshot_path = runtime.snapshot_path
+        snapshot_chapter = 0
+        if snapshot_path.is_file():
+            try:
+                snapshot_chapter = int(load_snapshot(snapshot_path).get("chapter_index") or 0)
+            except (OSError, ValueError, TypeError):
+                snapshot_chapter = 0
+        if book_id and (snapshot_chapter == chapter or snapshot_chapter == 0):
+            unbound_uncertain = list_unbound_uncertain_executions(
+                runtime.run_dir,
+                expected_book_id=book_id,
+            )
+    uncertain_call = None
+    if unbound_uncertain:
+        first_call = next(
+            (
+                call
+                for item in unbound_uncertain
+                for call in (item.get("calls") or [])
+                if isinstance(call, dict)
+            ),
+            None,
+        )
+        uncertain_call = {
+            "execution_id": unbound_uncertain[0]["execution_id"],
+            "call_id": first_call.get("call_id") if first_call else None,
+            "attempt_id": first_call.get("attempt_id") if first_call else None,
+            "stage": first_call.get("stage") if first_call else None,
+            "created_at": first_call.get("created_at") if first_call else None,
+        }
     verified_source = (
         verified_final_recovery_draft(
             run_dir=runtime.run_dir,
@@ -1424,12 +2561,42 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
         if latest_run_id is not None
         else None
     )
-    verified_source_sha256 = (
+    verified_final_sha256 = (
         str(verified_source.get("sha256") or "").strip() or None
         if isinstance(verified_source, Mapping)
         else None
     )
-    recoverable = bool(run and run_record.get("committed") is not True)
+    verified_candidate = (
+        verified_candidate_recovery_draft(
+            run_dir=runtime.run_dir,
+            run_id=latest_run_id,
+        )
+        if latest_run_id is not None and verified_source is None
+        else None
+    )
+    verified_candidate_sha256 = (
+        str(verified_candidate.get("sha256") or "").strip() or None
+        if isinstance(verified_candidate, Mapping)
+        else None
+    )
+    verified_source_sha256 = verified_final_sha256 or verified_candidate_sha256
+    reset_discards_latest_run = bool(
+        latest_checkpoint
+        and latest_checkpoint.get("action") == "reset"
+        and latest_run_id
+        and latest_checkpoint.get("source_run_id") == latest_run_id
+    )
+    # A reset is append-only evidence that its source run was deliberately
+    # abandoned.  Keep both records visible in history, but do not surface the
+    # discarded run as a fresh recovery task after the workbench restarts.
+    recoverable = bool(
+        (
+            run
+            and run_record.get("committed") is not True
+            and not reset_discards_latest_run
+        )
+        or (not run and unbound_uncertain and not formal_prose_exists)
+    )
     checkpoint_matches_latest_run = bool(
         latest_checkpoint
         and latest_checkpoint.get("action") != "reset"
@@ -1446,16 +2613,33 @@ def _chapter_recovery_summary(root: Path, chapter: int) -> dict[str, Any]:
             and latest_checkpoint.get("complete_draft_sha256")
             == verified_source_sha256
         )
-    return {
+    summary = {
         "chapter": chapter,
-        "formal_prose_exists": bool(resolve_prose(root, chapter).path),
+        "formal_prose_exists": formal_prose_exists,
         "latest_run": _compact_run(run),
         "recoverable": recoverable,
         "checkpoint": latest_checkpoint,
         "checkpoint_matches_latest_run": checkpoint_matches_latest_run,
-        "verified_final_sha256": verified_source_sha256,
+        "verified_final_sha256": verified_final_sha256,
+        "verified_candidate_sha256": verified_candidate_sha256,
         "needs_reclassification": bool(recoverable and not checkpoint_matches_latest_run),
+        "uncertain_without_run": bool(unbound_uncertain and not run),
+        "uncertain_call": uncertain_call,
+        "reset_cleared": bool(
+            latest_checkpoint
+            and latest_checkpoint.get("action") == "reset"
+            and not formal_prose_exists
+            and not unbound_uncertain
+        ),
     }
+    summary["durable_polished_draft_available"] = durable_polished_draft_available(summary)
+    summary["retained_complete_draft_available"] = retained_complete_draft_available(summary)
+    summary["retained_paid_draft_preview"] = (
+        None
+        if formal_prose_exists
+        else _retained_paid_draft_preview(run)
+    )
+    return summary
 
 
 def _recovery_draft_source_conflict(
@@ -1579,23 +2763,37 @@ def _provider_status() -> dict[str, Any]:
     }
 
 
+def _catalog_project_item(
+    record: ProjectRecord,
+    jobs: JobStore,
+    reviewed_views: ReviewedProjectViews,
+    outlines: OutlineBatchService,
+    *,
+    reviewed: bool = False,
+) -> dict[str, Any]:
+    item = reviewed_views.summary(record) if reviewed else _project_summary(record, jobs, outlines)
+    return annotate_project_catalog(item, record)
+
+
 def _import_active_project(repository: Path, projects: ProjectRegistry) -> None:
-    marker = repository / ".active-book"
     candidates: list[Path] = []
-    if marker.is_file():
-        value = marker.read_text(encoding="utf-8-sig").strip()
-        if value:
-            candidate = Path(value)
-            candidates.append(candidate if candidate.is_absolute() else repository / candidate)
+    active = resolve_active_book(repository)
+    if active is not None:
+        candidates.append(active)
     books_root = repository / "books"
     if books_root.is_dir():
         candidates.extend(path for path in books_root.iterdir() if path.is_dir())
     seen: set[Path] = set()
     for candidate in candidates:
-        canonical = candidate.resolve()
+        try:
+            canonical = candidate.resolve()
+        except (OSError, RuntimeError):
+            continue
         if canonical in seen:
             continue
         seen.add(canonical)
+        if not should_auto_import_book(canonical, active_book=active):
+            continue
         if all((canonical / name).is_dir() for name in ("设定", "大纲", "正文", "追踪")):
             projects.import_project(canonical)
 
@@ -1659,12 +2857,30 @@ def _read_optional_text(path: Path | None) -> str | None:
         return None
 
 
+def _next_outline_title(record: ProjectRecord) -> str | None:
+    outline = resolve_outline(record.root, record.next_chapter)
+    if outline.path is None or outline.conflict:
+        return None
+    title = _chapter_display_title(outline_path=outline.path)
+    return title if title != "未命名章节" else None
+
+
+def _chapter_display_title(
+    *,
+    outline_path: Path | None = None,
+    prose_path: Path | None = None,
+) -> str:
+    for path in (outline_path, prose_path):
+        if path is None:
+            continue
+        title = extract_chapter_title(_read_optional_text(path) or "", path)
+        if title:
+            return title
+    return "未命名章节"
+
+
 def _chapter_title(path: Path | None) -> str:
-    if path is None:
-        return "未命名章节"
-    stem = path.stem
-    match = re.search(r"章[_：:\s-]*(.+)$", stem)
-    return match.group(1).strip() if match else stem
+    return _chapter_display_title(outline_path=path, prose_path=path)
 
 
 def _visible_character_count(text: str) -> int:
@@ -1676,6 +2892,48 @@ def _attention_label(state: str) -> str:
         "awaiting_input": "需要作者检查并确认",
         "needs_recovery": "Provider 状态待安全恢复",
     }.get(state, "有待处理事项")
+
+
+def _candidate_result_message(candidate: Mapping[str, Any]) -> str:
+    status = str(candidate.get("status") or "")
+    if status == "completed":
+        if isinstance(candidate.get("draft"), Mapping):
+            return "正文候选已生成并复制为可编辑工作台草稿；正式正文和权威状态仍未修改。"
+        return "正文候选已生成；确认后可复制为可编辑工作台草稿，正式正文和权威状态仍未修改。"
+    if status == "provider_uncertain":
+        return "模型调用结果不确定，服务商可能已计费；请先核对使用记录，不要直接重试。"
+    if status == "stale":
+        return "生成期间可信输入发生变化；候选已隔离保留，正式正文和权威状态均未修改。"
+    if status == "failed":
+        return "正文候选生成失败；证据已保留，正式正文和权威状态均未修改。"
+    if status == "cancelled":
+        return "正文候选已取消；正式正文和权威状态均未修改。"
+    if status == "abandoned":
+        return "该不确定 Provider 结果已明确放弃采用；证据仍保留。"
+    if status == "needs_recovery":
+        return "候选已有持久 Intent，但没有终态记录；需作者确认后才能恢复，系统不会自动调用 Provider。"
+    return "正文候选状态已更新；正式正文和权威状态均未修改。"
+
+
+def _fact_extraction_result_message(extraction: Mapping[str, Any]) -> str:
+    status = str(extraction.get("status") or "")
+    if status == "completed":
+        if isinstance(extraction.get("fact_review"), Mapping):
+            return "事实候选已提取为作者审核卡；尚未写入权威状态，也未修改正式正文。"
+        if extraction.get("source_state") == "stale":
+            return "事实候选已保留，但正文或权威状态已经变化；请从最新草稿重新提取。"
+        return "事实候选已提取并保留；尚未写入权威状态，也未修改正式正文。"
+    if status == "provider_uncertain":
+        return "Provider 结果不确定；系统已停止新的模型调用，草稿、正式正文和权威状态均未修改。"
+    if status == "needs_recovery":
+        return "事实提取已有持久 Intent，但没有终态记录；需作者确认后才能安全恢复。"
+    if status == "failed":
+        return "事实候选提取失败且未自动重试；草稿、正式正文和权威状态均未修改。"
+    if status == "cancelled":
+        return "事实候选提取已取消；草稿、正式正文和权威状态均未修改。"
+    if status == "abandoned":
+        return "该不确定 Provider 结果已明确放弃采用；原始证据仍保留。"
+    return "事实候选提取状态已更新；草稿、正式正文和权威状态均未修改。"
 
 
 def _error_code(exc: Exception) -> str:

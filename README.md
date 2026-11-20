@@ -1,6 +1,8 @@
 # NovelAgent
 
-**Windows 本地作者从这里开始：[下载已验收的候选 ZIP](https://github.com/Gabrilekiwi/NovelAgent/releases/download/windows-self-use-cf5fa25/NovelAgent-Windows-cf5fa25.zip) · [安装与日常使用](docs/windows-author.md) · [自用上线标准](docs/product-validation.md)。** 候选包来自已验证的 `cf5fa25`。本页下方的开发说明针对默认分支；GitHub 的 “Code → Download ZIP” 是该分支的源码归档。
+Windows 作者从这里开始：[下载当前自用候选版](deliverables/release-candidate/README.md) · [安装与日常使用](docs/windows-author.md) · [自用上线标准](docs/product-validation.md)。
+
+以下为开发仓库的技术说明；历史版本的验证结论只对应当时的构建。
 
 Version: 2.0.1 stabilization release
 
@@ -36,17 +38,26 @@ Notion / Memory + StoryProject shadow/strict semantic state
 
 ## Quick Start
 
-Requires Python 3.12 or newer.
+The reproducible development baseline uses CPython 3.12 and a project virtual environment.
 
 Install dependencies:
 
-```bash
-pip install -r requirements.txt
+```powershell
+py -3.12 scripts/setup_environment.py
+.venv\Scripts\python.exe -B scripts/check_environment.py --dev
 ```
+
+On Linux, use `python3.12 scripts/setup_environment.py` and `.venv/bin/python` for subsequent commands. The setup installs exact runtime and transitive versions from `requirements.lock` plus test dependencies from `requirements-dev.lock`. Use `--runtime-only` to omit test tools. See [development environment and continuation](docs/development/environment.md) for validation, lock updates, and recovery of interrupted work. `requirements*.txt` declare dependency ranges for deliberate upgrades; the lock files define the tested installation.
 
 ## Windows 本地创作工作台
 
-完成依赖安装后，双击仓库根目录的 `启动创作工作台.bat`。工作台会自动打开浏览器；关闭启动窗口即可停止服务。作者日常使用不需要进入运行目录、查看 JSON 或输入恢复命令。
+完成上述项目环境安装后，双击仓库根目录的 `启动创作工作台.bat`。启动器使用并检查本项目`.venv`，缺失或版本不符时提示修复命令。工作台会自动打开浏览器；关闭启动窗口即可停止服务。作者日常使用不需要进入运行目录、查看 JSON 或输入恢复命令。
+
+试用当前开发改动（包括受控一次续试）请先关闭旧工作台，再双击 [`试用当前工作台.bat`](试用当前工作台.bat)。此入口明确使用当前目录版本，避免默认启动器打开已提交的旧界面；使用原本的工作台数据目录。已有实例运行时仍会打开原实例，因此切换版本前需要先关闭旧窗口。这是当前版本试用入口，不代表稳定版发布。续试和草稿保存的验证范围见[工作台日常操作验证](docs/development/workbench-continuation-20261117.md)。
+
+重复启动会验证并打开已有工作台，不再启动第二个任务执行器。若原窗口异常退出，但执行子进程仍在运行，新启动会提示等待或检查原进程，并保留任务现场。默认端口被其他程序占用时自动选择可用端口；以启动窗口显示的地址为准。创建作品时，“保存父目录”需要选择已存在的文件夹，路径错误可直接修改后重试，已填写内容会保留。
+
+隔离开发验证可使用 `.venv\Scripts\python.exe run_workbench.py --data-dir .tmp\workbench-test --workspace .tmp\workbench-books --no-active-import --no-browser --port 0`，先创建该 workspace 文件夹。工作台实例资格与本机作品写资格分别核对；恢复副本需经过受控交接后才能写入，直接复制目录不会获得写资格。完整恢复及Windows发布验收仍在进行，安装、升级保全和回退说明见[环境与维护文档](docs/development/environment.md)。
 
 工作台固定为五个主区域：
 
@@ -56,7 +67,7 @@ pip install -r requirements.txt
 - **待处理**：处理异常恢复、草稿修订、重验证和作者确认提交；不确定的 Provider 调用不会自动重试。
 - **历史**：追溯生成、警告、恢复、提交、Receipt/readback 和成本摘要。
 
-当前候选版按[作者独立写作和入稿](docs/product-validation.md)验收。两个十章批次与九维打分是可选试验，旧方法留在[历史记录](docs/development/product-validation-history.md)。
+自用上线按[作者独立完成一章的标准](docs/product-validation.md)验收。两个十章批次和九维打分都是可选实验；早期验证方法留在[历史记录](docs/development/product-validation-history.md)。
 
 工作台只监听 `127.0.0.1`，并校验 Host、Origin 和启动令牌。Provider 凭据继续由本机环境变量或 `.env` 管理；网页和工作台 SQLite 只显示脱敏就绪状态，不接收、不回显也不保存 API Key。
 

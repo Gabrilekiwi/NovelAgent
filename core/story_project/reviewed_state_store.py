@@ -1,0 +1,383 @@
+"""Receipt-backed cold reading for the reviewed legacy format.
+
+Not installed in ordinary builders until the identity/upgrade/commit gates are
+complete. The caller supplies trusted roots and the identity's baseline anchor.
+Reads do not reconcile transactions or regenerate anything. The writer lock and
+pending-transaction gate belong to the service that calls this reader.
+"""
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+
+from core.engine.persistence_v2 import verify_publication_receipt
+from core.engine.safe_paths import assert_safe_local_tree
+from core.story_project.paths import infer_next_chapter, resolve_prose
+from core.story_project.reviewed_state_document import (
+    FORMAT, PROSE_DIRECTORY, RECEIPT_DIRECTORY, RELATIVE_PATH, STATE_DIRECTORY,
+    decode_document, digest, fail, read_project_bytes, verify_current_sources, verify_transition,
+)
+
+
+def source_revision_after(document: bytes, *, book_id: str) -> dict:
+    value = decode_document(document, book_id=book_id)
+    return {"format": FORMAT, "revision": value["revision"], "committed_through": value["committed_through"],
+            "reviewed_document_sha256": digest(document), "request_sha256": value["head"]["request_sha256"]}
+
+
+def _one(bindings: list[dict], target_id: str) -> dict:
+    found = [b for b in bindings if b["target_id"] == target_id]
+    if len(found) != 1:
+        fail("reviewed_receipt_target_missing")
+    return found[0]
+
+
+def _content(binding: dict, roots: dict, *, read_bytes=None) -> bytes:
+    ref = binding["path_ref"]
+    if ref["root_id"] not in roots:
+        fail("reviewed_receipt_root_missing")
+    raw = (read_bytes or read_project_bytes)(Path(roots[ref["root_id"]]), ref["relative_path"])
+    if binding["sha256"] != digest(raw) or binding["size"] != len(raw):
+        fail("reviewed_receipt_current_target_mismatch")
+    return raw
+
+
+def _path(binding: dict, root_id: str, relative: str):
+    if binding["path_ref"]["root_id"] != root_id or binding["path_ref"]["relative_path"] != relative:
+        fail("reviewed_receipt_path_mismatch")
+
+
+def verify_reviewed_history(*, root: Path, book_id: str, root_map: dict,
+                            baseline_document_sha256: str) -> dict:
+    result, _ = _read_reviewed_history(root=root, book_id=book_id, root_map=root_map,
+                                      baseline_document_sha256=baseline_document_sha256)
+    return result
+
+
+class _LiveReviewedEvidence:
+    """Ordinary readers always retain local root and receipt PathGuard checks."""
+    def read(self, root, relative):
+        return read_project_bytes(root, relative)
+
+    def directory(self, path):
+        return assert_safe_local_tree(path)
+
+    def receipt(self, value, *, root_map):
+        return verify_publication_receipt(value, root_map=root_map)
+
+    def children(self, directory):
+        if not directory.is_dir():
+            fail("reviewed_publication_missing")
+        return sorted(directory.iterdir())
+
+    def prose(self, root, chapter):
+        return resolve_prose(root, chapter).path
+
+
+def _read_reviewed_history(*, root: Path, book_id: str, root_map: dict,
+                           baseline_document_sha256: str, _parent_document: bytes | None = None,
+                           _evidence=None) -> tuple[dict, dict]:
+    """Verify all retained receipts and require the current file to be the tip.
+
+    Each transaction publishes an immutable state snapshot as well as applying
+    the current state. Replaying the chain proves the seven collections came
+    from that confirmed baseline and those fact decisions. This is local
+    integrity evidence, not a signature against a fully rewritten book/history.
+    """
+    evidence = _evidence or _LiveReviewedEvidence()
+    root = evidence.directory(root)
+    if (Path(root_map["story_project"]).absolute() != root
+            or not Path(root_map["runtime"]).absolute().is_relative_to(root)
+            or Path(root_map["runtime"]).absolute() == root):
+        fail("reviewed_root_map_invalid")
+    runtime = evidence.directory(root_map["runtime"])
+    observed_document = evidence.read(root, RELATIVE_PATH)
+    # Only the typed transaction verifier may check the retained history at its
+    # staged before-image during apply. Public readers always use current bytes.
+    current_document = observed_document if _parent_document is None else _parent_document
+    current = decode_document(current_document, book_id=book_id)
+    directory = evidence.directory(runtime / RECEIPT_DIRECTORY)
+    identity_bytes = evidence.read(root, ".novelagent/project.json")
+    identity_payload = json.loads(identity_bytes.decode("utf-8-sig"))
+    native = "genesis" in identity_payload.get("reviewed_state", {})
+    records = {}
+    revisions = set()
+    # This namespace contains only these transactions for this book. Looking
+    # at all receipts detects a rollback to an older valid state or a fork.
+    for path in evidence.children(directory):
+        relative = path.relative_to(runtime).as_posix()
+        raw = evidence.read(runtime, relative)
+        if path.suffix != ".json":
+            fail("reviewed_receipt_namespace_invalid")
+        receipt = json.loads(raw.decode("utf-8"))
+        if native and relative == f"{RECEIPT_DIRECTORY}/start.json":
+            from core.story_project.new_book import verify_start
+            document = evidence.read(runtime, f"{STATE_DIRECTORY}/start.md")
+            value = verify_start(identity_bytes, receipt, document, book_id=book_id)
+            records[relative] = {"document": document, "value": value, "receipt": receipt, "final": {}, "prose": None}
+            revisions.add(1)
+            continue
+        result = evidence.receipt(receipt, root_map=root_map)
+        if not result["valid"] or receipt["schema_version"] != "2.1" or receipt["book_id"] != book_id:
+            fail("reviewed_publication_invalid")
+        state_binding = _one(receipt["artifacts"], "reviewed_state_archive")
+        run_id = receipt["run_id"]
+        _path(state_binding, "runtime", f"{STATE_DIRECTORY}/{run_id}.md")
+        document = _content(state_binding, root_map, read_bytes=evidence.read)
+        value = decode_document(document, book_id=book_id)
+        if value["initial_baseline"]["confirmation"]["chapter"] == 0 and not native:
+            fail("reviewed_new_book_identity_required")
+        head = value["head"]
+        checkpoint = source_revision_after(document, book_id=book_id)
+        if any(t["target_id"] == "reviewed_identity" for t in receipt["apply_targets"]):
+            if head["kind"] != "baseline":
+                fail("reviewed_upgrade_receipt_kind_invalid")
+            checkpoint = _upgrade_checkpoint(receipt, document=document, roots=root_map, read_bytes=evidence.read)
+        if (head["run_id"] != run_id or head["receipt_id"] != receipt["receipt_id"]
+                or head["receipt_relative_path"] != relative
+                or value["revision"] in revisions
+                or receipt["story_project_source_revision_after"] != checkpoint):
+            fail("reviewed_receipt_state_binding_invalid")
+        _path({"path_ref": receipt["receipt_path_ref"]}, "runtime", relative)
+        applied = _one(receipt["apply_targets"], "reviewed_state")
+        _path(applied, "story_project", RELATIVE_PATH)
+        if applied["sha256"] != state_binding["sha256"] or applied["size"] != len(document):
+            fail("reviewed_applied_state_mismatch")
+        final = json.loads(_content(receipt["final_run"], root_map, read_bytes=evidence.read).decode("utf-8"))
+        if (final.get("record_type") != "reviewed_legacy_commit" or final.get("id") != run_id
+                or final.get("book_id") != book_id or final.get("kind") != head["kind"]
+                or final.get("request_sha256") != head["request_sha256"]
+                or final.get("revision") != value["revision"] or final.get("committed") is not True):
+            fail("reviewed_final_record_mismatch")
+        prose = None
+        if head["kind"] == "chapter":
+            archived = _one(receipt["artifacts"], "reviewed_chapter_archive")
+            _path(archived, "runtime", f"{PROSE_DIRECTORY}/{run_id}.md")
+            prose = _content(archived, root_map, read_bytes=evidence.read)
+            target = _one(receipt["apply_targets"], "reviewed_chapter")
+            ref = target["path_ref"]
+            actual_prose = evidence.prose(root, value["committed_through"])
+            if (ref["root_id"] != "story_project" or actual_prose is None
+                    or actual_prose.relative_to(root).as_posix() != ref["relative_path"]):
+                fail("reviewed_chapter_path_invalid")
+            if _content(target, root_map, read_bytes=evidence.read) != prose:
+                fail("reviewed_chapter_archive_mismatch")
+        revisions.add(value["revision"])
+        records[relative] = {"document": document, "value": value, "prose": prose,
+                             "receipt": receipt, "final": final}
+    if native and f"{RECEIPT_DIRECTORY}/start.json" not in records:
+        fail("reviewed_new_book_start_missing")
+    if not records:
+        fail("reviewed_publication_missing")
+    archives = evidence.directory(runtime / STATE_DIRECTORY)
+    expected_archives = {f"{item['value']['head']['run_id']}.md" for item in records.values()}
+    if {path.name for path in evidence.children(archives)} != expected_archives:
+        fail("reviewed_archive_receipt_coverage_mismatch")
+    tip = max(records.values(), key=lambda item: item["value"]["revision"])
+    if tip["document"] != current_document:
+        fail("reviewed_current_state_is_not_tip")
+    pending = tip
+    visited = set()
+    while True:
+        head = pending["value"]["head"]
+        relative = head["receipt_relative_path"]
+        if relative in visited:
+            fail("reviewed_history_cycle")
+        visited.add(relative)
+        parent = head["previous"]
+        if parent is None:
+            if digest(pending["document"]) != baseline_document_sha256:
+                fail("reviewed_baseline_anchor_mismatch")
+            break
+        before = records.get(parent["receipt_relative_path"])
+        if before is None or digest(before["document"]) != parent["document_sha256"]:
+            fail("reviewed_history_missing")
+        verify_transition(document=pending["document"], previous_document=before["document"],
+                          book_id=book_id, chapter_prose=pending["prose"])
+        pending = before
+    if len(visited) != len(records) or len(records) != current["revision"]:
+        fail("reviewed_history_fork")
+    if evidence.read(root, ".novelagent/project.json") != identity_bytes:
+        fail("reviewed_identity_changed_during_read")
+    from core.story_project.reviewed_chapter_transition import CHAPTER_TRANSITION
+    for item in records.values():
+        if item["value"]["head"]["kind"] != "chapter":
+            continue
+        if identity_payload.get("schema_version") == "3.0" or item["final"].get("chapter_transition") == CHAPTER_TRANSITION:
+            parent = records[item["value"]["head"]["previous"]["receipt_relative_path"]]
+            _verify_typed_chapter_checkpoint(item, previous_document=parent["document"], roots=root_map, read_bytes=evidence.read)
+    if evidence.read(root, RELATIVE_PATH) != observed_document:
+        fail("reviewed_source_changed_during_read")
+    result = {"value": copy.deepcopy(current), "document_sha256": digest(current_document),
+              "receipt_count": len(records), "receipt_hash": tip["receipt"]["receipt_hash"]}
+    # Source-resolution receipts can follow a chapter without advancing the cursor.
+    # Use only the matching chapter in the verified chain; a baseline has no such receipt.
+    for item in records.values():
+        v = item["value"]
+        if v["head"]["kind"] == "chapter" and v["committed_through"] == current["committed_through"]:
+            accepted = [{"summary": f["summary"], "quotes": [s["quote"] for s in f["evidence_spans"]]}
+                        for f in v["last_transition"]["facts"] if f["review"]["decision"] == "accepted"]
+            if accepted:
+                result["previous_chapter_facts"] = {"chapter": v["committed_through"], "facts": accepted}
+            break
+    return result, records
+
+
+def _verify_typed_chapter_checkpoint(item, *, previous_document, roots, read_bytes=None):
+    read_bytes = read_bytes or read_project_bytes
+    from core.engine.persistence_v2 import validate_persistence_manifest_v2
+    from core.story_project.reviewed_chapter_transition import (
+        CHAPTER_TRANSITION, QUALITY_DIRECTORY, QUALITY_TARGET, verify_chapter_bundle,
+    )
+    receipt = item["receipt"]
+    run_id = receipt["run_id"]
+    request_binding = _one(receipt["artifacts"], "reviewed_commit_request")
+    quality_binding = _one(receipt["artifacts"], QUALITY_TARGET)
+    _path(request_binding, "runtime", f"reviewed/requests/{run_id}.json")
+    _path(quality_binding, "runtime", f"{QUALITY_DIRECTORY}/{run_id}.json")
+    ref = receipt["manifest"]["path_ref"]
+    manifest = validate_persistence_manifest_v2(json.loads(read_bytes(Path(roots[ref["root_id"]]), ref["relative_path"])))
+    if manifest["manifest_digest"] != receipt["manifest"]["sha256"]:
+        fail("reviewed_chapter_manifest_changed")
+    declared = manifest["immutable"]["read_set_declared_writes"]
+    state_declarations = [d for d in declared if d["relative_path"] == RELATIVE_PATH]
+    if (len(state_declarations) != 1 or state_declarations[0].get("transition") != CHAPTER_TRANSITION
+            or state_declarations[0].get("source_revision_after") != receipt["story_project_source_revision_after"]):
+        fail("reviewed_chapter_transition_missing")
+    verify_chapter_bundle(previous_document=previous_document, document=item["document"], prose=item["prose"],
+        evidence=json.loads(_content(request_binding, roots, read_bytes=read_bytes)),
+        quality=json.loads(_content(quality_binding, roots, read_bytes=read_bytes)),
+        final_record=item["final"], read_set=manifest["immutable"]["story_project_read_set"],
+        transaction_binding={"run_id": run_id, "context_digest": receipt["context_digest"],
+            "generation_input_context_digest": receipt["generation_input_context_digest"],
+            "receipt_id": receipt["receipt_id"], "receipt_path_ref": receipt["receipt_path_ref"]})
+
+
+def read_verified_commit_requests(*, root: Path, book_id: str, root_map: dict,
+                                  baseline_document_sha256: str) -> list[dict]:
+    """Read publication facts for rebuilding an index; never regenerate.
+
+    The caller owns the book lock and pending-transaction boundary. This is
+    stricter than the format-only reader: every chapter needs its complete
+    immutable request artifact. A valid generic receipt alone is insufficient.
+    It verifies historical publication, not permission for another publication.
+    """
+    from core.engine.chapter_commit_request import (
+        REQUEST_DIRECTORY, REQUEST_TARGET, verify_commit_request_evidence,
+    )
+    from core.engine.persistence_v2 import validate_persistence_manifest_v2
+
+    history, records = _read_reviewed_history(root=root, book_id=book_id, root_map=root_map,
+                                             baseline_document_sha256=baseline_document_sha256)
+    publications = []
+    scopes = set()
+    for item in sorted(records.values(), key=lambda item: item["value"]["revision"]):
+        value, receipt = item["value"], item["receipt"]
+        if value["head"]["kind"] != "chapter":
+            continue
+        binding = _one(receipt["artifacts"], REQUEST_TARGET)
+        _path(binding, "runtime", f"{REQUEST_DIRECTORY}/{receipt['run_id']}.json")
+        evidence = json.loads(_content(binding, root_map).decode("utf-8"))
+        ref = receipt["manifest"]["path_ref"]
+        manifest = validate_persistence_manifest_v2(json.loads(read_project_bytes(
+            Path(root_map[ref["root_id"]]), ref["relative_path"]).decode("utf-8")))
+        if manifest["manifest_digest"] != receipt["manifest"]["sha256"]:
+            fail("reviewed_request_manifest_changed")
+        parent = records[value["head"]["previous"]["receipt_relative_path"]]
+        request = verify_commit_request_evidence(evidence=evidence, previous_document=parent["document"],
+            document=item["document"], receipt=receipt, manifest=manifest, final_record=item["final"])
+        scope = request["idempotency_scope_sha256"]
+        if scope in scopes:
+            fail("reviewed_duplicate_idempotency_publication")
+        scopes.add(scope)
+        publications.append({"record_type": "reviewed_chapter_publication", "schema_version": "1.0",
+            "book_id": book_id, "chapter": value["committed_through"], "revision": value["revision"],
+            "run_id": receipt["run_id"], "request": request,
+            "request_sha256": value["head"]["request_sha256"],
+            "preparation_sha256": evidence["preparation"]["preparation_sha256"],
+            "request_evidence_sha256": evidence["evidence_sha256"],
+            "receipt_id": receipt["receipt_id"], "receipt_relative_path": value["head"]["receipt_relative_path"],
+            "receipt_hash": receipt["receipt_hash"], "document_sha256": digest(item["document"]),
+            "prose_sha256": digest(item["prose"]), "publication_verified": True})
+    if digest(read_project_bytes(root, RELATIVE_PATH)) != history["document_sha256"]:
+        fail("reviewed_source_changed_during_read")
+    return publications
+
+
+def _upgrade_checkpoint(receipt: dict, *, document: bytes, roots: dict, read_bytes=None) -> dict:
+    read_bytes = read_bytes or read_project_bytes
+    from core.story_project.activation import validate_story_state_calibration_report
+    from core.engine.persistence_v2 import validate_persistence_manifest_v2
+    from core.story_project.reviewed_identity import verify_reviewed_identity_transition, verify_upgrade_preparation_evidence
+
+    run_id = receipt["run_id"]
+    before = _one(receipt["artifacts"], "reviewed_identity_before")
+    after = _one(receipt["artifacts"], "reviewed_identity_after")
+    calibration = _one(receipt["artifacts"], "reviewed_calibration")
+    for binding, suffix in ((before, "before"), (after, "after"), (calibration, "calibration")):
+        _path(binding, "runtime", f"reviewed/upgrades/{run_id}-{suffix}.json")
+    after_bytes = _content(after, roots, read_bytes=read_bytes)
+    identity = verify_reviewed_identity_transition(old_identity_bytes=_content(before, roots, read_bytes=read_bytes),
+        new_identity_bytes=after_bytes, baseline_document=document)
+    applied = _one(receipt["apply_targets"], "reviewed_identity")
+    _path(applied, "story_project", ".novelagent/project.json")
+    if _content(applied, roots, read_bytes=read_bytes) != after_bytes:
+        fail("reviewed_upgrade_identity_mismatch")
+    report = validate_story_state_calibration_report(json.loads(_content(calibration, roots, read_bytes=read_bytes).decode("utf-8")))
+    if (not report["strict_eligible"] or report["book_id"] != identity.book_id
+            or report["report_sha256"] != identity.payload["activation"]["calibration_report_sha256"]):
+        fail("reviewed_upgrade_calibration_mismatch")
+    preparation = _one(receipt["artifacts"], "reviewed_upgrade_preparation")
+    _path(preparation, "runtime", f"reviewed/upgrades/{run_id}-preparation.json")
+    manifest_ref = receipt["manifest"]["path_ref"]
+    manifest = validate_persistence_manifest_v2(json.loads(read_bytes(
+        Path(roots[manifest_ref["root_id"]]), manifest_ref["relative_path"]).decode("utf-8")))
+    if manifest["manifest_digest"] != receipt["manifest"]["sha256"]:
+        fail("reviewed_upgrade_manifest_changed")
+    # The reviewed baseline was accepted as of these existing chapters. Later
+    # candidates must not silently build on an edited/deleted historical prose
+    # file while retaining facts confirmed against its old bytes. New chapters
+    # are checked against their own apply/archive targets above.
+    for entry in manifest["immutable"]["story_project_read_set"]["membership"]:
+        if entry["relative_path"].startswith("正文/"):
+            current = read_bytes(Path(roots["story_project"]), entry["relative_path"])
+            if digest(current) != entry["sha256"] or len(current) != entry["size"]:
+                fail("reviewed_upgrade_baseline_prose_changed")
+    verify_upgrade_preparation_evidence(
+        preparation=json.loads(_content(preparation, roots, read_bytes=read_bytes).decode("utf-8")),
+        final_record=json.loads(_content(receipt["final_run"], roots, read_bytes=read_bytes).decode("utf-8")),
+        old_identity_bytes=_content(before, roots, read_bytes=read_bytes), new_identity_bytes=after_bytes, baseline_document=document,
+        calibration_report=report, read_set=manifest["immutable"]["story_project_read_set"],
+        transaction_binding={"run_id": receipt["run_id"], "context_digest": receipt["context_digest"],
+            "generation_input_context_digest": receipt["generation_input_context_digest"],
+            "receipt_id": receipt["receipt_id"], "receipt_path_ref": receipt["receipt_path_ref"]})
+    return {"schema_version": "1.0", "book_id": identity.book_id,
+        "root_uuid": applied["path_ref"]["root_uuid"], "identity_sha256": digest(after_bytes),
+        "authority_epoch": 0, "head_event_hash": None,
+        "reviewed_state": source_revision_after(document, book_id=identity.book_id)}
+
+
+def load_verified_current(*, root: Path, book_id: str, next_chapter: int, root_map: dict,
+                          baseline_document_sha256: str) -> dict:
+    result = verify_reviewed_history(root=root, book_id=book_id, root_map=root_map,
+                                     baseline_document_sha256=baseline_document_sha256)
+    verify_current_sources(root=root, value=result["value"], next_chapter=next_chapter)
+    if infer_next_chapter(root) != next_chapter:
+        fail("reviewed_prose_cursor_mismatch")
+    return result
+
+
+def load_runtime_view(context: dict, *, root_map: dict, baseline_document_sha256: str) -> dict:
+    """Internal explicit bridge; normal identity discovery remains disabled."""
+    from core.story_project.reviewed_state_context import build_reviewed_state_context
+
+    result = load_verified_current(root=Path(context["story_project_root"]),
+        book_id=context["project_identity"]["book_id"], next_chapter=context["chapter_index"],
+        root_map=root_map, baseline_document_sha256=baseline_document_sha256)
+    value = result["value"]
+    return build_reviewed_state_context(context, authoritative_state=value["current_state"],
+        source_relative_path=RELATIVE_PATH, source_sha256=result["document_sha256"],
+        manual_sources_sha256=value["source_revision"]["sha256"], committed_through=value["committed_through"],
+        static_references=value["static_references"],
+        previous_chapter_facts=result.get("previous_chapter_facts"))

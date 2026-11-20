@@ -18,5 +18,20 @@ data/memory_v2/
 data/memory_outbox.jsonl
 data/memory_outbox*.jsonl
 /.active-book
+/.novelagent-chapter-price.local.json
 /books/
 /pytest-cache-files-*/
+pytest-cache-files-*/
+tmp_review_regression_write_test/
+
+# Local manuscripts, provider trial details, and unpublished run notes.
+/deliverables/chapter64/
+/deliverables/local-only/
+/docs/development/current-checkpoint.md
+/docs/development/chapter64-admission-repair-20261117.md
+/docs/development/chapter64-connection-followup-20261117.md
+/docs/development/daily-writing-value-review-20261112.md
+/docs/development/single-chapter-trial-20261117.md
+/docs/development/t81-validation-record-*.draft.json
+# Superseded local distribution; its validation summary remains versioned.
+/deliverables/release-candidate/NovelAgent-da1d0208210a.zip

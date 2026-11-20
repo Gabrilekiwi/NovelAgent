@@ -311,16 +311,44 @@ def _build_chapter_blueprint(*, chapter_index: int, outline_path: Path, outline_
     )
 
 
-def _extract_title(text: str, outline_path: Path) -> str:
-    for line in text.splitlines():
+_CANONICAL_CHAPTER_PREFIX = re.compile(r"^第\d+章(?:[_：:\s-]+|$)")
+_FILENAME_CHAPTER_PREFIX = re.compile(r"^(?:细纲_)?第0*\d+章[_：:\s-]*")
+
+
+def extract_chapter_title(text: str = "", path: Path | None = None) -> str:
+    """Return the chapter title from file content, then a cleaned filename.
+
+    Official workbench outlines are stored as ``细纲_第0NN章.md`` with a heading
+    ``# 第N章 {title}``. The canonical filename is not the title and must not be
+    shown to authors as if it were.
+    """
+
+    for line in (text or "").splitlines():
         stripped = line.strip()
-        if stripped.startswith("#"):
-            title = stripped.lstrip("#").strip()
-            if title:
-                return title
-    stem = outline_path.stem
-    title = re.sub(r"^细纲_第0*\d+章_?", "", stem).strip()
-    return title or stem
+        if not stripped.startswith("#"):
+            continue
+        heading = stripped.lstrip("#").strip()
+        if not heading:
+            continue
+        remainder = _CANONICAL_CHAPTER_PREFIX.sub("", heading, count=1).strip()
+        return remainder or heading
+    if path is None:
+        return ""
+    stem = path.stem
+    remainder = _FILENAME_CHAPTER_PREFIX.sub("", stem, count=1).strip()
+    if remainder:
+        inner = _CANONICAL_CHAPTER_PREFIX.sub("", remainder, count=1).strip()
+        return inner or remainder
+    match = re.search(r"章[_：:\s-]+(.+)$", stem)
+    if match and match.group(1).strip():
+        inner = match.group(1).strip()
+        inner_rest = _CANONICAL_CHAPTER_PREFIX.sub("", inner, count=1).strip()
+        return inner_rest or inner
+    return ""
+
+
+def _extract_title(text: str, outline_path: Path) -> str:
+    return extract_chapter_title(text, outline_path) or outline_path.stem
 
 
 def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str | None:
