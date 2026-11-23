@@ -9,7 +9,10 @@ title NovelAgent Workbench
 set "PYTHONUTF8=1"
 
 set "NOVELAGENT_PYTHON=%~dp0.venv\Scripts\python.exe"
-if exist "%NOVELAGENT_PYTHON%" goto check_environment
+if not exist "%NOVELAGENT_PYTHON%" goto install_environment
+"%NOVELAGENT_PYTHON%" -B scripts\check_environment.py
+if not errorlevel 1 goto start_workbench
+:install_environment
 echo First launch: setting up NovelAgent. Internet access or an offline package source is required.
 py -3.12 -V >nul 2>&1
 if errorlevel 1 goto try_python
@@ -27,6 +30,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
+:start_workbench
 "%NOVELAGENT_PYTHON%" run_workbench.py %*
 set "NOVELAGENT_EXIT=%errorlevel%"
 

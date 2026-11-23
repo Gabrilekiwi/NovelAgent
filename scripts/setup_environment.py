@@ -29,6 +29,10 @@ def main() -> int:
                     "assert sys.prefix != sys.base_prefix, 'Expected virtual environment'; "
                     "assert pathlib.Path(sys.prefix).resolve() == pathlib.Path(sys.argv[1]).resolve(), 'Unexpected .venv location'",
                     str(target)], check=True)
+    # A cancelled Windows install may leave python.exe but no pip. Repair only
+    # this verified project venv before attempting to install its locked packages.
+    if subprocess.run([str(python), "-c", "import pip"], capture_output=True).returncode:
+        subprocess.run([str(python), "-m", "ensurepip", "--upgrade", "--default-pip"], check=True)
     lock = "requirements.lock" if args.runtime_only else "requirements-dev.lock"
     subprocess.run([str(python), "-m", "pip", "install", "--disable-pip-version-check",
                     "--no-input", "-r", str(ROOT / lock)], check=True)
