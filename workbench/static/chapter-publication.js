@@ -36,6 +36,11 @@
     if (!Object.keys(value).length) list.append(node("dt", "暂无记录"));
     return list;
   };
+  const authorMessage = finding => ({
+    "Chapter is too short to be a full next chapter.": "正文过短，请检查是否漏存了一部分。",
+    "Chapter is shorter than expected.": "本章比常见篇幅短。如果这一场已经写完，不需要补字。",
+    "Chapter is longer than the current heuristic range.": "本章比常见篇幅长，可以按场景需要保留。"
+  }[finding.message] || finding.message);
   const showDisposition = (value, allowed) => {
     if(!value || value.schema_version!=="reviewed_quality_disposition_v1"
       || value.publication_authorized!==false || value.repair_authorized!==false)
@@ -64,7 +69,7 @@
       const lexical = finding.codes.length === 1 && finding.codes[0] === "missing_conflict_marker";
       const label = lexical || allowed ? "写作提醒" : (groups[finding.disposition] || "需核对");
       const item=node("article");item.append(node("h4",`${label}：${finding.codes.map(code=>names[code] || code).join("、")}`));
-      item.append(node("p", lexical ? "检查只查找少数冲突词。即使没有命中，人物的行动、选择或后果也可能已经写出了冲突。这项提醒不阻止发布，不必为了消除它而加词。" : finding.message));
+      item.append(node("p", lexical ? "检查只查找少数冲突词。即使没有命中，人物的行动、选择或后果也可能已经写出了冲突。这项提醒不阻止发布，不必为了消除它而加词。" : authorMessage(finding)));
       if(finding.quotes.length)for(const span of finding.quotes) {
         item.append(node("p",`正文第 ${span.start_char+1}–${span.end_char} 字符（摘录）`),node("blockquote",span.quote));
       } else if(!lexical && !allowed && finding.disposition!=="advice")item.append(node("p","此项未提供可核对的正文范围，请人工定位；当前依据不足以自动修正。"));
@@ -230,7 +235,7 @@
     preview = allowed || choiceInputs.length ? result : null;
     $("preview-panel").hidden = false;
     $("prose").textContent = result.preparation.final_prose;
-    $("quality").textContent = allowed ? "本地标准质量检查通过。提交时将再次核验。" : choiceInputs.length ? "章纲检查有分歧。你可以修改草稿，或在下方逐项选择忽略。" : "仍有不可忽略的检查未通过或尚未完成。请核对检查详情并处理后再发布。";
+    $("quality").textContent = allowed ? "本地标准质量检查通过。提交时将再次核验。" : choiceInputs.length ? "文字匹配未能确认部分章纲要求。用不同说法写出的情节也可能被标记。请对照正文；如果已经写到，可以在下方逐项选择忽略。" : "仍有不可忽略的检查未通过或尚未完成。请核对检查详情并处理后再发布。";
     if(result.execution_budget?.time)$("quality").textContent+=` 本章累计已测主动执行 ${result.execution_budget.time.active_seconds} 秒（上限 ${result.execution_budget.time.active_limit_seconds} 秒），作者等待单列。`;
     showDisposition(result.quality_disposition, allowed);
     $("checks").replaceChildren(...[
