@@ -1,12 +1,14 @@
 # Windows 本地自用候选版
 
-[下载 NovelAgent-Windows-0e364f9.zip](NovelAgent-Windows-0e364f9.zip)（2026-11-20）。请解压到新目录，按[Windows 作者使用指南](../../docs/windows-author.md)安装。切换版本前关闭旧工作台，保留作品和备份；恢复旧备份请使用制作备份时对应的版本。
+[下载 NovelAgent-Windows-c731ed1.zip](NovelAgent-Windows-c731ed1.zip)（2026-11-23）。请解压到新目录，装有 Python 3.12 的 Windows 可双击启动工作台，首次启动会安装运行组件。[Windows 作者使用指南](../../docs/windows-author.md) · [自用上线标准](../../docs/product-validation.md)。
 
-本版修复了 Windows 上作品登记目录较深时无法建书的问题。在未启用系统长路径的 Windows 上，已用解压后的程序创建测试书、导入并编辑第一章、审核事实并正式入稿。重开后，第一章正文与保存内容一致，第二章只带入已接受的事实。也验证了深目录下能识别已运行的工作台，并阻止第二个写入者。
+本版提供工作台模型设置、章节预算继承、操作等待提示，以及按项确认章纲偏差的发布预览。写作提醒和必须处理的问题分开显示。用隔离测试书真实调用一次模型；最终包仅调整了预览页文案，实际从解压后的程序接续编辑过的手稿、完成发布，关闭再启动，核对了正式稿、下一章的事实原句和预算。已从同版备份恢复并逐字核对副本正文；在同机启用该副本后，也成功保存了第二章章纲。模型密钥不随备份转移。这是操作验收，尚未由作者独立完成整轮试用。
 
-包内程序对应 `0e364f93f96bebb868f85cf6f6a4af80b30246c0`。[本包验收记录及校验值](windows-0e364f9.json) · [自用上线标准](../../docs/product-validation.md)。本次使用作者手稿，未调用付费模型；上一版的实际模型试写记录见下方。本次验收不覆盖长篇写作质量或作者独立完成全流程。
+[本包验收记录及校验值](windows-c731ed1.json)。切换版本前关闭旧工作台并保留原程序、书稿和备份。恢复归档使用制作备份时对应的版本。
 
 旧版下载与记录：
+
+- [0e364f9 Windows 候选包](NovelAgent-Windows-0e364f9.zip) · [旧包长目录、入稿和重开记录](windows-0e364f9.json)。
 
 - [3d16f15 Windows 候选包](NovelAgent-Windows-3d16f15.zip) · [该版真实调用、编辑及重开读稿记录](windows-3d16f15.json)。
 - [cf5fa25 Windows 候选包](NovelAgent-Windows-cf5fa25.zip) · [该版验收记录](windows-cf5fa25.json)。

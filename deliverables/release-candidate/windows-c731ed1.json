@@ -1,0 +1,44 @@
+{
+  "date": "2026-11-23",
+  "zip": "NovelAgent-Windows-c731ed1.zip",
+  "sha256": "24696e7d5e7621436ca4d6cc3417a140a269094caecb2d5d1750acf1a8662652",
+  "source_commit": "c731ed1810d769ed248c2963cfb2b30cc4e99f93",
+  "guide_commit": "c731ed1810d769ed248c2963cfb2b30cc4e99f93",
+  "archive_format": 2,
+  "zip_entries": 609,
+  "stable_release": false,
+  "verification": {
+    "host": "Windows",
+    "python": "3.12.4",
+    "first_launch_from_extracted_archive": true,
+    "installation_source": "30 locked runtime packages from a downloaded local wheel directory",
+    "interrupted_install_repaired_on_same_launcher": true,
+    "generation_source": "562dcf6fe190daf736cb37323a80616769f212b2",
+    "final_package_difference_since_generation": [
+      "workbench/static/chapter-publication.js"
+    ],
+    "provider_calls": 1,
+    "input_tokens": 11778,
+    "output_tokens": 902,
+    "unresolved_attempts": 0,
+    "reviewed_prose_characters": 978,
+    "prose_sha256": "a8487e9e4223a8eb1838be126af3b8eb06c60ed2cf84b601cfd84789809ddc77",
+    "accepted_facts": 1,
+    "author_waived_outline_checks": 2,
+    "final_package_publication_verified": true,
+    "cold_start_reopens_same_prose_and_receipt": true,
+    "next_chapter_confirmed_fact_quote_and_inherited_budget": true,
+    "restored_readonly_chapter_identical": true,
+    "unassisted_author_acceptance": false,
+    "restored_copy_activated_on_same_machine": true,
+    "restored_copy_saved_next_chapter_outline": true,
+    "restored_copy_first_chapter_hash_and_call_count_preserved": true,
+    "checks": {
+      "affected_suite": 245,
+      "subtests": 13,
+      "final_focused_checks": 5,
+      "smoke_preflight_passed": 21
+    }
+  },
+  "scope": "Operator-run test on an isolated book. Real generation preceded the final two display-text changes; the final ZIP was freshly installed, resumed the reviewed draft, published it and reopened it. No claim about other providers, offline installation without a package source, or long-form literary quality."
+}
