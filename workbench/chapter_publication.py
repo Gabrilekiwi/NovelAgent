@@ -23,6 +23,7 @@ from core.engine.root_registry import RootRegistryService
 from core.engine.safe_paths import assert_safe_local_tree
 from core.story_project.reviewed_identity import load_verified_reviewed_identity
 from core.story_project.reviewed_state_document import digest, read_project_bytes
+from core.story_project.reviewed_chapter_transition import offered_author_quality_choice
 from workbench.book_ownership import BookOwnership
 from workbench.chapter_commit_index import ChapterCommitIndex
 from workbench.chapter_commits import ChapterCommitConflict, ChapterCommitIntegrityError, ChapterCommitRecoveryRequired
@@ -52,11 +53,13 @@ class ChapterPublicationService:
         return BookOwnership(book_id, machine_store=self.machine_store)
 
     def commit(self, *, project_id, chapter, review_id, expected_draft_revision, expected_review_revision,
-               expected_draft_sha256, expected_facts_sha256, idempotency_key):
+               expected_draft_sha256, expected_facts_sha256, idempotency_key, author_quality_choice=None):
         route = dict(project_id=project_id, chapter=chapter, review_id=review_id,
             expected_draft_revision=expected_draft_revision, expected_review_revision=expected_review_revision,
             expected_draft_sha256=expected_draft_sha256, expected_facts_sha256=expected_facts_sha256,
             idempotency_key=idempotency_key)
+        if author_quality_choice is not None:
+            route["author_quality_choice"] = author_quality_choice
         return self._request(route, prepare_new=True)
 
     def resolve(self, **route):
@@ -121,7 +124,8 @@ class ChapterPublicationService:
         chapter=route['chapter']
         before_effect()
         prepare=self.preparations.prepare if prepare is None else prepare
-        preparation = prepare(**route, connection=connection)
+        prepare_route = {k: v for k, v in route.items() if k != "author_quality_choice"}
+        preparation = prepare(**prepare_route, connection=connection)
         trusted = ReviewedChapterCandidateContextBuilder(root).build(chapter)
         run_id = f"commit_{incoming['idempotency_scope_sha256'][:32]}"
         tx, arguments = build_reviewed_chapter_transaction(trusted_context=trusted,
@@ -143,7 +147,7 @@ class ChapterPublicationService:
         self._fault("after_prepare", intent)
         self._fault("before_commit", intent)
         if (owner.require(**owner_args) != ownership
-                or prepare(**route, connection=connection) != preparation):
+                or prepare(**prepare_route, connection=connection) != preparation):
             raise ChapterCommitConflict("author request or ownership changed before publication")
         before_effect()
         result = tx.commit()
@@ -195,6 +199,7 @@ class ChapterPublicationService:
                 check()
                 result=self.preparations.prepare_quality(**route,quality_policy=self.quality_policy,connection=connection)
                 check()
+            result["offered_author_quality_choice"] = offered_author_quality_choice(result["quality"])
             if budget is None:
                 return {**result,'execution_budget':None,'execution_mode':'local_author_review','provider_calls':0}
             return {**result,'execution_budget':{'budget_sha256':budget.store.frozen_budget()['budget_sha256'],

@@ -1,5 +1,6 @@
 (() => {
   "use strict";
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
   const root = document.querySelector('[data-recovery-controls]');
   if (!root) return;
   const one = key => root.querySelector(`[data-recovery-${key}]`);
@@ -111,10 +112,10 @@
       document.dispatchEvent(new CustomEvent('workbench:maintenance-status',{detail:maintenance}));
     }
   };
-  one('begin').addEventListener('click',() => run(async () => {
+  one('begin').addEventListener('click',withFeedback(() => run(async () => {
     maintenance = await request('/api/maintenance/begin',{purpose:'restore'}); await refresh();
-  }));
-  one('refresh').addEventListener('click',() => run(refresh));
+  })));
+  one('refresh').addEventListener('click',withFeedback(() => run(refresh)));
   root.addEventListener('toggle',() => { if (root.open) run(refresh); });
   one('session').addEventListener('change',() => run(async () => {
     currentId = one('session').value;
@@ -125,55 +126,55 @@
   one('archive').addEventListener('change',invalidate);
   one('destination').addEventListener('input',invalidate);
   one('confirm').addEventListener('change',render);
-  one('preview').addEventListener('click',() => run(async () => {
+  one('preview').addEventListener('click',withFeedback(() => run(async () => {
     preview = await request('/api/recovery-sessions/preview',{operation_id:maintenance.operation_id,
       archive_id:one('archive').value,destination:one('destination').value.trim()});
     one('preview-summary').textContent = `归档资料已核对。原作品：${preview.source_root}。恢复目标：${preview.destination}。${preview.continuation_blockers.length ? '继续写作仍有待处理条件；可以先恢复只读资料。':'可继续准备只读副本。'}`;
     one('preview-summary').hidden = false;
-  }));
-  one('create').addEventListener('click',() => run(async () => {
+  })));
+  one('create').addEventListener('click',withFeedback(() => run(async () => {
     if (!preview) throw new Error('请重新核对归档。');
     currentId = 'restore_'+crypto.randomUUID().replaceAll('-','');
     selectSession(await request('/api/recovery-sessions',{session_id:currentId,
       operation_id:maintenance.operation_id,archive_id:preview.archive_id,destination:preview.destination,
       expected_plan_sha256:preview.plan_sha256}));
     await refresh();
-  }));
+  })));
   const step = async selected => {
     selectSession(await request(`/api/recovery-sessions/${encodeURIComponent(currentId)}/steps/${selected}`,{
       operation_id:session.operation_id,expected_state_sha256:session.state_sha256,
       confirmed:selected === 'rollback' || one('confirm').checked,resume:session.pending_action === selected}));
   };
-  one('next').addEventListener('click',() => run(() => step(action())));
-  one('rollback').addEventListener('click',() => run(async () => {
+  one('next').addEventListener('click',withFeedback(() => run(() => step(action()))));
+  one('rollback').addEventListener('click',withFeedback(() => run(async () => {
     if (!window.confirm('确认恢复原作品的写资格？恢复副本将继续不可写，后续不能直接重新启用此会话。')) return;
     await step('rollback');
-  }));
-  one('cancel').addEventListener('click',() => run(() => step('cancel')));
-  one('open').addEventListener('click',() => run(async () => {
+  })));
+  one('cancel').addEventListener('click',withFeedback(() => run(() => step('cancel'))));
+  one('open').addEventListener('click',withFeedback(() => run(async () => {
     const value = await request(`/api/recovery-sessions/${encodeURIComponent(currentId)}/open`,{
       operation_id:session.operation_id,expected_state_sha256:session.state_sha256});
     const url = new URL(value.url);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port ||
         url.username || url.password) throw new Error('恢复工作台地址无法核验，请重新核对。');
     window.location.assign(url.href);
-  }));
+  })));
   const readback = extra => request(`/api/recovery-sessions/${encodeURIComponent(currentId)}/readback`,{
     operation_id:session.operation_id,...extra});
-  one('readback').addEventListener('click',() => run(async () => {
+  one('readback').addEventListener('click',withFeedback(() => run(async () => {
     const value = await readback({});
     const select = one('readback-item'); select.replaceChildren();
     value.chapters.forEach(item => select.add(new Option(`正式第 ${item.chapter} 章`,`chapter:${item.chapter}`)));
     value.author_drafts.forEach(item => select.add(new Option(`作者草稿第 ${item.chapter} 章 · r${item.revision}`,`draft:${item.id}`)));
     one('readback-summary').hidden = false;
-  }));
-  one('readback-open').addEventListener('click',() => run(async () => {
+  })));
+  one('readback-open').addEventListener('click',withFeedback(() => run(async () => {
     const [kind,id] = one('readback-item').value.split(':');
     if (!id) throw new Error('请先选择要查看的章节或草稿。');
     const value = await readback(kind === 'chapter' ? {chapter:Number(id)}:{draft_id:id});
     one('readback-text').value = kind === 'chapter' ? value.chapter_text:value.author_draft.text;
     one('readback-summary').hidden = false;
-  }));
+  })));
   document.addEventListener('workbench:maintenance',event => { maintenance = event.detail; render(); });
   document.addEventListener('workbench:restore-scope',event => {
     const previous = restoreScope?.controller?.session_id;

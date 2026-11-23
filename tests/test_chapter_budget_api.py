@@ -222,3 +222,26 @@ def test_public_money_freeze_default_generation_fact_gate_and_fee_report(fresh_a
     assert len(calls)==1
     after=c['client'].get(c['path']).json()
     assert after['usage']['items'][0]==account
+
+
+def test_relay_suggestion_inherits_only_settings_and_rechecks_endpoint(fresh_api,monkeypatch):
+    c=fresh_api; client=c['client']; path=c['path']; service=c['app'].state.chapter_budgets
+    profile=dict(provider='openai',model='fixture',endpoint_fingerprint='a'*64)
+    monkeypatch.setattr(service,'monetary_option',lambda:dict(available=False,estimate_identity=profile.copy()))
+    first=client.get(path).json()['suggestion']
+    assert first['source_chapter'] is None and first['target']=={'amount':'1','currency':'USD'}
+    assert first['limits']['max_provider_calls']==3
+    rates=dict(**profile,input_price_per_million='2',output_price_per_million='10')
+    payload=copy.deepcopy(c['payload']); payload['configuration']['spending_target']=dict(amount='0.65',currency='USD',estimate_rates=rates)
+    profile['endpoint_fingerprint']='b'*64
+    assert client.post(path,json=payload).status_code==409
+    profile['endpoint_fingerprint']='a'*64
+    saved=client.post(path,json=payload); assert saved.status_code==200,saved.text
+    next_path=path.replace('/2/','/3/'); following=client.get(next_path).json()
+    assert following['state']=='not_configured' and following['usage'] is None
+    assert following['suggestion']['source_chapter']==2 and following['suggestion']['estimate_rates']==rates
+    assert following['suggestion']['target']=={'amount':'0.65','currency':'USD'}
+    assert following['suggestion']['limits']['max_output_tokens']==payload['configuration']['max_output_tokens']
+    profile['model']='changed-model'
+    changed=client.get(next_path).json()['suggestion'];assert changed['tariff_changed'] and 'estimate_rates' not in changed
+    assert client.get(path).json()['budget']==saved.json()['budget']

@@ -1,5 +1,6 @@
 (() => {
   "use strict";
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
 
   const doc = document;
   const body = doc.body;
@@ -183,10 +184,17 @@
       && Number(form.dataset.chapter) === submissionContext.chapter
       && form.dataset.cardSha === submissionContext.card_sha256
     );
+    // Respect an early confirmation click while the previous chapter's settings are still loading.
+    const budgetRead = isChapterCardConfirmation && window.NovelAgentChapterBudget?.pendingInitialization?.();
+    if (budgetRead) {
+      await budgetRead;
+      if (!submissionIsCurrent() || form.dataset.inputRevision !== submissionContext.input_revision) return;
+    }
+    const inheritedBudget = isChapterCardConfirmation ? window.NovelAgentChapterBudget?.captureInheritance?.() : null;
     const boundJsonBody = isChapterCardConfirmation ? formAsJson(form) : null;
     const confirmMessage = submitter?.dataset.confirm || form.dataset.confirm;
     if (confirmMessage && form.dataset.confirmedOnce !== "true") {
-      const confirmed = await confirmAction(confirmMessage, submitter?.dataset.confirmTone || form.dataset.confirmTone);
+      const confirmed = await confirmAction(inheritedBudget ? `${confirmMessage} 同时${inheritedBudget.summary}` : confirmMessage, submitter?.dataset.confirmTone || form.dataset.confirmTone);
       if (!confirmed) return;
     }
     if (!submissionIsCurrent()) return;
@@ -245,6 +253,7 @@
         : payload;
       form.dispatchEvent(new CustomEvent("workbench:success", { bubbles: true, detail: successDetail }));
 
+      if (inheritedBudget && submissionIsCurrent() && form.dataset.inputRevision === submissionContext.input_revision && payload.confirmation) await inheritedBudget.apply();
       if (responseTargetsCurrentForm) {
         const redirectUrl = payload.redirect_url || payload.location || (response.redirected ? response.url : null);
         if (redirectUrl && sameOriginNavigate(redirectUrl)) return;
@@ -274,14 +283,14 @@
   };
 
   all("form[data-async-form]").forEach((form) => {
-    form.addEventListener("submit", (event) => {
+    form.addEventListener("submit", withFeedback((event) => {
       event.preventDefault();
-      asyncSubmit(form, event.submitter);
-    });
+      return asyncSubmit(form, event.submitter);
+    }));
   });
 
   all("[data-submit-form]").forEach((button) => {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", withFeedback(async () => {
       const target = doc.getElementById(button.dataset.submitForm);
       if (!target) return;
       if (button.dataset.confirm) {
@@ -290,7 +299,7 @@
         target.dataset.confirmedOnce = "true";
       }
       target.requestSubmit();
-    });
+    }));
   });
 
   // Native dialogs: no untrusted string is ever inserted as HTML.
@@ -311,7 +320,7 @@
     const open = body.classList.toggle("sidebar-open");
     sidebarToggle.setAttribute("aria-expanded", String(open));
   });
-  sidebarScrim?.addEventListener("click", closeSidebar);
+  sidebarScrim?.addEventListener("click", withFeedback(closeSidebar));
   window.addEventListener("keydown", (event) => { if (event.key === "Escape" && body.classList.contains("sidebar-open")) closeSidebar(); });
 
   // Tabs with keyboard support and stable URL hashes.

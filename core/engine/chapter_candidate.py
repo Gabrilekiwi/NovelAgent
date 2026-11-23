@@ -327,6 +327,35 @@ class ChapterCandidateStore:
             self._run_artifact_path(str(intent["execution"]["model_calls_ref"]))
         )
 
+    def partial_chapter_responses(self, intent, record, *, include_text=False):
+        """Expose interrupted chapter prose only, never a plan, prompt or fact response."""
+        if record['status'] != 'failed' or 'partial_response_failed' not in record['evidence']['receipt_statuses']:
+            return []
+        calls = self.model_call_store(intent)
+        fragments = []
+        for path in sorted(local_io_path(calls.receipts_dir).glob('*.json')):
+            receipt = calls.load_receipt(path.stem)
+            if receipt['status'] != 'partial_response_failed' or receipt['receipt_hash'] not in record['evidence']['receipt_hashes']:
+                continue
+            call = calls.load_intent(path.stem)
+            if call['stage'] != 'chapter_generation' or call['intent_hash'] not in record['evidence']['intent_hashes']:
+                continue
+            if receipt['response_artifact_ref'] != f'responses/{path.stem}.txt':
+                raise ChapterCandidateIntegrityError('unexpected partial chapter response reference')
+            fragment = {'sha256': receipt['response_artifact_hash'], 'attempt_id': path.stem,
+                        'finish_reason': receipt['finish_reason']}
+            if include_text:
+                artifact = _resolve_relative_artifact(calls.root, receipt['response_artifact_ref'])
+                try:
+                    raw = local_io_path(artifact).read_bytes()
+                    if hashlib.sha256(raw).hexdigest() != fragment['sha256']:
+                        raise ChapterCandidateIntegrityError('partial chapter response hash mismatch')
+                    fragment['text'] = raw.decode('utf-8')
+                except (OSError, UnicodeError) as exc:
+                    raise ChapterCandidateIntegrityError('partial chapter response unreadable') from exc
+            fragments.append(fragment)
+        return fragments
+
     def _verify_intent_artifacts(self, intent: dict[str, Any]) -> None:
         candidate_id = intent["candidate_id"]
         input_ref = f"candidates/{candidate_id}/input.md"

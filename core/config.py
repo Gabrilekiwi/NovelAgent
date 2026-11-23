@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.runtime_paths import DEFAULT_MEMORY_PATH
+from core.writing_profile import current_profile
 
 
 _ENV_LOADED = False
@@ -73,10 +74,11 @@ def get_config() -> RuntimeConfig:
         openai_validation_max_output_tokens,
         max(1, _int_env("OPENAI_REVALIDATION_MAX_OUTPUT_TOKENS", 6000)),
     )
+    profile = current_profile()
     return RuntimeConfig(
-        openai_api_key=_env("OPENAI_API_KEY"),
-        openai_base_url=_env("OPENAI_BASE_URL"),
-        openai_model=_env("OPENAI_MODEL") or "gpt-4.1-mini",
+        openai_api_key=profile["api_key"] if profile else _env("OPENAI_API_KEY"),
+        openai_base_url=(profile["base_url"] or None) if profile else _env("OPENAI_BASE_URL"),
+        openai_model=profile["model"] if profile else (_env("OPENAI_MODEL") or "gpt-4.1-mini"),
         # Long-context reasoning and validation calls routinely exceed 90s.
         # Keep the physical request timeout aligned with the fail-closed
         # provider deadline; callers may still lower it explicitly.

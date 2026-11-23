@@ -130,6 +130,10 @@ class ChapterBudgetStore:
         if (not isinstance(endpoint_type,str) or not endpoint_type or len(endpoint_type)>200
                 or not isinstance(endpoint_fingerprint,str) or not re.fullmatch('[0-9a-f]{64}',endpoint_fingerprint)):
             raise ChapterBudgetError('attempt endpoint binding is invalid')
+        rates = budget.get('spending_target', {}).get('estimate_rates')
+        if rates and (rates['provider'], rates['model'], rates['endpoint_fingerprint']) != (
+                intent['provider'], intent['model'], endpoint_fingerprint):
+            raise ChapterBudgetConflict('模型或中转地址与本章估算单价不符，本次请求未发送。')
         reserved=intent['budget_reservation']
         inputs=_count(reserved.get('reserved_input_tokens'));outputs=_count(reserved.get('reserved_output_tokens'))
         if inputs is None or outputs is None or reserved.get('reserved_total_tokens')!=inputs+outputs:
@@ -212,7 +216,7 @@ class ChapterBudgetStore:
             key=(execution,plan['intent']['attempt_id'])
             if key in keys:raise ChapterBudgetError('duplicate budget attempt identity')
             keys.add(key)
-            if row['local_rejection'] not in {None,'max_provider_calls','max_input_tokens','max_output_tokens','amount_limit',
+            if row['local_rejection'] not in {None,'max_provider_calls','max_input_tokens','max_output_tokens','amount_limit','estimated_amount_limit',
                     'batch_max_provider_calls','batch_max_input_tokens','batch_max_output_tokens','batch_amount_limit'}:
                 raise ChapterBudgetError('invalid local budget rejection')
             if row['receipt'] is not None:
@@ -289,6 +293,16 @@ class ChapterBudgetStore:
             charged_amount=_amount(amount) if budget['amount_limit'] is not None else None,
             charged=totals,items=items,exceeded=exceeded,
             unresolved_attempts=[(x['execution_id'],x['attempt_id']) for x in items if x['accounting_state'] in {'reserved','held_unknown'}])
+        target = budget.get('spending_target', {})
+        rates = target.get('estimate_rates')
+        if rates:
+            with localcontext() as context:
+                context.prec = 80
+                estimate = sum(Decimal(totals[k+'_tokens']) * Decimal(rates[k+'_price_per_million'])
+                               for k in ('input','output')) / Decimal(1_000_000)
+            if estimate > Decimal(target['amount']):
+                exceeded.append('estimated_amount')
+            result['estimated_spend'] = {'amount':_amount(estimate), 'limit':target['amount'], 'currency':target['currency']}
         if 'repair_cycle' in value:result['repair_cycle']=copy.deepcopy(value['repair_cycle'])
         return result
 
@@ -424,7 +438,8 @@ class ChapterBudgetStore:
             row={'execution_id':execution_id,'plan':plan,'receipt':None,'local_rejection':None,'dispatch_claimed':False}
             value['attempts'].append(row)
             after=self._report(budget,value)
-            mapping={'calls':'max_provider_calls','input_tokens':'max_input_tokens','output_tokens':'max_output_tokens','amount':'amount_limit'}
+            mapping={'calls':'max_provider_calls','input_tokens':'max_input_tokens','output_tokens':'max_output_tokens','amount':'amount_limit',
+                     'estimated_amount':'estimated_amount_limit'}
             if after['exceeded']:
                 rejection=mapping[after['exceeded'][0]]
                 row['local_rejection']=rejection

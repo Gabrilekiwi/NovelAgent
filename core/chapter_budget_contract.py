@@ -129,6 +129,7 @@ def freeze_chapter_budget(
     *, book_id: str, chapter: int, max_provider_calls: int, max_input_tokens: int,
     max_output_tokens: int, max_active_seconds: str, amount_limit: str | None = None,
     currency: str | None = None, pricing: list[Mapping[str, Any]] | None = None,
+    spending_target: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Freeze server-selected chapter identity, limits and tariffs canonically."""
     rows = [] if pricing is None else pricing
@@ -156,6 +157,19 @@ def freeze_chapter_budget(
         "max_active_seconds": normalize_budget_decimal(max_active_seconds, label="max_active_seconds", positive=True),
         "pricing": sorted(normalized, key=lambda row: tuple(row[name] for name in _IDENTITY_FIELDS)),
     }
+    if spending_target is not None:
+        if amount_limit is not None or not isinstance(spending_target, Mapping) or set(spending_target) not in ({'currency','amount'}, {'currency','amount','estimate_rates'}):
+            _fail('a planning target must be separate from a priced amount limit')
+        result['spending_target'] = {'currency': _currency(spending_target['currency']),
+            'amount': normalize_budget_decimal(spending_target['amount'], label='spending target')}
+        if 'estimate_rates' in spending_target:
+            rates = spending_target['estimate_rates']
+            keys = {'provider','model','endpoint_fingerprint','input_price_per_million','output_price_per_million'}
+            if not isinstance(rates, Mapping) or set(rates) != keys:
+                _fail('estimated rates require an exact provider, model, endpoint and two prices')
+            result['spending_target']['estimate_rates'] = dict(provider=_text(rates['provider'],'provider'),
+                model=_text(rates['model'],'model'), endpoint_fingerprint=_fingerprint(rates['endpoint_fingerprint']),
+                **{k:normalize_budget_decimal(rates[k], label=k) for k in ('input_price_per_million','output_price_per_million')})
     result["budget_sha256"] = canonical_json_hash(result, exclude_environment_fields=False)
     return result
 
@@ -164,10 +178,10 @@ def validate_chapter_budget(
     value: Any, *, expected_book_id: str | None = None, expected_chapter: int | None = None,
 ) -> dict[str, Any]:
     """Verify exact shape, canonical values and hash; optionally check ownership."""
-    if (not isinstance(value, Mapping) or set(value) != _BUDGET_FIELDS
+    if (not isinstance(value, Mapping) or set(value) not in (_BUDGET_FIELDS, _BUDGET_FIELDS | {"spending_target"})
             or value["schema_version"] != CHAPTER_BUDGET_SCHEMA_VERSION):
         _fail("unsupported frozen chapter budget fields or schema")
-    expected = freeze_chapter_budget(**{k: value[k] for k in _BUDGET_FIELDS - {"schema_version", "budget_sha256"}})
+    expected = freeze_chapter_budget(**{k: value[k] for k in set(value) - {"schema_version", "budget_sha256"}})
     if expected != value:
         _fail("frozen chapter budget is noncanonical or its hash differs", "chapter_budget_integrity_error")
     if ((expected_book_id is not None and expected["book_id"] != _text(expected_book_id, "expected_book_id"))

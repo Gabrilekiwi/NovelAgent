@@ -42,7 +42,7 @@ def build_reviewed_chapter_transaction(*, trusted_context, chapter_preparation, 
     evidence = prepare_commit_request_evidence(preparation=p, request=request)
     quality = prepare_candidate_chapter_quality(trusted_context=trusted, chapter_preparation=p, quality_policy=quality_policy,
         candidate_source_verifier=candidate_source_verifier)
-    verify_quality_binding(quality, p)
+    verify_quality_binding(quality, p, author_quality_choice=request["request"].get("author_quality_choice"))
     book_id = p["binding"]["book_id"]
     previous = read_project_bytes(root, RELATIVE_PATH)
     document = prepare_chapter_document(document=previous, book_id=book_id, preparation=p, run_id=run_id)

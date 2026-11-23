@@ -39,7 +39,7 @@
 
       <div class="sidebar-footer">
         <div class="provider-state"><span class="provider-light" data-provider-light aria-hidden="true"></span><span><strong data-provider-name>模型服务</strong><small data-provider-state>正在检查</small></span></div>
-        <details class="provider-help"><summary>如何配置模型</summary><p>先建书、手写章纲无需模型。要让模型写作，在程序目录将 <code>.env.example</code> 复制为 <code>.env</code>（已有则直接编辑）。填入 <code>OPENAI_API_KEY</code> 和服务商提供的 <code>OPENAI_MODEL</code>；使用兼容服务时，再填 <code>OPENAI_BASE_URL</code>。保存后关闭工作台并重新启动。显示「配置就绪」表示已读取配置，未验证连接。</p></details>
+        <button type="button" class="button button-secondary" data-open-model-help>模型设置</button>
         <a class="text-link" href="#/health" data-health-link>项目健康</a>
       </div>
     </aside>
@@ -200,8 +200,8 @@
             <h2>填写本章章纲</h2><p>写下本章打算发生什么。章纲只指导写作；入稿后，只有审稿时确认的事实会进入后续章节。</p>
             <div class="form-grid"><label class="field"><span>章节标题</span><input name="title" required maxlength="160"></label>
             <label class="field"><span>核心事件</span><input name="core_event" required maxlength="2000"></label>
-            <label class="field"><span>必写节拍（每行一条）</span><textarea name="required_beats" required maxlength="6000"></textarea></label>
-            <label class="field"><span>结尾留下的压力或悬念</span><textarea name="ending_pressure" required maxlength="2000"></textarea></label></div>
+            <label class="field"><span>必写节拍（每行一条）</span><textarea name="required_beats" placeholder="每行一条；没有额外要求可填“无”" required maxlength="6000"></textarea></label>
+            <label class="field"><span>结尾留下的压力或悬念</span><textarea name="ending_pressure" placeholder="没有指定悬念可填“无”" required maxlength="2000"></textarea></label></div>
             <p role="alert" data-outline-start-error></p><button class="button button-primary" type="submit">保存本章章纲</button>
           </form>
           <section class="panel" data-retained-author-draft-panel hidden aria-label="保留的作者草稿">
@@ -231,6 +231,7 @@
                     <fieldset class="chapter-card-focus"><legend>校验重点</legend><label class="check-field"><input type="checkbox" name="validation_focus" value="continuity" checked disabled><span><strong>连续性</strong><small>检查与前文事实和场景衔接。</small></span></label><label class="check-field"><input type="checkbox" name="validation_focus" value="spatial" checked disabled><span><strong>空间关系</strong><small>检查人物、地点与移动关系。</small></span></label><label class="check-field"><input type="checkbox" name="validation_focus" value="logic" checked disabled><span><strong>情节逻辑</strong><small>检查事件因果与章纲覆盖。</small></span></label></fieldset>
                     <label class="field"><span>写作备注 <em>可选，每行一项</em></span><textarea name="notes_text" rows="5" placeholder="例：保持第三人称限知视角" disabled></textarea></label>
                     <div class="form-error" data-form-error role="alert" hidden></div>
+                    <label class="check-field" hidden><input type="checkbox" data-budget-inherit checked><span data-budget-inherit-text></span></label>
                     <button class="button button-primary button-wide" type="submit" data-card-confirm-button disabled>确认本章意图</button>
                   </form>
                   <div class="notice notice-success chapter-card-confirmed" data-card-confirmed hidden><strong>当前输入已确认</strong><p>本章生成使用已确认的输入；候选与草稿进度见下方。</p><code data-card-confirmation-sha></code></div>
@@ -242,6 +243,11 @@
                 <div data-chapter-budget-body class="model-usage-summary"></div>
                 <form data-chapter-budget-form>
                   <p>限额确认后固定用于本章。生成、提取及重试共同占用额度，重启不会清零；审稿等待不占用主动执行时间。</p>
+                  <p data-chapter-budget-source></p>
+                  <div class="form-grid">
+                    <label class="field"><span>每章预算金额</span><input name="budget_amount" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" required></label>
+                    <label class="field"><span>预算币种（不换汇）</span><input name="budget_currency" type="text" maxlength="3" pattern="[A-Z]{3}" required></label>
+                  </div>
                   <p class="muted-copy" data-chapter-budget-money-note>正在核对当前模型的金额配置条件。</p>
                   <div class="form-grid">
                     <label class="field"><span>最多模型调用次数</span><input name="max_provider_calls" type="number" min="1" step="1" required></label>
@@ -250,16 +256,14 @@
                     <label class="field"><span>主动执行上限（秒）</span><input name="max_active_seconds" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" required></label>
                   </div>
                   <div data-chapter-budget-money hidden>
-                    <label class="check-field"><input name="monetary_enabled" type="checkbox"><span>为本章冻结价格并启用金额限额</span></label>
+                    <label class="check-field"><input name="monetary_enabled" type="checkbox"><span>填写服务商单价，预计超过本章金额时停止新请求</span></label>
                     <div class="form-grid">
-                      <label class="field"><span>币种（不换汇）</span><input name="budget_currency" type="text" maxlength="3" pattern="[A-Z]{3}" placeholder="USD" disabled></label>
-                      <label class="field"><span>本章金额上限</span><input name="budget_amount" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
-                      <label class="field"><span>未缓存输入单价 / 百万 token</span><input name="budget_input_price" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
+                      <label class="field"><span>输入单价 / 百万 token</span><input name="budget_input_price" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
                       <label class="field"><span>缓存命中输入单价 / 百万 token</span><input name="budget_cached_price" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
                       <label class="field"><span>输出单价 / 百万 token</span><input name="budget_output_price" type="text" inputmode="decimal" pattern="[0-9]+([.][0-9]+)?" disabled></label>
                     </div>
                   </div>
-                  <label class="check-field"><input name="author_confirmed" type="checkbox" required><span>我确认以上本章限额；启用金额控制时，已核对模型、端点、档位和适用价格。</span></label>
+                  <p class="muted-copy">点击下方按钮即确认本章设置。只保存限额，不调用模型。</p>
                   <button type="submit" class="button button-primary" data-chapter-budget-submit>确认本章限额</button>
                 </form>
                 <p class="form-error" data-chapter-budget-error role="alert" hidden></p>
@@ -271,7 +275,18 @@
                 </div>
                 <p class="chapter-candidate-message" data-candidate-message>模型只生成可隔离、可恢复的正文候选；不会自动提交正式正文，也不会写入权威状态。</p>
                 <div class="chapter-candidate-binding" data-candidate-binding hidden><span>候选记录</span><code data-candidate-id></code><span>正文 SHA</span><code data-candidate-prose-sha></code></div>
+                <section data-candidate-fragments hidden>
+                  <h3>中断时保留的原文</h3>
+                  <p>这是模型断开前已收到的文字，结尾可能不完整。查看和取回不调用模型。</p>
+                  <div class="button-row" data-fragment-choices></div>
+                  <div data-fragment-preview hidden>
+                    <label>中断原文（只读，可复制）<textarea rows="12" readonly data-fragment-text></textarea></label>
+                    <button type="button" class="button button-secondary" data-fragment-prepare>放入稿件导入框</button>
+                  </div>
+                  <p data-fragment-message role="status"></p>
+                </section>
                 <div class="notice notice-warning" data-candidate-old-binding hidden><strong>候选与当前确认不一致</strong><p>草稿和运行证据会继续保留；如要新生成，请以当前章节卡重新确认意图。</p></div>
+                <div class="notice notice-warning" data-chapter-model-help hidden><p>尚未配置写作模型。保存设置后即可继续，章纲和限额会保留。</p><button type="button" class="button button-secondary" data-open-model-help>配置写作模型</button></div>
                 <div data-chapter-estimate-panel>
                   <button type="button" class="button button-secondary" data-chapter-estimate disabled>估算这次正文费用</button>
                   <p data-chapter-estimate-result aria-live="polite">请先确认本章意图。估算本身不调用模型。</p>
@@ -380,7 +395,7 @@
         <!-- Production -->
         <section data-spa-view="production" hidden>
           <div class="page-heading"><div><div class="heading-status-row"><p class="eyebrow">连续创作</p><span class="status-badge status-idle" data-production-status><span class="status-dot"></span><span data-status-label>空闲</span></span></div><h1 data-production-title>开始新的生产批次</h1><p class="lede">Pass / Warning 事务提交后自动继续；Needs revision / Blocked / Error 立即暂停。</p></div></div>
-          <section class="panel launch-panel" data-production-launch><div class="launch-copy"><p class="eyebrow">生产设置</p><h2>让章纲变成可阅读的正文</h2><p>开始前会检查章纲连续性、项目状态、Provider 和作品锁。</p></div><form class="launch-form" action="/api/projects/0/sessions" method="post" data-session-form data-async-form data-json-form data-success-message="生产批次已启动。"><div class="form-grid"><label class="field"><span>起始章</span><input type="number" name="start_chapter" min="1" required value="1"></label><label class="field"><span>连续章数</span><select name="chapter_count"><option value="1">1 章</option><option value="4">4 章</option><option value="10" selected>10 章</option></select></label></div><p class="muted-copy" data-session-window-note></p><div class="notice notice-warning" data-production-model-help hidden><p>章纲可以先写好。要生成正文，还需要配置模型并重启工作台。</p><button class="button button-secondary" type="button" data-open-model-help>查看模型配置方法</button></div><div class="policy-card"><span class="policy-icon">⇄</span><div><strong>受监督的自动继续</strong><p>Pass / Warning 自动提交并继续，其余结果暂停等待你。</p></div></div><label class="check-field"><input type="checkbox" name="pause_after_chapter" value="true"><span><strong>完成当前章后暂停</strong><small>先阅读一章，再决定是否继续。</small></span></label><div class="form-error" data-form-error role="alert" hidden></div><button class="button button-primary button-wide" type="submit">预检并开始</button></form></section>
+          <section class="panel launch-panel" data-production-launch><div class="launch-copy"><p class="eyebrow">生产设置</p><h2>让章纲变成可阅读的正文</h2><p>开始前会检查章纲连续性、项目状态、Provider 和作品锁。</p></div><form class="launch-form" action="/api/projects/0/sessions" method="post" data-session-form data-async-form data-json-form data-success-message="生产批次已启动。"><div class="form-grid"><label class="field"><span>起始章</span><input type="number" name="start_chapter" min="1" required value="1"></label><label class="field"><span>连续章数</span><select name="chapter_count"><option value="1">1 章</option><option value="4">4 章</option><option value="10" selected>10 章</option></select></label></div><p class="muted-copy" data-session-window-note></p><div class="notice notice-warning" data-production-model-help hidden><p>章纲可以先写好。要生成正文，请先配置写作模型。</p><button class="button button-secondary" type="button" data-open-model-help>配置写作模型</button></div><div class="policy-card"><span class="policy-icon">⇄</span><div><strong>受监督的自动继续</strong><p>Pass / Warning 自动提交并继续，其余结果暂停等待你。</p></div></div><label class="check-field"><input type="checkbox" name="pause_after_chapter" value="true"><span><strong>完成当前章后暂停</strong><small>先阅读一章，再决定是否继续。</small></span></label><div class="form-error" data-form-error role="alert" hidden></div><button class="button button-primary button-wide" type="submit">预检并开始</button></form></section>
           <div class="production-layout" data-production-session hidden><div class="production-main"><section class="panel current-chapter-card"><header class="current-chapter-header"><div><p class="eyebrow">当前章节</p><h2 data-session-chapter>—</h2></div><span class="live-state" data-connection-state><span class="pulse"></span>实时连接</span></header><ol class="stage-timeline" data-stage-timeline><li class="stage" data-stage="preflight"><span class="stage-node"><span>1</span></span><div><strong>预检</strong><small data-stage-detail>检查状态与模型</small></div></li><li class="stage" data-stage="generating"><span class="stage-node"><span>2</span></span><div><strong>生成</strong><small data-stage-detail>逐场景生成正文</small></div></li><li class="stage" data-stage="validating"><span class="stage-node"><span>3</span></span><div><strong>校验</strong><small data-stage-detail>事实与连续性</small></div></li><li class="stage" data-stage="reviewing"><span class="stage-node"><span>4</span></span><div><strong>审核</strong><small data-stage-detail>质量门与修复</small></div></li><li class="stage" data-stage="committing"><span class="stage-node"><span>5</span></span><div><strong>提交</strong><small data-stage-detail>写入并校验 Receipt</small></div></li></ol><div class="scene-progress"><div class="progress-copy"><span data-progress-label>正在准备…</span><strong data-progress-percent>0%</strong></div><div class="progress"><span style="--progress:0%"></span></div></div><div class="live-message"><span class="live-message-mark">···</span><div><strong data-live-title>正在等待新事件</strong><p data-live-detail>进度会在这里实时更新。</p></div></div></section><section class="panel event-panel"><div class="section-heading compact"><h2>最新事件</h2></div><ol class="event-feed" data-event-feed><li data-empty-event><time>—</time><span class="event-dot"></span><div><strong>等待第一个运行事件</strong></div></li></ol></section></div><aside class="production-side"><section class="panel queue-panel"><div class="section-heading compact"><h2>批次队列</h2></div><ol class="chapter-queue" data-chapter-queue></ol></section><section class="panel recovery-attention-panel" data-production-attention hidden><p class="eyebrow" data-production-attention-eyebrow>已安全暂停</p><h3 data-production-attention-title>不要重复启动或紧急停止</h3><p data-production-attention-detail>正式正文尚未提交。先到待处理识别最新可信恢复点，再决定是否重新校验。</p><a class="button button-primary button-wide" href="#/pending" data-production-attention-link>前往待处理</a><form action="/api/jobs/0/cancel" method="post" data-close-paused-job-form data-async-form data-success-message="已关闭这次停住的生产任务；运行证据已保留，可以重新开写。" data-confirm="将关闭这次已停住的生产任务，保留运行、回执与恢复证据，然后就可以重新开写。确认吗？" hidden><button class="button button-secondary button-wide" type="submit">关闭这次停住的生产任务</button></form></section><section class="panel safety-panel" data-production-controls><p class="eyebrow">生产控制</p><form action="/api/jobs/0/pause" method="post" data-pause-job-form data-async-form data-confirm="将在当前章安全提交后暂停，确认吗？"><button class="button button-secondary button-wide" type="submit">本章完成后暂停</button></form><form action="/api/jobs/0/cancel" method="post" data-cancel-job-form data-async-form data-confirm="紧急停止可能产生 Provider 不确定状态，且不会自动重试。仍要继续吗？" data-confirm-tone="danger"><button class="button button-danger-ghost button-wide" type="submit">紧急停止</button></form></section></aside></div>
 
           <section class="panel cohort-panel" data-cohort-zone>
@@ -478,11 +493,23 @@
 
   <dialog class="sheet-dialog" id="create-project-dialog"><form action="/api/projects" method="post" data-async-form data-json-form data-success-message="作品已创建。"><header class="sheet-header"><div><p class="eyebrow">新作品</p><h2>建立创作起点</h2></div><button class="icon-button" type="button" data-dialog-close aria-label="关闭">×</button></header><div class="form-grid"><label class="field field-span-2"><span>作品名 <em>必填</em></span><input name="title" required maxlength="120"></label><label class="field"><span>题材</span><input name="genre" maxlength="80"></label><label class="field"><span>语言</span><select name="language"><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="en">English</option></select></label><label class="field field-span-2"><input type="hidden" name="writing_mode" value="review_each_chapter"><span>作品简介</span><textarea name="summary" rows="4" maxlength="1200"></textarea></label><label class="field field-span-2"><span>已确定的开篇设定（选填）</span><textarea name="initial_settings" rows="3" maxlength="4000" placeholder="只填写确定的事实，例如：林岚是渡口的守夜人。"></textarea><small>这些设定会带入写作。留空表示尚未确定；后续以每章审稿时确认的事实为准。</small></label><label class="field field-span-2"><span>保存位置</span><input name="root_path" list="author-workspaces" required aria-describedby="create-location-help"><datalist id="author-workspaces"></datalist><small id="create-location-help">已选好本机的书稿目录；每本书会建立自己的文件夹。</small></label></div><div class="form-error" data-form-error role="alert" hidden></div><footer class="sheet-actions"><button class="button button-ghost" type="button" data-dialog-close>取消</button><button class="button button-primary" type="submit">创建作品</button></footer></form></dialog>
   <dialog class="sheet-dialog compact-sheet" id="import-project-dialog"><form action="/api/projects/import" method="post" data-async-form data-json-form data-success-message="作品已导入。"><header class="sheet-header"><div><p class="eyebrow">现有工程</p><h2>导入 StoryProject</h2></div><button class="icon-button" type="button" data-dialog-close aria-label="关闭">×</button></header><label class="field"><span>项目文件夹</span><input name="path" required placeholder="D:\\NovelAgent\\books\\我的小说"></label><div class="form-error" data-form-error role="alert" hidden></div><footer class="sheet-actions"><button class="button button-ghost" type="button" data-dialog-close>取消</button><button class="button button-primary" type="submit">检查并导入</button></footer></form></dialog>
+  <dialog class="sheet-dialog compact-sheet" id="writing-model-dialog" aria-labelledby="writing-model-title">
+    <form id="writing-model-form" autocomplete="off">
+      <header class="sheet-header"><div><p class="eyebrow">本机工作台</p><h2 id="writing-model-title">写作模型设置</h2></div><button type="button" class="icon-button" data-dialog-close aria-label="关闭">×</button></header>
+      <p class="muted-copy">这里的设置适用于本工作台的所有作品。保存不调用模型，也不产生费用。</p>
+      <label class="field"><span>服务地址</span><input name="base_url" type="url" maxlength="2048" placeholder="https://服务商地址/v1"><small>使用中转站请填写它提供的接口地址；使用 OpenAI 官方服务可留空。</small></label>
+      <label class="field"><span>模型名称</span><input name="model" required maxlength="256" spellcheck="false" placeholder="服务商提供的模型标识"></label>
+      <label class="field"><span>API 密钥</span><input type="password" name="api_key" maxlength="8192" autocomplete="new-password" spellcheck="false"><small data-writing-key-hint></small></label>
+      <p role="alert" class="form-error" data-writing-settings-error hidden></p>
+      <footer class="sheet-actions"><button type="button" class="button button-ghost" data-dialog-close>取消</button><button type="submit" class="button button-primary">保存模型设置</button></footer>
+    </form>
+  </dialog>
   <dialog class="confirm-dialog" id="confirm-dialog"><form method="dialog"><div class="dialog-mark">?</div><h2>确认操作</h2><p data-confirm-message></p><div class="dialog-actions"><button class="button button-ghost" value="cancel">取消</button><button class="button button-primary" value="confirm" data-confirm-button>确认</button></div></form></dialog>
   <div class="toast-region" data-toast-region aria-live="polite"></div><div class="sidebar-scrim" data-sidebar-scrim></div>
 
   <template id="book-card-template"><article class="book-card"><a class="book-card-main"><div class="book-cover"><span class="cover-kicker"></span><strong></strong><small>本地作者</small></div><div class="book-card-copy"><div class="book-title-row"><div><h3></h3><p></p></div><div class="book-card-badges"><span class="edition-badge" data-edition-badge hidden></span><span class="status-badge status-idle"><span class="status-dot"></span><span data-status-label>空闲</span></span></div></div><p class="book-summary"></p><div class="book-progress-copy"><span>最近进展</span><strong></strong></div><div class="progress"><span></span></div><footer><span></span><span class="card-link">进入作品 →</span></footer></div></a></article></template>
   <template id="outline-card-template"><article class="outline-card"><header class="outline-card-header"><div class="outline-number"><span>第</span><strong></strong><span>章</span></div><label class="field title-field"><span class="sr-only">章节标题</span><input name="outline_title" required maxlength="120" placeholder="输入章节标题"></label><button class="icon-button outline-toggle" type="button" aria-expanded="true">⌃</button></header><div class="outline-card-body"><input type="hidden" name="chapter_index" data-field="chapter_index"><div class="outline-fields"><label class="field field-span-2"><span>核心事件 <em>必填</em></span><textarea name="core_event" data-field="core_event" required rows="3"></textarea></label><label class="field"><span>必写节拍 <em>每行一项</em></span><textarea name="required_beats" data-field="required_beats" required rows="5"></textarea></label><label class="field"><span>结尾压力 <em>必填</em></span><textarea name="ending_pressure" data-field="ending_pressure" required rows="5"></textarea></label></div></div></article></template>
+  <script src="/static/action-feedback.js" defer></script>
   <script src="/static/workbench.js" defer></script>
   <script src="/static/maintenance.js" defer></script>
   <script src="/static/backup.js" defer></script>

@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
   const doc = document, UI = window.NovelAgentUI;
   const labels = {
     generation:'正文生成',chapter_generation:'正文生成',chapter_draft:'正文生成',chapter_fact_extraction:'事实提取',
@@ -107,6 +108,6 @@
     heading.textContent='按本作品的物理调用查看用量、来源和费用。';
   };
   panel?.addEventListener('toggle',()=>{if(panel.open)load();});
-  refresh?.addEventListener('click',load);
+  refresh?.addEventListener('click',withFeedback(load));
   window.NovelAgentModelUsage=Object.freeze({setRoute,tokenLabel,costLabel,summaryLines,budgetLines});
 })();

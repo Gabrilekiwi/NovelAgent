@@ -11,6 +11,7 @@ import webbrowser
 import uvicorn
 
 from workbench.app import create_app, _local_app_root
+from core.writing_profile import PROFILE_ENV, profile_path
 from workbench.instance import InstanceAlreadyRunning, InstanceLease, existing_instance_url
 from workbench.official_launch import OfficialLaunchError, launch_from_official_plan, plan_official_launch
 from workbench.backup_archive import _lineage
@@ -129,6 +130,7 @@ def main() -> int:
                 books = _local_app_root() / "books"
                 books.mkdir(parents=True, exist_ok=True)
                 workspaces = [books, repository]
+        os.environ[PROFILE_ENV] = str(profile_path(directory))  # Also inherited by execution workers.
         app = create_app(
             repo_root=repository, allowed_workspaces=workspaces, start_worker=not restored,
             database_path=database_path, runtime_root=directory / "jobs",

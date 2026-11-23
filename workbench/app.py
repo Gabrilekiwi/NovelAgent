@@ -103,6 +103,8 @@ from workbench.chapter_publication_api import install_chapter_publication_routes
 from workbench.reviewed_workflow import install_reviewed_workflow
 from workbench.reviewed_project_views import ProjectDisplayRegistry, ReviewedProjectViews
 from workbench.maintenance import maintenance_for, MaintenanceBlocked, DeferredStartup
+from core.writing_profile import profile_path, use_profile
+from workbench.provider_settings import install_provider_settings
 from workbench.maintenance_api import MaintenanceRoute, install_maintenance_status
 from workbench.backup_api import install_backup_api
 from workbench.recovery_api import install_recovery_api
@@ -286,6 +288,9 @@ def _create_app_owned(
     app.state.allowed_workspaces = [str(path) for path in workspaces]
     app.state.repo_root = repository
 
+    writing_profile = profile_path(db_path.parent)
+    install_provider_settings(app, writing_profile)
+
     @app.middleware("http")
     async def local_security_boundary(request: Request, call_next: Any):
         if not instance_lease.held:
@@ -318,7 +323,8 @@ def _create_app_owned(
                     {"error": {"code": "session_token_required", "message": "启动令牌无效，请刷新工作台。"}},
                     status_code=403,
                 )
-        response = await call_next(request)
+        with use_profile(writing_profile):
+            response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -2751,8 +2757,8 @@ def _provider_status() -> dict[str, Any]:
         openai_ready = bool(config.openai_api_key)
         model = config.openai_model
     except Exception:
-        openai_ready = bool(os.environ.get("OPENAI_API_KEY"))
-        model = os.environ.get("OPENAI_MODEL")
+        openai_ready = False
+        model = None
     anthropic_ready = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
     return {
         "ready": openai_ready,
@@ -2905,7 +2911,7 @@ def _candidate_result_message(candidate: Mapping[str, Any]) -> str:
     if status == "stale":
         return "生成期间可信输入发生变化；候选已隔离保留，正式正文和权威状态均未修改。"
     if status == "failed":
-        return "正文候选生成失败；证据已保留，正式正文和权威状态均未修改。"
+        return (candidate.get("error") or {}).get("message") or "正文候选生成失败；证据已保留，正式正文和权威状态均未修改。"
     if status == "cancelled":
         return "正文候选已取消；正式正文和权威状态均未修改。"
     if status == "abandoned":
@@ -2928,7 +2934,7 @@ def _fact_extraction_result_message(extraction: Mapping[str, Any]) -> str:
     if status == "needs_recovery":
         return "事实提取已有持久 Intent，但没有终态记录；需作者确认后才能安全恢复。"
     if status == "failed":
-        return "事实候选提取失败且未自动重试；草稿、正式正文和权威状态均未修改。"
+        return (extraction.get("error") or {}).get("message") or "事实候选提取失败且未自动重试；草稿、正式正文和权威状态均未修改。"
     if status == "cancelled":
         return "事实候选提取已取消；草稿、正式正文和权威状态均未修改。"
     if status == "abandoned":

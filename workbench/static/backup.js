@@ -1,5 +1,6 @@
 (() => {
   "use strict";
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
   const root = document.querySelector('[data-backup-controls]');
   if (!root) return;
   const one = key => root.querySelector(`[data-backup-${key}]`);
@@ -136,7 +137,7 @@
       button.textContent = '校验完整性';
       const result = document.createElement('span');
       result.setAttribute('role', 'status'); result.textContent = '尚未校验';
-      button.addEventListener('click', () => run(async () => {
+      button.addEventListener('click', withFeedback(() => run(async () => {
         if (!ready()) throw new Error('请在维护就绪后校验归档。');
         result.textContent = '正在校验…';
         try {
@@ -145,7 +146,7 @@
           if (checked.archive_verified !== true || checked.recoverable !== false) throw new Error('归档校验结果无效。');
           result.textContent = '本次完整性校验通过 · 诊断归档';
         } catch (error) { result.textContent = '校验未通过'; throw error; }
-      }));
+      })));
       item.append(label, button, result); list.append(item);
     }
   };
@@ -170,14 +171,14 @@
       document.dispatchEvent(new CustomEvent('workbench:maintenance-status',{detail:maintenance}));
     }
   };
-  one('preview').addEventListener('click', () => run(async () => {
+  one('preview').addEventListener('click', withFeedback(() => run(async () => {
     clearPreview(); one('result').hidden = true;
     if (!ready()) throw new Error('请在维护就绪后预览归档。');
     const value = await request(`/api/projects/${encodeURIComponent(one('project').value)}/backups/preview`,
       {operation_id: maintenance.operation_id});
     preview = value; showPreview(value);
-  }));
-  one('onboarding-check').addEventListener('click', () => run(async () => {
+  })));
+  one('onboarding-check').addEventListener('click', withFeedback(() => run(async () => {
     clearOnboarding();
     if (!ready()) throw new Error('请在维护就绪后检查作品接入条件。');
     const value = await request(`/api/projects/${encodeURIComponent(one('project').value)}/onboarding/preview`, {
@@ -192,8 +193,8 @@
     paragraph(panel, '本次接入检查完成，尚未升级或登记作品。执行前仍需重新核验。');
     for (const check of value.checks) paragraph(panel, `${check.passed ? '通过' : '待完成'}：${check.message}`);
     panel.hidden = false;
-  }));
-  one('save').addEventListener('click', () => run(async () => {
+  })));
+  one('save').addEventListener('click', withFeedback(() => run(async () => {
     if (!ready() || !preview || preview.project_id !== one('project').value ||
       preview.operation_id !== maintenance.operation_id) throw new Error('请重新预览归档范围。');
     const bound = preview;
@@ -204,8 +205,8 @@
     one('result').textContent = `诊断归档已保存：${saved.path}。恢复功能尚未验收，请保留原始工程。`;
     one('result').hidden = false;
     await loadArchives();
-  }));
-  one('registration-check').addEventListener('click', () => run(async () => {
+  })));
+  one('registration-check').addEventListener('click', withFeedback(() => run(async () => {
     clearRegistration();
     const value = await request(`/api/projects/${encodeURIComponent(one('project').value)}/onboarding/registration/preview`, {
       operation_id: maintenance?.operation_id, archive_id: one('onboarding-archive').value,
@@ -219,7 +220,7 @@
     paragraph(one('registration-summary'), value.state === 'registered' ? '当前原登记已完成。请重新备份，再继续核对升级条件。' :
       value.state === 'resumable' ? '发现原登记意图。再次确认后仅继续该登记，不创建新的资格。' : '原书、归档和当前登记已核对。请明确确认后登记写入保护。');
     one('registration-summary').hidden = false;
-  }));
+  })));
   one('registration-confirm').addEventListener('change', render);
   const certificationPath = (project, archive) => `/api/projects/${encodeURIComponent(project)}/backups/${encodeURIComponent(archive)}/certification`;
   const validCertificate = (value, project, archive) => value.schema_version === 'target_recovery_certificate_verification_v1' &&
@@ -228,7 +229,7 @@
     value.policy?.schema_version === 'windows_same_host_single_book_v1' &&
     value.policy.restore?.source_unavailable_write_activation_supported === false &&
     value.policy.restore?.unknown_usage_write_activation_allowed === false;
-  one('certification-check').addEventListener('click', () => run(async () => {
+  one('certification-check').addEventListener('click', withFeedback(() => run(async () => {
     clearCertification();
     const project = one('project').value, archive = one('onboarding-archive').value;
     if (!ready() || !project || !archive) throw new Error('请在维护就绪后选择作品与归档。');
@@ -246,9 +247,9 @@
     if (value.blockers.some(item => item.code === 'source_changed_since_archive'))
       paragraph(panel, '作品、数据库或运行配置已偏离所选备份，请重新归档再核对。');
     panel.hidden = false;
-  }));
+  })));
   one('certification-confirm').addEventListener('change', render);
-  one('certification-save').addEventListener('click', () => run(async () => {
+  one('certification-save').addEventListener('click', withFeedback(() => run(async () => {
     const bound = certification;
     if (!ready() || !bound?.can_certify || !one('certification-confirm').checked ||
         bound.project_id !== one('project').value || bound.archive_id !== one('onboarding-archive').value ||
@@ -262,16 +263,16 @@
     if (!validCertificate(value, bound.project_id, bound.archive_id)) throw new Error('认证结果无法核对，请复验已有认证。');
     one('result').textContent = '有条件恢复认证已附加保存。原诊断归档保留；可写恢复仍须原来源、本机凭证和最新用量核验。';
     one('result').hidden = false;
-  }));
-  one('certification-verify').addEventListener('click', () => run(async () => {
+  })));
+  one('certification-verify').addEventListener('click', withFeedback(() => run(async () => {
     clearCertification();
     const project = one('project').value, archive = one('onboarding-archive').value;
     const value = await request(certificationPath(project, archive) + '/verify', {operation_id: maintenance?.operation_id});
     if (!validCertificate(value, project, archive)) throw new Error('认证结果无法核对。');
     paragraph(one('certification-summary'), '已有认证与归档内容复验通过。此结果不授予写入资格；恢复前仍需重新核对上方前提。');
     one('certification-summary').hidden = false;
-  }));
-  one('registration-save').addEventListener('click', () => run(async () => {
+  })));
+  one('registration-save').addEventListener('click', withFeedback(() => run(async () => {
     if (!ready() || !registration?.can_register || !one('registration-confirm').checked)
       throw new Error('请先核对旧书登记条件并明确确认。');
     const bound = registration;
@@ -285,11 +286,11 @@
     clearRegistration(); clearPreview(); clearOnboarding(); clearCertification();
     one('result').textContent = '旧书写入保护已登记，正文和格式保留。请重新备份，完成可恢复认证后再升级格式。';
     one('result').hidden = false;
-  }));
+  })));
   one('project').addEventListener('change', () => { clearPreview(); clearOnboarding(); clearRegistration(); clearCertification(); one('result').hidden = true; render(); });
   one('onboarding-archive').addEventListener('change', () => { clearOnboarding(); clearRegistration(); clearCertification(); render(); });
   const refresh = () => run(async () => { clearOnboarding(); clearRegistration(); clearCertification(); await loadProjects(); await loadArchives(); });
-  one('refresh').addEventListener('click', refresh);
+  one('refresh').addEventListener('click', withFeedback(refresh));
   root.addEventListener('toggle', () => {
     if (root.open && !initialized) { initialized = true; refresh(); }
   });

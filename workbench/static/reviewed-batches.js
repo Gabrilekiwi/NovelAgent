@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
   const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
   const project=params.get('project_id'),base=`/api/projects/${encodeURIComponent(project || '')}/reviewed-batches`;
   const storage=`novelagent.batch-request:${project}`;
@@ -115,7 +116,7 @@
     await loadList(operation.batch || result.grant?.manifest.batch_id);
   };
   $('prepare-form').addEventListener('input',()=>{preview=null;$('manifest').hidden=true;$('grant-confirm-label').hidden=true;$('grant-confirm').checked=false;render();});
-  $('prepare-form').addEventListener('submit',event=>{event.preventDefault();void run(async()=>{
+  $('prepare-form').addEventListener('submit',withFeedback(event=>{event.preventDefault();return run(async()=>{
     const f=$('prepare-form').elements,number=name=>Number(f[name].value),text=name=>f[name].value.trim();
     const configuration={chapter_limits:{max_provider_calls:number('chapter_calls'),max_input_tokens:number('chapter_input'),
       max_output_tokens:number('chapter_output'),max_active_seconds:text('max_active_seconds'),amount_limit:text('chapter_amount'),currency:text('currency'),
@@ -125,24 +126,24 @@
     const body={end_chapter:number('end_chapter'),configuration},key=crypto.randomUUID();
     preview={body,key,...await api(`${base}/preview`,body,key)};displayManifest(preview.manifest);
     $('grant-confirm-label').hidden=false;$('grant-confirm').checked=false;
-  });});
-  $('authorize').addEventListener('click',()=>run(async()=>{if(!preview || !$('grant-confirm').checked)return;
-    await send({url:base,batch:preview.manifest.batch_id,key:preview.key,body:{...preview.body,expected_manifest_sha256:preview.manifest.manifest_sha256,author_confirmed:true}});preview=null;}));
-  $('batch').addEventListener('change',()=>run(loadStatus));$('refresh').addEventListener('click',()=>run(()=>loadList($('batch').value)));
-  for(const action of ['start','resume','pause','stop'])$(action).addEventListener('click',()=>run(async()=>{confirmed();
-    await send({url:url('/commands'),batch:$('batch').value,key:crypto.randomUUID(),body:{action,expected_control_sha256:expected(),author_confirmed:true}});}));
-  $('initialize').addEventListener('click',()=>run(async()=>{confirmed();await send({url:url('/initialize'),batch:$('batch').value,body:{author_confirmed:true}});}));
-  $('recover-stage').addEventListener('click',()=>run(async()=>{confirmed();const r=current.recovery;
-    await send({url:url('/recover-stage'),batch:$('batch').value,body:{action:r.action,chapter:r.chapter,stage:r.stage,author_confirmed:true}});}));
-  $('retry-command').addEventListener('click',()=>run(async()=>{confirmed();if(!pending)return;
+  });}));
+  $('authorize').addEventListener('click',withFeedback(()=>run(async()=>{if(!preview || !$('grant-confirm').checked)return;
+    await send({url:base,batch:preview.manifest.batch_id,key:preview.key,body:{...preview.body,expected_manifest_sha256:preview.manifest.manifest_sha256,author_confirmed:true}});preview=null;})));
+  $('batch').addEventListener('change',()=>run(loadStatus));$('refresh').addEventListener('click',withFeedback(()=>run(()=>loadList($('batch').value))));
+  for(const action of ['start','resume','pause','stop'])$(action).addEventListener('click',withFeedback(()=>run(async()=>{confirmed();
+    await send({url:url('/commands'),batch:$('batch').value,key:crypto.randomUUID(),body:{action,expected_control_sha256:expected(),author_confirmed:true}});})));
+  $('initialize').addEventListener('click',withFeedback(()=>run(async()=>{confirmed();await send({url:url('/initialize'),batch:$('batch').value,body:{author_confirmed:true}});})));
+  $('recover-stage').addEventListener('click',withFeedback(()=>run(async()=>{confirmed();const r=current.recovery;
+    await send({url:url('/recover-stage'),batch:$('batch').value,body:{action:r.action,chapter:r.chapter,stage:r.stage,author_confirmed:true}});})));
+  $('retry-command').addEventListener('click',withFeedback(()=>run(async()=>{confirmed();if(!pending)return;
     const operation={...pending};if(current?.recovery && ['start','resume','pause','stop'].includes(current.recovery.action))operation.url=url('/recover-command');
-    await send(operation);}));
-  $('takeover').addEventListener('click',()=>run(async()=>{confirmed();await send({url:url('/takeover'),batch:$('batch').value,
-    body:{draft_id:$('draft').value,expected_control_sha256:expected(),author_confirmed:true}});}));
-  $('complete-author').addEventListener('click',()=>run(async()=>{confirmed();const request=authorRequests[Number($('author-request').value)];if(!request)throw Error('未找到原发布请求。');
+    await send(operation);})));
+  $('takeover').addEventListener('click',withFeedback(()=>run(async()=>{confirmed();await send({url:url('/takeover'),batch:$('batch').value,
+    body:{draft_id:$('draft').value,expected_control_sha256:expected(),author_confirmed:true}});})));
+  $('complete-author').addEventListener('click',withFeedback(()=>run(async()=>{confirmed();const request=authorRequests[Number($('author-request').value)];if(!request)throw Error('未找到原发布请求。');
     await send({url:url('/complete-author'),batch:$('batch').value,body:{chapter:current.recovery?.chapter || current.control.progress.chapter,
-      request,expected_control_sha256:expected(),author_confirmed:true}});}));
-  $('restored-preview').addEventListener('click',()=>run(async()=>{
+      request,expected_control_sha256:expected(),author_confirmed:true}});})));
+  $('restored-preview').addEventListener('click',withFeedback(()=>run(async()=>{
     restoredPreview=await api(url('/restored-continuation/preview'),{});$('restored-confirm').checked=false;
     const r=restoredPreview;$('restored-summary').replaceChildren(
       node('p',`原位置：第 ${r.original_progress.chapter} 章 · ${stageNames[r.original_progress.stage] || '待核对'}。`),
@@ -153,12 +154,12 @@
       original_spending_not_available:'原用量未结算或已超限。',frozen_author_inputs_changed:'冻结章纲或作者来源变化。',
       frozen_model_or_policy_changed:'原模型或策略变化。',software_changed:'软件版本变化。',original_parent_readback_not_available:'前章原回读证明需核对。',restored_authoritative_context_differs:'当前事实状态与原回读不同。'};
     for(const reason of r.blockers || [])$('restored-summary').append(node('p',labels[reason] || '原章节执行时间不完整或已用尽。'));
-  }));
-  $('restored-prepare').addEventListener('click',()=>run(async()=>{
+  })));
+  $('restored-prepare').addEventListener('click',withFeedback(()=>run(async()=>{
     if(!restoredPreview?.can_prepare || !$('restored-confirm').checked)return;
     await send({url:url('/restored-continuation'),batch:$('batch').value,
       body:{expected_preview_sha256:restoredPreview.record_sha256,author_confirmed:true}});
-  }));
+  })));
   for(const id of ['command-confirm','grant-confirm','draft','restored-confirm'])$(id).addEventListener('change',render);
   void run(async()=>{if(!project)throw Error('请从作品概览进入自动连续写作。');$('back').href=`/#/projects/${encodeURIComponent(project)}/overview`;
     const saved=localStorage.getItem(storage);if(saved){pending=JSON.parse(saved);if(!pending || !pending.url?.startsWith(base) || !pending.body)throw Error('原批次请求记录不完整，请保留记录。');}

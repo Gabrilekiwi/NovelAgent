@@ -6,6 +6,8 @@ import asyncio
 from fastapi import Body, Header, HTTPException, Path, Query
 from fastapi.responses import JSONResponse
 
+from core.engine.chapter_commit_request import ChapterCommitRequestError, validate_author_quality_choice
+from core.story_project.reviewed_chapter_transition import ReviewedChapterTransitionError
 from core.engine.reviewed_candidate_context import ReviewedChapterCandidateContextBuilder
 from core.story_project.read_set import StoryProjectSourceDriftError
 from core.quality.reviewed_disposition import ReviewedDispositionError
@@ -43,17 +45,25 @@ def install_chapter_publication_routes(app, *, database, allowed_workspaces, mac
         return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
 
     for error_type in (ChapterCommitConflict, ChapterCommitIntegrityError, ChapterCommitRecoveryRequired,
-                       BookOwnershipError, InstanceAlreadyRunning, StoryProjectSourceDriftError,ReviewedDispositionError):
+                       BookOwnershipError, InstanceAlreadyRunning, StoryProjectSourceDriftError, ReviewedDispositionError, ReviewedChapterTransitionError):
         app.add_exception_handler(error_type, publication_error)
 
-    def request_values(project_id, chapter, payload, key, *, commit=False):
+    def request_values(project_id, chapter, payload, key, *, commit=False, status=False):
         expected = _INPUT_FIELDS | ({"author_confirmed"} if commit else set())
+        choice = {}
+        if (commit or status) and "author_quality_choice" in payload:
+            try:
+                validate_author_quality_choice(payload["author_quality_choice"])
+            except ChapterCommitRequestError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            expected.add("author_quality_choice")
+            choice["author_quality_choice"] = payload["author_quality_choice"]
         if set(payload) != expected:
             raise HTTPException(422, "提交只接受审核编号、草稿与审核版本及摘要；不接受客户端质量或状态结果。")
         if commit and payload["author_confirmed"] is not True:
             raise HTTPException(422, "请明确确认发布本章。")
         return {"project_id": project_id, "chapter": chapter,
-                **{name: payload[name] for name in _INPUT_FIELDS}, "idempotency_key": key}
+                **{name: payload[name] for name in _INPUT_FIELDS}, **choice, "idempotency_key": key}
 
     @app.get("/api/projects/{project_id}/chapters/{chapter}/publication-input")
     async def publication_input(project_id: str, chapter: int = Path(ge=1), review_id: str = Query(min_length=1)):
@@ -77,7 +87,7 @@ def install_chapter_publication_routes(app, *, database, allowed_workspaces, mac
     @app.post("/api/projects/{project_id}/chapters/{chapter}/publication-status")
     async def resolve(project_id: str, chapter: int = Path(ge=1), payload: dict = Body(...),
                       idempotency_key: str = Header(..., alias="Idempotency-Key")):
-        route = request_values(project_id, chapter, payload, idempotency_key)
+        route = request_values(project_id, chapter, payload, idempotency_key, status=True)
         return {"publication": await asyncio.to_thread(service.resolve, **route)}
 
     @app.post("/api/projects/{project_id}/publication-recovery")

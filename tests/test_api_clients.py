@@ -217,7 +217,7 @@ class ApiClientTest(unittest.TestCase):
                 else:
                     os.environ[name] = value
 
-        self.assertEqual({"api_key": "test-key", "timeout": 9, "max_retries": 0}, captured["client_kwargs"])
+        self.assertEqual({"api_key": "test-key", "base_url": "https://api.openai.com/v1", "timeout": 9, "max_retries": 0}, captured["client_kwargs"])
         self.assertEqual(
             {
                 "model": "test-model",

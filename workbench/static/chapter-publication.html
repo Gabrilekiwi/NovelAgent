@@ -5,6 +5,7 @@
   <title>确认发布章节 · NovelAgent</title>
   <link rel="stylesheet" href="/static/workbench.css">
   <link rel="stylesheet" href="/static/chapter-publication.css">
+  <script src="/static/action-feedback.js" defer></script>
   <script src="/static/chapter-publication.js" defer></script>
 </head>
 <body>
@@ -31,6 +32,11 @@
         <button id="resolve" class="button button-secondary" hidden>查询原提交结果</button>
         <button id="recover" class="button button-secondary" hidden>恢复原事务</button>
         <button id="restart" class="button button-secondary" hidden>重新准备提交</button></div>
+      <fieldset id="author-choices" hidden>
+        <legend>按当前正文发布</legend>
+        <p>如果你认可正文的处理，可以逐项忽略以下章纲提示。这些选择仅对当前草稿和事实审核有效，会随发布凭证保存。也可以返回本章修改草稿。</p>
+        <div id="choice-list"></div><p id="choice-progress" aria-live="polite"></p>
+      </fieldset>
       <label id="confirm-label" hidden><input type="checkbox" id="confirmed"> 我已核对最终正文和事实，确认发布本章。</label>
       <button id="commit" class="button button-primary" disabled>确认发布本章</button>
       <p id="receipt" hidden></p>

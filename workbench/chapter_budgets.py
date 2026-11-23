@@ -22,6 +22,37 @@ _CONFIG_FIELDS={'max_provider_calls','max_input_tokens','max_output_tokens','max
                 'amount_limit','currency','pricing'}
 
 
+def chapter_start_suggestion(registry, chapter, option):
+    """Copy configuration only; never copy spending, time, grants or confirmation."""
+    limits = dict(max_provider_calls=3, max_input_tokens=max(150000, 3 * option.get('input_reservation_per_call', 0)),
+        max_output_tokens=48000, max_active_seconds='1200')
+    target = {'amount':'1', 'currency':'USD'}
+    suggestion = dict(source_chapter=None, limits=limits, target=target, pricing=None, tariff_changed=False)
+    previous = registry.status(chapter - 1) if chapter > 1 else None
+    if not previous or previous['state'] != 'ready':
+        return suggestion
+    old = previous['budget']
+    suggestion.update(source_chapter=chapter-1, limits={k:old[k] for k in limits})
+    if old['amount_limit'] is None:
+        saved = old.get('spending_target', target)
+        suggestion['target'] = {key:saved[key] for key in ('amount','currency')}
+        if rates := saved.get('estimate_rates'):
+            identity = option.get('estimate_identity')
+            if identity and all(rates[k] == v for k,v in identity.items()):
+                suggestion['estimate_rates'] = rates
+            else:
+                suggestion['tariff_changed'] = True
+    else:
+        suggestion['target'] = {'amount':old['amount_limit'], 'currency':old['currency']}
+        rows = old['pricing']
+        if (option.get('available') and len(rows) == 1
+                and all(rows[0].get(k) == v for k,v in option['pricing_template'].items())):
+            suggestion['pricing'] = rows[0]
+        else:
+            suggestion['tariff_changed'] = True
+    return suggestion
+
+
 class ChapterBudgetService:
     def __init__(self,publication):
         self.publication=publication
@@ -38,7 +69,15 @@ class ChapterBudgetService:
                 max_completion_tokens=1,service_tier='default',prompt_cache_retention='in_memory',n=1,stream=False),
                 base_url=config.openai_base_url or 'https://api.openai.com/v1')
         except BillingRequestError:
-            return {'available':False,'message':'当前模型或端点尚无已核对的金额契约，可先使用调用、token和时间限额。'}
+            from api.budget_endpoint import endpoint_fingerprint
+            option = {'available':False,'message':'可填入自己服务商的单价，在下一次请求预计超出预算时停止。'}
+            try:
+                fingerprint = endpoint_fingerprint('openai',config.openai_base_url or 'https://api.openai.com/v1')
+                if config.openai_model:
+                    option['estimate_identity'] = dict(provider='openai',model=config.openai_model,endpoint_fingerprint=fingerprint)
+            except ChapterBudgetError:
+                option['message'] = '当前端点无法绑定单价，仅使用调用、token 和时间限额。'
+            return option
         return {'available':True,'model':plan['model'],'service_tier':plan['service_tier'],
             'input_reservation_per_call':plan['max_billable_input_tokens'],
             'message':'请填入已核对且覆盖本章调用范围的价格。金额占用包含保守预留，实际账单不由工作台核对。',
@@ -52,6 +91,8 @@ class ChapterBudgetService:
         result=registry.status(chapter)
         answer={'project_id':project.id,'book_id':project.book_id,'chapter':chapter,**result,
             'usage':None,'time':None,'monetary_option':self.monetary_option()}
+        if result['state']=='not_configured':
+            answer['suggestion']=chapter_start_suggestion(registry, chapter, answer['monetary_option'])
         if result['state']=='ready':
             store=ChapterBudgetStore(registry.root/f'c{chapter}',book_id=project.book_id,chapter=chapter)
             answer['usage']=store.report()
@@ -82,7 +123,7 @@ class ChapterBudgetService:
     def freeze(self,project_id,chapter,*,configuration,expected_context_sha256,author_confirmed):
         if author_confirmed is not True:
             raise ChapterBudgetConflict('请明确确认本章预算。')
-        if not isinstance(configuration,dict) or set(configuration)!=_CONFIG_FIELDS:
+        if not isinstance(configuration,dict) or set(configuration) not in (_CONFIG_FIELDS, _CONFIG_FIELDS | {'spending_target'}):
             raise ChapterBudgetConflict('预算配置字段不完整或包含不支持的字段。')
         # This existing boundary owns the machine book, Provider lock and DB
         # registration. Freeze must not bypass unresolved calls or publication.
@@ -101,6 +142,10 @@ class ChapterBudgetService:
                 if trusted.context_sha256!=expected_context_sha256:
                     raise ChapterBudgetConflict('章节输入已变化，请刷新后重新确认预算。')
                 if registry.status(chapter)['state']=='not_configured':
+                    if rates := budget.get('spending_target',{}).get('estimate_rates'):
+                        identity = self.monetary_option().get('estimate_identity')
+                        if not identity or any(rates[k] != v for k,v in identity.items()):
+                            raise ChapterBudgetConflict('模型或中转地址已变化，请重新核对单价。')
                     for row in budget['pricing']:
                         if 'billing_policy' not in row:continue
                         option=self.monetary_option()

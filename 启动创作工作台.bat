@@ -9,16 +9,20 @@ title NovelAgent Workbench
 set "PYTHONUTF8=1"
 
 set "NOVELAGENT_PYTHON=%~dp0.venv\Scripts\python.exe"
-if not exist "%NOVELAGENT_PYTHON%" (
-  echo The project environment is missing.
-  echo Install Python 3.12, then run: py -3.12 scripts\setup_environment.py
-  pause
-  exit /b 1
-)
-
+if exist "%NOVELAGENT_PYTHON%" goto check_environment
+echo First launch: setting up NovelAgent. Internet access or an offline package source is required.
+py -3.12 -V >nul 2>&1
+if errorlevel 1 goto try_python
+py -3.12 scripts\setup_environment.py --runtime-only
+if errorlevel 1 goto setup_failed
+goto check_environment
+:try_python
+python scripts\setup_environment.py --runtime-only
+if errorlevel 1 goto setup_failed
+:check_environment
 "%NOVELAGENT_PYTHON%" -B scripts\check_environment.py
 if errorlevel 1 (
-  echo Run: py -3.12 scripts\setup_environment.py
+  echo Repair setup: py -3.12 scripts\setup_environment.py --runtime-only
   pause
   exit /b 1
 )
@@ -34,3 +38,9 @@ if not "%NOVELAGENT_EXIT%"=="0" (
 )
 
 endlocal & exit /b %NOVELAGENT_EXIT%
+
+:setup_failed
+echo Setup did not finish. Check Python 3.12 and your package source.
+echo Retry: py -3.12 scripts\setup_environment.py --runtime-only
+pause
+endlocal & exit /b 1

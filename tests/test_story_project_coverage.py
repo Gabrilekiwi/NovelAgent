@@ -35,6 +35,27 @@ def _beat_index_groups(plan: dict) -> list[list[int]]:
 
 
 class StoryProjectCoverageTests(unittest.TestCase):
+    def test_explicit_none_is_not_a_required_word_in_final_prose_or_scenes(self):
+        blueprint = _nine_beat_blueprint()
+        blueprint.update(required_beats=[{"index": 1, "text": "无"}], ending_pressure="无")
+        plan = build_blueprint_plan(blueprint)
+        self.assertEqual([[]], _beat_index_groups(plan))
+        self.assertEqual(blueprint["core_event"], plan["scenes"][0]["goal"])
+        generated_plan = plan_scenes("本章输入", chapter_index=18, chapter_blueprint=blueprint)
+        self.assertEqual(blueprint["core_event"], generated_plan["scenes"][0]["goal"])
+        text = "许禾替孩子拉直了布条。"
+        for report in (build_text_blueprint_coverage(blueprint, text), build_blueprint_coverage(blueprint, [], text)):
+            self.assertEqual(0, report["required_beat_count"])
+            self.assertFalse(report["ending_pressure_required"])
+            self.assertFalse(report["ending_pressure_covered"])
+            self.assertTrue(validate_blueprint_coverage(blueprint, report)["ok"])
+        blueprint["required_beats"].append({"index": 2, "text": "无人码头响起汽笛"})
+        blueprint["ending_pressure"] = "无人码头再度停电"
+        for report in (build_text_blueprint_coverage(blueprint, text), build_blueprint_coverage(blueprint, [], text)):
+            self.assertEqual([2], report["missing_beat_indexes"])
+            self.assertTrue(report["ending_pressure_required"])
+            self.assertEqual(["missing_required_beat", "missing_ending_pressure"], [p["code"] for p in validate_blueprint_coverage(blueprint, report)["problems"]])
+
     def test_whole_text_does_not_require_or_invent_scene_declarations(self):
         blueprint = _nine_beat_blueprint()
         text = "\n".join([*(beat["text"] for beat in blueprint["required_beats"]), blueprint["ending_pressure"]])

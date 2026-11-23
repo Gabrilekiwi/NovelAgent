@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
   const $ = id => document.getElementById(id), params = new URLSearchParams(location.search);
   const project = params.get('project_id'), base = '/api/projects/' + encodeURIComponent(project || '') + '/onboarding/upgrade';
   let maintenance = null, busy = false, preview = null, original = null, cursor = null;
@@ -84,30 +85,30 @@
   }
   for (const id of ['upgrade-baseline','upgrade-archive']) $(id).addEventListener('change',() => {preview = null;clearAcks();render();});
   for (const id of ['upgrade-policy-ack','upgrade-author-ack']) $(id).addEventListener('change',render);
-  $('upgrade-refresh').addEventListener('click',() => run(() => list()));
-  $('upgrade-more').addEventListener('click',() => run(() => list(true)));
-  $('upgrade-query').addEventListener('click',() => run(query));
-  $('upgrade-preview').addEventListener('click',() => run(async () => {
+  $('upgrade-refresh').addEventListener('click',withFeedback(() => run(() => list())));
+  $('upgrade-more').addEventListener('click',withFeedback(() => run(() => list(true))));
+  $('upgrade-query').addEventListener('click',withFeedback(() => run(query)));
+  $('upgrade-preview').addEventListener('click',withFeedback(() => run(async () => {
     clearAcks(); const review = reviews.get($('upgrade-baseline').value);
     if (!ready() || !review) throw new Error('请选择已确认审核并进入备份维护。');
     preview = await request(base + '/preview',{operation_id:maintenance.operation_id,archive_id:$('upgrade-archive').value,
       baseline_id:review.id,expected_revision:review.revision,expected_sha256:review.record_sha256});
     original = null;remember(preview);$('upgrade-status').textContent = '预览已核对，请阅读升级差异和恢复前提后分别确认。';
     $('upgrade-operation').textContent = '尚未提交；刷新不会自动升级。';
-  }));
-  $('upgrade-commit').addEventListener('click',() => run(async () => {
+  })));
+  $('upgrade-commit').addEventListener('click',withFeedback(() => run(async () => {
     if (!preview || !$('upgrade-policy-ack').checked || !$('upgrade-author-ack').checked || !ready()) throw new Error('请重新核对并明确确认。');
     const value = preview;remember(value);preview = null;clearAcks();
     await request(base + '/commit',{operation_id:value.operation_id,archive_id:value.archive_id,baseline_id:value.baseline_id,
       expected_revision:value.expected_revision,expected_sha256:value.expected_sha256,expected_preview_sha256:value.preview_sha256,
       acknowledged_policy_sha256:value.recovery_policy_sha256,confirmed:true});await query();
-  }));
-  $('upgrade-continue').addEventListener('click',() => run(async () => {
+  })));
+  $('upgrade-continue').addEventListener('click',withFeedback(() => run(async () => {
     if (!original?.can_continue || !$('upgrade-policy-ack').checked || !$('upgrade-author-ack').checked || !ready()) throw new Error('请先继续原维护，核对原操作后明确确认。');
     const value = original.preview;original = null;clearAcks();
     await request(base + '/continue',{operation_id:value.operation_id,preview_sha256:value.preview_sha256,
       acknowledged_policy_sha256:value.recovery_policy_sha256,confirmed:true});await query();
-  }));
+  })));
   document.addEventListener('workbench:maintenance',event => {maintenance = event.detail;preview = null;clearAcks();render();});
   window.addEventListener('pagehide',clearAcks);
   if (!project) {$('upgrade-status').textContent = '请从所选作品的作者审核页面进入升级。';render();return;}

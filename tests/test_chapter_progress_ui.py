@@ -15,7 +15,7 @@ def run_js(assertions):
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
 let source = fs.readFileSync(process.argv[1], 'utf8');
 const marker = '  const renderChapterCandidate =';
-source = source.replace(marker, '  globalThis.progress = { present: chapterWorkflowPresentation, matches: chapterProgressMatches };\n  return;\n' + marker);
+source = source.replace(marker, '  globalThis.progress = { present: chapterWorkflowPresentation, matches: chapterProgressMatches, sync: syncChapterModelButtons, state };\n  return;\n' + marker);
 const sandbox = { document: { body: { hasAttribute: () => true }, querySelector: () => null,
   querySelectorAll: () => [], createElement: () => ({}) }, window: { NovelAgentUI: {} } };
 vm.runInNewContext(source, sandbox);
@@ -79,13 +79,14 @@ def test_confirmation_keeps_button_reference_after_browser_clears_current_target
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
 const source = fs.readFileSync(process.argv[1], 'utf8');
 const control = process.argv[2];
-const marker = `  one("[data-${control}]")?.addEventListener("click", async (event) => {`;
-const start = source.indexOf(marker), end = source.indexOf('\n  });', start) + 6;
+const marker = `  one("[data-${control}]")?.addEventListener("click", withFeedback(async (event) => {`;
+const start = source.indexOf(marker), end = source.indexOf('\n  }));', start) + 7;
 assert(start > 0 && end > start);
 let listener, accept, observedButton;
 const button = { disabled:false }, draft = {id:'draft-a'};
 const sandbox = {
   one: selector => selector === `[data-${control}]` ? { addEventListener:(_, fn)=>listener=fn } : {classList:{contains:()=>false}},
+  withFeedback:handler=>handler,
   quoteKey:()=> 'same-chapter',
   UI:{confirmAction:()=>new Promise(resolve=>accept=resolve)},
   state:{chapterCandidate:{draft},chapterConfirmation:{confirmation_sha256:'a'.repeat(64)}},
@@ -108,3 +109,20 @@ setImmediate(()=>{ assert.strictEqual(observedButton,button); assert(button.disa
     result = subprocess.run([shutil.which('node'), '-e', script, str(SPA), control],
         cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_model_readiness_and_budget_refresh_keep_both_model_buttons_blocked():
+    run_js(r"""
+const {sync,state}=sandbox.progress;
+const control=()=>({disabled:false,classList:{contains:()=>false}});
+const generate=control(), extract=control(), help={};
+sandbox.document.querySelector=s=>({'[data-candidate-generate]':generate,'[data-fact-extract]':extract,'[data-chapter-model-help]':help})[s] ?? null;
+state.chapterCard={book_id:'book',chapter_index:1,confirmation:{card_sha256:'card'},binding:{context_sha256:'context'}};
+state.chapterConfirmation={book_id:'book',chapter_index:1,card_sha256:'card',context_sha256:'context'};
+state.providerReady=false; state.chapterBudgetBlocked=true; sync();
+state.chapterBudgetBlocked=false; sync();
+assert(generate.disabled && extract.disabled && !help.hidden);
+state.providerReady=true; sync(); assert(!generate.disabled && !extract.disabled && help.hidden);
+state.chapterBudgetBlocked=true; sync(); assert(generate.disabled && extract.disabled);
+state.chapterBudgetBlocked=false; state.chapterCandidate={status:'provider_uncertain'}; sync(); assert(generate.disabled);
+""")

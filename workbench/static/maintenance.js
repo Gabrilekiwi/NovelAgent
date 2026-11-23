@@ -1,5 +1,6 @@
 (() => {
   "use strict";
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
   const root=document.querySelector('[data-maintenance-controls]');
   if (!root) return;
   const one=(key)=>root.querySelector(`[data-maintenance-${key}]`);
@@ -54,8 +55,8 @@
       document.dispatchEvent(new CustomEvent('workbench:maintenance',{detail:current}));
     }
   };
-  ['begin','resume','finish'].forEach(action=>one(action).addEventListener('click',()=>request(action)));
-  one('refresh').addEventListener('click',()=>request());
+  ['begin','resume','finish'].forEach(action=>one(action).addEventListener('click',withFeedback(()=>request(action))));
+  one('refresh').addEventListener('click',withFeedback(()=>request()));
   window.addEventListener('focus',()=>request());
   document.addEventListener('workbench:error',()=>request());
   document.addEventListener('workbench:maintenance-status',event=>{

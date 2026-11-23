@@ -12,14 +12,14 @@ def test_manual_review_does_not_send_from_dirty_or_replaced_draft():
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 const source=fs.readFileSync(process.argv[1],'utf8');
 const helper=source.slice(source.indexOf('  const canStartManualFactReview ='),source.indexOf('  const renderChapterFacts ='));
-const start=source.indexOf("  one('[data-fact-manual]')?.addEventListener"),end=source.indexOf('\n  });',start)+6;
+const start=source.indexOf("  one('[data-fact-manual]')?.addEventListener"),end=source.indexOf('\n  }));',start)+7;
 assert(start>0 && end>start);
 (async()=>{
  for(const scenario of ['cancel','dirty-before','dirty-after','route-changed','valid']) {
   let listener,accept,calls=[],busyButton;
   let dirty=scenario==='dirty-before',current=true;
   const button={disabled:false},action={draft_id:'draft-1',draft_revision:4,draft_sha256:'abc'};
-  const sandbox={state:{chapterCandidate:{draft:{id:'draft-1'}}},
+  const sandbox={withFeedback:fn=>fn,state:{chapterCandidate:{draft:{id:'draft-1'}}},
    one:s=>s==='[data-fact-manual]'?{addEventListener:(_,fn)=>listener=fn}:dirty?{}:null,
    UI:{showToast:()=>{},confirmAction:()=>new Promise(r=>accept=r)},beginFactAction:()=>action,
    factActionTargetsCurrentDraft:()=>current,setFactButtonBusy:b=>busyButton=b,

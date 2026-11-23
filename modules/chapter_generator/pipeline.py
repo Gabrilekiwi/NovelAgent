@@ -53,6 +53,7 @@ from core.story_project.coverage import (
     blueprint_to_dict,
     build_blueprint_coverage,
     build_blueprint_plan,
+    ending_requirement,
     validate_generation_blueprint_contract,
 )
 from modules.chapter_generator.generator import _DRY_RUN_CHAPTER, _load_scene_prompt
@@ -342,7 +343,7 @@ def plan_scenes(
     if blueprint is not None:
         return _validate_plan(
             build_blueprint_plan(blueprint, scene_limit=scene_limit),
-            chapter_index=chapter_index,
+            chapter_index=chapter_index, blueprint_plan=True,
         )
 
     if dry_run:
@@ -679,7 +680,7 @@ def generate_scenes(
     generation_state_view_source: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     blueprint = blueprint_to_dict(chapter_blueprint)
-    plan = _validate_plan(plan)
+    plan = _validate_plan(plan, blueprint_plan=blueprint is not None)
     recovered = _recovered_scene_prefix(recovered_scene_drafts, plan)
     scene_drafts: list[dict[str, Any]] = []
     scene_state = (
@@ -818,7 +819,7 @@ def generate_scenes(
             **({"covered_beat_indexes": required_beat_indexes} if required_beat_indexes else {}),
             **(
                 {"ending_pressure_covered": True}
-                if blueprint is not None and int(scene["index"]) == _last_scene_index(plan)
+                if ending_requirement(blueprint) and int(scene["index"]) == _last_scene_index(plan)
                 else {}
             ),
             "text": scene_text,
@@ -1109,7 +1110,7 @@ def _scene_request_payload(
             "chapter_plan": chapter_plan_context,
             "scene": scene,
             "required_beats": scene_required_beats,
-            "ending_pressure": (blueprint or {}).get("ending_pressure"),
+            "ending_pressure": ending_requirement(blueprint) or None,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -1122,7 +1123,7 @@ def _scene_request_payload(
         "chapter_plan": chapter_plan_context,
         "scene": scene,
         "story_project_required_beats": scene_required_beats,
-        "story_project_ending_pressure": (blueprint or {}).get("ending_pressure"),
+        "story_project_ending_pressure": ending_requirement(blueprint) or None,
         "story_project_chapter_contract": _scene_blueprint_contract(
             blueprint
         ),
@@ -2086,7 +2087,7 @@ def _dry_run_scene_result(
             for position, (beat_index, beat_text) in enumerate(beat_texts)
         ]
         if scene_index == _last_scene_index(plan):
-            ending_pressure = str(chapter_blueprint.get("ending_pressure") or "").strip()
+            ending_pressure = ending_requirement(chapter_blueprint)
             if ending_pressure:
                 text_parts.append(
                     f"Ending pressure: {_dry_run_unique_requirement(ending_pressure)}"
@@ -2213,7 +2214,7 @@ def merge_scenes(scene_drafts: list[dict[str, Any]]) -> str:
     return validate_text_output(merged, CHAPTER_CONTRACT)
 
 
-def _validate_plan(plan: dict[str, Any], *, chapter_index: int = 1) -> dict[str, Any]:
+def _validate_plan(plan: dict[str, Any], *, chapter_index: int = 1, blueprint_plan: bool = False) -> dict[str, Any]:
     normalized = {
         "goal": str(plan.get("goal") or "Advance the chapter with clear conflict."),
         "scenes": [],
@@ -2230,7 +2231,7 @@ def _validate_plan(plan: dict[str, Any], *, chapter_index: int = 1) -> dict[str,
         scene_type = str(scene.get("type") or "development")
         goal = str(scene.get("goal") or f"Scene {index}")
         story_project_beat_indexes = _scene_beat_indexes(scene)
-        if index == 1 and not story_project_beat_indexes:
+        if index == 1 and not story_project_beat_indexes and not blueprint_plan:
             scene_type = "opening_bridge"
             goal = "Continue directly from last_chapter_ending"
             beats = [

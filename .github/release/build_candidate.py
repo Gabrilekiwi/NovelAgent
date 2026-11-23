@@ -49,7 +49,9 @@ def metadata(payload):
     return {'size': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
 
 
-def build(source, guides):
+def build(source, guides, archive_format=2):
+    if archive_format not in (1, 2):
+        raise ValueError("Unsupported archive format")
     files = blobs(source, (*TREES, *FILES, *EXTRAS))
     for name in (*FILES, *EXTRAS):
         if name not in files:
@@ -57,6 +59,11 @@ def build(source, guides):
     for name in files:
         if name not in (*FILES, *EXTRAS) and Path(name).suffix not in SUFFIXES:
             raise ValueError(f'review additional file before distributing: {name}')
+    if archive_format == 2:
+        # Git stores normalized LF; cmd.exe expects native CRLF in a Windows distribution.
+        for name in files:
+            if name.endswith(".bat"):
+                files[name] = files[name].replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     files.update(blobs(guides, GUIDES))
     files['README.md'] = ('# NovelAgent · Windows 本地自用候选版\n\n首次使用，请打开[作者使用指南](docs/windows-author.md)。\n\n'
                           '[自用上线标准](docs/product-validation.md) · [包内文件校验清单](candidate-manifest.json)\n').encode()
@@ -67,6 +74,8 @@ def build(source, guides):
                 raise ValueError(f'{name}: missing local target {link}')
     manifest = {'source_commit': source, 'guide_commit': guides, 'stable_release': False,
                 'members': {n:metadata(b) for n,b in sorted(files.items())}}
+    if archive_format == 2:
+        manifest['archive_format'] = archive_format
     files['candidate-manifest.json'] = (json.dumps(manifest, ensure_ascii=False, indent=2)+'\n').encode()
     out = io.BytesIO()
     with ZipFile(out, 'w') as archive:

@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
   const $ = id => document.getElementById(id);
   const project = new URLSearchParams(location.search).get('project_id');
   document.getElementById('open-upgrade').href = project ? '/upgrade?project_id=' + encodeURIComponent(project) : '/';
@@ -151,7 +152,7 @@
       const details = el('details');details.className = 'baseline-category';details.open = key === 'characters';
       details.append(el('summary',label));const list = el('div');list.id = 'rows-' + category;details.append(list);
       const add = el('button','添加' + label + '记录');add.type = 'button';
-      add.addEventListener('click',() => run(async () => {addRow(group,'author_' + crypto.randomUUID().replaceAll('-',''));changed();}));
+      add.addEventListener('click',withFeedback(() => run(async () => {addRow(group,'author_' + crypto.randomUUID().replaceAll('-',''));changed();})));
       details.append(add);const caption = el('label');const check = el('input');check.type = 'checkbox';
       check.addEventListener('change',render);caption.append(check,document.createTextNode('我已核对' + label + '，包括空白或缺失记录。'));
       details.append(caption);acknowledgements[category] = check;$('fact-editors').append(details);
@@ -203,31 +204,31 @@
     else { $('saved-revision').replaceChildren();option($('saved-revision'),String(record.revision),'第 ' + record.revision + ' 版（加载最新版本可查看完整历史）'); }
     $('saved-revision').value = String(record.revision);
   }
-  $('refresh-reviews').addEventListener('click',() => run(async () => {current = false;clearAcks();await list();}));
-  $('more-reviews').addEventListener('click',() => run(() => list(true)));
+  $('refresh-reviews').addEventListener('click',withFeedback(() => run(async () => {current = false;clearAcks();await list();})));
+  $('more-reviews').addEventListener('click',withFeedback(() => run(() => list(true))));
   $('saved-review').addEventListener('change',() => {current = false;clearAcks();render();});
-  $('load-review').addEventListener('click',() => run(async () => {
+  $('load-review').addEventListener('click',withFeedback(() => run(async () => {
     if (dirty || referenceDirty) throw new Error('请先保存未完成修改，或刷新页面后加载其他审核。');
     accept(await request('/' + encodeURIComponent($('saved-review').value)));$('review-status').textContent = '已加载保存的审核，请核对当前来源。';
-  }));
-  $('load-revision').addEventListener('click',() => run(async () => {
+  })));
+  $('load-revision').addEventListener('click',withFeedback(() => run(async () => {
     if (dirty || referenceDirty) throw new Error('请先保存未完成修改。');
     accept(await request('/' + record.id + '?revision=' + encodeURIComponent($('saved-revision').value)));
-  }));
-  $('inspect-review').addEventListener('click',() => run(async () => {
+  })));
+  $('inspect-review').addEventListener('click',withFeedback(() => run(async () => {
     const value = await request('/' + record.id + '/inspect',operation());accept(value,{sourceCurrent:value.source_current});
     $('review-status').textContent = value.source_current ? '当前来源核对通过。草稿可逐类核对后确认。' : value.reason;
-  }));
+  })));
   $('copy-review').addEventListener('click',() => {
     record = null;head = true;current = false;dirty = true;referenceDirty = false;clearAcks();
     $('saved-revision').replaceChildren();$('review-status').textContent = '已以所选内容新建未保存审核，请重新核对全部类别和当前来源。';render();
   });
-  $('proposal').addEventListener('click',() => run(async () => {
+  $('proposal').addEventListener('click',withFeedback(() => run(async () => {
     if (dirty || referenceDirty) throw new Error('请先保存当前修改，或刷新页面后重新整理。');
     const value = await request('/proposal',operation());record = null;head = true;current = false;dirty = true;refs = [];referenceDirty = false;
     showState(value.state);sourcePaths(value.source_paths);renderRefs();clearAcks();
     $('review-status').textContent = `已整理截至第 ${value.chapter} 章的建议，七类事实均尚未确认。`;
-  }));
+  })));
   $('calibration-file').addEventListener('change',() => run(async () => {
     calibration = null;current = false;clearAcks();const file = $('calibration-file').files[0];
     if (!file || file.size > 2*1024*1024) throw new Error('请选择不超过 2 MiB 的完整原校准报告。');
@@ -236,16 +237,16 @@
     calibration = raw;$('calibration-status').textContent = '报告已读取；保存时将核对它是否匹配当前作品。';
   }));
   $('source-path').addEventListener('change',() => {source = null;$('source-text').textContent = '';$('source-excerpt').value = '';render();});
-  $('read-source').addEventListener('click',() => run(async () => {
+  $('read-source').addEventListener('click',withFeedback(() => run(async () => {
     source = await request('/source',{...operation(),relative_path:$('source-path').value});$('source-text').textContent = source.text;
-  }));
-  $('add-reference').addEventListener('click',() => run(async () => {
+  })));
+  $('add-reference').addEventListener('click',withFeedback(() => run(async () => {
     const text = $('source-excerpt').value;
     if (!source || !text.trim() || !source.text.includes(text)) throw new Error('摘录须完整匹配当前原资料中的一段文字。');
     if (refs.some(ref => ref.relative_path === source.relative_path && ref.text === text)) throw new Error('这段摘录已保留。');
     refs.push({relative_path:source.relative_path,sha256:source.sha256,text});referenceDirty = true;changed();renderRefs();
-  }));
-  $('save-review').addEventListener('click',() => run(async () => {
+  })));
+  $('save-review').addEventListener('click',withFeedback(() => run(async () => {
     const state = readState();let value;
     clearAcks();
     if (record && !referenceDirty) value = await request('/' + record.id + '/edit',{...operation(),state,expected_revision:record.revision,expected_sha256:record.record_sha256});
@@ -256,16 +257,16 @@
     }
     accept(value,{sourceCurrent:true});await list();$('saved-review').value = record.id;
     $('review-status').textContent = '审核草稿已保存。请逐类核对后明确确认。';
-  }));
+  })));
   $('author-confirmed').addEventListener('change',render);
-  $('confirm-review').addEventListener('click',() => run(async () => {
+  $('confirm-review').addEventListener('click',withFeedback(() => run(async () => {
     if (!canConfirm() || !$('author-confirmed').checked || !Object.values(acknowledgements).every(input => input.checked)) throw new Error('请逐类核对后明确确认。');
     const body = {...operation(),expected_revision:record.revision,expected_sha256:record.record_sha256,
       confirmed_categories:['event','character_state','relationship','roster','location','inventory','counter'],author_confirmed:true};
     clearAcks();current = false;
     accept(await request('/' + record.id + '/confirm',body),{sourceCurrent:true});await list();
     $('review-status').textContent = '作者基线已确认。请回工作台生成新备份和认证，再继续后续升级。';
-  }));
+  })));
   document.addEventListener('workbench:maintenance',event => {
     const value = event.detail;
     current = false;clearAcks();

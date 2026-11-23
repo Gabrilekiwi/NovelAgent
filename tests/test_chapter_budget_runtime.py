@@ -307,3 +307,25 @@ def test_original_execution_binding_cannot_be_reassigned(tmp_path,change):
     else:execution='execution_other'
     changed=ModelCallRuntimeContext(r.store,chapter_budget=ChapterModelCallBudget(s,execution_id=execution))
     with pytest.raises(ChapterBudgetError):changed.execute_attempt(**args(operation=forbidden))
+
+
+def test_estimated_relay_cap_stops_before_transport_after_restart(tmp_path):
+    from tests.test_chapter_budget_store import budget
+    rates=dict(provider='openai',model='fixture',endpoint_fingerprint=FP,
+               input_price_per_million='1',output_price_per_million='2')
+    s=ChapterBudgetStore(tmp_path/'b',book_id='book-test',chapter=2)
+    s.initialize(budget(None,spending_target=dict(amount='0.0006',currency='USD',estimate_rates=rates)))
+    sent=[]
+    def transport():
+        sent.append(1)
+        assert s.report()['estimated_spend']['amount']=='0.0005'
+        return ModelResponse('synthetic relay',actual_model='fixture',endpoint_type='relay',usage=response().usage)
+    request=args(input_bound=None,endpoint_type='relay',operation=transport)
+    assert runtime(tmp_path).execute_attempt(**request)=='synthetic relay'
+    assert s.report()['estimated_spend']['amount']=='0.00014'
+    with pytest.raises(ChapterBudgetExceeded,match='estimated_amount_limit'):
+        runtime(tmp_path,'execution_next').execute_attempt(**request)
+    assert s.report()['charged']['calls']==1 and s.report()['estimated_spend']['amount']=='0.00014'
+    with pytest.raises(ChapterBudgetConflict):
+        runtime(tmp_path,'execution_switched').execute_attempt(**{**request,'endpoint_fingerprint':'f'*64})
+    assert sent==[1]

@@ -895,3 +895,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 [data-previous-edition-notice] { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 [data-previous-edition-notice] p { margin: 0; flex: 1 1 240px; }
 [data-previous-editions-lede] { margin: 0 0 12px; }
+
+/* Keep long actions visible without trapping keyboard focus or hiding the draft. */
+.action-feedback { position:fixed; z-index:2147483000; inset:auto 0 max(1.25rem,env(safe-area-inset-bottom)) 0; margin-inline:auto; width:max-content; max-width:min(90vw,36rem); display:flex; align-items:center; gap:.7rem; padding:.85rem 1.25rem; background:#173c37; color:white; border-radius:.7rem; box-shadow:0 4px 22px #0003; pointer-events:none; }
+.action-feedback[hidden] {display:none !important;}
+.action-spinner {width:1em;height:1em;border:2px solid #fff6;border-top-color:white;border-radius:50%;animation:action-spin .8s linear infinite;flex:none;}
+@keyframes action-spin {to {transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce) {.action-spinner {animation:none}}

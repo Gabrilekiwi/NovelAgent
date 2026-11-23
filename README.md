@@ -69,7 +69,7 @@ On Linux, use `python3.12 scripts/setup_environment.py` and `.venv/bin/python` f
 
 自用上线按[作者独立完成一章的标准](docs/product-validation.md)验收。两个十章批次和九维打分都是可选实验；早期验证方法留在[历史记录](docs/development/product-validation-history.md)。
 
-工作台只监听 `127.0.0.1`，并校验 Host、Origin 和启动令牌。Provider 凭据继续由本机环境变量或 `.env` 管理；网页和工作台 SQLite 只显示脱敏就绪状态，不接收、不回显也不保存 API Key。
+工作台只监听 `127.0.0.1`，并校验 Host、Origin 和启动令牌。在工作台左侧点「模型设置」，填写服务地址、模型名和 API 密钥，保存后无需重启。密钥不会回显，也不写入书稿、项目文件或工作台数据库；Windows 使用当前用户的系统加密，其他系统使用仅本人可读的设置文件。每个工作台数据目录独立；未在界面配置时仍可沿用原有环境设置。
 
 Run preflight without model calls:
 

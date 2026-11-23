@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Callable, Mapping
-from api.execution_deadline import RequestExecutionDeadline
+from api.execution_deadline import RequestExecutionDeadline, interrupted_stream_reason
 from api.budget_endpoint import endpoint_fingerprint
 
 from api.contracts import (
@@ -138,7 +138,7 @@ def polish_chapter(
                 timed_kwargs,
                 model=model,
                 endpoint_type=endpoint_type,
-                check_execution_time=deadline.remaining if deadline is not None else None,
+                check_execution_time=deadline.check_stream if deadline is not None else None,
             )
         response = client.messages.create(**timed_kwargs)
         return _extract_message_text(
@@ -211,7 +211,7 @@ def _stream_message_text(
     *,
     model: str | None,
     endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
-    check_execution_time: Callable[[], Any] | None = None,
+    check_execution_time: Callable[[bool], Any] | None = None,
 ) -> ModelResponse:
     stream_factory = getattr(client.messages, "stream", None)
     if stream_factory is None:
@@ -234,7 +234,7 @@ def _stream_message_text(
                 for part in text_stream:
                     if part:
                         parts.append(str(part))
-                    if check_execution_time is not None:check_execution_time()
+                    if check_execution_time is not None:check_execution_time(bool(part))
             if not parts:
                 for event in stream:
                     text = getattr(event, "text", None)
@@ -257,14 +257,14 @@ def _stream_message_text(
                     event_usage = reported_model_usage(_sdk_mapping(getattr(event, "usage", None)))
                     if event_usage:
                         usage.update(event_usage)
-                    if check_execution_time is not None:check_execution_time()
+                    if check_execution_time is not None:check_execution_time(bool(text))
 
-            if check_execution_time is not None:check_execution_time()
+            if check_execution_time is not None:check_execution_time(False)
             final_message = None
             final_getter = getattr(stream, "get_final_message", None)
             if callable(final_getter):
                 final_message = final_getter()
-            if check_execution_time is not None:check_execution_time()
+            if check_execution_time is not None:check_execution_time(False)
             if final_message is not None:
                 final_usage = reported_model_usage(_sdk_mapping(getattr(final_message, "usage", None)))
                 if final_usage:
@@ -291,7 +291,7 @@ def _stream_message_text(
             ModelResponse(
                 partial_text,
                 usage=usage,
-                finish_reason="stream_interrupted",
+                finish_reason=interrupted_stream_reason(exc),
                 request_id=request_id,
                 actual_model=actual_model,
                 endpoint_type=endpoint_type,

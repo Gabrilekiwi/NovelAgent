@@ -30,7 +30,32 @@ def is_reviewed_chapter_transition(declarations):
     return any(d.get("transition") == CHAPTER_TRANSITION for d in declarations)
 
 
-def verify_quality_binding(quality, preparation):
+# Only blueprint interpretation is delegated to the author. A new producer code
+# must be explicitly reviewed before it can be offered here.
+_AUTHOR_DECIDABLE = {"missing_required_beat", "missing_ending_pressure"}
+
+
+def offered_author_quality_choice(q):
+    decision = q["local_policy_decision"]
+    if (q["binding"].get("acceptance_kind") != "author" or q["quality_coverage_complete"] is not True
+            or q["pending_gates"] != [] or q["review_gate"]["status"] != "pass"
+            or q["final_artifact_integrity"]["accepted"] is not True
+            or q["authoritative_state_validation"]["accepted"] is not True
+            or q["local_quality_passed"] is not False or decision["accepted"] is not False):
+        return None
+    ids = sorted(decision["blocking_finding_ids"])
+    findings = {f["id"]: f for f in decision["findings"]}
+    if (not ids or len(set(ids)) != len(ids) or any(i not in findings or not findings[i]["codes"]
+            or not set(findings[i]["codes"]) <= _AUTHOR_DECIDABLE for i in ids)):
+        return None
+    # The full quality report includes per-run timings. Bind consent to the
+    # actual manuscript, verified facts, rules and findings, not to wall time.
+    fingerprint = digest({"version": 1, "binding": q["binding"], "coverage": q["blueprint_coverage"],
+        "findings": [{"id": i, "codes": findings[i]["codes"], "evidence": findings[i]["evidence"]} for i in ids]})
+    return {"review_sha256": fingerprint, "finding_ids": ids}
+
+
+def verify_quality_binding(quality, preparation, *, author_quality_choice=None):
     from core.quality_decision import resolve_quality_policy
     from core.story_project.coverage import build_text_blueprint_coverage
     p, q = preparation, quality
@@ -43,10 +68,16 @@ def verify_quality_binding(quality, preparation):
         action_policy=review['batch_grant']['manifest']['action_policy']
         _require(project_reviewed_quality_disposition(preparation=p,quality=q,policy_snapshot=action_policy)['automatic_action']=='continue',
             'policy publication requires all automatic-admission gates to pass')
+    waived = False
+    if author_quality_choice is not None:
+        _require(p['binding'].get('acceptance_kind') == 'author'
+            and author_quality_choice == offered_author_quality_choice(q),
+            '作者选择与本次拦截项不一致，或仍有不可忽略的检查。请重新生成预览。')
+        waived = True
     _require(isinstance(q, dict) and q.get("quality_preparation_version") == "reviewed_candidate_quality_v1"
         and q.get("stage") == "candidate_quality_checked" and q.get("publication_authorized") is False
         and q.get("quality_coverage_complete") is True and q.get("pending_gates") == []
-        and q.get("local_quality_passed") is True
+        and (q.get("local_quality_passed") is True or waived)
         and q.get("quality_sha256") == digest({k: v for k, v in q.items() if k != "quality_sha256"}),
         "chapter requires complete passing Candidate quality evidence")
     binding = q["binding"]
@@ -61,7 +92,7 @@ def verify_quality_binding(quality, preparation):
         and binding["candidate_evidence_sha256"] == digest(q["candidate_evidence"])
         and binding["blueprint_coverage_sha256"] == digest(q["blueprint_coverage"]),
         "quality evidence differs from the chapter preparation")
-    _require(q["local_policy_decision"]["accepted"] is True and q["review_gate"]["status"] == "pass"
+    _require((q["local_policy_decision"]["accepted"] is True or waived) and q["review_gate"]["status"] == "pass"
         and q["final_artifact_integrity"]["accepted"] is True and q["authoritative_state_validation"]["accepted"] is True,
         "quality acceptance differs from its producer reports")
     candidate = q["candidate_evidence"]
@@ -89,7 +120,7 @@ def verify_chapter_bundle(*, previous_document, document, prose, evidence, quali
         and transaction_binding["receipt_id"] == head["receipt_id"]
         and ref["root_id"] == "runtime" and ref["relative_path"] == head["receipt_relative_path"],
         "chapter transaction context or receipt binding differs")
-    verify_quality_binding(quality, p)
+    verify_quality_binding(quality, p, author_quality_choice=request["request"].get("author_quality_choice"))
     expected = {"record_type": "reviewed_legacy_commit", "id": run_id, "book_id": book_id, "kind": "chapter",
         "revision": value["revision"], "committed": True, "request_sha256": p["request_sha256"],
         "client_request_sha256": request["client_request_sha256"],

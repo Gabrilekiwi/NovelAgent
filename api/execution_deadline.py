@@ -10,6 +10,18 @@ import math
 from core.chapter_execution_time import ChapterTimeError, ChapterTimeExceeded
 
 
+class StreamIdleExceeded(ChapterTimeExceeded):
+    """No usable stream progress within the transport timeout."""
+
+
+def interrupted_stream_reason(error):
+    if isinstance(error, StreamIdleExceeded):
+        return 'stream_idle_timeout'
+    if isinstance(error, ChapterTimeExceeded):
+        return 'execution_deadline_exhausted'
+    return 'stream_interrupted'
+
+
 class RequestExecutionDeadline:
     def __init__(self,runtime,policy,*,configured_timeout,extra_remaining=None):
         self.runtime=runtime
@@ -20,8 +32,9 @@ class RequestExecutionDeadline:
         self.extra_remaining=extra_remaining
         self.configured_timeout=configured_timeout
         self.timeout=None
+        self.last_stream_text=None
 
-    def remaining(self):
+    def _observe_clock(self):
         if self.failed:
             raise ChapterTimeError('request deadline clock was previously invalid')
         now=float(self.policy.clock())
@@ -29,13 +42,13 @@ class RequestExecutionDeadline:
             self.failed=True
             raise ChapterTimeError('request deadline clock moved backwards or is invalid')
         self.last_observed=now
-        with localcontext() as context:
-            context.prec=64
-            remaining=Decimal(str(self.policy.deadline_seconds))-Decimal(str(now-self.started))
+        return now
+
+    def _active_remaining(self):
         active=self.runtime.remaining_active_seconds()
         if active is None:
             raise ChapterTimeError('request deadline requires a live chapter interval')
-        remaining=min(remaining,active)
+        remaining=active
         if self.extra_remaining is not None:
             extra=self.extra_remaining()
             if extra is not None:
@@ -47,7 +60,29 @@ class RequestExecutionDeadline:
             raise ChapterTimeExceeded('Provider request active execution deadline exhausted')
         return remaining
 
+    def remaining(self):
+        now=self._observe_clock()
+        with localcontext() as context:
+            context.prec=64
+            window=Decimal(str(self.policy.deadline_seconds))-Decimal(str(now-self.started))
+        if window<=0:
+            raise ChapterTimeExceeded('Provider dispatch/retry window exhausted')
+        return min(window,self._active_remaining())
+
+    def check_stream(self, received_text=False):
+        # A retry window limits starting requests, not finishing a productive one.
+        if self.last_stream_text is None:
+            self.remaining()
+        else:
+            now=self._observe_clock()
+            self._active_remaining()
+            if self.configured_timeout>0 and now-self.last_stream_text>=self.configured_timeout:
+                raise StreamIdleExceeded('Provider stream stopped producing text')
+        if received_text:
+            self.last_stream_text=self.last_observed
+
     def prepare(self):
+        self.last_stream_text=None
         remaining=self.remaining()
         configured=Decimal(str(self.configured_timeout))
         if not configured.is_finite():raise ChapterTimeError('SDK timeout must be finite')

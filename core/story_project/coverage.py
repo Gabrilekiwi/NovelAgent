@@ -33,6 +33,11 @@ def validate_generation_blueprint_contract(chapter_blueprint: dict[str, Any]) ->
         raise ValueError("StoryProject generation requires chapter_blueprint.ending_pressure.")
 
 
+def ending_requirement(blueprint: dict[str, Any] | None) -> str:
+    value = str((blueprint or {}).get("ending_pressure") or "").strip()
+    return "" if value == "无" else value
+
+
 def build_blueprint_plan(
     chapter_blueprint: dict[str, Any],
     *,
@@ -40,6 +45,12 @@ def build_blueprint_plan(
 ) -> dict[str, Any]:
     validate_generation_blueprint_contract(chapter_blueprint)
     beats = _normalized_beats(chapter_blueprint)
+    if not beats:
+        # The author explicitly specified no additional beats. The writing task
+        # still needs a real scene driven by the chapter's core event.
+        goal = chapter_blueprint["core_event"].strip()
+        return {"goal": goal, "scenes": [{"index": 1, "type": "story_project_blueprint",
+            "goal": goal, "required_beats": [goal], "required_beat_indexes": []}]}
     scene_count = min(len(beats), _MAX_BLUEPRINT_SCENES)
     if scene_limit is not None:
         scene_count = min(scene_count, max(1, int(scene_limit)))
@@ -82,7 +93,7 @@ def build_blueprint_coverage(
             covered.append(index)
         else:
             missing.append(index)
-    ending_pressure = str(chapter_blueprint.get("ending_pressure") or "").strip()
+    ending_pressure = ending_requirement(chapter_blueprint)
     ending_required = bool(ending_pressure)
     ending_covered = ending_required and _text_covers(_ending_window(merged_chapter), ending_pressure)
     return {
@@ -105,7 +116,7 @@ def validate_blueprint_coverage(
         problems.append(
             {
                 "code": "missing_required_beat",
-                "message": f"Generated chapter did not prove coverage of required beat {index}.",
+                "message": f"正文中未找到第 {index} 项必写节拍的对应内容：{beat_text}",
                 "beat_index": str(index),
                 "beat_text": beat_text,
                 "evidence": [
@@ -118,7 +129,7 @@ def validate_blueprint_coverage(
         problems.append(
             {
                 "code": "missing_ending_pressure",
-                "message": "Generated chapter ending did not prove coverage of ending_pressure.",
+                "message": f"正文结尾未找到章纲指定的压力或悬念：{ending_pressure}",
                 "ending_pressure": ending_pressure,
                 "evidence": [{"kind": "ending_pressure", "value": ending_pressure or "required"}],
             }
@@ -145,12 +156,12 @@ def build_text_blueprint_coverage(chapter_blueprint: dict[str, Any], chapter_tex
         raise ValueError("text coverage requires unique required beat indexes")
     checks = [{"beat_index": beat["index"], "required_text": beat["text"],
                "covered": _text_covers(chapter_text, beat["text"])} for beat in beats]
-    ending = str(blueprint["ending_pressure"]).strip()
+    ending = ending_requirement(blueprint)
     return {"required_beat_count": len(beats),
         "covered_beat_indexes": [item["beat_index"] for item in checks if item["covered"]],
         "missing_beat_indexes": [item["beat_index"] for item in checks if not item["covered"]],
-        "ending_pressure_required": True,
-        "ending_pressure_covered": _text_covers(_ending_window(chapter_text), ending),
+        "ending_pressure_required": bool(ending),
+        "ending_pressure_covered": bool(ending) and _text_covers(_ending_window(chapter_text), ending),
         "basis": "whole_chapter_text_heuristic_v1", "scene_declarations_used": False,
         "beat_checks": checks, "ending_check": {"required_text": ending,
             "window": "last_1200_stripped_characters"}}
@@ -166,7 +177,9 @@ def _normalized_beats(chapter_blueprint: dict[str, Any]) -> list[dict[str, Any]]
             text = str(raw.get("text") or "").strip()
             raw_index = raw.get("index")
             index = raw_index if isinstance(raw_index, int) and not isinstance(raw_index, bool) else position
-        if text:
+        if not text:
+            raise ValueError("required beat text must not be blank")
+        if text != "无":
             beats.append({"index": int(index), "text": text})
     return beats
 

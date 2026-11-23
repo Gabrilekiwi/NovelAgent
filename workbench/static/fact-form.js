@@ -182,11 +182,12 @@
         : key === "carrier_id" || key === "member_ids" || /参与人物|在场人物/.test(path) ? "character" : null;
       return entities.filter((entity) => entity.entity_id && (!kind || entity.kind === kind)).map((entity) => ({
         value: entity.entity_id,
+        names: [entity.name || entity.canonical_name, ...(entity.aliases || [])].filter(Boolean),
         text: `${entity.name || entity.canonical_name || entity.entity_id}${entity.aliases?.length ? `（${entity.aliases.join("、")}）` : ""}`,
       }));
     }
 
-    function node(nodeSchema, initial, key, path, depth) {
+    function node(nodeSchema, initial, key, path, depth, rootField = null) {
       if (depth > MAX_DEPTH || ++nodeCount > MAX_NODES) fail(path, "内容层级或字段过多，请拆分后填写");
       nodeSchema = nodeSchema && typeof nodeSchema === "object" ? nodeSchema : {};
       const box = element("div", null, "fact-form-value");
@@ -206,7 +207,7 @@
           const variant = alternatives.find((candidate) => typesFor(candidate).includes(selectedType));
           const selectedSchema = variant ? { ...nodeSchema, ...variant } : nodeSchema;
           const selectedValue = selectedType === type ? starting : defaultValue({ ...selectedSchema, type: selectedType });
-          panels.set(selectedType, typed(selectedType, selectedSchema, selectedValue, key, path, depth, initial === undefined || selectedType !== type));
+          panels.set(selectedType, typed(selectedType, selectedSchema, selectedValue, key, path, depth, rootField, initial === undefined || selectedType !== type));
         }
         return panels.get(selectedType);
       }
@@ -231,7 +232,7 @@
       };
     }
 
-    function typed(type, typedSchema, initial, key, path, depth, missing = false) {
+    function typed(type, typedSchema, initial, key, path, depth, rootField, missing = false) {
       const box = element("div", null, `fact-form-${type}`);
       if (typedSchema.enum || own(typedSchema, "const")) {
         const values = clone(typedSchema.enum || [typedSchema.const]);
@@ -277,7 +278,9 @@
           select.className = "fact-form-reference";
           option(select, key === "source_event_key" ? "选择本章事件…" : "选择已有对象或本章新增身份…", "");
           choices.forEach((choice, index) => option(select, choice.text, String(index)));
-          select.value = "";
+          const selected = choices.findIndex(choice => choice.value === initial);
+          select.value = selected < 0 ? "" : String(selected);
+          input.addEventListener("input", () => { select.value = ""; });
           select.addEventListener("change", () => {
             if (!readOnly && select.value !== "") { input.value = choices[Number(select.value)].value; changed(); }
           });
@@ -285,7 +288,20 @@
         }
         return { element: box, read: () => {
           if (type === "boolean") return input.checked;
-          if (type === "string") return input.value;
+          if (type === "string") {
+            // Only identity slots of a chapter proposal can bind a name. Free text,
+            // event keys, generic state values and archived model evidence stay literal.
+            const identitySlot = (depth === 1 && rootField === key) || (depth === 2 && rootField === "member_ids")
+              || (depth === 3 && ["onsite_participants", "remote_participants", "transported_items", "related_entities"].includes(rootField));
+            if (options.bindNames && identitySlot && choices.length && key !== "source_event_key") {
+              const raw = input.value.trim();
+              if (choices.some(choice => choice.value === raw)) return raw;
+              const ids = new Set(choices.filter(choice => choice.names?.includes(raw)).map(choice => choice.value));
+              if (ids.size > 1) fail(path, `“${raw}”对应多个已登记对象，请从下拉框明确选择`);
+              if (ids.size === 1) return [...ids][0];
+            }
+            return input.value;
+          }
           if (!input.value.trim()) fail(path, "请填写数值");
           const numeric = Number(input.value);
           if (!Number.isFinite(numeric)) fail(path, "请填写有限数值");
@@ -301,7 +317,7 @@
           if (rows.length >= MAX_ITEMS) fail(path, `列表最多支持 ${MAX_ITEMS} 项`);
           const row = element("fieldset", null, "fact-form-row");
           const legend = element("legend");
-          const editor = node(typedSchema.items || {}, item, key, `${path} / 第 ${rows.length + 1} 项`, depth + 1);
+          const editor = node(typedSchema.items || {}, item, key, `${path} / 第 ${rows.length + 1} 项`, depth + 1, rootField);
           const entry = { row, legend, editor };
           row.appendChild(legend);
           row.appendChild(editor.element);
@@ -345,7 +361,7 @@
             caption.prepend(include);
             row.appendChild(caption);
           }
-          const editor = node(fieldSchema, fieldValue, name, `${path} / ${label(name) || "新增字段"}`, depth + 1);
+          const editor = node(fieldSchema, fieldValue, name, `${path} / ${label(name) || "新增字段"}`, depth + 1, depth === 0 && fixed ? name : rootField);
           const contents = element("fieldset", null, "fact-form-field-content");
           contents.disabled = readOnly || Boolean(include && !include.checked);
           contents.appendChild(editor.element);

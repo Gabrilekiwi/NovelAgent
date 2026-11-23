@@ -1,5 +1,6 @@
 (() => {
   "use strict";
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
 
   const doc = document;
   if (!doc.body?.hasAttribute("data-spa")) return;
@@ -18,6 +19,7 @@
   const state = {
     projects: [],
     providerReady: false,
+    providerRevision: 0,
     projectId: null,
     project: null,
     detail: null,
@@ -1502,12 +1504,13 @@
     setText("[data-provider-name]", provider.name || provider.provider_name || "模型服务");
     setText("[data-provider-state]", ready ? "配置就绪" : "待配置");
     state.providerReady = ready;
+    syncChapterModelButtons();
     one("[data-production-model-help]").hidden = ready;
     updateSessionLaunchButton(one("[data-session-form]"));
     const providerButtons = all("[data-requires-provider]");
     providerButtons.forEach((button) => {
       button.disabled = !ready;
-      button.title = ready ? "" : "请先配置模型，方法见「如何配置模型」";
+      button.title = ready ? "" : "请先打开「模型设置」";
     });
   };
   const pendingChapterNumber = (issue) => {
@@ -1675,7 +1678,7 @@
   };
   let displayedQuote = null, pendingQuote = null;
   const quoteKey = () => state.route?.area === "chapter" && currentConfirmationMatchesCard()
-    ? JSON.stringify([state.routeRevision, state.projectId, state.route.chapter, state.chapterConfirmation.confirmation_sha256]) : null;
+    ? JSON.stringify([state.routeRevision, state.projectId, state.route.chapter, state.chapterConfirmation.confirmation_sha256, state.providerRevision]) : null;
   const quoteText = (quote) => {
     const n = v => Number(v).toLocaleString("zh-CN");
     const p = quote.price;
@@ -1716,9 +1719,27 @@
     renderQuote();
     return promise;
   };
+  // Both the chapter response and the later budget response affect these controls.
+  const syncChapterModelButtons = () => {
+    const generate = one('[data-candidate-generate]');
+    const openExecution = ['running', 'needs_recovery', 'provider_uncertain'].includes(state.chapterCandidate?.status);
+    if (generate) {
+      generate.disabled = !state.providerReady || !currentConfirmationMatchesCard() || openExecution || Boolean(state.chapterCandidateError)
+        || state.chapterBudgetBlocked || state.chapterRecoveryRequired || state.chapterHasFormalProse || generate.classList.contains('is-busy');
+      generate.title = !state.providerReady ? '请先配置写作模型，或导入已有稿件' : state.chapterCandidateError || openExecution ? '请先处理已有候选记录' : !currentConfirmationMatchesCard() ? '请先确认本章输入' : '';
+    }
+    const extract = one('[data-fact-extract]');
+    if (extract) {
+      extract.disabled = !state.providerReady || state.chapterBudgetBlocked || Boolean(state.chapterFactError) || extract.classList.contains('is-busy');
+      extract.title = state.providerReady ? '' : '请先配置写作模型，或自行审阅事实';
+    }
+    const help = one('[data-chapter-model-help]');
+    if (help) help.hidden = state.providerReady || state.chapterHasFormalProse || state.chapterRecoveryRequired;
+  };
   const candidateStatusPresentation = (candidate, errorMessage = "") => {
     if (!candidate) {
       if (errorMessage) return { status: "failed", label: "状态不可用", title: "无法恢复正文候选状态", message: `${errorMessage} 为避免重复调用模型，状态恢复前不能生成新的候选。` };
+      if (currentConfirmationMatchesCard() && !state.providerReady) return { status: "warning", label: "待配置模型", title: "尚未配置写作模型", message: "本章输入已确认。点击下方“配置写作模型”，保存后再生成正文。" };
       if (currentConfirmationMatchesCard() && state.chapterBudgetBlocked) return { status: "warning", label: "预算待处理", title: "章节意图已确认", message: "现在可以估算正文费用；预算允许后才能调用模型。" };
       if (currentConfirmationMatchesCard()) return { status: "ready", label: "可生成", title: "章节意图已确认", message: "可以调用模型生成一份隔离正文候选；结果不会自动提交正式正文，也不会写入权威状态。" };
       return { status: "idle", label: "等待确认", title: "确认本章意图后生成", message: "模型只生成可隔离、可恢复的正文候选；不会自动提交正式正文，也不会写入权威状态。" };
@@ -1735,7 +1756,7 @@
     };
     return presentations[candidate.status] || { status: "warning", label: "需要检查", title: "正文候选状态需要检查", message: "工作台不会自动重试或提交任何内容。" };
   };
-  const chapterWorkflowPresentation = ({ formal, recovery, candidate, extraction, review, error, pending, confirmed, budgetBlocked, budgetMessage }) => {
+  const chapterWorkflowPresentation = ({ formal, recovery, candidate, extraction, review, error, pending, confirmed, budgetBlocked, budgetMessage, providerReady }) => {
     if (recovery) return { phase: "blocked", label: "提交待恢复", message: "本章有未完成的提交，请先在项目概览恢复原事务。" };
     if (formal) return { phase: "committed", label: "正式稿", message: "本章已正式保存，可以开始下一章。" };
     if (pending === "candidate") return { phase: "candidate", label: "生成中", message: "正在处理本次正文生成。可以离开本页，回来后从保存的记录继续。" };
@@ -1745,6 +1766,7 @@
     if (extraction?.status === "running") return { phase: "facts", label: "检查中", message: "事实提取仍在执行。请等待当前提取结束。" };
     if (candidate?.continuation?.state === "ready") return { phase: "candidate", label: "可续试一次", message: "一次续试许可已保存。点击下方“开始这一次续试”才会发送请求；旧请求占用继续保留。" };
     if (candidate?.continuation?.state === "available") return { phase: "candidate", label: "续试待确认", message: "上次请求结果未知。可在下方核对占用，明确允许同一章再试一次。" };
+    if (candidate?.status === 'failed' && candidate.error?.code === 'model_key_missing') return { phase: 'candidate', label: providerReady ? '上次未发送' : '待配置模型', message: providerReady ? '上次生成时缺少密钥，没有发送请求。现在已读到配置，请核对本章输入和限额后再生成。' : '上次生成时未配置写作模型，没有发送请求。请点击正文候选区的“配置写作模型”，或导入已有稿件。' };
     if ([candidate?.status, extraction?.status].some(s => ["needs_recovery", "provider_uncertain", "failed"].includes(s))) return { phase: "blocked", label: "需要处理", message: "当前操作已停止，请查看下方原因和恢复操作；已有草稿仍保留。" };
     if (review?.state === "stale") return { phase: "facts", label: "事实需重查", message: "正文或依据发生变化，请核对草稿并重新检查事实。旧决定保留为只读记录。" };
     if (review?.state === "confirmed") return { phase: "publication", label: "待发布", message: "事实决定已确认。下一步预览最终正文并发布。" };
@@ -1754,6 +1776,7 @@
     if (budgetBlocked) return { phase: "blocked", label: "预算待处理", message: budgetMessage || "请先读取并确认下方本章预算，已有草稿仍可编辑。" };
     if (candidate?.draft) return { phase: "candidate", label: "可编辑草稿", message: "正文草稿已保存。编辑完成后提取事实，继续本章审核。" };
     if (candidate?.status === "completed") return { phase: "candidate", label: "候选已生成", message: "正文候选已保留，请建立可编辑草稿。" };
+    if (confirmed && providerReady === false) return { phase: "candidate", label: "待配置模型", message: "点击正文候选区的“配置写作模型”。保存后可继续本章。" };
     if (confirmed) return { phase: "candidate", label: "可生成", message: "本章意图已确认，可以生成正文候选。" };
     return { phase: "intent", label: "待确认意图", message: "从本章目标开始：确认意图后生成正文、审阅事实并发布。" };
   };
@@ -1819,7 +1842,7 @@
     const presentation = chapterWorkflowPresentation({ formal: state.chapterHasFormalProse, recovery: state.chapterRecoveryRequired,
       candidate: state.chapterCandidate, extraction: state.chapterFactExtraction, review: state.chapterFactReview,
       error: state.chapterCandidateError || state.chapterFactError, confirmed: currentConfirmationMatchesCard(),
-      budgetBlocked: state.chapterBudgetBlocked, budgetMessage: state.chapterBudgetMessage,
+      providerReady: state.providerReady, budgetBlocked: state.chapterBudgetBlocked, budgetMessage: state.chapterBudgetMessage,
       pending: one('[data-candidate-generate].is-busy, [data-candidate-resume].is-busy, [data-continuation-run].is-busy') ? "candidate"
         : one('[data-fact-extract].is-busy, [data-fact-resume].is-busy') ? "facts" : null });
     setText("[data-chapter-flow-message]", presentation.message);
@@ -1837,12 +1860,57 @@
     if (next) { next.hidden = !state.chapterHasFormalProse || state.chapterRecoveryRequired; next.href = `#/projects/${encodeURIComponent(state.projectId)}/chapters/${Number(state.route.chapter) + 1}`; }
     scheduleChapterProgress();
   };
+  const fragmentIndex = candidate => (candidate?.partial_responses || []).map(fragment => ({
+    candidateId: candidate.candidate_id, attempt: fragment.attempt_id, sha: fragment.sha256,
+  }));
+  let fragmentView = null;
+  const renderChapterFragments = (candidate, previous) => {
+    const panel = one('[data-candidate-fragments]');
+    if (!panel) return;
+    const sameChapter = candidate && previous && previous.project_id === candidate.project_id && previous.chapter_index === candidate.chapter_index;
+    const items = candidate?.fragmentHistory ?? (sameChapter ? previous.fragmentHistory : null) ?? [];
+    const refs = [...fragmentIndex(candidate), ...items].filter((v,i,all) => all.findIndex(x => x.candidateId === v.candidateId && x.attempt === v.attempt) === i);
+    if (candidate) candidate.fragmentHistory = refs;
+    const choices = one('[data-fragment-choices]',panel), preview = one('[data-fragment-preview]',panel);
+    const output = one('[data-fragment-text]',panel), prepare = one('[data-fragment-prepare]',panel);
+    const message = one('[data-fragment-message]',panel);
+    const view = {}; fragmentView = view;
+    choices.replaceChildren(); output.value = ''; message.textContent = ''; preview.hidden = true; panel.hidden = !refs.length;
+    const current = () => fragmentView === view && state.route?.projectId === candidate.project_id && Number(state.route?.chapter) === candidate.chapter_index;
+    refs.forEach((ref,index) => {
+      const button = document.createElement('button'); button.type='button'; button.className='button button-secondary';
+      button.textContent = refs.length === 1 ? '查看中断原文' : `查看中断原文 ${index+1}`;
+      button.onclick = withFeedback(async () => {
+        const request = {}; view.request = request;
+        preview.hidden = true; output.value = ''; message.textContent = '正在核对本地原文…';
+        try {
+          const {payload} = await api(candidateDetailPath(candidate.project_id, candidate.chapter_index, ref.candidateId));
+          if (!current() || view.request !== request) return;
+          const fragment = (payload.candidate || payload).partial_responses?.find(x => x.attempt_id === ref.attempt && x.sha256 === ref.sha);
+          if (!fragment?.text) throw new Error();
+          output.value = fragment.text; preview.hidden = false;
+          message.textContent = `已核对原文，共 ${Array.from(fragment.text).length} 个字符。`;
+          prepare.hidden = Boolean(candidate.draft) || !state.project?.reviewed_format || state.chapterHasFormalProse || !currentConfirmationMatchesCard() || state.chapterRecoveryRequired || state.chapterCandidateError || ['running','provider_uncertain','needs_recovery'].includes(candidate.status);
+          prepare.onclick = () => {
+            if (!current() || prepare.hidden || one('[data-author-draft-open]')?.disabled) return;
+            const input = one('[data-author-draft-text]');
+            if (input.value && input.value !== fragment.text) { message.textContent='导入框已有文字；请先保留原稿，或直接复制上方原文。'; return; }
+            input.value = fragment.text; input.dataset.fragmentChapter = `${candidate.project_id}/${candidate.chapter_index}`; one('[data-author-draft-origin]').value = `工作台中断原文 ${ref.candidateId} / ${ref.sha}`;
+            one('[data-author-draft-panel]').hidden = false; input.focus();
+          };
+        } catch { if (current() && view.request === request) message.textContent = '无法核对这份原文，未导入任何文字。'; }
+      });
+      choices.append(button);
+    });
+  };
   const renderChapterCandidate = (candidate, errorMessage = state.chapterCandidateError, options = {}) => {
+    const previous = state.chapterCandidate;
     state.chapterCandidate = candidate || null;
     state.chapterCandidateError = errorMessage || "";
     renderChapterWorkflow();
     const panel = one("[data-chapter-candidate-panel]");
     if (!panel) return;
+    renderChapterFragments(candidate, previous);
     const presentation = candidateStatusPresentation(candidate, state.chapterCandidateError);
     UI.updateStatusBadge(one("[data-candidate-status]", panel), presentation.status, presentation.label);
     setText("[data-candidate-title]", presentation.title, panel);
@@ -1869,15 +1937,8 @@
     }
     if (generate) {
       generate.hidden = currentCompleted;
-      generate.disabled = !confirmed || blocksNewCandidate || Boolean(state.chapterCandidateError) || state.chapterBudgetBlocked;
       generate.textContent = candidate ? "生成新的正文候选" : "生成正文候选";
-      generate.title = state.chapterCandidateError
-        ? "必须先恢复 Candidate 状态，避免重复调用模型"
-        : !confirmed
-          ? "请先确认当前章节卡"
-          : blocksNewCandidate
-            ? "当前 Candidate 尚未安全结束"
-            : "";
+      syncChapterModelButtons();
     }
     const resume = one("[data-candidate-resume]", panel);
     if (resume) resume.hidden = candidate?.status !== "needs_recovery" || !bindingCurrent;
@@ -2137,7 +2198,7 @@
     const context = factEditorContext();
     if (context) {
       card._proposalEditor = window.NovelAgentFactForm.render(proposalField, context.payload_contracts[fact.kind], fact.proposal,
-        { readOnly, entities: factEntities(), events: [...new Map([...state.chapterFactReview.facts, ...all("[data-fact-card]", container).map(c => ({ ...c._baseFact, summary: one("[data-fact-summary]", c)?.value || c._baseFact.summary }))].filter(f => f?.kind === "event").map(f => [f.local_key, { local_key: f.local_key, summary: f.summary }])).values()] });
+        { readOnly, bindNames: context.support_supported, entities: factEntities(), events: [...new Map([...state.chapterFactReview.facts, ...all("[data-fact-card]", container).map(c => ({ ...c._baseFact, summary: one("[data-fact-summary]", c)?.value || c._baseFact.summary }))].filter(f => f?.kind === "event").map(f => [f.local_key, { local_key: f.local_key, summary: f.summary }])).values()] });
       const quotes = el("div", "fact-quote-fields"); quotes.append(el("h4", "", "支持这项事实的正文原句"));
       const quoteFields = el("div"); quotes.append(quoteFields);
       card._evidenceEditor = window.NovelAgentFactForm.render(quoteFields, { type: "array", minItems: 1, items: { type: "string", minLength: 1, maxLength: 1000 } },
@@ -2269,6 +2330,9 @@
       presentation.status = 'warning'; presentation.label = '可自行审阅';
       presentation.message = '模型提取受预算限制。你仍可自行审阅事实，不新增模型调用，旧请求的占用和未知费用继续保留。';
     }
+    if (!state.providerReady && !state.chapterFactExtraction && !activeReview && !state.chapterFactError) {
+      presentation.status = 'warning'; presentation.label = '可自行审阅'; presentation.message = '写作模型尚未配置。你可以自行审阅事实，不需要模型。';
+    }
     UI.updateStatusBadge(one("[data-fact-status]", panel), presentation.status, presentation.label);
     setText("[data-fact-title]", presentation.title, panel);
     setText("[data-fact-message]", presentation.message, panel);
@@ -2287,7 +2351,7 @@
     const extract = one("[data-fact-extract]", panel);
     if (extract) {
       extract.hidden = !canStart;
-      extract.disabled = Boolean(state.chapterFactError) || state.chapterBudgetBlocked;
+      syncChapterModelButtons();
       extract.textContent = state.chapterFactExtraction ? "从当前草稿重新提取" : "提取事实候选";
     }
     const manual = one('[data-fact-manual]', panel);
@@ -2555,12 +2619,8 @@
       state.chapterBudgetBlocked = blocked;
       state.chapterBudgetMessage = message || '';
       if (!state.chapterCandidate && !state.chapterCandidateError) renderChapterCandidate(null, '');
-      const generate = one('[data-candidate-generate]');
-      if (generate) generate.disabled = blocked || !currentConfirmationMatchesCard() || Boolean(state.chapterCandidateError)
-        || ['running', 'needs_recovery', 'provider_uncertain'].includes(state.chapterCandidate?.status) || generate.classList.contains('is-busy');
-      const extract = one('[data-fact-extract]');
-      if (extract) extract.disabled = blocked || Boolean(state.chapterFactError) || extract.classList.contains('is-busy');
-      if (!state.chapterFactExtraction && !state.chapterFactReview) {
+      syncChapterModelButtons();
+      if (state.providerReady && !state.chapterFactError && !state.chapterFactExtraction && !state.chapterFactReview) {
         UI.updateStatusBadge(one('[data-fact-status]'), blocked ? 'warning' : 'ready', blocked ? '可自行审阅' : '可审阅');
         setText('[data-fact-message]', blocked ? '模型提取受预算限制；仍可自行审阅事实，旧占用和未知费用继续保留。' : '可从已保存草稿提取事实建议，也可自行添加并审阅。');
       }
@@ -2602,17 +2662,18 @@
   const loadChapterCandidate = async (projectId, chapterNumber) => {
     const collection = candidateCollectionPath(projectId, chapterNumber);
     const { payload } = await api(collection);
-    const latest = arrayFrom(payload, "items", "candidates")[0];
+    const items = arrayFrom(payload, "items", "candidates");
+    const latest = items[0];
     if (!latest) return null;
     const candidateId = latest.candidate_id || latest.id;
     if (typeof candidateId !== "string" || !/^candidate_[0-9a-f]{40}$/.test(candidateId)) {
       throw { status: 500, payload: { error: { message: "Candidate 列表返回了无效标识。" } } };
     }
     const detail = await api(candidateDetailPath(projectId, chapterNumber, candidateId));
-    return detail.payload?.candidate || detail.payload;
+    return {...(detail.payload?.candidate || detail.payload), fragmentHistory: items.flatMap(fragmentIndex)};
   };
 
-  one("[data-next-author-outline]")?.addEventListener("submit", async event => {
+  one("[data-next-author-outline]")?.addEventListener("submit", withFeedback(async event => {
     event.preventDefault();
     const form = event.currentTarget, project = state.projectId, number = Number(state.route.chapter);
     const button = form.querySelector("button"), error = one("[data-outline-start-error]");
@@ -2624,7 +2685,7 @@
       if (state.projectId === project && Number(state.route?.chapter) === number) await loadChapter(number);
     } catch (e) { error.textContent = UI.errorMessage(e.payload, e.status); }
     finally { button.disabled = false; }
-  });
+  }));
   const loadChapter = async (number, expectedRouteRevision = null) => {
     const projectId = state.projectId;
     const chapterNumber = Number(number);
@@ -2987,12 +3048,49 @@
     submit.title = !state.providerReady ? "请先配置模型" : form.dataset.outlineAvailable !== "true" ? "请先确认本章章纲" : "";
   }
 
-  one("[data-open-model-help]")?.addEventListener("click", () => {
-    const help = one(".provider-help");
-    help.open = true;
-    one("summary", help).focus();
-    help.scrollIntoView({ block: "center" });
-  });
+  const settingsDialog = one('#writing-model-dialog');
+  const settingsForm = one('#writing-model-form');
+  let settingsView = 0;
+  const settingsError = msg => { const box = one('[data-writing-settings-error]'); box.textContent = msg; box.hidden = !msg; };
+  all('[data-open-model-help]').forEach(button => button.addEventListener('click', withFeedback(async () => {
+    const view = ++settingsView;
+    settingsForm.reset(); settingsError(''); const submit = settingsForm.querySelector('[type=submit]'); submit.disabled = true;
+    const fields = settingsForm.elements;
+    settingsDialog.showModal();
+    try {
+      const {payload} = await api('/api/settings/writing-model');
+      if (view !== settingsView) return;
+      fields.model.value = payload.model || ''; fields.base_url.value = payload.base_url || '';
+      const originalUrl = fields.base_url.value.trim().replace(/\/+$/, '');
+      const updateKey = () => {
+        const keep = payload.has_key && originalUrl === fields.base_url.value.trim().replace(/\/+$/, '');
+        fields.api_key.required = !keep;
+        setText('[data-writing-key-hint]', keep ? '已配置密钥。留空保留；更换服务地址时须填写新密钥。' : '请填写此服务的密钥；保存后不会回显。');
+      };
+      fields.base_url.oninput = updateKey; updateKey();
+      if (payload.source === 'unreadable') settingsError('旧设置无法读取，请重新填写后保存。');
+      submit.disabled = false;
+    } catch (e) { if (view === settingsView) settingsError(UI.errorMessage(e.payload, e.status)); }
+  })));
+  settingsDialog?.addEventListener('close', () => { ++settingsView; settingsForm.reset(); settingsForm.elements.api_key.value = ''; });
+  settingsForm?.addEventListener('submit', withFeedback(async event => {
+    event.preventDefault(); const view = settingsView; const fields = settingsForm.elements;
+    const submit = settingsForm.querySelector('[type=submit]'); if (submit.disabled) return;
+    submit.disabled = true; settingsError('');
+    try {
+      const {payload} = await api('/api/settings/writing-model', {method:'PUT', json:{model:fields.model.value, base_url:fields.base_url.value, api_key:fields.api_key.value}});
+      state.providerRevision++; updateProvider({ready:payload.has_key});
+      if (state.route?.area === 'chapter') {
+        renderQuote(); renderChapterWorkflow();
+        const c = candidateStatusPresentation(state.chapterCandidate, state.chapterCandidateError);
+        setText('[data-candidate-title]', c.title); setText('[data-candidate-message]', c.message); UI.updateStatusBadge(one('[data-candidate-status]'), c.status, c.label);
+        if (!state.chapterFactReview && !state.chapterFactExtraction && state.chapterCandidate?.draft) renderChapterFacts(null, null, state.chapterFactError);
+      }
+      if (view === settingsView) settingsDialog.close();
+      UI.showToast('模型设置已保存。下次调用使用新配置；尚未验证连通性。');
+    } catch (e) { if (view === settingsView) settingsError(UI.errorMessage(e.payload, e.status)); }
+    finally { if (view === settingsView) submit.disabled = false; }
+  }));
 
   const applySessionOutlineWindow = (form, payload, startOverride) => {
     const startInput = one('input[name="start_chapter"]', form);
@@ -4341,7 +4439,7 @@
     );
   };
 
-  one("[data-reviewed-project-recover]")?.addEventListener("click", async (event) => {
+  one("[data-reviewed-project-recover]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     const projectId = state.projectId;
     const errorBox = one("[data-reviewed-project-error]");
@@ -4362,7 +4460,7 @@
         errorBox.hidden = false;
       }
     } finally { button.disabled = false; }
-  });
+  }));
 
   const loadHealth = async () => {
     const { payload } = await api(`/api/projects/${encodeURIComponent(state.projectId)}/health`);
@@ -4428,8 +4526,8 @@
     }
   };
 
-  one("[data-spa-retry]")?.addEventListener("click", route);
-  window.addEventListener("hashchange", route);
+  one("[data-spa-retry]")?.addEventListener("click", withFeedback(route));
+  window.addEventListener("hashchange", withFeedback(route));
 
   all('button[data-chapter-step]').forEach(button => button.addEventListener("click", () => {
     const target = { intent: '[data-chapter-card]', candidate: state.chapterCandidate?.draft
@@ -4484,14 +4582,17 @@
   };
   const candidateFromPayload = (payload) => payload?.candidate || payload;
 
+  one('[data-author-draft-text]')?.addEventListener('input', event => { if (!event.target.value) delete event.target.dataset.fragmentChapter; });
   one('[data-author-draft-open]')?.addEventListener('click', () => {
     const panel=one('[data-author-draft-panel]');
     panel.hidden=false; one('[data-author-draft-text]',panel)?.focus();
   });
-  one('[data-author-draft-import]')?.addEventListener('click', async (event) => {
+  one('[data-author-draft-import]')?.addEventListener('click', withFeedback(async (event) => {
     const button=event.currentTarget;
     if (button.disabled || !currentConfirmationMatchesCard() || state.chapterRecoveryRequired || state.chapterCandidateError) return;
-    const text=one('[data-author-draft-text]').value, origin=one('[data-author-draft-origin]').value;
+    const input=one('[data-author-draft-text]');
+    if (input.dataset.fragmentChapter && input.dataset.fragmentChapter !== `${state.projectId}/${Number(state.route?.chapter)}`) { setText('[data-author-draft-error]','这段中断原文来自另一章。请回到原章节导入，或清空导入框后填写本章稿件。'); return; }
+    const text=input.value, origin=one('[data-author-draft-origin]').value;
     if (!text.trim() || !origin.trim()) { setText('[data-author-draft-error]','请填写正文和稿件来源。'); return; }
     const confirmation=JSON.parse(JSON.stringify(state.chapterConfirmation));
     const action=beginCandidateAction({requireCardBinding:true,requireConfirmation:true});
@@ -4509,10 +4610,10 @@
     } catch(error) {
       if (candidateActionTargetsCurrentChapter({action})) setText('[data-author-draft-error]',UI.errorMessage(error?.payload,error?.status));
     } finally { finishCandidateAction(button,action); }
-  });
+  }));
 
-  one("[data-chapter-estimate]")?.addEventListener("click", estimateForCurrentChapter);
-  one("[data-candidate-generate]")?.addEventListener("click", async (event) => {
+  one("[data-chapter-estimate]")?.addEventListener("click", withFeedback(estimateForCurrentChapter));
+  one("[data-candidate-generate]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     if (!currentConfirmationMatchesCard() || state.chapterCandidateError) {
@@ -4572,9 +4673,9 @@
     } finally {
       finishCandidateAction(button, action);
     }
-  });
+  }));
 
-  one("[data-candidate-resume]")?.addEventListener("click", async (event) => {
+  one("[data-candidate-resume]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     const candidate = state.chapterCandidate;
@@ -4601,9 +4702,9 @@
     } finally {
       finishCandidateAction(button, action);
     }
-  });
+  }));
 
-  one("[data-candidate-create-draft]")?.addEventListener("click", async (event) => {
+  one("[data-candidate-create-draft]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     const candidate = state.chapterCandidate;
@@ -4630,9 +4731,9 @@
     } finally {
       finishCandidateAction(button, action);
     }
-  });
+  }));
 
-  one("[data-candidate-abandon-provider]")?.addEventListener("click", async (event) => {
+  one("[data-candidate-abandon-provider]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     const candidate = state.chapterCandidate;
@@ -4663,7 +4764,7 @@
     } finally {
       finishCandidateAction(button, action);
     }
-  });
+  }));
 
   const continuationAction = async (event, start) => {
     const button = event.currentTarget, candidate = state.chapterCandidate;
@@ -4694,9 +4795,9 @@
       void window.NovelAgentChapterBudget?.refresh();
     }
   };
-  one('[data-continuation-authorize]')?.addEventListener('click', event => continuationAction(event, false));
-  one('[data-continuation-run]')?.addEventListener('click', event => continuationAction(event, true));
-  one('[data-continuation-result]')?.addEventListener('click', async (event) => {
+  one('[data-continuation-authorize]')?.addEventListener('click', withFeedback(event => continuationAction(event, false)));
+  one('[data-continuation-run]')?.addEventListener('click', withFeedback(event => continuationAction(event, true)));
+  one('[data-continuation-result]')?.addEventListener('click', withFeedback(async (event) => {
     const candidate = state.chapterCandidate, target = candidate?.continuation?.target_candidate_id;
     if (!target) return;
     const action = beginCandidateAction({ candidate });
@@ -4708,7 +4809,7 @@
     } catch (error) {
       if (candidateActionTargetsCurrentChapter({ action })) showCandidateActionError(UI.errorMessage(error?.payload, error?.status));
     }
-  });
+  }));
 
   one("[data-candidate-draft-form]")?.addEventListener("input", (event) => {
     const form = event.currentTarget;
@@ -4716,7 +4817,7 @@
     setText("[data-candidate-draft-save-state]", "有尚未保存的修改", form);
   });
 
-  one("[data-candidate-draft-form]")?.addEventListener("submit", async (event) => {
+  one("[data-candidate-draft-form]")?.addEventListener("submit", withFeedback(async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     if (!form.reportValidity()) return;
@@ -4761,7 +4862,7 @@
     } finally {
       finishCandidateAction(button, action);
     }
-  });
+  }));
 
   const setFactButtonBusy = (button, busy) => {
     if (!button) return;
@@ -4801,7 +4902,7 @@
   const extractionFromPayload = (payload) => payload?.fact_extraction || payload;
   const reviewFromPayload = (payload) => payload?.fact_review || payload;
 
-  one('[data-fact-manual]')?.addEventListener('click', async (event) => {
+  one('[data-fact-manual]')?.addEventListener('click', withFeedback(async (event) => {
     const button = event.currentTarget;
     const allowed = () => canStartManualFactReview({ draft: state.chapterCandidate?.draft,
       review: state.chapterFactReview, extraction: state.chapterFactExtraction, error: state.chapterFactError });
@@ -4826,9 +4927,9 @@
       if (!factActionTargetsCurrentDraft({ action })) return;
       showFactError(UI.errorMessage(error?.payload, error?.status));
     } finally { finishFactAction(button, action); }
-  });
+  }));
 
-  one("[data-fact-open-review]")?.addEventListener("click", async (event) => {
+  one("[data-fact-open-review]")?.addEventListener("click", withFeedback(async (event) => {
     const extraction = state.chapterFactExtraction;
     if (extraction?.status !== "completed" || extraction.source_state !== "current" || state.chapterFactReview) return;
     if (one('[data-candidate-draft-form].is-dirty')) { UI.showToast("请先保存正文修改，再核对事实是否仍有效。", "error"); return; }
@@ -4848,9 +4949,9 @@
       if (!factActionTargetsCurrentDraft({ action })) return;
       showFactError(UI.errorMessage(error?.payload, error?.status));
     } finally { finishFactAction(button, action); }
-  });
+  }));
 
-  one("[data-fact-extract]")?.addEventListener("click", async (event) => {
+  one("[data-fact-extract]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     const draft = state.chapterCandidate?.draft;
@@ -4891,9 +4992,9 @@
     } finally {
       finishFactAction(button, action);
     }
-  });
+  }));
 
-  one("[data-fact-resume]")?.addEventListener("click", async (event) => {
+  one("[data-fact-resume]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     const extraction = state.chapterFactExtraction;
@@ -4922,9 +5023,9 @@
     } finally {
       finishFactAction(button, action);
     }
-  });
+  }));
 
-  one("[data-fact-cancel]")?.addEventListener("click", async (event) => {
+  one("[data-fact-cancel]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     const extraction = state.chapterFactExtraction;
@@ -4952,9 +5053,9 @@
     } finally {
       finishFactAction(button, action);
     }
-  });
+  }));
 
-  one("[data-fact-abandon-provider]")?.addEventListener("click", async (event) => {
+  one("[data-fact-abandon-provider]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     const extraction = state.chapterFactExtraction;
@@ -4987,7 +5088,7 @@
     } finally {
       finishFactAction(button, action);
     }
-  });
+  }));
 
   one("[data-fact-card-list]")?.addEventListener("input", (event) => {
     const form = event.currentTarget.closest("[data-fact-review-form]");
@@ -5023,7 +5124,7 @@
     updateFactReviewLocalState();
     one("[data-fact-summary]", list.lastElementChild)?.focus();
   });
-  all("[data-fact-batch]").forEach(button => button.addEventListener("click", async () => {
+  all("[data-fact-batch]").forEach(button => button.addEventListener("click", withFeedback(async () => {
     const review = state.chapterFactReview;
     const selected = all("[data-fact-card]").filter(card => !card.hidden && one("[data-fact-select]", card)?.checked);
     if (review?.state !== "editing" || !selected.length) return;
@@ -5035,14 +5136,14 @@
       card.dataset.decision = decision; one("[data-fact-select]", card).checked = false;
     });
     one("[data-fact-review-form]").classList.add("is-dirty"); updateFactReviewLocalState();
-  }));
+  })));
   one("[data-fact-support-editor]")?.addEventListener("input", () => {
     const form = one("[data-fact-review-form]");
     form.dataset.supportDirty = "true";
     setText("[data-fact-support-state]", "身份或初始情况有未保存的决定");
     updateFactReviewLocalState();
   });
-  one("[data-fact-support-save]")?.addEventListener("click", async (event) => {
+  one("[data-fact-support-save]")?.addEventListener("click", withFeedback(async (event) => {
     const review = state.chapterFactReview;
     if (review?.state !== "editing" || !factEditorContext()?.support_supported) return;
     let support, localFacts;
@@ -5065,7 +5166,7 @@
       if (!factActionTargetsCurrentDraft({ action })) return;
       showFactError(`${UI.errorMessage(error?.payload, error?.status) || error.message} 你的本地补充仍保留。`, "[data-fact-review-error]");
     } finally { finishFactAction(button, action); }
-  });
+  }));
   one("[data-fact-card-list]")?.addEventListener("click", (event) => {
     const decisionButton = event.target.closest("[data-fact-decision]");
     const deleteButton = event.target.closest("[data-fact-delete]");
@@ -5092,7 +5193,7 @@
     return { review: updated, message: payload.message };
   };
 
-  one("[data-fact-review-form]")?.addEventListener("submit", async (event) => {
+  one("[data-fact-review-form]")?.addEventListener("submit", withFeedback(async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     if (!form.reportValidity() || state.chapterFactReview?.state !== "editing") return;
@@ -5126,9 +5227,9 @@
     } finally {
       finishFactAction(button, action);
     }
-  });
+  }));
 
-  one("[data-fact-confirm]")?.addEventListener("click", async (event) => {
+  one("[data-fact-confirm]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.currentTarget;
     if (!button || button.disabled) return;
     const form = one("[data-fact-review-form]");
@@ -5151,7 +5252,13 @@
     try {
       let current = review;
       let saveMessage = "";
-      if (form.classList.contains("is-dirty")) {
+      // Saved draft cards can still contain names typed before their identities were declared.
+      // Confirm exactly the references the author now sees, even after reopening the page.
+      const stableProposal = proposal => JSON.stringify(proposal, (_key, value) =>
+        value && typeof value === "object" && !Array.isArray(value)
+          ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
+      const originals = new Map(review.facts.map(fact => [fact.fact_id, stableProposal(fact.proposal)]));
+      if (form.classList.contains("is-dirty") || localFacts.some(fact => originals.get(fact.fact_id) !== stableProposal(fact.proposal))) {
         const saved = await saveCurrentFactReview(action, localFacts);
         if (!saved) return;
         current = saved.review;
@@ -5175,12 +5282,14 @@
     } catch (error) {
       if (!factActionTargetsCurrentDraft({ action })) return;
       const message = UI.errorMessage(error?.payload, error?.status) || error.message;
-      showFactError(`${message}${error?.status === 409 ? " 你的本地编辑仍保留在页面中。" : ""}`, "[data-fact-review-error]");
-      UI.showToast(message, "error");
+      const hint = /chapter_fact_identity_unknown/.test(`${error?.payload?.error?.code || ""} ${message}`)
+        ? "有事实引用了尚未登记的人物、地点或物品。请先在下方登记并保存，再在事实卡输入已登记的名称或从下拉框选择。" : message;
+      showFactError(`${hint}${error?.status === 409 ? " 你的本地编辑仍保留在页面中。" : ""}`, "[data-fact-review-error]");
+      UI.showToast(hint, "error");
     } finally {
       finishFactAction(button, action);
     }
-  });
+  }));
 
   one("[data-chapter-card-confirm-form]")?.addEventListener("input", (event) => {
     const form = event.currentTarget;
@@ -5197,7 +5306,7 @@
     const query = event.target.value.trim().toLocaleLowerCase("zh-CN");
     all("[data-history-rows] tr[data-search-value]").forEach((row) => { row.hidden = Boolean(query) && !(row.dataset.searchValue || "").toLocaleLowerCase("zh-CN").includes(query); });
   });
-  one("[data-history-rows]")?.addEventListener("click", async (event) => {
+  one("[data-history-rows]")?.addEventListener("click", withFeedback(async (event) => {
     const button = event.target.closest("[data-history-detail-id]");
     if (!button || button.disabled) return;
     try {
@@ -5206,9 +5315,9 @@
     } catch (error) {
       showError(error);
     }
-  });
+  }));
 
-  one("[data-spa-approve-outline]")?.addEventListener("click", async () => {
+  one("[data-spa-approve-outline]")?.addEventListener("click", withFeedback(async () => {
     const batch = state.batch;
     if (!batch) return;
     if (one("[data-outline-editor]").classList.contains("is-dirty")) { UI.showToast("请先保存改动，再确认章纲。", "error"); return; }
@@ -5220,9 +5329,9 @@
       UI.showToast(payload.message || `${count} 章章纲已确认并冻结。`);
       await loadOutlines();
     } catch (error) { showError(error); UI.showToast(UI.errorMessage(error.payload, error.status), "error"); }
-  });
+  }));
 
-  one("[data-spa-adopt-existing-outline]")?.addEventListener("click", async () => {
+  one("[data-spa-adopt-existing-outline]")?.addEventListener("click", withFeedback(async () => {
     const batch = state.batch;
     if (!batch) return;
     if (one("[data-outline-editor]").classList.contains("is-dirty")) { UI.showToast("请先保存改动，再确认章纲。", "error"); return; }
@@ -5233,9 +5342,9 @@
       UI.showToast(payload.message || "已有细纲已保留并纳入冻结批次。");
       await loadOutlines();
     } catch (error) { showError(error); UI.showToast(UI.errorMessage(error.payload, error.status), "error"); }
-  });
+  }));
 
-  one("[data-close-cohort]")?.addEventListener("click", async () => {
+  one("[data-close-cohort]")?.addEventListener("click", withFeedback(async () => {
     const cohort = state.cohort;
     if (!cohort || cohort.status !== "active") return;
     const confirmed = await UI.confirmAction("结束后本轮不能再修改。如果任一门槛未通过，本轮将记为失败，修复后需创建新 cohort。仍要继续吗？", "danger");
@@ -5245,7 +5354,7 @@
       UI.showToast(payload.cohort?.status === "passed" ? "本轮 Cohort 已通过。" : "本轮 Cohort 已关闭，结果已固化。");
       await loadProduction();
     } catch (error) { showError(error); UI.showToast(UI.errorMessage(error.payload, error.status), "error"); }
-  });
+  }));
 
   doc.addEventListener("workbench:success", async (event) => {
     const form = event.target.closest("form");

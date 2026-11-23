@@ -104,3 +104,43 @@ def test_blank_start_and_corrupt_receipt_fail_closed(tmp_path):
         start=root/'.novelagent/runtime/reviewed/receipts/start.json';start.write_text('{}')
         detail=response(c.get('/api/projects/'+project['id']))['project']
         assert detail['reviewed_status']['state']=='evidence_invalid' and detail['next_chapter'] is None
+
+
+def test_first_generation_without_model_key_is_local_and_explained(tmp_path, monkeypatch):
+    monkeypatch.setenv('NOVELAGENT_SKIP_DOTENV', '1')
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    with open_desk(tmp_path) as client:
+        assert not response(client.get('/api/bootstrap'))['provider']['ready']
+        project = create(client, tmp_path, SETTING)
+        base = '/api/projects/' + project['id']
+        chapter = base + '/chapters/1'
+        outline(client, chapter, OUTLINE)
+        card = response(client.get(chapter + '/card'))['chapter_card']
+        confirmation = response(client.post(chapter + '/card/confirm', json={
+            'confirmed': True, 'expected_card_sha256': card['confirmation']['card_sha256'],
+            'goal': OUTLINE['core_event'], 'validation_focus': ['continuity'], 'notes_text': '',
+        }))['confirmation']
+        response(client.post(chapter + '/budget', json={
+            'author_confirmed': True, 'expected_context_sha256': card['binding']['context_sha256'],
+            'configuration': dict(max_provider_calls=3, max_input_tokens=100000, max_output_tokens=50000,
+                                  max_active_seconds='900', amount_limit=None, currency=None, pricing=[]),
+        }))
+        result = response(client.post(chapter + '/candidates', json={'confirmation': confirmation},
+                                      headers={'Idempotency-Key': 'first-chapter-missing-key'}))
+        candidate = result['candidate']
+        assert candidate['status'] == 'failed' and candidate['draft'] is None
+        assert candidate['error']['code'] == 'model_key_missing'
+        assert '没有发送模型请求' in candidate['error']['message'] == result['message']
+        assert response(client.get(chapter + '/candidates/' + candidate['candidate_id']))['candidate']['error'] == candidate['error']
+        assert response(client.get(base + '/model-calls'))['summary']['attempt_count'] == 0
+        assert response(client.get(chapter + '/budget'))['usage']['charged']['calls'] == 0
+        assert response(client.get(chapter + '/card'))['chapter_card']['confirmation'] == card['confirmation']
+
+
+def test_only_known_local_failure_is_relabelled_in_old_receipts():
+    from workbench.chapter_candidates import _public_error
+    legacy = {'type': 'ModelCallError', 'code': 'provider_error',
+              'message': 'OPENAI_API_KEY is required for non-dry-run generation.'}
+    assert _public_error(legacy, 'failed')['code'] == 'model_key_missing'
+    assert _public_error(legacy, 'provider_uncertain')['code'] == 'provider_call_uncertain'
+    assert _public_error({**legacy, 'message': 'different private error'}, 'failed')['code'] == 'provider_error'

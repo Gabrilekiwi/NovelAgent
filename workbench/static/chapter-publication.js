@@ -1,5 +1,6 @@
 (() => {
   "use strict";
+  const withFeedback = globalThis.NovelAgentFeedback?.action || (handler => handler);
   const $ = (id) => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const project = params.get("project_id"), chapter = Number(params.get("chapter")), review = params.get("review_id");
@@ -20,7 +21,7 @@
     summary: "说明", proposal: "事实变化", source_event_key: "关联事件", event_type: "事件类型", occurrence_location: "发生地点",
     onsite_participants: "现场参与者", remote_participants: "远程参与者", transported_items: "运输物品", related_entities: "关联实体",
     role: "作用", relation: "关联", delta: "变化数量", before: "此前", after: "此后", current_goal: "当前目标",
-    counter_id: "计数项", operation: "操作", increment: "增加", set: "设为", completed: "已发生", actor: "参与者" };
+    counter_id: "计数项", operation: "操作", increment: "增加", set: "设为", completed: "已完成", ongoing: "进行中", started: "开始", actor: "行动者", witness: "见证者", recipient: "接受者", present_other: "其他在场人物" };
   const node = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; };
   const explain = (value) => {
     if (value === null || typeof value !== "object") return node("span", value == null ? "—" : labels[value] || entityNames[value] || String(value));
@@ -35,12 +36,12 @@
     if (!Object.keys(value).length) list.append(node("dt", "暂无记录"));
     return list;
   };
-  const showDisposition = (value) => {
+  const showDisposition = (value, allowed) => {
     if(!value || value.schema_version!=="reviewed_quality_disposition_v1"
       || value.publication_authorized!==false || value.repair_authorized!==false)
       throw new Error("本次问题与正文依据不完整，请重新生成预览。");
     const groups={pause:"需要作者核对",repair_once:"可进行一次修正评估",advice:"一般建议"};
-    const names={duplicate_scene_text:"正文重复",near_duplicate_scene_text:"正文近似重复",
+    const names={missing_conflict_marker:"情节冲突提示",duplicate_scene_text:"正文重复",near_duplicate_scene_text:"正文近似重复",
       duplicate_opening:"重复开头",duplicate_ending_hook:"重复结尾",repetition_or_stalling:"重复或停滞",
       chapter_length_reasonable:"篇幅建议",missing_required_beat:"章纲节拍缺失",
       missing_ending_pressure:"结尾压力缺失",no_meta_output:"混入非正文内容",
@@ -48,9 +49,10 @@
       preserves_last_scene_location:"场景位置衔接",continue_previous_ending:"前后章衔接规则",
       llm_validator_unavailable:"必要模型检查未完成"};
     names.short_near_prose_repetition_risk="短正文疑似重复";
-    $("quality-action-summary").textContent=({continue:"没有需要修正的问题，或仅有一般建议。",
-      pause:"存在需要作者核对的问题，请结合原文和事实记录审阅。",
-      repair_once:"重复问题已定位到正文，修正后须重新提取事实并检查。"}[value.automatic_action] || "请核对本次完整质量记录。");
+    // This page is for manual publication. automatic_action controls unattended runs only.
+    $("quality-action-summary").textContent = allowed ? ((value.findings || []).length || (value.pause_reasons || []).length
+      ? "本章已通过发布检查。以下是写作提醒，不阻止发布；核对正文和事实后即可确认。" : "本章已通过发布检查，没有额外提醒。")
+      : "本章尚未通过全部发布检查。请按上方检查结果和下方可选操作处理。";
     const children=[];
     for(const reason of value.pause_reasons || [])children.push(node("p",({
       quality_coverage_incomplete:"必要检查尚未完成。",authoritative_state_not_accepted:"事实状态校验尚未通过。",
@@ -59,11 +61,13 @@
       short_prose_review_incomplete:"短正文风险检查超过当前支持范围，需要人工核对。"
     }[reason] || "本项条件需要核对。")));
     for(const finding of value.findings || []) {
-      const item=node("article");item.append(node("h4",`${groups[finding.disposition] || "需核对"}：${finding.codes.map(code=>names[code] || code).join("、")}`));
-      item.append(node("p",finding.message));
+      const lexical = finding.codes.length === 1 && finding.codes[0] === "missing_conflict_marker";
+      const label = lexical || allowed ? "写作提醒" : (groups[finding.disposition] || "需核对");
+      const item=node("article");item.append(node("h4",`${label}：${finding.codes.map(code=>names[code] || code).join("、")}`));
+      item.append(node("p", lexical ? "检查只查找少数冲突词。即使没有命中，人物的行动、选择或后果也可能已经写出了冲突。这项提醒不阻止发布，不必为了消除它而加词。" : finding.message));
       if(finding.quotes.length)for(const span of finding.quotes) {
         item.append(node("p",`正文第 ${span.start_char+1}–${span.end_char} 字符（摘录）`),node("blockquote",span.quote));
-      } else if(finding.disposition!=="advice")item.append(node("p","此项未提供可核对的正文范围，请人工定位；当前依据不足以自动修正。"));
+      } else if(!lexical && !allowed && finding.disposition!=="advice")item.append(node("p","此项未提供可核对的正文范围，请人工定位；当前依据不足以自动修正。"));
       children.push(item);
     }
     $("quality-actions").replaceChildren(...children);
@@ -73,9 +77,35 @@
     // the user could not identify after a lost response.
     localStorage.setItem(storageKey, JSON.stringify(request));
   };
+  let choiceInputs = [];
+  const choicesReady = () => choiceInputs.every(input => input.checked);
+  const renderChoices = (result) => {
+    const offer = result.offered_author_quality_choice;
+    choiceInputs = [];
+    $("choice-list").replaceChildren();
+    if (!offer) return;
+    const rows = new Map(result.quality_disposition.findings.map(row => [row.finding_id, row]));
+    for (const id of offer.finding_ids) {
+      const row = rows.get(id);
+      if (!row) throw new Error("未能加载拦截项，请重新生成预览。");
+      const box = node("input"); box.type = "checkbox"; box.value = id;
+      const title = row.codes.includes("missing_ending_pressure") ? "结尾压力" : "必写节拍";
+      const label = node("label"); label.append(box, node("span", ` 忽略「${title}」：${row.message}`));
+      const paragraph = node("p"); paragraph.append(label); $("choice-list").append(paragraph);
+      choiceInputs.push(box);
+      box.addEventListener("change", () => { $("confirmed").checked = false; controls(); });
+    }
+  };
   const controls = () => {
+    const choosing = Boolean(preview?.offered_author_quality_choice) && !pending && !published;
+    $("author-choices").hidden = !choosing;
+    if (choosing) $("choice-progress").textContent = choicesReady() ? "所有拦截项均已选择忽略。请核对正文和事实后确认发布。"
+      : `已选择忽略 ${choiceInputs.filter(input => input.checked).length} / ${choiceInputs.length} 项。未忽略的问题须先修改。`;
+    for (const box of choiceInputs) box.disabled = busy || !choosing;
+    $("confirm-label").hidden = !preview || !choicesReady() || pending || published;
+
     $("preview").disabled = busy || budgetBlocked || !current || pending || published || terminal || current.review_state !== "confirmed";
-    $("commit").disabled = busy || budgetBlocked || !preview || !$("confirmed").checked || pending || published || terminal;
+    $("commit").disabled = busy || budgetBlocked || !preview || !choicesReady() || !$("confirmed").checked || pending || published || terminal;
     $("reload").disabled = busy || pending;
     $("resolve").hidden = !request || published || terminal;
     $("resolve").disabled = busy;
@@ -167,6 +197,8 @@
       $("title").textContent = `第 ${result.chapter} 章 · 已发布`;
       $("status").textContent = `第 ${result.chapter} 章已发布。正文、事实状态和提交凭证已核验。`;
       $("receipt").hidden = false; $("receipt").textContent = `提交凭证：${result.run_id}`;
+      const ignored = result.request?.request?.author_quality_choice?.finding_ids;
+      if (ignored?.length) $("receipt").textContent += ` · 已记录作者选择忽略的 ${ignored.length} 项章纲提示。`;
       $("next-chapter").hidden = false;
       $("next-chapter").href = `/#/projects/${encodeURIComponent(project)}/chapters/${result.chapter + 1}`;
       $("recover").hidden = true;
@@ -184,7 +216,7 @@
     if (!request) return;
     presentResult((await api(`${path}/publication-status`, request.body, request.key)).publication);
   };
-  $("preview").addEventListener("click", () => run(async () => {
+  $("preview").addEventListener("click", withFeedback(() => run(async () => {
     preview = null; $("confirmed").checked = false; $("confirm-label").hidden = true; $("preview-panel").hidden = true;
     await loadInput();
     if(!await loadBudget())return;
@@ -194,16 +226,25 @@
     const result = await api(`${path}/publication-preview`, request.body, request.key);
     const quality = result.quality;
     const allowed = quality.local_quality_passed === true && quality.quality_coverage_complete === true && !quality.pending_gates.length;
-    preview = allowed ? result : null;
+    renderChoices(result);
+    preview = allowed || choiceInputs.length ? result : null;
     $("preview-panel").hidden = false;
     $("prose").textContent = result.preparation.final_prose;
-    $("quality").textContent = allowed ? "本地标准质量检查通过。提交时将再次核验。" : "质量检查未通过，暂不能发布。请返回草稿处理问题。";
+    $("quality").textContent = allowed ? "本地标准质量检查通过。提交时将再次核验。" : choiceInputs.length ? "章纲检查有分歧。你可以修改草稿，或在下方逐项选择忽略。" : "仍有不可忽略的检查未通过或尚未完成。请核对检查详情并处理后再发布。";
     if(result.execution_budget?.time)$("quality").textContent+=` 本章累计已测主动执行 ${result.execution_budget.time.active_seconds} 秒（上限 ${result.execution_budget.time.active_limit_seconds} 秒），作者等待单列。`;
-    showDisposition(result.quality_disposition);
+    showDisposition(result.quality_disposition, allowed);
     $("checks").replaceChildren(...[
       ["正文完整性", quality.final_artifact_integrity.accepted], ["事实状态校验", quality.authoritative_state_validation.accepted],
       ["叙事审查", quality.review_gate.status === "pass"], ["检查项完整", quality.quality_coverage_complete]
     ].map(([name, ok]) => node("li", `${name}：${ok ? "通过" : "未通过"}`)));
+    const coverage = quality.blueprint_coverage;
+    if (coverage) {
+      const missing = coverage.missing_beat_indexes || [];
+      $("checks").append(node("li", !coverage.required_beat_count ? "必写节拍：章纲未指定额外要求"
+        : missing.length ? `必写节拍：未覆盖第 ${missing.join("、")} 项` : "必写节拍：通过"),
+        node("li", !coverage.ending_pressure_required ? "结尾压力：章纲未指定要求"
+          : coverage.ending_pressure_covered ? "结尾压力：通过" : "结尾压力：未通过"));
+    }
     const factPlan = result.preparation.fact_preparation;
     const supplement = factPlan.support_preparation;
     entityNames = Object.fromEntries((supplement?.identity_plan.directory_after || []).map((entry) => [entry.entity_id, entry.name]));
@@ -223,33 +264,37 @@
       const details = node("details"); details.append(node("summary", labels[key] || key), explain(value)); return details;
     }));
     $("confirm-label").hidden = !allowed; $("confirmed").checked = false;
-    $("status").textContent = allowed ? "预览已生成，本章尚未发布。" : "请先修正质量检查发现的问题。";
-  }));
+    $("status").textContent = allowed ? "预览已生成，本章尚未发布。" : choiceInputs.length ? "预览已生成。请到下方选择如何处理章纲提示。" : "请先处理不可忽略的检查项。";
+  })));
   $("confirmed").addEventListener("change", controls);
-  $("commit").addEventListener("click", () => run(async () => {
-    if (!preview || !$("confirmed").checked || !request || pending || published) return;
+  $("commit").addEventListener("click", withFeedback(() => run(async () => {
+    if (!preview || !choicesReady() || !$("confirmed").checked || !request || pending || published) return;
+    if (choiceInputs.length) request.body.author_quality_choice = {
+      review_sha256: preview.offered_author_quality_choice.review_sha256,
+      finding_ids: choiceInputs.filter(box => box.checked).map(box => box.value).sort()
+    };
     saveRequest(); pending = true; controls();
     $("status").textContent = "正在发布。若响应中断，请查询原提交结果。";
     const result = await api(`${path}/publication`, { ...request.body, author_confirmed: true }, request.key);
     presentResult(result.publication);
-  }));
-  $("resolve").addEventListener("click", () => run(resolve));
-  $("reload").addEventListener("click", () => run(async () => {
+  })));
+  $("resolve").addEventListener("click", withFeedback(() => run(resolve)));
+  $("reload").addEventListener("click", withFeedback(() => run(async () => {
     preview = null; $("confirmed").checked = false; $("confirm-label").hidden = true; $("preview-panel").hidden = true;
     await loadInput();
     if(!published && await loadBudget())$("status").textContent="审核与预算已重新读取，请重新生成预览。";
-  }));
-  $("recover").addEventListener("click", () => run(async () => {
+  })));
+  $("recover").addEventListener("click", withFeedback(() => run(async () => {
     await api(`/api/projects/${encodeURIComponent(project)}/publication-recovery`, { author_confirmed: true });
     $("recover").hidden = true;
     if (request) await resolve();
     else $("status").textContent = "原事务恢复完成，请重新生成预览。";
-  }));
-  $("restart").addEventListener("click", () => run(async () => {
+  })));
+  $("restart").addEventListener("click", withFeedback(() => run(async () => {
     localStorage.removeItem(storageKey); request = null; terminal = false; preview = null;
     $("preview-panel").hidden = true; await loadInput(); $("status").textContent = "请重新核对当前草稿并生成预览。";
     await loadBudget();
-  }));
+  })));
   run(async () => {
     if (!project || !review || !Number.isInteger(chapter) || chapter < 1) throw new Error("请从本章已确认的事实审核记录进入发布页面。");
     $("back").href = `/#/projects/${encodeURIComponent(project)}/chapters/${chapter}`;

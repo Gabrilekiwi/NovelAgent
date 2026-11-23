@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
+from api.contracts import MISSING_WRITING_MODEL_KEY, is_missing_writing_model_key
+
 from core.engine.chapter_candidate import (
     AUTHOR_CANDIDATE_VERSION,
     ChapterCandidateConflictError,
@@ -616,6 +618,9 @@ class ChapterCandidateService:
 
         error = record.get("error") if isinstance(record, Mapping) else None
         public_error = _public_error(error, raw_status)
+        fragments = store.partial_chapter_responses(intent, record, include_text=include_text) if raw_status == 'failed' and not is_author else []
+        if fragments:
+            public_error = {'code': 'partial_chapter_response', 'message': '正文生成中断，已保留收到的文字。可在下方查看中断原文；不会自动重试，也未修改正式章节。'}
         prose_payload: dict[str, Any] = {
             "available": prose_available,
             "sha256": record["prose"]["sha256"] if isinstance(record, Mapping) else None,
@@ -645,6 +650,7 @@ class ChapterCandidateService:
             "chapter_intent": copy.deepcopy(intent["chapter_intent"]),
             **({'generation_source':'author_import','origin_label':intent['author_import']['origin_label']} if is_author else {}),
             "prose": prose_payload,
+            **({"partial_responses": fragments} if fragments else {}),
             "draft_import": draft_import,
             "draft": _public_draft(draft, include_text=include_text),
             "uncertainty": uncertainty,
@@ -839,6 +845,8 @@ def _public_error(
     error: Mapping[str, Any] | None,
     raw_status: str,
 ) -> dict[str, str] | None:
+    if raw_status == "failed" and is_missing_writing_model_key(error):
+        return {"code": MISSING_WRITING_MODEL_KEY, "message": "本次生成没有发送模型请求：工作台当时没有读到写作模型密钥。章纲和本章限额仍保留。"}
     if raw_status == "provider_uncertain":
         code = "provider_call_uncertain"
         message = (

@@ -135,6 +135,20 @@ def model_response_text(value: ModelResponse | str) -> str:
     return str(value)
 
 
+MISSING_WRITING_MODEL_KEY = "model_key_missing"
+MISSING_WRITING_MODEL_KEY_DETAIL = "OPENAI_API_KEY is required for non-dry-run generation."
+
+
+def is_missing_writing_model_key(error: Mapping[str, Any] | None) -> bool:
+    if not isinstance(error, Mapping):
+        return False
+    # Older receipts used the generic provider_error code. Match only our own local check.
+    return error.get("code") == MISSING_WRITING_MODEL_KEY or (
+        error.get("code") == "provider_error" and error.get("type") == "ModelCallError"
+        and error.get("message") == MISSING_WRITING_MODEL_KEY_DETAIL
+    )
+
+
 class ModelCallError(RuntimeError):
     def __init__(
         self,

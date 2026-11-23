@@ -156,9 +156,11 @@ def test_candidate_ui_uses_compact_discovery_then_detail_and_exact_author_action
         "const loadChapter =", 1
     )[0]
     assert "const { payload } = await api(collection);" in loader
-    assert 'arrayFrom(payload, "items", "candidates")[0]' in loader
+    assert 'const items = arrayFrom(payload, "items", "candidates");' in loader
+    assert 'const latest = items[0];' in loader
     assert "const detail = await api(candidateDetailPath(projectId, chapterNumber, candidateId));" in loader
-    assert "return detail.payload?.candidate || detail.payload;" in loader
+    assert '...(detail.payload?.candidate || detail.payload)' in loader
+    assert 'fragmentHistory: items.flatMap(fragmentIndex)' in loader
     assert "input_pack" not in loader
 
     resume = spa.split('one("[data-candidate-resume]")', 1)[1].split(

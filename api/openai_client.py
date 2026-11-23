@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping
 from contextlib import suppress
 import copy
-from api.execution_deadline import RequestExecutionDeadline
+from api.execution_deadline import RequestExecutionDeadline, interrupted_stream_reason
 from api.budget_endpoint import endpoint_fingerprint
 
 from api.contracts import (
+    MISSING_WRITING_MODEL_KEY,
+    MISSING_WRITING_MODEL_KEY_DETAIL,
     reported_model_usage,
     MODEL_ENDPOINT_OFFICIAL,
     MODEL_ENDPOINT_OPENAI_COMPATIBLE,
@@ -67,7 +69,8 @@ def chat_completion(
     resolved_model = model or config.openai_model
     if not api_key:
         raise ModelCallError(
-            "OPENAI_API_KEY is required for non-dry-run generation.",
+            MISSING_WRITING_MODEL_KEY_DETAIL,
+            failure_category=MISSING_WRITING_MODEL_KEY,
             provider="openai",
             stage=stage,
             model=resolved_model,
@@ -93,8 +96,8 @@ def chat_completion(
         raise ValueError("OpenAI chat completion requires model_read_generation retry profile")
 
     client_kwargs: dict[str, Any] = {"api_key": api_key}
-    if config.openai_base_url:
-        client_kwargs["base_url"] = config.openai_base_url
+    # Pin the selected destination; the SDK must not pick an older OPENAI_BASE_URL.
+    client_kwargs["base_url"] = config.openai_base_url or "https://api.openai.com/v1"
     if config.openai_timeout_seconds > 0:
         client_kwargs["timeout"] = min(
             float(config.openai_timeout_seconds),
@@ -146,7 +149,7 @@ def chat_completion(
                 stage=stage,
                 model=resolved_model,
                 endpoint_type=endpoint_type,
-                check_execution_time=deadline.remaining if deadline is not None else None,
+                check_execution_time=deadline.check_stream if deadline is not None else None,
                 capture_billing=monetary,
             )
         final_payload=copy.deepcopy(payload)
@@ -286,7 +289,7 @@ def _extract_streamed_message_content(
     stage: str,
     model: str | None,
     endpoint_type: str = MODEL_ENDPOINT_UNKNOWN,
-    check_execution_time: Callable[[], Any] | None = None,
+    check_execution_time: Callable[[bool], Any] | None = None,
     capture_billing: bool = False,
 ) -> ModelResponse:
     parts: list[str] = []
@@ -311,7 +314,7 @@ def _extract_streamed_message_content(
                 usage = chunk_usage
             choices = getattr(chunk, "choices", None)
             if not isinstance(choices, list) or not choices:
-                if check_execution_time is not None:check_execution_time()
+                if check_execution_time is not None:check_execution_time(False)
                 continue
             choice = choices[0]
             reason = _optional_metadata(getattr(choice, "finish_reason", None))
@@ -321,15 +324,15 @@ def _extract_streamed_message_content(
             content = getattr(delta, "content", None)
             if isinstance(content, str):
                 parts.append(content)
-            if check_execution_time is not None:check_execution_time()
-        if check_execution_time is not None:check_execution_time()
+            if check_execution_time is not None:check_execution_time(bool(isinstance(content, str) and content))
+        if check_execution_time is not None:check_execution_time(False)
     except Exception as exc:
         partial_text = "".join(parts)
         partial_response = (
             ModelResponse(
                 partial_text,
                 usage=observations.attach(usage) if capture_billing else usage,
-                finish_reason="stream_interrupted",
+                finish_reason=interrupted_stream_reason(exc),
                 request_id=request_id,
                 actual_model=actual_model,
                 endpoint_type=endpoint_type,

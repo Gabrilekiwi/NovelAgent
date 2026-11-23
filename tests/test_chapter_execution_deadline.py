@@ -209,3 +209,41 @@ def test_time_interval_from_another_frozen_budget_is_rejected(tmp_path):
     with other.active('generation') as interval:
         with pytest.raises(ChapterTimeError):runtime(tmp_path,active_interval=interval).execute_attempt(**args(operation=forbidden))
     assert s.report()['charged']['calls']==0
+
+
+@pytest.mark.parametrize('provider',['openai','anthropic'])
+def test_progressing_stream_finishes_after_retry_window_without_second_request(tmp_path,monkeypatch,provider):
+    manual=ManualClock();clock=execution_clock(tmp_path/'t',manual,'1200');clock.initialize();requests=[]
+    class Chunks:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        @property
+        def text_stream(self):return iter(self)
+        def __iter__(self):
+            for text in ['begin',' middle',' end']:
+                manual.advance(70)
+                yield NS(choices=[NS(delta=NS(content=text),finish_reason='stop' if text==' end' else None)]) if provider=='openai' else text
+    def stream(**kwargs):requests.append(kwargs);return Chunks()
+    configure(monkeypatch,provider,lambda **kwargs:pytest.fail('unexpected non-stream request'),stream)
+    with clock.active('generation') as interval:
+        r=ModelCallRuntimeContext(ModelCallStore(tmp_path/'c'),active_interval=interval)
+        assert invoke(provider,r,manual,deadline_seconds=180)=='begin middle end'
+    assert len(requests)==1 and r.store.load_receipt('timed-a1')['status']=='succeeded'
+    assert clock.report()['active_seconds']=='210'
+
+
+def test_empty_events_cannot_extend_start_window_or_reset_stream_idle_timeout(tmp_path):
+    from api.execution_deadline import StreamIdleExceeded
+    manual=ManualClock();clock=execution_clock(tmp_path/'t',manual,'1200');clock.initialize()
+    with clock.active('generation') as interval:
+        r=ModelCallRuntimeContext(ModelCallStore(tmp_path/'c'),active_interval=interval)
+        policy=RetryPolicy(MODEL_READ_GENERATION,deadline_seconds=180,clock=manual.seconds)
+        stopped=RequestExecutionDeadline(r,policy,configured_timeout=40)
+        manual.advance(179);stopped.check_stream(False);manual.advance(1)
+        with pytest.raises(ChapterTimeExceeded):stopped.check_stream(False)
+        idle=RequestExecutionDeadline(r,policy,configured_timeout=40)
+        idle.check_stream(True);manual.advance(39);idle.check_stream(False);manual.advance(1)
+        with pytest.raises(StreamIdleExceeded):idle.check_stream(False)
+        cap=RequestExecutionDeadline(r,policy,configured_timeout=40,extra_remaining=lambda:5-(manual.seconds()-220))
+        cap.check_stream(True);manual.advance(6)
+        with pytest.raises(ChapterTimeExceeded):cap.check_stream(True)

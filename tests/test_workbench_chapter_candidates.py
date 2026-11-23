@@ -864,3 +864,41 @@ def test_provider_uncertain_abandon_gate(
 
     assert _formal_inventory(root) == formal_before
     _assert_no_formal_runtime_outputs(root)
+
+
+@pytest.mark.parametrize('stage', ['chapter_generation', 'plan'])
+def test_failed_stream_fragment_is_local_verified_and_never_a_draft(tmp_path,stage):
+    from api.contracts import ModelResponse
+    from api.retry import PartialResponseError
+    from core.local_file_io import local_io_path
+    root=_strict_book(tmp_path); baseline=_formal_inventory(root); requests=[]
+    text='一行原文。\r\n结尾没有写'
+    def generate(_):
+        runtime=current_model_call_runtime()
+        def relay():
+            requests.append(1)
+            raise PartialResponseError(ConnectionError(),partial_content_received=True,
+                partial_response=ModelResponse(text,finish_reason='stream_interrupted'))
+        return runtime.execute_attempt(call_id='fixture',attempt_number=1,provider='test',model='test-model',
+            stage=stage,endpoint_type=MODEL_ENDPOINT_OFFICIAL,request={'input':'test'},input_tokens=12,
+            max_output_tokens=128,operation=relay).text
+    def factory(path):
+        return ChapterCandidateExecutor(story_project_root=path,generator=generate,execution_kind='model',
+            repository_root=REPOSITORY,provenance_factory=_fixed_provenance)
+    app=_create_app(tmp_path=tmp_path,root=root,factory=factory);project=_import_project(app,root)
+    with TestClient(app) as client:
+        _unlock(client); confirmation=_confirm_chapter(client,project['id'])
+        c=_generate_candidate(client,project['id'],confirmation,key='partial-test').json()['candidate']
+        assert c['status']=='failed' and not c['draft'] and not c['prose']['available']
+        path=f"/api/projects/{project['id']}/chapters/2/candidates"; detail=path+'/'+c['candidate_id']
+        listing=client.get(path).json()['items'][0]
+        if stage=='chapter_generation':
+            digest=hashlib.sha256(text.encode()).hexdigest()
+            assert listing['partial_responses'][0]['sha256']==digest and 'text' not in listing['partial_responses'][0]
+            assert client.get(detail).json()['candidate']['partial_responses'][0]['text']==text
+            store=ChapterCandidateStore(root); calls=store.model_call_store(store.load_intent(c['candidate_id']))
+            local_io_path(calls.root/'responses'/'fixture-a1.txt').write_bytes(b'changed')
+            refused=client.get(detail); assert refused.status_code!=200 and 'changed' not in refused.text
+        else:
+            assert 'partial_responses' not in c and 'partial_responses' not in listing
+        assert len(requests)==1 and _formal_inventory(root)==baseline

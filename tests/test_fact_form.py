@@ -173,6 +173,30 @@ assert.equal(form.read().to_location, "用户输入的原值");
 ''')
 
 
+def test_author_typed_names_bind_only_unique_declared_identities_and_never_free_text() -> None:
+    run_dom(r'''
+const entities = [
+  {entity_id: "local:he", kind: "character", name: "许禾", aliases: ["禾禾", "小许"]},
+  {entity_id: "local:second", kind: "character", name: "许生", aliases: ["小许"]},
+  {entity_id: "local:shop", kind: "location", name: "禾禾", aliases: []},
+];
+const raw = {...event, event_type: "禾禾", occurrence_location: "禾禾",
+  onsite_participants: [{entity_id: "禾禾", role: "actor"}],
+  extra: {entity_id: "禾禾"}, remote_participants: [], transported_items: [], related_entities: []};
+const form = Form.render(container, schemas.event, raw, {entities, bindNames: true});
+const first = form.read();
+assert.equal(first.occurrence_location, "local:shop");
+assert.equal(first.onsite_participants[0].entity_id, "local:he");
+assert.equal(first.event_type, "禾禾"); assert.equal(first.extra.entity_id, "禾禾");
+const person = named("事实内容 / 在场人物 / 第 1 项 / 人物或对象");
+person.value = " 小许 "; assert.throws(() => form.read(), /多个已登记对象/);
+set(named("事实内容 / 在场人物 / 第 1 项 / 人物或对象：选择已有对象"), "1");
+assert.equal(form.read().onsite_participants[0].entity_id, "local:second");
+person.value = "未登记"; assert.equal(form.read().onsite_participants[0].entity_id, "未登记");
+assert.deepEqual(plain(Form.render(container, schemas.event, raw, {entities, bindNames:true, readOnly:true}).read()), raw);
+''')
+
+
 @pytest.mark.parametrize(
     ("schema_expression", "value_expression", "input_value", "message"),
     [

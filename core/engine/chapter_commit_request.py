@@ -36,9 +36,22 @@ def _sha(value, label):
         raise ChapterCommitRequestError(f"invalid {label}")
 
 
+def validate_author_quality_choice(choice):
+    if not isinstance(choice, dict) or set(choice) != {"review_sha256", "finding_ids"}:
+        raise ChapterCommitRequestError("作者选择格式无效，请重新生成预览。")
+    _sha(choice["review_sha256"], "review_sha256")
+    ids = choice["finding_ids"]
+    if (not isinstance(ids, list) or not 0 < len(ids) <= 1000
+            or not all(isinstance(i, str) and re.fullmatch(r"qf:v1:[0-9a-f]{64}", i) for i in ids)
+            or ids != sorted(set(ids))):
+        raise ChapterCommitRequestError("忽略项必须是本次预览列出的具体问题，且不能重复。")
+
+
 def _validate_route(route):
-    if not isinstance(route, dict) or set(route) != _REQUEST_FIELDS:
+    if not isinstance(route, dict) or set(route) not in (_REQUEST_FIELDS, _REQUEST_FIELDS | {"author_quality_choice"}):
         raise ChapterCommitRequestError("request must contain only route IDs and revision/hash CAS")
+    if "author_quality_choice" in route:
+        validate_author_quality_choice(route["author_quality_choice"])
     for field in ("project_id", "review_id"):
         _identifier(route[field], field)
     for field in ("chapter", "expected_draft_revision", "expected_review_revision"):
@@ -56,7 +69,7 @@ def chapter_commit_request(*, book_id: str, request: dict) -> dict:
     it must not rewrite those IDs to manufacture the same original request.
     """
     _identifier(book_id, "book_id")
-    if not isinstance(request, dict) or set(request) != _REQUEST_FIELDS | {"idempotency_key"}:
+    if not isinstance(request, dict) or "idempotency_key" not in request:
         raise ChapterCommitRequestError("invalid commit request fields")
     key = _identifier(request["idempotency_key"], "idempotency_key")
     route = {k: copy.deepcopy(v) for k, v in request.items() if k != "idempotency_key"}
@@ -92,6 +105,10 @@ def prepare_commit_request_evidence(*, preparation: dict, request: dict) -> dict
     expected = {"project_id": b["project_id"], "chapter": b["chapter"], "review_id": b["review_id"],
         "expected_draft_revision": b["draft_revision"], "expected_review_revision": b["review_revision"],
         "expected_draft_sha256": b["draft_sha256"], "expected_facts_sha256": b["facts_sha256"]}
+    if "author_quality_choice" in r["request"]:
+        if b.get("acceptance_kind") != "author":
+            raise ChapterCommitRequestError("仅允许作者在单章发布时作出选择。")
+        expected["author_quality_choice"] = r["request"]["author_quality_choice"]
     read_set = validate_schema(p["read_set"], "story_project_read_set.schema.json")
     if (r["request"] != expected or r["book_id"] != b["book_id"]
             or r["idempotency_scope_sha256"] != p["idempotency_scope_sha256"]

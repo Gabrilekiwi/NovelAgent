@@ -23,7 +23,7 @@ for document in (ROOT / 'README.md', base / 'README.md', ROOT / 'docs/windows-au
             raise ValueError(f'{document.name}: missing target {target}')
 # Different zlib versions may choose another deflate stream. Authenticate the downloaded
 # bytes above; compare uncompressed members to the reproducible build on every host.
-with ZipFile(BytesIO(archive)) as actual, ZipFile(BytesIO(build(report['source_commit'], report['guide_commit']))) as expected:
+with ZipFile(BytesIO(archive)) as actual, ZipFile(BytesIO(build(report['source_commit'], report['guide_commit'], report.get('archive_format', 1)))) as expected:
     if actual.namelist()!=expected.namelist() or any(actual.read(n)!=expected.read(n) for n in expected.namelist()):
         raise ValueError('ZIP contents differ from pinned source or guides')
     for doc in ('docs/windows-author.md','docs/product-validation.md'):

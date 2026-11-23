@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
+from api.contracts import MISSING_WRITING_MODEL_KEY, is_missing_writing_model_key
+
 from core.engine.chapter_candidate_context import (
     ChapterCandidateContextBuilder,
     ChapterCandidateContextError,
@@ -617,6 +619,8 @@ def _public_error(
     error: Mapping[str, Any] | None,
     raw_status: str,
 ) -> dict[str, str] | None:
+    if raw_status == "failed" and is_missing_writing_model_key(error):
+        return {"code": MISSING_WRITING_MODEL_KEY, "message": "本次事实提取没有发送模型请求：工作台当时没有读到写作模型密钥。草稿仍可编辑，也可自行审阅事实。"}
     if raw_status == "provider_uncertain":
         return {
             "code": "provider_call_uncertain",
