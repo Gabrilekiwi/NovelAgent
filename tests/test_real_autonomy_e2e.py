@@ -119,13 +119,15 @@ class _FakeCompletions:
 
 class _FakeOpenAI:
     calls: list[dict] = []
+    completions_type = _FakeCompletions
 
     def __init__(self, **kwargs) -> None:
         if kwargs.get("api_key") != "unit-test-openai-key":
             raise AssertionError("test harness did not pass the explicit credential")
-        if "base_url" in kwargs:
-            raise AssertionError("release harness must use the official endpoint")
-        self.chat = SimpleNamespace(completions=_FakeCompletions(self.calls))
+        # The SDK can inherit OPENAI_BASE_URL if no explicit endpoint is passed.
+        if kwargs.get("base_url") != "https://api.openai.com/v1":
+            raise AssertionError("release harness must explicitly select the official endpoint")
+        self.chat = SimpleNamespace(completions=self.completions_type(self.calls))
 
 
 class _AuthenticationError(RuntimeError):
@@ -143,13 +145,7 @@ class _FailingCompletions:
 
 class _FailingOpenAI(_FakeOpenAI):
     calls: list[dict] = []
-
-    def __init__(self, **kwargs) -> None:
-        if kwargs.get("api_key") != "unit-test-openai-key":
-            raise AssertionError("test harness did not pass the explicit credential")
-        if "base_url" in kwargs:
-            raise AssertionError("release harness must use the official endpoint")
-        self.chat = SimpleNamespace(completions=_FailingCompletions(self.calls))
+    completions_type = _FailingCompletions
 
 
 def _clean_provenance(*, dirty: bool = False):
